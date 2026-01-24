@@ -1,0 +1,41 @@
+PROJECT SUMMARY
+
+ROOT FOLDERS
+- assets: App assets (prompts, schemas, course folders under assets/teachers).
+- lib: Flutter app source code (UI, services, models, DB, LLM).
+- windows/macos/linux/android/ios/web: Platform builds.
+- test/integration_test: Automated tests.
+- skills: Project notes and skills log.
+
+KEY CODE AREAS
+- lib/db/app_database.dart: Drift database schema, queries, and migrations.
+- lib/services/course_service.dart: Load/validate course folders and map nodes.
+- lib/services/session_service.dart: Chat sessions, prompt rendering, LLM calls.
+- lib/llm/llm_providers.dart: Provider list and default models.
+- lib/llm/prompt_repository.dart: Loads prompts from assets or teacher overrides.
+- lib/ui/pages/teacher_home_page.dart: Teacher dashboard and course actions.
+- lib/ui/pages/student_home_page.dart: Student course list and progress.
+- lib/ui/pages/skill_tree_page.dart: Skill tree rendering and node actions.
+- lib/ui/tutor_session_page.dart: Chat UI and summarize flow.
+- lib/ui/widgets/markdown_math.dart: Inline text+math tokenization.
+- lib/ui/widgets/math_markdown_view.dart: Inline renderer (SelectableText.rich).
+
+DATA STORAGE
+- SQLite DB: Stored in the user Documents folder as family_teacher.db.
+- Secure storage: API keys are stored in OS secure storage (not in SQLite).
+- Course materials: Loaded from teacher-selected folders on disk.
+
+GIT TRACK (APP CODE + REQUIRED ASSETS)
+- lib/
+- assets/prompts/, assets/schemas/, assets/textbooks/
+- assets/teachers/<teacher>/prompts/
+- android/, ios/, macos/, linux/, windows/, web/
+- test/, integration_test/, tool/
+- pubspec.yaml, pubspec.lock, l10n.yaml, analysis_options.yaml
+- README.md, .gitignore
+- skills/
+
+DO NOT COMMIT (GENERATED OR USER DATA)
+- build/, .dart_tool/, .flutter-plugins*, .pub/
+- .idea/, .vscode/, *.iml, *.log
+- assets/teachers/<teacher>/<course>/ (course materials)

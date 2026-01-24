@@ -1,0 +1,49 @@
+name: family_teacher
+description: Family teacher MVP with LLM-backed tutoring and skill trees.
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  provider: ^6.1.2
+  drift: ^2.30.0
+  drift_flutter: ^0.2.8
+  sqlite3_flutter_libs: ^0.5.20
+  path_provider: ^2.1.4
+  path: ^1.9.0
+  flutter_secure_storage: ^9.2.2
+  http: ^1.2.2
+  crypto: ^3.0.3
+  intl: ^0.20.2
+  json_schema: ^5.2.0
+  file_picker: ^8.0.6
+  uuid: ^4.4.0
+  window_manager: ^0.3.9
+  flutter_math_fork: ^0.7.2
+  graphview: ^1.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+  build_runner: ^2.4.11
+  drift_dev: ^2.30.0
+  sqlite3: ^2.4.3
+
+flutter:
+  uses-material-design: true
+  generate: true
+  assets:
+    - assets/prompts/learn.txt
+    - assets/prompts/review.txt
+    - assets/prompts/summarize.txt
+    - assets/schemas/summarize.schema.json
+    - assets/textbooks/math_outline_y5_y12.txt
+    - assets/teachers/

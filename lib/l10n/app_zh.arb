@@ -1,0 +1,540 @@
+﻿{
+  "@@locale": "zh",
+  "appTitle": "家庭老师",
+  "loginTab": "登录",
+  "registerTeacherTab": "注册老师",
+  "usernameLabel": "用户名",
+  "pinLabel": "PIN",
+  "loginButton": "登录",
+  "createTeacherButton": "创建老师",
+  "usernameExists": "用户名已存在。",
+  "invalidLogin": "用户名或 PIN 无效。",
+  "teacherTitle": "老师：{name}",
+  "@teacherTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "studentTitle": "学生：{name}",
+  "@studentTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "createStudentButton": "创建学生",
+  "createCourseButton": "加载课程",
+  "loadCourseButton": "加载课程",
+  "reloadCourseButton": "重新加载课程",
+  "studentsSection": "学生",
+  "coursesSection": "课程版本",
+  "noStudents": "暂无学生。",
+  "noCourses": "暂无课程。",
+  "studentRoleLabel": "学生",
+  "courseGranularityStatus": "粒度 {granularity} • 树 {status}",
+  "@courseGranularityStatus": {
+    "placeholders": {
+      "granularity": {},
+      "status": {}
+    }
+  },
+  "courseProgressStatus": "进度 {completed}/{total}",
+  "@courseProgressStatus": {
+    "placeholders": {
+      "completed": {},
+      "total": {}
+    }
+  },
+  "editButton": "编辑",
+  "treeButton": "树",
+  "assignButton": "分配",
+  "progressButton": "进度",
+  "assignDialogTitle": "分配学生",
+  "assignDialogNoStudents": "没有可用学生。",
+  "assignConfirmButton": "分配",
+  "cancelButton": "取消",
+  "createStudentDialogTitle": "创建学生",
+  "createTeacherDialogTitle": "创建老师",
+  "createDialogCreate": "创建",
+  "createFailedMessage": "创建失败：{error}",
+  "@createFailedMessage": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "teacherCreatedMessage": "老师已创建。",
+  "noAssignedCourses": "暂无分配课程。",
+  "granularityLabel": "粒度 {value}",
+  "@granularityLabel": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "createCourseTitle": "加载课程",
+  "editCourseTitle": "编辑课程",
+  "courseLoadFailedTitle": "加载课程失败",
+  "subjectLabel": "科目",
+  "subjectRequired": "需要填写科目。",
+  "courseFolderLabel": "课程文件夹",
+  "courseFolderHint": "选择课程文件夹",
+  "courseFolderRequired": "需要选择课程文件夹。",
+  "courseFolderPickerTitle": "选择课程文件夹",
+  "browseButton": "浏览",
+  "courseNameLabel": "课程：{name}",
+  "@courseNameLabel": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "granularityFieldLabel": "粒度",
+  "textbookOutlineLabel": "教材大纲",
+  "saveButton": "保存",
+  "savingLabel": "保存中...",
+  "loadingLabel": "加载中...",
+  "generateTreeButton": "生成树",
+  "generatingLabel": "生成中...",
+  "viewTreeButton": "查看树",
+  "courseLoadedMessage": "课程已加载。",
+  "courseReloadTitle": "重新加载课程？",
+  "courseReloadBody": "这将替换现有课程数据。覆盖会按文本映射学生进度；删除会清除所有学生进度。",
+  "courseReloadOverride": "覆盖",
+  "courseReloadDeletedTitle": "删除的节点",
+  "courseReloadDeletedMessage": "以下节点在新内容中不存在，将删除其进度：",
+  "courseReloadDeleteConfirmTitle": "删除课程数据？",
+  "courseReloadDeleteConfirmMessage": "这将删除该课程的所有学生进度，继续？",
+  "treeGenerationFailedMessage": "生成树失败，请重试。",
+  "detailsButton": "详情",
+  "retryButton": "重试",
+  "subjectGranularityRequired": "需要填写科目和粒度。",
+  "treeGenerationErrorMessage": "生成树错误：{error}",
+  "@treeGenerationErrorMessage": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "treeGenerationFailedTitle": "生成树失败",
+  "messageLabel": "消息：",
+  "parseErrorLabel": "解析错误：",
+  "rawResponseLabel": "原始响应：",
+  "closeButton": "关闭",
+  "skillTreeTitle": "技能树",
+  "noNodesYet": "暂无节点。",
+  "nodeNotFound": "未找到节点。",
+  "statusLit": "状态：已点亮",
+  "statusNotLit": "状态：未点亮",
+  "startContinueSession": "开始/继续会话",
+  "startNewSession": "开始新会话",
+  "sessionHistoryTitle": "会话历史",
+  "noSessionsYet": "暂无会话。",
+  "sessionLabel": "会话 {id}",
+  "@sessionLabel": {
+    "placeholders": {
+      "id": {}
+    }
+  },
+  "noSummaryYet": "暂无总结。",
+  "continueButton": "继续",
+  "sessionTitle": "会话 {id}",
+  "@sessionTitle": {
+    "placeholders": {
+      "id": {}
+    }
+  },
+  "noMessagesYet": "暂无消息。",
+  "chatLabelStudent": "学生",
+  "chatLabelSummary": "总结",
+  "chatLabelTutor": "导师（{mode}）",
+  "@chatLabelTutor": {
+    "placeholders": {
+      "mode": {}
+    }
+  },
+  "summaryFailedRetry": "总结失败，重试？",
+  "chatInputLabel": "你的消息",
+  "chatInputHint": "在此输入（Ctrl+Enter 发送）",
+  "sendTooltip": "发送",
+  "stopTooltip": "停止",
+  "summaryButton": "总结",
+  "exitButton": "退出",
+  "messageRequiredTitle": "需要消息",
+  "messageRequiredBody": "发送前请输入消息。",
+  "requestFailedTitle": "请求失败",
+  "refreshFailedTitle": "刷新失败",
+  "editFailedTitle": "编辑失败",
+  "summaryUpdatedLit": "总结已更新。点亮：{lit}",
+  "@summaryUpdatedLit": {
+    "placeholders": {
+      "lit": {}
+    }
+  },
+  "summaryUpdatedStatus": "总结已更新。点亮：{lit}。掌握等级：{level}",
+  "@summaryUpdatedStatus": {
+    "placeholders": {
+      "lit": {},
+      "level": {}
+    }
+  },
+  "summarySavedUnparsed": "总结已保存（未解析）。",
+  "summaryFailedTitle": "总结失败",
+  "summaryFailedMessage": "Schema 验证失败或响应无效。",
+  "detailsLabel": "详情：",
+  "copyTooltip": "复制",
+  "editTooltip": "编辑",
+  "refreshTooltip": "刷新",
+  "copySuccess": "已复制到剪贴板。",
+  "settingsTitle": "设置",
+  "llmSettingsTitle": "LLM 设置",
+  "providerLabel": "提供方",
+  "baseUrlLabel": "Base URL",
+  "modelLabel": "模型",
+  "timeoutSecondsLabel": "超时（秒）",
+  "maxTokensLabel": "最大 tokens",
+  "llmModeLabel": "LLM 模式",
+  "llmModeLiveRecord": "实时（记录）",
+  "llmModeReplay": "回放",
+  "llmModeLive": "实时",
+  "noModelsAvailable": "暂无可用模型。",
+  "modelMissingMessage": "需要选择模型。",
+  "useSiliconflowDefaults": "使用 SiliconFlow 默认",
+  "useEnvDefaults": "使用环境变量默认",
+  "saveLlmConfigButton": "保存 LLM 配置",
+  "viewLlmLogsButton": "查看 LLM 日志",
+  "apiKeyLabel": "API Key",
+  "clearKeyButton": "清除 Key",
+  "loadKeyFromEnvButton": "从环境变量加载 Key",
+  "apiKeyMissingMessage": "需要 API Key。",
+  "apiKeyClearedMessage": "API Key 已清除。",
+  "apiKeyNotFoundMessage": "未找到 OPENAI_API_KEY。",
+  "apiKeyLoadedMessage": "已从环境变量加载 API Key。",
+  "configSavedMessage": "配置已保存。",
+  "configAlreadySavedMessage": "配置已存在。",
+  "savedApiConfigsTitle": "已保存的 API 配置",
+  "noSavedConfigs": "暂无已保存配置。",
+  "keyHashLabel": "Key 哈希：{hash}",
+  "@keyHashLabel": {
+    "placeholders": {
+      "hash": {}
+    }
+  },
+  "configDeletedMessage": "配置已删除。",
+  "loadButton": "加载",
+  "deleteButton": "删除",
+  "deleteCourseButton": "删除课程",
+  "deleteCourseTitle": "删除课程 {name}？",
+  "@deleteCourseTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "deleteCourseMessage": "这将删除课程、节点以及所有学生进度和会话。",
+  "deleteCourseSuccess": "课程已删除。",
+  "backupRestoreTitle": "备份与恢复",
+  "exportDbDialogTitle": "导出数据库",
+  "restoreDbDialogTitle": "恢复数据库",
+  "exportDbButton": "导出 DB",
+  "restoreDbButton": "恢复 DB",
+  "backupExportedMessage": "备份已导出。",
+  "restoreConfirmTitle": "恢复数据库",
+  "restoreConfirmMessage": "恢复将覆盖本地数据，继续？",
+  "restoreConfirmButton": "恢复",
+  "restoreCompletedMessage": "数据库已恢复，正在重启...",
+  "appSectionTitle": "应用",
+  "quitButton": "退出（教师 PIN）",
+  "notLoggedInMessage": "未登录。",
+  "teacherNotFoundMessage": "未找到教师账号。",
+  "invalidPinMessage": "PIN 无效。",
+  "teacherPinTitle": "教师 PIN",
+  "confirmButton": "确认",
+  "okButton": "确定",
+  "languageTitle": "语言",
+  "languageSystem": "系统默认",
+  "languageEnglish": "英语",
+  "languageChinese": "中文",
+  "languageSavedMessage": "语言已更新。",
+  "promptTemplatesTitle": "提示词模板",
+  "promptTemplatesButton": "提示词",
+  "promptLearn": "学习",
+  "promptPractice": "练习",
+  "promptReview": "复习",
+  "promptSummarize": "总结",
+  "promptStatusDefault": "当前：默认",
+  "promptStatusCustom": "当前：自定义（{time}）",
+  "@promptStatusCustom": {
+    "placeholders": {
+      "time": {}
+    }
+  },
+  "promptHistoryTitle": "历史",
+  "promptHistoryEmpty": "暂无历史。",
+  "useDefaultButton": "使用默认",
+  "previewButton": "预览",
+  "useButton": "使用",
+  "promptEditTitle": "编辑提示词（{name}）",
+  "@promptEditTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "promptTemplateLabel": "模板",
+  "promptRequiredVars": "必需变量：{vars}",
+  "@promptRequiredVars": {
+    "placeholders": {
+      "vars": {}
+    }
+  },
+  "promptAllowedVars": "允许变量：{vars}",
+  "@promptAllowedVars": {
+    "placeholders": {
+      "vars": {}
+    }
+  },
+  "promptSaved": "提示词已保存。",
+  "promptReverted": "已恢复默认。",
+  "promptActivated": "已设为当前。",
+  "promptPreviewTitle": "提示词预览",
+  "promptValidationFailedTitle": "提示词验证失败",
+  "promptMissingVars": "缺少变量：{vars}",
+  "@promptMissingVars": {
+    "placeholders": {
+      "vars": {}
+    }
+  },
+  "promptUnknownVars": "未知变量：{vars}",
+  "@promptUnknownVars": {
+    "placeholders": {
+      "vars": {}
+    }
+  },
+  "progressTitle": "进度：{subject}",
+  "@progressTitle": {
+    "placeholders": {
+      "subject": {}
+    }
+  },
+  "noAssignedStudents": "暂无分配的学生。",
+  "litCountLabel": "点亮 {litCount}/{total}",
+  "@litCountLabel": {
+    "placeholders": {
+      "litCount": {},
+      "total": {}
+    }
+  },
+  "llmLogsTitle": "LLM 日志",
+  "loadLogsFailed": "加载日志失败：{error}",
+  "@loadLogsFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "noLlmLogs": "暂无 LLM 日志。",
+  "llmCallDetailsTitle": "LLM 调用详情",
+  "llmTimeLabel": "时间：{time}",
+  "@llmTimeLabel": {
+    "placeholders": {
+      "time": {}
+    }
+  },
+  "llmPromptLabel": "提示：{prompt}",
+  "@llmPromptLabel": {
+    "placeholders": {
+      "prompt": {}
+    }
+  },
+  "llmModeValueLabel": "模式：{mode}",
+  "@llmModeValueLabel": {
+    "placeholders": {
+      "mode": {}
+    }
+  },
+  "llmModelLabel": "模型：{model}",
+  "@llmModelLabel": {
+    "placeholders": {
+      "model": {}
+    }
+  },
+  "llmBaseUrlLabel": "Base URL：{url}",
+  "@llmBaseUrlLabel": {
+    "placeholders": {
+      "url": {}
+    }
+  },
+  "llmLatencyLabel": "耗时：{ms} 毫秒",
+  "@llmLatencyLabel": {
+    "placeholders": {
+      "ms": {}
+    }
+  },
+  "llmCallHashLabel": "调用哈希：{hash}",
+  "@llmCallHashLabel": {
+    "placeholders": {
+      "hash": {}
+    }
+  },
+  "llmTeacherLabel": "教师：{teacher}",
+  "@llmTeacherLabel": {
+    "placeholders": {
+      "teacher": {}
+    }
+  },
+  "llmStudentLabel": "学生：{student}",
+  "@llmStudentLabel": {
+    "placeholders": {
+      "student": {}
+    }
+  },
+  "llmTeacherUnknown": "教师：未知",
+  "llmStudentNone": "学生：无",
+  "llmTeacherIdLabel": "教师：#{id}",
+  "@llmTeacherIdLabel": {
+    "placeholders": {
+      "id": {}
+    }
+  },
+  "llmStudentIdLabel": "学生：#{id}",
+  "@llmStudentIdLabel": {
+    "placeholders": {
+      "id": {}
+    }
+  },
+  "llmKpLabel": "知识点：{kp}",
+  "@llmKpLabel": {
+    "placeholders": {
+      "kp": {}
+    }
+  },
+  "llmActionLabel": "动作：{action}",
+  "@llmActionLabel": {
+    "placeholders": {
+      "action": {}
+    }
+  },
+  "llmRenderedPromptLabel": "渲染提示：",
+  "llmResponseLabel": "响应：",
+  "llmParseErrorLabel": "解析错误：",
+  "llmStatusUnknown": "未知",
+  "llmStatusOk": "正常",
+  "llmStatusError": "错误",
+  "llmLogEntryTitle": "{time} • {prompt}",
+  "@llmLogEntryTitle": {
+    "placeholders": {
+      "time": {},
+      "prompt": {}
+    }
+  },
+  "llmLogEntrySubtitle": "{model} • {mode} • {status}",
+  "@llmLogEntrySubtitle": {
+    "placeholders": {
+      "model": {},
+      "mode": {},
+      "status": {}
+    }
+  },
+  "apiKeyMissingForConfig": "此配置未找到 API Key。",
+  "tutorReplyLabel": "回复",
+  "renameSessionButton": "重命名",
+  "renameSessionTitle": "重命名会话",
+  "sessionNameLabel": "会话名称",
+  "studentSessionsTitle": "会话：{name}",
+  "@studentSessionsTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "noStudentSessions": "该学生暂无会话。",
+  "sessionCourseLabel": "课程：{name}",
+  "@sessionCourseLabel": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "sessionNodeLabel": "节点：{name}",
+  "@sessionNodeLabel": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "sessionStartedLabel": "开始：{time}",
+  "@sessionStartedLabel": {
+    "placeholders": {
+      "time": {}
+    }
+  },
+  "deleteSessionButton": "删除会话",
+  "deleteSessionTitle": "删除会话“{name}”？",
+  "@deleteSessionTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "deleteSessionMessage": "这将删除该会话及其消息。",
+  "deleteSessionSuccess": "会话已删除。",
+  "resetPinButton": "重置 PIN",
+  "resetPinDialogTitle": "为 {name} 重置 PIN",
+  "@resetPinDialogTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "pinUpdatedMessage": "PIN 已更新。",
+  "studentSessionsButton": "学生会话",
+  "deleteStudentButton": "删除学生",
+  "deleteStudentTitle": "删除学生 {name}？",
+  "@deleteStudentTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "deleteStudentMessage": "这将删除学生及其会话和进度。",
+  "deleteStudentSuccess": "学生已删除。",
+  "adminTitle": "管理员：{name}",
+  "@adminTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "teachersSection": "老师",
+  "noTeachers": "暂无老师。",
+  "deleteTeacherButton": "删除老师",
+  "deleteTeacherTitle": "删除老师 {name}？",
+  "@deleteTeacherTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "deleteTeacherMessage": "这将删除老师及其学生、课程和会话。",
+  "deleteTeacherSuccess": "老师已删除。",
+  "searchNodeLabel": "搜索节点",
+  "searchNodeHint": "输入编号或标题",
+  "noSearchResults": "无匹配结果。",
+  "unparsedLinesLabel": "未解析行数：{count}",
+  "@unparsedLinesLabel": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "showRawButton": "显示原文",
+  "hideRawButton": "隐藏原文",
+  "nodeDetailsTitle": "节点详情",
+  "nodeIdLabel": "编号：{id}",
+  "@nodeIdLabel": {
+    "placeholders": {
+      "id": {}
+    }
+  },
+  "nodeTitleLabel": "标题：{title}",
+  "@nodeTitleLabel": {
+    "placeholders": {
+      "title": {}
+    }
+  },
+  "nodeGradeLabel": "年级：{grade}",
+  "@nodeGradeLabel": {
+    "placeholders": {
+      "grade": {}
+    }
+  },
+  "levelFilterLabel": "层级",
+  "yearFilterLabel": "年份",
+  "yearFilterAll": "全部年份",
+  "zoomInLabel": "放大",
+  "zoomOutLabel": "缩小"
+}

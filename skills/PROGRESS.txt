@@ -1,0 +1,25 @@
+FAMILY TEACHER - PROGRESS
+
+STATUS
+- App runs as a Windows desktop Flutter app with SQLite storage.
+- LLM chat supports learn/review/summarize flows.
+- Skill tree loads from course folder and shows progress.
+
+IMPLEMENTED
+- Course load from folder with validation.
+- Skill tree parsing from contents.txt/context.txt.
+- Tree display with search, filters, expand/collapse state, and saved view state.
+- Sessions: learn/review/summarize with prompt variables and session history.
+- Summary saves lit status and difficulty for question selection.
+- Teacher can manually toggle lit status for nodes.
+- Course reload supports override/wipe with mapping by text.
+- Prompt templates with history and variable reference panel.
+- Backup/restore of SQLite database.
+
+CURRENT CONCERNS
+- Rendering performance depends on message length and math density.
+- If prompt output includes malformed inline markup, renderer should fall back gracefully.
+
+NEXT CHECKS
+- Run flutter analyze and tests after dependency updates.
+- Verify course folder conversion script output matches the new format.

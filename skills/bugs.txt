@@ -1,0 +1,31 @@
+SKILLS LOG
+
+SKILL: Dart string escaping for math delimiters
+- Context: KaTeX/LaTeX delimiters include "$" in Dart strings.
+- Fix: Escape "$" or use raw strings to avoid interpolation errors.
+- Lesson: Always audit string literals when embedding "$".
+
+SKILL: Windows plugin compatibility
+- Context: webview_windows used std::format (<format>), which fails on VS2019.
+- Fix: Avoid C++20-only STL or pin a compatible plugin.
+- Lesson: Align plugin toolchains with the build environment.
+
+SKILL: Math rendering fallback behavior
+- Context: LaTeX commands like \cdot showed as plain text when not wrapped.
+- Fix: Enforce math delimiters in prompts and add fallback rendering.
+- Lesson: Normalize math input before rendering.
+
+SKILL: Rendering performance
+- Context: WebView creation was expensive and slow in chat lists.
+- Fix: Cache expensive renderers by message id.
+- Lesson: Reuse heavy UI objects to avoid jank.
+
+SKILL: Inline math layout
+- Context: Block Markdown widgets caused large gaps in mixed text+math lines.
+- Fix: Use a single RichText with TextSpan + WidgetSpan.
+- Lesson: Inline math needs inline layout primitives.
+
+SKILL: Math parse errors UX
+- Context: Parse errors were shown directly to the user.
+- Fix: Render raw text on error (no error UI).
+- Lesson: Fail soft for LLM output parsing.

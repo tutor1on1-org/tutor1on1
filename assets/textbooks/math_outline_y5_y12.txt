@@ -1,0 +1,100 @@
+Math Outline (Years 5–12) — Headings Only
+
+Year 5–6 Foundations
+- Place value, rounding, estimation
+- Integers and number properties (factors, multiples, primes)
+- Fractions: equivalence, compare/order, add/subtract
+- Decimals: place value, operations, rounding
+- Percent basics and simple applications
+- Ratios (intro) and rates (intro)
+- Measurement: length, area, volume, mass, time
+- Perimeter, area of rectangles/triangles (intro)
+- Angles: types, measuring, simple constructions
+- Coordinates (1st quadrant), simple graphing
+- Data: tables, bar charts, line plots
+- Probability: simple chance, experimental probability (intro)
+
+Year 7–8 Core
+Number & Operations
+- Integers, rational numbers, order of operations
+- Fractions/decimals/percent conversions
+- Ratio, rates, unit rates, proportional reasoning
+- Exponents (integer powers), roots (intro), scientific notation (intro)
+
+Algebra
+- Algebraic expressions: simplify, expand (distributive law)
+- Linear equations (one-variable): solve and check
+- Inequalities (one-variable): solve and graph on number line
+- Coordinate plane (4 quadrants), graphing basics
+- Patterns, sequences (arithmetic), rules
+- Introduction to functions: input-output, function notation (informal)
+
+Geometry & Measurement
+- Angle relationships: parallel lines, triangles
+- Triangles and quadrilaterals: properties and classification
+- Congruence and simple constructions
+- Perimeter/area of common shapes; volume of prisms (intro)
+- Transformations: translation, rotation, reflection, dilation (intro)
+- Pythagoras theorem (intro or Year 8)
+
+Data & Probability
+- Data displays: histograms, dot plots, box plots (intro)
+- Mean/median/mode/range; outliers
+- Basic probability rules; sample space
+
+Year 9–10 Advanced Core
+Algebra
+- Linear functions: slope, intercept, graphing
+- Systems of linear equations: solve (graphing/substitution/elimination)
+- Linear inequalities: graphing solution regions (intro)
+- Polynomials: operations, factoring basics
+- Quadratic expressions and equations (intro to standard forms)
+- Exponents and exponent laws (deeper), radicals
+- Rational expressions (intro), restrictions and simplification
+
+Functions
+- Function notation, domain/range (intro)
+- Quadratic functions: graphs and key features (vertex, roots)
+- Exponential growth/decay (intro)
+- Piecewise functions (intro)
+
+Geometry
+- Similarity and scale factor
+- Pythagoras theorem (applications)
+- Trigonometry basics: sine/cosine/tangent in right triangles
+- Circles: circumference, area, arcs (intro)
+- Coordinate geometry (intro): distance, midpoint (optional)
+
+Statistics & Probability
+- Scatterplots, correlation, line of best fit (intro)
+- Two-way tables, conditional probability (intro)
+- Standard deviation (intro), normal distribution idea (intro)
+- Counting basics (permutations/combinations intro)
+
+Year 11–12 Senior / Precalculus / Calculus Prep
+Algebra & Functions
+- Advanced quadratics and transformations
+- Polynomial functions: zeros, factor theorem (intro), graphs
+- Exponential and logarithmic functions (intro/standard)
+- Trigonometric functions: unit circle, graphs, identities (intro)
+- Sequences and series: arithmetic/geometric, sums
+- Complex numbers (intro)
+- Vectors (2D): magnitude, direction, dot product (intro)
+
+Calculus (Intro)
+- Limits concept (informal)
+- Differentiation: derivative as rate of change, basic rules
+- Applications of derivatives: tangent, optimization (intro)
+- Integration: area under curve (informal), basic antiderivatives (intro)
+- Applications of integrals (intro)
+
+Advanced Statistics (Intro)
+- Sampling and study design
+- Confidence intervals (conceptual)
+- Hypothesis testing (conceptual)
+- Regression (deeper), residuals
+
+Optional Extensions
+- Discrete mathematics: logic, sets, graphs (intro)
+- Financial mathematics: compound interest, annuities (intro)
+- Matrices (intro)

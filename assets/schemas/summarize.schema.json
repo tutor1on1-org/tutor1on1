@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SessionSummaryOutput",
+  "type": "object",
+  "required": ["summary_text", "master_level", "lit"],
+  "properties": {
+    "summary_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 800
+    },
+    "master_level": {
+      "type": "string",
+      "enum": ["easy", "medium", "hard"]
+    },
+    "lit": {
+      "type": "boolean"
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,541 @@
+﻿{
+  "@@locale": "en",
+  "appTitle": "Family Teacher",
+  "loginTab": "Login",
+  "registerTeacherTab": "Register Teacher",
+  "usernameLabel": "Username",
+  "pinLabel": "PIN",
+  "loginButton": "Login",
+  "createTeacherButton": "Create Teacher",
+  "usernameExists": "Username already exists.",
+  "invalidLogin": "Invalid username or PIN.",
+  "teacherTitle": "Teacher: {name}",
+  "@teacherTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "studentTitle": "Student: {name}",
+  "@studentTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "createStudentButton": "Create Student",
+  "createCourseButton": "Load Course",
+  "loadCourseButton": "Load Course",
+  "reloadCourseButton": "Reload Course",
+  "studentsSection": "Students",
+  "coursesSection": "Course Versions",
+  "noStudents": "No students yet.",
+  "noCourses": "No courses yet.",
+  "studentRoleLabel": "Student",
+  "courseGranularityStatus": "Granularity {granularity} \u2022 Tree {status}",
+  "@courseGranularityStatus": {
+    "placeholders": {
+      "granularity": {},
+      "status": {}
+    }
+  },
+  "courseProgressStatus": "Progress {completed}/{total}",
+  "@courseProgressStatus": {
+    "placeholders": {
+      "completed": {},
+      "total": {}
+    }
+  },
+  "editButton": "Edit",
+  "treeButton": "Tree",
+  "assignButton": "Assign",
+  "progressButton": "Progress",
+  "assignDialogTitle": "Assign Student",
+  "assignDialogNoStudents": "No students available.",
+  "assignConfirmButton": "Assign",
+  "cancelButton": "Cancel",
+  "createStudentDialogTitle": "Create Student",
+  "createTeacherDialogTitle": "Create Teacher",
+  "createDialogCreate": "Create",
+  "createFailedMessage": "Create failed: {error}",
+  "@createFailedMessage": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "teacherCreatedMessage": "Teacher created.",
+  "noAssignedCourses": "No assigned courses.",
+  "granularityLabel": "Granularity {value}",
+  "@granularityLabel": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "createCourseTitle": "Load Course",
+  "editCourseTitle": "Edit Course",
+  "courseLoadFailedTitle": "Course load failed",
+  "subjectLabel": "Subject",
+  "subjectRequired": "Subject is required.",
+  "courseFolderLabel": "Course folder",
+  "courseFolderHint": "Select a course folder",
+  "courseFolderRequired": "Course folder is required.",
+  "courseFolderPickerTitle": "Select course folder",
+  "browseButton": "Browse",
+  "courseNameLabel": "Course: {name}",
+  "@courseNameLabel": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "granularityFieldLabel": "Granularity",
+  "textbookOutlineLabel": "Textbook Outline",
+  "saveButton": "Save",
+  "savingLabel": "Saving...",
+  "loadingLabel": "Loading...",
+  "generateTreeButton": "Generate Tree",
+  "generatingLabel": "Generating...",
+  "viewTreeButton": "View Tree",
+  "courseLoadedMessage": "Course loaded.",
+  "courseReloadTitle": "Reload course?",
+  "courseReloadBody": "This will replace the existing course data. Override maps student progress by text. Delete removes all student progress.",
+  "courseReloadOverride": "Override",
+  "courseReloadDeletedTitle": "Deleted nodes",
+  "courseReloadDeletedMessage": "These nodes are missing in the new contents and their progress will be deleted:",
+  "courseReloadDeleteConfirmTitle": "Delete course data?",
+  "courseReloadDeleteConfirmMessage": "This will delete all student progress for this course. Continue?",
+  "treeGenerationFailedMessage": "Tree generation failed. Please retry.",
+  "detailsButton": "Details",
+  "retryButton": "Retry",
+  "subjectGranularityRequired": "Subject and granularity are required.",
+  "treeGenerationErrorMessage": "Tree generation error: {error}",
+  "@treeGenerationErrorMessage": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "treeGenerationFailedTitle": "Tree generation failed",
+  "messageLabel": "Message:",
+  "parseErrorLabel": "Parse error:",
+  "rawResponseLabel": "Raw response:",
+  "closeButton": "Close",
+  "skillTreeTitle": "Skill Tree",
+  "noNodesYet": "No nodes yet.",
+  "nodeNotFound": "Node not found.",
+  "statusLit": "Status: Lit",
+  "statusNotLit": "Status: Not lit",
+  "startContinueSession": "Start/Continue Session",
+  "startNewSession": "Start new session",
+  "sessionHistoryTitle": "Session History",
+  "noSessionsYet": "No sessions yet.",
+  "sessionLabel": "Session {id}",
+  "@sessionLabel": {
+    "placeholders": {
+      "id": {}
+    }
+  },
+  "noSummaryYet": "No summary yet.",
+  "continueButton": "Continue",
+  "sessionTitle": "Session {id}",
+  "@sessionTitle": {
+    "placeholders": {
+      "id": {}
+    }
+  },
+  "noMessagesYet": "No messages yet.",
+  "chatLabelStudent": "Student",
+  "chatLabelSummary": "Summary",
+  "chatLabelTutor": "Tutor ({mode})",
+  "@chatLabelTutor": {
+    "placeholders": {
+      "mode": {}
+    }
+  },
+  "summaryFailedRetry": "Summary failed. Retry?",
+  "chatInputLabel": "Your message",
+  "chatInputHint": "Type here (Ctrl+Enter to send)",
+  "sendTooltip": "Send",
+  "stopTooltip": "Stop",
+  "summaryButton": "Summary",
+  "exitButton": "Exit",
+  "messageRequiredTitle": "Message required",
+  "messageRequiredBody": "Please enter a message before sending.",
+  "requestFailedTitle": "Request failed",
+  "refreshFailedTitle": "Refresh failed",
+  "editFailedTitle": "Edit failed",
+  "summaryUpdatedLit": "Summary updated. Lit: {lit}",
+  "@summaryUpdatedLit": {
+    "placeholders": {
+      "lit": {}
+    }
+  },
+  "summaryUpdatedStatus": "Summary updated. Lit: {lit}. Level: {level}",
+  "@summaryUpdatedStatus": {
+    "placeholders": {
+      "lit": {},
+      "level": {}
+    }
+  },
+  "summarySavedUnparsed": "Summary saved (unparsed).",
+  "summaryFailedTitle": "Summary failed",
+  "summaryFailedMessage": "Schema validation failed or response was invalid.",
+  "detailsLabel": "Details:",
+  "copyTooltip": "Copy",
+  "editTooltip": "Edit",
+  "refreshTooltip": "Refresh",
+  "copySuccess": "Copied to clipboard.",
+  "settingsTitle": "Settings",
+  "llmSettingsTitle": "LLM Settings",
+  "providerLabel": "Provider",
+  "baseUrlLabel": "Base URL",
+  "modelLabel": "Model",
+  "timeoutSecondsLabel": "Timeout (seconds)",
+  "maxTokensLabel": "Max tokens",
+  "llmModeLabel": "LLM Mode",
+  "llmModeLiveRecord": "Live (Record)",
+  "llmModeReplay": "Replay",
+  "llmModeLive": "Live",
+  "noModelsAvailable": "No models available.",
+  "modelMissingMessage": "Model is required.",
+  "useSiliconflowDefaults": "Use SiliconFlow defaults",
+  "useEnvDefaults": "Use env defaults",
+  "saveLlmConfigButton": "Save LLM Config",
+  "viewLlmLogsButton": "View LLM Logs",
+  "apiKeyLabel": "API Key",
+  "clearKeyButton": "Clear Key",
+  "loadKeyFromEnvButton": "Load key from env",
+  "apiKeyMissingMessage": "API key is required.",
+  "apiKeyClearedMessage": "API key cleared.",
+  "apiKeyNotFoundMessage": "OPENAI_API_KEY not found.",
+  "apiKeyLoadedMessage": "Loaded API key from env.",
+  "configSavedMessage": "Config saved.",
+  "configAlreadySavedMessage": "Config already saved.",
+  "savedApiConfigsTitle": "Saved API Configs",
+  "noSavedConfigs": "No saved configs yet.",
+  "keyHashLabel": "Key hash: {hash}",
+  "@keyHashLabel": {
+    "placeholders": {
+      "hash": {}
+    }
+  },
+  "configDeletedMessage": "Config deleted.",
+  "loadButton": "Load",
+  "deleteButton": "Delete",
+  "deleteCourseButton": "Delete course",
+  "deleteCourseTitle": "Delete course {name}?",
+  "@deleteCourseTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "deleteCourseMessage": "This will remove the course, its nodes, and all student progress and sessions.",
+  "deleteCourseSuccess": "Course deleted.",
+  "backupRestoreTitle": "Backup & Restore",
+  "exportDbDialogTitle": "Export database",
+  "restoreDbDialogTitle": "Restore database",
+  "exportDbButton": "Export DB",
+  "restoreDbButton": "Restore DB",
+  "backupExportedMessage": "Backup exported.",
+  "restoreConfirmTitle": "Restore Database",
+  "restoreConfirmMessage": "Restoring will overwrite local data. Continue?",
+  "restoreConfirmButton": "Restore",
+  "restoreCompletedMessage": "Database restored. Restarting...",
+  "appSectionTitle": "App",
+  "quitButton": "Quit (Teacher PIN)",
+  "notLoggedInMessage": "Not logged in.",
+  "teacherNotFoundMessage": "Teacher account not found.",
+  "invalidPinMessage": "Invalid PIN.",
+  "teacherPinTitle": "Teacher PIN",
+  "confirmButton": "Confirm",
+  "okButton": "OK",
+  "languageTitle": "Language",
+  "languageSystem": "System default",
+  "languageEnglish": "English",
+  "languageChinese": "Chinese",
+  "languageSavedMessage": "Language updated.",
+  "promptTemplatesTitle": "Prompt Templates",
+  "promptTemplatesButton": "Prompts",
+  "promptLearn": "Learn",
+  "promptPractice": "Practice",
+  "promptReview": "Review",
+  "promptSummarize": "Summarize",
+  "promptStatusDefault": "Current: Default",
+  "promptStatusCustom": "Current: Custom ({time})",
+  "@promptStatusCustom": {
+    "placeholders": {
+      "time": {}
+    }
+  },
+  "promptHistoryTitle": "History",
+  "promptHistoryEmpty": "No history yet.",
+  "useDefaultButton": "Use Default",
+  "previewButton": "Preview",
+  "useButton": "Use",
+  "promptEditTitle": "Edit Prompt ({name})",
+  "@promptEditTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "promptTemplateLabel": "Template",
+  "promptRequiredVars": "Required variables: {vars}",
+  "@promptRequiredVars": {
+    "placeholders": {
+      "vars": {}
+    }
+  },
+  "promptAllowedVars": "Allowed variables: {vars}",
+  "@promptAllowedVars": {
+    "placeholders": {
+      "vars": {}
+    }
+  },
+  "promptSaved": "Prompt saved.",
+  "promptReverted": "Reverted to default.",
+  "promptActivated": "Prompt set active.",
+  "promptPreviewTitle": "Prompt Preview",
+  "promptValidationFailedTitle": "Prompt validation failed",
+  "promptMissingVars": "Missing variables: {vars}",
+  "@promptMissingVars": {
+    "placeholders": {
+      "vars": {}
+    }
+  },
+  "promptUnknownVars": "Unknown variables: {vars}",
+  "@promptUnknownVars": {
+    "placeholders": {
+      "vars": {}
+    }
+  },
+  "progressTitle": "Progress: {subject}",
+  "@progressTitle": {
+    "placeholders": {
+      "subject": {}
+    }
+  },
+  "noAssignedStudents": "No assigned students.",
+  "litCountLabel": "{litCount}/{total} lit",
+  "@litCountLabel": {
+    "placeholders": {
+      "litCount": {},
+      "total": {}
+    }
+  },
+  "llmLogsTitle": "LLM Logs",
+  "loadLogsFailed": "Failed to load logs: {error}",
+  "@loadLogsFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "noLlmLogs": "No LLM logs yet.",
+  "llmCallDetailsTitle": "LLM Call Details",
+  "llmTimeLabel": "Time: {time}",
+  "@llmTimeLabel": {
+    "placeholders": {
+      "time": {}
+    }
+  },
+  "llmPromptLabel": "Prompt: {prompt}",
+  "@llmPromptLabel": {
+    "placeholders": {
+      "prompt": {}
+    }
+  },
+  "llmModeValueLabel": "Mode: {mode}",
+  "@llmModeValueLabel": {
+    "placeholders": {
+      "mode": {}
+    }
+  },
+  "llmModelLabel": "Model: {model}",
+  "@llmModelLabel": {
+    "placeholders": {
+      "model": {}
+    }
+  },
+  "llmBaseUrlLabel": "Base URL: {url}",
+  "@llmBaseUrlLabel": {
+    "placeholders": {
+      "url": {}
+    }
+  },
+  "llmLatencyLabel": "Latency: {ms} ms",
+  "@llmLatencyLabel": {
+    "placeholders": {
+      "ms": {}
+    }
+  },
+  "llmCallHashLabel": "Call hash: {hash}",
+  "@llmCallHashLabel": {
+    "placeholders": {
+      "hash": {}
+    }
+  },
+  "llmTeacherLabel": "Teacher: {teacher}",
+  "@llmTeacherLabel": {
+    "placeholders": {
+      "teacher": {}
+    }
+  },
+  "llmStudentLabel": "Student: {student}",
+  "@llmStudentLabel": {
+    "placeholders": {
+      "student": {}
+    }
+  },
+  "llmTeacherUnknown": "Teacher: Unknown",
+  "llmStudentNone": "Student: None",
+  "llmTeacherIdLabel": "Teacher: #{id}",
+  "@llmTeacherIdLabel": {
+    "placeholders": {
+      "id": {}
+    }
+  },
+  "llmStudentIdLabel": "Student: #{id}",
+  "@llmStudentIdLabel": {
+    "placeholders": {
+      "id": {}
+    }
+  },
+  "llmKpLabel": "KP: {kp}",
+  "@llmKpLabel": {
+    "placeholders": {
+      "kp": {}
+    }
+  },
+  "llmActionLabel": "Action: {action}",
+  "@llmActionLabel": {
+    "placeholders": {
+      "action": {}
+    }
+  },
+  "llmRenderedPromptLabel": "Rendered prompt:",
+  "llmResponseLabel": "Response:",
+  "llmParseErrorLabel": "Parse error:",
+  "llmStatusUnknown": "UNKNOWN",
+  "llmStatusOk": "OK",
+  "llmStatusError": "ERROR",
+  "llmLogEntryTitle": "{time} \u2022 {prompt}",
+  "@llmLogEntryTitle": {
+    "placeholders": {
+      "time": {},
+      "prompt": {}
+    }
+  },
+  "llmLogEntrySubtitle": "{model} \u2022 {mode} \u2022 {status}",
+  "@llmLogEntrySubtitle": {
+    "placeholders": {
+      "model": {},
+      "mode": {},
+      "status": {}
+    }
+  },
+  "apiKeyMissingForConfig": "API key not found for this config.",
+  "tutorReplyLabel": "reply",
+  "renameSessionButton": "Rename",
+  "renameSessionTitle": "Rename session",
+  "sessionNameLabel": "Session name",
+  "studentSessionsTitle": "Sessions: {name}",
+  "@studentSessionsTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "noStudentSessions": "No sessions for this student.",
+  "sessionCourseLabel": "Course: {name}",
+  "@sessionCourseLabel": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "sessionNodeLabel": "Node: {name}",
+  "@sessionNodeLabel": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "sessionStartedLabel": "Started: {time}",
+  "@sessionStartedLabel": {
+    "placeholders": {
+      "time": {}
+    }
+  },
+  "deleteSessionButton": "Delete session",
+  "deleteSessionTitle": "Delete session \"{name}\"?",
+  "@deleteSessionTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "deleteSessionMessage": "This will remove the session and its messages.",
+  "deleteSessionSuccess": "Session deleted.",
+  "resetPinButton": "Reset PIN",
+  "resetPinDialogTitle": "Reset PIN for {name}",
+  "@resetPinDialogTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "pinUpdatedMessage": "PIN updated.",
+  "studentSessionsButton": "Student sessions",
+  "deleteStudentButton": "Delete student",
+  "deleteStudentTitle": "Delete student {name}?",
+  "@deleteStudentTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "deleteStudentMessage": "This will remove the student, their sessions, and progress.",
+  "deleteStudentSuccess": "Student deleted.",
+  "adminTitle": "Admin: {name}",
+  "@adminTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "teachersSection": "Teachers",
+  "noTeachers": "No teachers yet.",
+  "deleteTeacherButton": "Delete teacher",
+  "deleteTeacherTitle": "Delete teacher {name}?",
+  "@deleteTeacherTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "deleteTeacherMessage": "This will remove the teacher, their students, courses, and sessions.",
+  "deleteTeacherSuccess": "Teacher deleted.",
+  "searchNodeLabel": "Search nodes",
+  "searchNodeHint": "Type id or title",
+  "noSearchResults": "No matches.",
+  "unparsedLinesLabel": "Unparsed lines: {count}",
+  "@unparsedLinesLabel": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "showRawButton": "Show raw",
+  "hideRawButton": "Hide raw",
+  "nodeDetailsTitle": "Node details",
+  "nodeIdLabel": "ID: {id}",
+  "@nodeIdLabel": {
+    "placeholders": {
+      "id": {}
+    }
+  },
+  "nodeTitleLabel": "Title: {title}",
+  "@nodeTitleLabel": {
+    "placeholders": {
+      "title": {}
+    }
+  },
+  "nodeGradeLabel": "Grade: {grade}",
+  "@nodeGradeLabel": {
+    "placeholders": {
+      "grade": {}
+    }
+  },
+  "levelFilterLabel": "Levels",
+  "yearFilterLabel": "Year",
+  "yearFilterAll": "All years",
+  "zoomInLabel": "Zoom in",
+  "zoomOutLabel": "Zoom out"
+}
+
