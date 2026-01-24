@@ -559,8 +559,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
                                           litMap: litMap,
                                           db: db,
                                           studentId: targetStudentId!,
-                                          includeAll: node.type !=
-                                              SkillNodeType.leaf,
+                                          includeAll: !_isLeafNode(node),
                                         ),
                                         child: const Text('lit'),
                                       ),
@@ -628,7 +627,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
           graph.addNode(graphNode(child));
         }
         graph.addEdge(parentNode, graphNode(child));
-        if (child.type == SkillNodeType.branch) {
+        if (child.children.isNotEmpty) {
           walk(child);
         }
       }
@@ -654,7 +653,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
   ) {
     final isSelected = _selectedId == node.id;
     final size = _nodeSizeFor(node);
-    final baseColor = node.type == SkillNodeType.leaf
+    final baseColor = _isLeafNode(node)
         ? (mastered ? Colors.green : Colors.grey)
         : _branchColor(node.id);
     final content = Container(
@@ -771,7 +770,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
   List<SkillNode> _detailNodesForSelection(SkillNode node) {
     final path = _pathToNode(node);
     final result = <SkillNode>[...path];
-    if (node.type == SkillNodeType.branch && _expanded.contains(node.id)) {
+    if (!_isLeafNode(node) && _expanded.contains(node.id)) {
       for (final child in node.children) {
         result.add(child);
       }
@@ -780,7 +779,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
   }
 
   void _toggleNodeExpansion(SkillNode node) {
-    if (node.type != SkillNodeType.branch) {
+    if (_isLeafNode(node)) {
       return;
     }
     if (_expanded.contains(node.id)) {
@@ -815,7 +814,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
     final ids = <String>{};
     void walk(SkillNode current) {
       for (final child in current.children) {
-        if (child.type == SkillNodeType.branch) {
+        if (child.children.isNotEmpty) {
           ids.add(child.id);
           walk(child);
         }
@@ -985,8 +984,15 @@ class _SkillTreePageState extends State<SkillTreePage> {
     return const [];
   }
 
+  bool _isLeafNode(SkillNode node) {
+    if (node.isPlaceholder) {
+      return false;
+    }
+    return node.children.isEmpty;
+  }
+
   bool _isNodeFullyLit(SkillNode node, Map<String, bool?> litMap) {
-    if (node.type == SkillNodeType.leaf) {
+    if (_isLeafNode(node)) {
       return litMap[node.id] == true;
     }
     final leaves = _collectLeafNodes(node);
@@ -999,7 +1005,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
   List<SkillNode> _collectLeafNodes(SkillNode node) {
     final leaves = <SkillNode>[];
     void walk(SkillNode current) {
-      if (current.type == SkillNodeType.leaf) {
+      if (_isLeafNode(current)) {
         leaves.add(current);
         return;
       }
@@ -1021,7 +1027,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
   }) async {
     final leaves = includeAll
         ? _collectLeafNodes(node)
-        : (node.type == SkillNodeType.leaf ? [node] : const <SkillNode>[]);
+        : (_isLeafNode(node) ? [node] : const <SkillNode>[]);
     if (leaves.isEmpty) {
       return;
     }
@@ -1065,7 +1071,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
   ) {
     final progress = <String, double>{};
     (int, int) walk(SkillNode node) {
-      if (node.type == SkillNodeType.leaf) {
+      if (_isLeafNode(node)) {
         final lit = litMap[node.id] == true;
         progress[node.id] = lit ? 1.0 : 0.0;
         return (lit ? 1 : 0, 1);
@@ -1155,7 +1161,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
       if (_matchesYear(child)) {
         return true;
       }
-      if (child.type == SkillNodeType.branch && _hasMatchingDescendant(child)) {
+      if (child.children.isNotEmpty && _hasMatchingDescendant(child)) {
         return true;
       }
     }
@@ -1194,7 +1200,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
     if (_matchesYear(node)) {
       return true;
     }
-    if (node.type == SkillNodeType.branch && _hasMatchingDescendant(node)) {
+    if (node.children.isNotEmpty && _hasMatchingDescendant(node)) {
       return true;
     }
     return false;
@@ -1206,7 +1212,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
     }
     final expanded = <String>{'math'};
     for (final node in _parseResult!.nodes.values) {
-      if (node.type != SkillNodeType.branch) {
+      if (node.children.isEmpty) {
         continue;
       }
       if (_nodeDepth(node) < level) {

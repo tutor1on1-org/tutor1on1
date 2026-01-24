@@ -558,7 +558,7 @@ class _CourseAssignmentTileState extends State<_CourseAssignmentTile> {
       final result = parser.parse(widget.course.textbookText);
       leafIds = result.nodes.values
           .where((node) => !node.isPlaceholder)
-          .where((node) => node.type == SkillNodeType.leaf)
+          .where((node) => node.children.isEmpty)
           .map((node) => node.id)
           .toSet();
       count = leafIds.length;
