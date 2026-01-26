@@ -13,7 +13,6 @@ import '../llm/llm_providers.dart';
 import '../security/hash_utils.dart';
 import '../security/pin_hasher.dart';
 import '../services/app_services.dart';
-import '../services/tts_service.dart';
 import '../state/auth_controller.dart';
 import '../state/settings_controller.dart';
 import 'pages/llm_logs_page.dart';
@@ -31,6 +30,7 @@ class _SettingsPageState extends State<SettingsPage> {
   final _timeoutController = TextEditingController();
   final _maxTokensController = TextEditingController();
   final _ttsDelayController = TextEditingController();
+  final _ttsTextLeadController = TextEditingController();
   final _ttsAudioPathController = TextEditingController();
   final _logDirectoryController = TextEditingController();
   final _apiKeyController = TextEditingController();
@@ -45,6 +45,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _timeoutController.dispose();
     _maxTokensController.dispose();
     _ttsDelayController.dispose();
+    _ttsTextLeadController.dispose();
     _ttsAudioPathController.dispose();
     _logDirectoryController.dispose();
     _apiKeyController.dispose();
@@ -87,6 +88,8 @@ class _SettingsPageState extends State<SettingsPage> {
       _maxTokensController.text = settings.maxTokens.toString();
       _ttsDelayController.text =
           (settings.ttsInitialDelayMs / 1000).round().toString();
+      _ttsTextLeadController.text =
+          (settings.ttsTextLeadMs / 1000).round().toString();
       _ttsAudioPathController.text = settings.ttsAudioPath ?? '';
       _logDirectoryController.text = settings.logDirectory ?? '';
       _mode = settings.llmMode;
@@ -204,6 +207,12 @@ class _SettingsPageState extends State<SettingsPage> {
             decoration:
                 InputDecoration(labelText: l10n.ttsInitialDelayLabel),
             controller: _ttsDelayController,
+            keyboardType: TextInputType.number,
+          ),
+          TextField(
+            decoration:
+                InputDecoration(labelText: l10n.ttsTextLeadLabel),
+            controller: _ttsTextLeadController,
             keyboardType: TextInputType.number,
           ),
           const SizedBox(height: 8),
@@ -344,7 +353,14 @@ class _SettingsPageState extends State<SettingsPage> {
                     maxTokens:
                         int.tryParse(_maxTokensController.text.trim()) ?? 8000,
                     ttsInitialDelayMs:
-                        _parseDelayMs(settings.ttsInitialDelayMs),
+                        _parseSecondsMs(
+                          _ttsDelayController,
+                          settings.ttsInitialDelayMs,
+                        ),
+                    ttsTextLeadMs: _parseSecondsMs(
+                      _ttsTextLeadController,
+                      settings.ttsTextLeadMs,
+                    ),
                     ttsAudioPath: resolvedAudioPath,
                     logDirectory: resolvedLogDir,
                     llmMode: _mode,
@@ -421,30 +437,6 @@ class _SettingsPageState extends State<SettingsPage> {
               );
             },
             child: Text(l10n.viewTtsLogsButton),
-          ),
-          TextButton(
-            onPressed: () async {
-              final result =
-                  await services.ttsService.playLastAudio();
-              if (!context.mounted) {
-                return;
-              }
-              switch (result.status) {
-                case TtsTestStatus.played:
-                  _showMessage(
-                    context,
-                    l10n.ttsTestStartedMessage(result.path ?? ''),
-                  );
-                  break;
-                case TtsTestStatus.missing:
-                  _showMessage(context, l10n.ttsTestMissingMessage);
-                  break;
-                case TtsTestStatus.failed:
-                  _showMessage(context, l10n.ttsTestFailedMessage);
-                  break;
-              }
-            },
-            child: Text(l10n.ttsTestButton),
           ),
           if (currentUser != null) ...[
             const Divider(height: 32),
@@ -709,8 +701,8 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  int _parseDelayMs(int fallbackMs) {
-    final raw = _ttsDelayController.text.trim();
+  int _parseSecondsMs(TextEditingController controller, int fallbackMs) {
+    final raw = controller.text.trim();
     if (raw.isEmpty) {
       return fallbackMs;
     }

@@ -4322,6 +4322,14 @@ class $AppSettingsTable extends AppSettings
       type: DriftSqlType.int,
       requiredDuringInsert: false,
       defaultValue: const Constant(60000));
+  static const VerificationMeta _ttsTextLeadMsMeta =
+      const VerificationMeta('ttsTextLeadMs');
+  @override
+  late final GeneratedColumn<int> ttsTextLeadMs = GeneratedColumn<int>(
+      'tts_text_lead_ms', aliasedName, false,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(1000));
   static const VerificationMeta _ttsAudioPathMeta =
       const VerificationMeta('ttsAudioPath');
   @override
@@ -4374,6 +4382,7 @@ class $AppSettingsTable extends AppSettings
         timeoutSeconds,
         maxTokens,
         ttsInitialDelayMs,
+        ttsTextLeadMs,
         ttsAudioPath,
         logDirectory,
         llmLogPath,
@@ -4432,6 +4441,12 @@ class $AppSettingsTable extends AppSettings
           _ttsInitialDelayMsMeta,
           ttsInitialDelayMs.isAcceptableOrUnknown(
               data['tts_initial_delay_ms']!, _ttsInitialDelayMsMeta));
+    }
+    if (data.containsKey('tts_text_lead_ms')) {
+      context.handle(
+          _ttsTextLeadMsMeta,
+          ttsTextLeadMs.isAcceptableOrUnknown(
+              data['tts_text_lead_ms']!, _ttsTextLeadMsMeta));
     }
     if (data.containsKey('tts_audio_path')) {
       context.handle(
@@ -4494,6 +4509,8 @@ class $AppSettingsTable extends AppSettings
           .read(DriftSqlType.int, data['${effectivePrefix}max_tokens'])!,
       ttsInitialDelayMs: attachedDatabase.typeMapping.read(
           DriftSqlType.int, data['${effectivePrefix}tts_initial_delay_ms'])!,
+      ttsTextLeadMs: attachedDatabase.typeMapping.read(
+          DriftSqlType.int, data['${effectivePrefix}tts_text_lead_ms'])!,
       ttsAudioPath: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}tts_audio_path']),
       logDirectory: attachedDatabase.typeMapping
@@ -4525,6 +4542,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
   final int timeoutSeconds;
   final int maxTokens;
   final int ttsInitialDelayMs;
+  final int ttsTextLeadMs;
   final String? ttsAudioPath;
   final String? logDirectory;
   final String? llmLogPath;
@@ -4540,6 +4558,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       required this.timeoutSeconds,
       required this.maxTokens,
       required this.ttsInitialDelayMs,
+      required this.ttsTextLeadMs,
       this.ttsAudioPath,
       this.logDirectory,
       this.llmLogPath,
@@ -4559,6 +4578,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
     map['timeout_seconds'] = Variable<int>(timeoutSeconds);
     map['max_tokens'] = Variable<int>(maxTokens);
     map['tts_initial_delay_ms'] = Variable<int>(ttsInitialDelayMs);
+    map['tts_text_lead_ms'] = Variable<int>(ttsTextLeadMs);
     if (!nullToAbsent || ttsAudioPath != null) {
       map['tts_audio_path'] = Variable<String>(ttsAudioPath);
     }
@@ -4590,6 +4610,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       timeoutSeconds: Value(timeoutSeconds),
       maxTokens: Value(maxTokens),
       ttsInitialDelayMs: Value(ttsInitialDelayMs),
+      ttsTextLeadMs: Value(ttsTextLeadMs),
       ttsAudioPath: ttsAudioPath == null && nullToAbsent
           ? const Value.absent()
           : Value(ttsAudioPath),
@@ -4622,6 +4643,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       timeoutSeconds: serializer.fromJson<int>(json['timeoutSeconds']),
       maxTokens: serializer.fromJson<int>(json['maxTokens']),
       ttsInitialDelayMs: serializer.fromJson<int>(json['ttsInitialDelayMs']),
+      ttsTextLeadMs: serializer.fromJson<int>(json['ttsTextLeadMs']),
       ttsAudioPath: serializer.fromJson<String?>(json['ttsAudioPath']),
       logDirectory: serializer.fromJson<String?>(json['logDirectory']),
       llmLogPath: serializer.fromJson<String?>(json['llmLogPath']),
@@ -4642,6 +4664,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       'timeoutSeconds': serializer.toJson<int>(timeoutSeconds),
       'maxTokens': serializer.toJson<int>(maxTokens),
       'ttsInitialDelayMs': serializer.toJson<int>(ttsInitialDelayMs),
+      'ttsTextLeadMs': serializer.toJson<int>(ttsTextLeadMs),
       'ttsAudioPath': serializer.toJson<String?>(ttsAudioPath),
       'logDirectory': serializer.toJson<String?>(logDirectory),
       'llmLogPath': serializer.toJson<String?>(llmLogPath),
@@ -4660,6 +4683,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
           int? timeoutSeconds,
           int? maxTokens,
           int? ttsInitialDelayMs,
+          int? ttsTextLeadMs,
           Value<String?> ttsAudioPath = const Value.absent(),
           Value<String?> logDirectory = const Value.absent(),
           Value<String?> llmLogPath = const Value.absent(),
@@ -4675,6 +4699,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
         timeoutSeconds: timeoutSeconds ?? this.timeoutSeconds,
         maxTokens: maxTokens ?? this.maxTokens,
         ttsInitialDelayMs: ttsInitialDelayMs ?? this.ttsInitialDelayMs,
+        ttsTextLeadMs: ttsTextLeadMs ?? this.ttsTextLeadMs,
         ttsAudioPath:
             ttsAudioPath.present ? ttsAudioPath.value : this.ttsAudioPath,
         logDirectory:
@@ -4699,6 +4724,9 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       ttsInitialDelayMs: data.ttsInitialDelayMs.present
           ? data.ttsInitialDelayMs.value
           : this.ttsInitialDelayMs,
+      ttsTextLeadMs: data.ttsTextLeadMs.present
+          ? data.ttsTextLeadMs.value
+          : this.ttsTextLeadMs,
       ttsAudioPath: data.ttsAudioPath.present
           ? data.ttsAudioPath.value
           : this.ttsAudioPath,
@@ -4725,6 +4753,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
           ..write('timeoutSeconds: $timeoutSeconds, ')
           ..write('maxTokens: $maxTokens, ')
           ..write('ttsInitialDelayMs: $ttsInitialDelayMs, ')
+          ..write('ttsTextLeadMs: $ttsTextLeadMs, ')
           ..write('ttsAudioPath: $ttsAudioPath, ')
           ..write('logDirectory: $logDirectory, ')
           ..write('llmLogPath: $llmLogPath, ')
@@ -4745,6 +4774,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       timeoutSeconds,
       maxTokens,
       ttsInitialDelayMs,
+      ttsTextLeadMs,
       ttsAudioPath,
       logDirectory,
       llmLogPath,
@@ -4763,6 +4793,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
           other.timeoutSeconds == this.timeoutSeconds &&
           other.maxTokens == this.maxTokens &&
           other.ttsInitialDelayMs == this.ttsInitialDelayMs &&
+          other.ttsTextLeadMs == this.ttsTextLeadMs &&
           other.ttsAudioPath == this.ttsAudioPath &&
           other.logDirectory == this.logDirectory &&
           other.llmLogPath == this.llmLogPath &&
@@ -4780,6 +4811,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
   final Value<int> timeoutSeconds;
   final Value<int> maxTokens;
   final Value<int> ttsInitialDelayMs;
+  final Value<int> ttsTextLeadMs;
   final Value<String?> ttsAudioPath;
   final Value<String?> logDirectory;
   final Value<String?> llmLogPath;
@@ -4795,6 +4827,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     this.timeoutSeconds = const Value.absent(),
     this.maxTokens = const Value.absent(),
     this.ttsInitialDelayMs = const Value.absent(),
+    this.ttsTextLeadMs = const Value.absent(),
     this.ttsAudioPath = const Value.absent(),
     this.logDirectory = const Value.absent(),
     this.llmLogPath = const Value.absent(),
@@ -4811,6 +4844,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     required int timeoutSeconds,
     required int maxTokens,
     this.ttsInitialDelayMs = const Value.absent(),
+    this.ttsTextLeadMs = const Value.absent(),
     this.ttsAudioPath = const Value.absent(),
     this.logDirectory = const Value.absent(),
     this.llmLogPath = const Value.absent(),
@@ -4831,6 +4865,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     Expression<int>? timeoutSeconds,
     Expression<int>? maxTokens,
     Expression<int>? ttsInitialDelayMs,
+    Expression<int>? ttsTextLeadMs,
     Expression<String>? ttsAudioPath,
     Expression<String>? logDirectory,
     Expression<String>? llmLogPath,
@@ -4847,6 +4882,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
       if (timeoutSeconds != null) 'timeout_seconds': timeoutSeconds,
       if (maxTokens != null) 'max_tokens': maxTokens,
       if (ttsInitialDelayMs != null) 'tts_initial_delay_ms': ttsInitialDelayMs,
+      if (ttsTextLeadMs != null) 'tts_text_lead_ms': ttsTextLeadMs,
       if (ttsAudioPath != null) 'tts_audio_path': ttsAudioPath,
       if (logDirectory != null) 'log_directory': logDirectory,
       if (llmLogPath != null) 'llm_log_path': llmLogPath,
@@ -4865,6 +4901,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
       Value<int>? timeoutSeconds,
       Value<int>? maxTokens,
       Value<int>? ttsInitialDelayMs,
+      Value<int>? ttsTextLeadMs,
       Value<String?>? ttsAudioPath,
       Value<String?>? logDirectory,
       Value<String?>? llmLogPath,
@@ -4880,6 +4917,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
       timeoutSeconds: timeoutSeconds ?? this.timeoutSeconds,
       maxTokens: maxTokens ?? this.maxTokens,
       ttsInitialDelayMs: ttsInitialDelayMs ?? this.ttsInitialDelayMs,
+      ttsTextLeadMs: ttsTextLeadMs ?? this.ttsTextLeadMs,
       ttsAudioPath: ttsAudioPath ?? this.ttsAudioPath,
       logDirectory: logDirectory ?? this.logDirectory,
       llmLogPath: llmLogPath ?? this.llmLogPath,
@@ -4913,6 +4951,9 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     }
     if (ttsInitialDelayMs.present) {
       map['tts_initial_delay_ms'] = Variable<int>(ttsInitialDelayMs.value);
+    }
+    if (ttsTextLeadMs.present) {
+      map['tts_text_lead_ms'] = Variable<int>(ttsTextLeadMs.value);
     }
     if (ttsAudioPath.present) {
       map['tts_audio_path'] = Variable<String>(ttsAudioPath.value);
@@ -4948,6 +4989,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
           ..write('timeoutSeconds: $timeoutSeconds, ')
           ..write('maxTokens: $maxTokens, ')
           ..write('ttsInitialDelayMs: $ttsInitialDelayMs, ')
+          ..write('ttsTextLeadMs: $ttsTextLeadMs, ')
           ..write('ttsAudioPath: $ttsAudioPath, ')
           ..write('logDirectory: $logDirectory, ')
           ..write('llmLogPath: $llmLogPath, ')

@@ -107,3 +107,13 @@ SKILL: TTS duplicate text output
 - Context: Completed streaming chunks were appended again on playback completion.
 - Fix: Track whether the active chunk has been fully displayed and skip the raw append if so.
 - Lesson: Keep per-chunk display state to prevent duplicate UI writes.
+
+SKILL: TTS stop replayed audio
+- Context: Pressing Stop could still trigger replay via pending callbacks or fallback playback.
+- Fix: Introduce a hard-stop gate in the UI and a stop token in playback; discard prefetched audio and skip fallbacks after stop.
+- Lesson: Stop should invalidate all in-flight playback paths, not just the current player.
+
+SKILL: LLM log timestamps collapsed to the latest
+- Context: Log rows stored created_at as integers, but the reader only parsed DateTime/string.
+- Fix: Interpret integer timestamps as epoch seconds/milliseconds when loading log entries.
+- Lesson: Always parse timestamp storage formats explicitly to avoid silent “now()” fallbacks.

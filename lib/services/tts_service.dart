@@ -29,6 +29,7 @@ class TtsService {
       StreamController<TtsPlaybackState>.broadcast();
   Future<void> _queue = Future.value();
   int _queueToken = 0;
+  int _stopToken = 0;
   bool _playerListenersAttached = false;
   String? _lastPlayerState;
   int? _replayMessageId;
@@ -42,6 +43,7 @@ class TtsService {
   Future<TtsTestResult> playLastAudio({int? sessionId}) async {
     await stop(sessionId: sessionId);
     try {
+      final stopToken = _stopToken;
       final dir = await getApplicationDocumentsDirectory();
       final path = '${dir.path}${Platform.pathSeparator}tts_last.mp3';
       final file = File(path);
@@ -62,6 +64,7 @@ class TtsService {
         file,
         sessionId: sessionId,
         sourceTag: 'test',
+        stopToken: stopToken,
       );
       if (!played) {
         await _logEvent(
@@ -94,6 +97,7 @@ class TtsService {
 
   Future<void> stop({int? sessionId}) async {
     _queueToken++;
+    _stopToken++;
     _queue = Future.value();
     await _player.stop();
     await _logEvent(
@@ -254,6 +258,7 @@ class TtsService {
         return;
       }
       try {
+        final stopToken = _stopToken;
         if (!await audio.file.exists()) {
           await _logError(
             message: 'Prefetched audio file missing.',
@@ -273,6 +278,7 @@ class TtsService {
           textSnippet: audio.textSnippet,
           textLength: audio.textLength,
           sourceTag: 'prefetch',
+          stopToken: stopToken,
           onPlaybackStart: onPlaybackStart,
         );
         onPlaybackComplete?.call(played);
@@ -389,6 +395,7 @@ class TtsService {
               return;
             }
             final file = await _writeTempAudio(audioBytes);
+            final stopToken = _stopToken;
             try {
               if (token != _queueToken) {
                 await _logEvent(
@@ -412,6 +419,7 @@ class TtsService {
                 textSnippet: trimmed,
                 textLength: trimmed.length,
                 sourceTag: 'queue',
+                stopToken: stopToken,
                 onPlaybackStart: notifyPlaybackStart,
               );
               if (!played) {
@@ -522,6 +530,7 @@ class TtsService {
     String? textSnippet,
     int? textLength,
     required String sourceTag,
+    required int stopToken,
     void Function(Duration? duration)? onPlaybackStart,
   }) async {
     final played = await _playWithPlayer(
@@ -535,6 +544,16 @@ class TtsService {
     );
     if (played) {
       return true;
+    }
+    if (stopToken != _stopToken) {
+      await _logEvent(
+        event: 'fallback_skip',
+        message: 'Playback stopped; skip fallback.',
+        textSnippet: textSnippet,
+        textLength: textLength,
+        sessionId: sessionId,
+      );
+      return false;
     }
     await _logEvent(
       event: 'fallback',

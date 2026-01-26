@@ -66,6 +66,12 @@ class SettingsRepository {
         );
         needsUpdate = true;
       }
+      if (existing.ttsTextLeadMs <= 0) {
+        companion = companion.copyWith(
+          ttsTextLeadMs: const Value(1000),
+        );
+        needsUpdate = true;
+      }
       if (needsUpdate) {
         await (_db.update(_db.appSettings)
               ..where((tbl) => tbl.id.equals(existing.id)))
@@ -93,6 +99,7 @@ class SettingsRepository {
             timeoutSeconds: 60,
             maxTokens: 8000,
             ttsInitialDelayMs: const Value(60000),
+            ttsTextLeadMs: const Value(1000),
             ttsAudioPath: Value(ttsAudioPath),
             logDirectory: Value(logDirectory),
             llmLogPath: Value(logPaths['llm']!),
@@ -111,6 +118,7 @@ class SettingsRepository {
     required int timeoutSeconds,
     required int maxTokens,
     required int ttsInitialDelayMs,
+    required int ttsTextLeadMs,
     required String ttsAudioPath,
     required String logDirectory,
     required String llmMode,
@@ -131,6 +139,7 @@ class SettingsRepository {
       timeoutSeconds: Value(timeoutSeconds),
       maxTokens: Value(maxTokens),
       ttsInitialDelayMs: Value(ttsInitialDelayMs),
+      ttsTextLeadMs: Value(ttsTextLeadMs),
       ttsAudioPath: Value(resolvedPath),
       logDirectory: Value(resolvedLogDir),
       llmLogPath: Value(logPaths['llm']!),

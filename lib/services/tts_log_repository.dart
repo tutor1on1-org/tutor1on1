@@ -83,7 +83,7 @@ class TtsLogRepository {
           'base_url': baseUrl,
           'model': model,
           'voice': voice,
-          'text_snippet': _truncate(textSnippet ?? '', 240),
+          'text_snippet': _truncate(textSnippet ?? '', 8000),
           'session_id': sessionId,
           'text_length': textLength,
         };

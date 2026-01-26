@@ -58,6 +58,7 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
   bool _ttsGateOpen = false;
   bool _ttsGateStarted = false;
   int _ttsInitialDelayMs = 60000;
+  int _ttsTextLeadMs = 1000;
   int? _assistantMessageId;
   int _ttsOutstandingChunks = 0;
   bool _ttsLlmCompleted = false;
@@ -72,6 +73,8 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
   bool _ttsStreamPaused = false;
   DateTime? _ttsStreamPausedAt;
   bool _ttsActiveChunkDisplayed = false;
+  bool _ttsPreparingFirstChunk = false;
+  bool _ttsHardStopped = false;
   Timer? _ttsPrefetchTimer;
   bool _ttsPrefetchWindowReached = false;
   bool _ttsPrefetchInFlight = false;
@@ -451,6 +454,19 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
                             ),
                           ],
                         ),
+                        if (_ttsEnabled && _ttsPreparingFirstChunk)
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(l10n.ttsPreparingLabel),
+                            ],
+                          ),
                         ElevatedButton(
                           key: const Key('summary_button'),
                           onPressed: _sending ? null : _requestSummary,
@@ -703,6 +719,9 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
   }
 
   Future<void> _stopLiveTts() async {
+    if (_ttsStreamingActive) {
+      _finishWordStreaming();
+    }
     _ttsChunkQueue.clear();
     _ttsPendingBuffer.clear();
     _ttsChunker.reset();
@@ -713,6 +732,13 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     _ttsChunkInFlight = false;
     _ttsStreamPaused = false;
     _ttsStreamPausedAt = null;
+    _ttsPreparingFirstChunk = false;
+    _ttsHardStopped = true;
+    _ttsPrefetchTimer?.cancel();
+    _ttsPrefetchWindowReached = false;
+    _ttsPrefetchInFlight = false;
+    _ttsPrefetchedAudio = null;
+    _ttsPrefetchedChunk = null;
     _ttsWordTimer?.cancel();
     await context.read<AppServices>().ttsService.stop(
           sessionId: widget.sessionId,
@@ -1177,6 +1203,7 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     _ttsWordTimer?.cancel();
     final settings = context.read<SettingsController>().settings;
     _ttsInitialDelayMs = settings?.ttsInitialDelayMs ?? 60000;
+    _ttsTextLeadMs = settings?.ttsTextLeadMs ?? 1000;
     _ttsOutstandingChunks = 0;
     _ttsLlmCompleted = false;
     _ttsFlushPending = false;
@@ -1190,6 +1217,8 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     _ttsStreamPaused = false;
     _ttsStreamPausedAt = null;
     _ttsActiveChunkDisplayed = false;
+    _ttsPreparingFirstChunk = false;
+    _ttsHardStopped = false;
     _ttsPrefetchTimer?.cancel();
     _ttsPrefetchWindowReached = false;
     _ttsPrefetchInFlight = false;
@@ -1208,6 +1237,19 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     if (chunk.isEmpty) {
       return;
     }
+    if (_ttsHardStopped) {
+      _ttsRawBuffer.write(chunk);
+      _appendDisplayChunk(chunk);
+      return;
+    }
+    if (!_ttsPreparingFirstChunk &&
+        !_ttsPlaybackActive &&
+        !_ttsChunkInFlight) {
+      _ttsPreparingFirstChunk = true;
+      if (mounted) {
+        setState(() {});
+      }
+    }
     _ttsRawBuffer.write(chunk);
     _ttsPendingBuffer.write(chunk);
     _startTtsGateIfNeeded();
@@ -1218,6 +1260,12 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
 
   void _flushTts() {
     if (!_ttsEnabled) {
+      return;
+    }
+    if (_ttsHardStopped) {
+      _ttsLlmCompleted = true;
+      _scheduleDisplayFlush();
+      _maybeFinalizeDisplay();
       return;
     }
     _ttsLlmCompleted = true;
@@ -1301,7 +1349,10 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
   }
 
   void _drainTtsQueue() {
-    if (!_ttsEnabled || _ttsChunkInFlight || _ttsStreamPaused) {
+    if (!_ttsEnabled ||
+        _ttsChunkInFlight ||
+        _ttsStreamPaused ||
+        _ttsHardStopped) {
       return;
     }
     if (_ttsChunkQueue.isEmpty) {
@@ -1325,6 +1376,7 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
         _ttsPlaybackActive = true;
         _ttsStreamPaused = false;
         _ttsStreamPausedAt = null;
+        _ttsPreparingFirstChunk = false;
         _startWordStreaming(
           rawText: next.raw,
           spokenText: next.spoken,
@@ -1360,7 +1412,9 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
   }
 
   Future<void> _attemptPrefetch({required bool forceComplete}) async {
-    if (_ttsPrefetchInFlight || _ttsPrefetchedAudio != null) {
+    if (_ttsHardStopped ||
+        _ttsPrefetchInFlight ||
+        _ttsPrefetchedAudio != null) {
       return;
     }
     _feedPendingToChunker();
@@ -1394,6 +1448,12 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     if (!mounted) {
       return;
     }
+    if (_ttsHardStopped) {
+      if (audio != null && await audio.file.exists()) {
+        await audio.file.delete();
+      }
+      return;
+    }
     if (audio == null) {
       _ttsChunkQueue.add(_TtsQueuedChunk(raw: rawChunk, spoken: spoken));
       return;
@@ -1404,6 +1464,28 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
   }
 
   void _handlePlaybackComplete(_TtsQueuedChunk chunk) {
+    if (_ttsHardStopped) {
+      if (_ttsStreamingActive) {
+        _finishWordStreaming();
+      } else if (!_ttsActiveChunkDisplayed) {
+        _appendDisplayChunk(chunk.raw);
+        _ttsActiveChunkDisplayed = true;
+      }
+      _ttsPlaybackActive = false;
+      _ttsChunkInFlight = false;
+      _ttsStreamPaused = false;
+      _ttsStreamPausedAt = null;
+      _ttsPrefetchTimer?.cancel();
+      _ttsPrefetchWindowReached = false;
+      _ttsPrefetchInFlight = false;
+      _ttsPrefetchedAudio = null;
+      _ttsPrefetchedChunk = null;
+      _maybeFinalizeDisplay();
+      if (mounted) {
+        setState(() {});
+      }
+      return;
+    }
     if (_ttsStreamingActive) {
       _finishWordStreaming();
     } else if (!_ttsActiveChunkDisplayed) {
@@ -1456,6 +1538,7 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
         _ttsPlaybackActive = true;
         _ttsStreamPaused = false;
         _ttsStreamPausedAt = null;
+        _ttsPreparingFirstChunk = false;
         _startWordStreaming(
           rawText: chunk.raw,
           spokenText: chunk.spoken,
@@ -1482,7 +1565,6 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     _ttsStreamTokens = _tokenizeForStreaming(rawText);
     final spokenTokens = _tokenizeForStreaming(spokenText);
     _ttsStreamIndex = 0;
-    _ttsStreamStart = DateTime.now();
     _ttsStreamDurationMs = _resolveDurationMs(
       duration: duration,
       spokenTokenCount: spokenTokens.length,
@@ -1496,7 +1578,20 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     _ttsStreamingActive = true;
     _ttsStreamPaused = false;
     _ttsStreamPausedAt = null;
-    _appendStreamingTokens(1);
+    final leadMs = _ttsTextLeadMs <= 0
+        ? 0
+        : (_ttsTextLeadMs > _ttsStreamDurationMs
+            ? _ttsStreamDurationMs
+            : _ttsTextLeadMs);
+    if (_ttsStreamDurationMs > 0 && leadMs > 0) {
+      final leadCount =
+          ((leadMs / _ttsStreamDurationMs) * _ttsStreamTokens.length).floor();
+      if (leadCount > 0) {
+        _appendStreamingTokens(leadCount);
+      }
+    }
+    _ttsStreamStart =
+        DateTime.now().subtract(Duration(milliseconds: leadMs));
     _startWordTimer();
   }
 

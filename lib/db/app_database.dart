@@ -151,6 +151,8 @@ class AppSettings extends Table {
   IntColumn get maxTokens => integer()();
   IntColumn get ttsInitialDelayMs =>
       integer().withDefault(const Constant(60000))();
+  IntColumn get ttsTextLeadMs =>
+      integer().withDefault(const Constant(1000))();
   TextColumn get ttsAudioPath => text().nullable()();
   TextColumn get logDirectory => text().nullable()();
   TextColumn get llmLogPath => text().nullable()();
@@ -210,7 +212,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 14;
+  int get schemaVersion => 15;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -273,6 +275,9 @@ class AppDatabase extends _$AppDatabase {
             await m.addColumn(appSettings, appSettings.logDirectory);
             await m.addColumn(appSettings, appSettings.llmLogPath);
             await m.addColumn(appSettings, appSettings.ttsLogPath);
+          }
+          if (from < 15) {
+            await m.addColumn(appSettings, appSettings.ttsTextLeadMs);
           }
         },
       );
@@ -1093,6 +1098,12 @@ class LlmLogEntry {
       createdAt = createdRaw;
     } else if (createdRaw is String) {
       createdAt = DateTime.tryParse(createdRaw) ?? DateTime.now();
+    } else if (createdRaw is int) {
+      if (createdRaw > 20000000000) {
+        createdAt = DateTime.fromMillisecondsSinceEpoch(createdRaw);
+      } else {
+        createdAt = DateTime.fromMillisecondsSinceEpoch(createdRaw * 1000);
+      }
     } else {
       createdAt = DateTime.now();
     }
