@@ -72,6 +72,11 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
   bool _ttsStreamPaused = false;
   DateTime? _ttsStreamPausedAt;
   bool _ttsActiveChunkDisplayed = false;
+  Timer? _ttsPrefetchTimer;
+  bool _ttsPrefetchWindowReached = false;
+  bool _ttsPrefetchInFlight = false;
+  TtsPrefetchedAudio? _ttsPrefetchedAudio;
+  _TtsQueuedChunk? _ttsPrefetchedChunk;
   String? _ttsAudioDir;
 
   @override
@@ -89,6 +94,7 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     _ttsGateTimer?.cancel();
     _ttsDisplayFlushTimer?.cancel();
     _ttsWordTimer?.cancel();
+    _ttsPrefetchTimer?.cancel();
     _inputController.dispose();
     _inputFocus.dispose();
     _scrollController.dispose();
@@ -1184,6 +1190,11 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     _ttsStreamPaused = false;
     _ttsStreamPausedAt = null;
     _ttsActiveChunkDisplayed = false;
+    _ttsPrefetchTimer?.cancel();
+    _ttsPrefetchWindowReached = false;
+    _ttsPrefetchInFlight = false;
+    _ttsPrefetchedAudio = null;
+    _ttsPrefetchedChunk = null;
     _ttsAudioDir = settings?.ttsAudioPath?.trim();
     if (_ttsEnabled) {
       context.read<AppServices>().ttsService.stop(sessionId: widget.sessionId);
@@ -1213,10 +1224,13 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     _openTtsGate();
     if (_ttsChunkInFlight || _ttsStreamPaused) {
       _ttsFlushPending = true;
+      if (_ttsPrefetchWindowReached) {
+        _attemptPrefetch(forceComplete: true);
+      }
       return;
     }
     _processPendingBuffer();
-    final chunks = _ttsChunker.flush();
+    final chunks = _ttsChunker.flushComplete();
     _emitTtsChunks(chunks);
     _scheduleDisplayFlush();
     _maybeFinalizeDisplay();
@@ -1261,6 +1275,15 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     _emitTtsChunks(chunks);
   }
 
+  void _feedPendingToChunker() {
+    final pending = _ttsPendingBuffer.toString();
+    if (pending.isEmpty) {
+      return;
+    }
+    _ttsPendingBuffer.clear();
+    _ttsChunker.addText(pending, allowCut: false);
+  }
+
   void _emitTtsChunks(List<String> chunks) {
     if (chunks.isEmpty) {
       return;
@@ -1298,6 +1321,7 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
         if (!mounted) {
           return;
         }
+        _schedulePrefetchWindow(duration);
         _ttsPlaybackActive = true;
         _ttsStreamPaused = false;
         _ttsStreamPausedAt = null;
@@ -1312,30 +1336,141 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
         if (!mounted) {
           return;
         }
-        if (_ttsStreamingActive) {
-          _finishWordStreaming();
-        } else if (!_ttsActiveChunkDisplayed) {
-          _appendDisplayChunk(next.raw);
-          _ttsActiveChunkDisplayed = true;
-        }
-        _ttsPlaybackActive = false;
-        _ttsChunkInFlight = false;
-        _ttsStreamPaused = false;
-        _ttsStreamPausedAt = null;
-        final remaining = _ttsOutstandingChunks - 1;
-        _ttsOutstandingChunks = remaining < 0 ? 0 : remaining;
-        _processPendingBuffer();
-        if (_ttsFlushPending) {
-          _ttsFlushPending = false;
-          final chunks = _ttsChunker.flush();
-          _emitTtsChunks(chunks);
-          _scheduleDisplayFlush();
-        }
-        _maybeFinalizeDisplay();
-        _drainTtsQueue();
-        setState(() {});
+        _handlePlaybackComplete(next);
       },
     );
+  }
+
+  void _schedulePrefetchWindow(Duration? duration) {
+    _ttsPrefetchTimer?.cancel();
+    _ttsPrefetchWindowReached = false;
+    if (duration == null) {
+      return;
+    }
+    final halfMs = (duration.inMilliseconds / 2).floor();
+    if (halfMs <= 0) {
+      return;
+    }
+    _ttsPrefetchTimer = Timer(Duration(milliseconds: halfMs), () {
+      _ttsPrefetchWindowReached = true;
+      if (_ttsChunkInFlight) {
+        _attemptPrefetch(forceComplete: _ttsLlmCompleted);
+      }
+    });
+  }
+
+  Future<void> _attemptPrefetch({required bool forceComplete}) async {
+    if (_ttsPrefetchInFlight || _ttsPrefetchedAudio != null) {
+      return;
+    }
+    _feedPendingToChunker();
+    String? rawChunk;
+    if (forceComplete) {
+      final chunks = _ttsChunker.flushComplete();
+      if (chunks.isNotEmpty) {
+        rawChunk = chunks.first;
+        _ttsFlushPending = false;
+      }
+    } else {
+      rawChunk = _ttsChunker.prefetchChunk();
+    }
+    if (rawChunk == null || rawChunk.trim().isEmpty) {
+      return;
+    }
+    final spoken = _ttsSanitizer.sanitizeForTts(rawChunk);
+    if (spoken.trim().isEmpty) {
+      _appendDisplayChunk(rawChunk);
+      return;
+    }
+    _ttsPrefetchInFlight = true;
+    final tts = context.read<AppServices>().ttsService;
+    final audio = await tts.prefetchAudio(
+      spoken,
+      sessionId: widget.sessionId,
+      messageId: _assistantMessageId,
+      audioDirectory: _ttsAudioDir,
+    );
+    _ttsPrefetchInFlight = false;
+    if (!mounted) {
+      return;
+    }
+    if (audio == null) {
+      _ttsChunkQueue.add(_TtsQueuedChunk(raw: rawChunk, spoken: spoken));
+      return;
+    }
+    _ttsOutstandingChunks += 1;
+    _ttsPrefetchedAudio = audio;
+    _ttsPrefetchedChunk = _TtsQueuedChunk(raw: rawChunk, spoken: spoken);
+  }
+
+  void _handlePlaybackComplete(_TtsQueuedChunk chunk) {
+    if (_ttsStreamingActive) {
+      _finishWordStreaming();
+    } else if (!_ttsActiveChunkDisplayed) {
+      _appendDisplayChunk(chunk.raw);
+      _ttsActiveChunkDisplayed = true;
+    }
+    _ttsPlaybackActive = false;
+    _ttsChunkInFlight = false;
+    _ttsStreamPaused = false;
+    _ttsStreamPausedAt = null;
+    _ttsPrefetchTimer?.cancel();
+    _ttsPrefetchWindowReached = false;
+    final remaining = _ttsOutstandingChunks - 1;
+    _ttsOutstandingChunks = remaining < 0 ? 0 : remaining;
+    _processPendingBuffer();
+    if (_ttsFlushPending && _ttsPrefetchedAudio == null) {
+      _ttsFlushPending = false;
+      _feedPendingToChunker();
+      final chunks = _ttsChunker.flushComplete();
+      _emitTtsChunks(chunks);
+      _scheduleDisplayFlush();
+    }
+    _maybeFinalizeDisplay();
+    if (_playPrefetchedIfReady()) {
+      setState(() {});
+      return;
+    }
+    _drainTtsQueue();
+    setState(() {});
+  }
+
+  bool _playPrefetchedIfReady() {
+    final audio = _ttsPrefetchedAudio;
+    final chunk = _ttsPrefetchedChunk;
+    if (audio == null || chunk == null) {
+      return false;
+    }
+    _ttsPrefetchedAudio = null;
+    _ttsPrefetchedChunk = null;
+    _ttsChunkInFlight = true;
+    _ttsActiveChunkDisplayed = false;
+    final tts = context.read<AppServices>().ttsService;
+    tts.playPrefetched(
+      audio,
+      onPlaybackStart: (duration) {
+        if (!mounted) {
+          return;
+        }
+        _schedulePrefetchWindow(duration);
+        _ttsPlaybackActive = true;
+        _ttsStreamPaused = false;
+        _ttsStreamPausedAt = null;
+        _startWordStreaming(
+          rawText: chunk.raw,
+          spokenText: chunk.spoken,
+          duration: duration,
+        );
+        setState(() {});
+      },
+      onPlaybackComplete: (success) {
+        if (!mounted) {
+          return;
+        }
+        _handlePlaybackComplete(chunk);
+      },
+    );
+    return true;
   }
 
   void _startWordStreaming({

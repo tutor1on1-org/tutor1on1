@@ -180,6 +180,125 @@ class TtsService {
     _emitReplayState();
   }
 
+  Future<TtsPrefetchedAudio?> prefetchAudio(
+    String text, {
+    int? sessionId,
+    int? messageId,
+    String? audioDirectory,
+  }) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    final token = _queueToken;
+    await _logEvent(
+      event: 'prefetch',
+      message: 'Prefetching TTS audio.',
+      textSnippet: trimmed,
+      textLength: trimmed.length,
+      sessionId: sessionId,
+    );
+    final audioBytes = await _requestAudio(trimmed, sessionId: sessionId);
+    if (audioBytes == null) {
+      await _logEvent(
+        event: 'prefetch_skip',
+        message: 'Prefetch returned no audio bytes.',
+        textSnippet: trimmed,
+        textLength: trimmed.length,
+        sessionId: sessionId,
+      );
+      return null;
+    }
+    if (token != _queueToken) {
+      await _logEvent(
+        event: 'prefetch_skip',
+        message: 'Prefetch ignored due to stop token.',
+        textSnippet: trimmed,
+        textLength: trimmed.length,
+        sessionId: sessionId,
+      );
+      return null;
+    }
+    if (audioDirectory != null &&
+        audioDirectory.trim().isNotEmpty &&
+        messageId != null) {
+      await _appendMessageAudio(
+        baseDir: audioDirectory.trim(),
+        messageId: messageId,
+        bytes: audioBytes,
+        sessionId: sessionId,
+      );
+    }
+    final file = await _writeTempAudio(audioBytes);
+    return TtsPrefetchedAudio(
+      file: file,
+      textSnippet: trimmed,
+      textLength: trimmed.length,
+      sessionId: sessionId,
+    );
+  }
+
+  Future<bool> playPrefetched(
+    TtsPrefetchedAudio audio, {
+    void Function(Duration? duration)? onPlaybackStart,
+    void Function(bool success)? onPlaybackComplete,
+  }) async {
+    final completer = Completer<bool>();
+    final token = _queueToken;
+    _queue = _queue.then((_) async {
+      if (token != _queueToken) {
+        onPlaybackComplete?.call(false);
+        if (!completer.isCompleted) {
+          completer.complete(false);
+        }
+        return;
+      }
+      try {
+        if (!await audio.file.exists()) {
+          await _logError(
+            message: 'Prefetched audio file missing.',
+            textSnippet: audio.textSnippet,
+            textLength: audio.textLength,
+            sessionId: audio.sessionId,
+          );
+          onPlaybackComplete?.call(false);
+          if (!completer.isCompleted) {
+            completer.complete(false);
+          }
+          return;
+        }
+        final played = await _playFile(
+          audio.file,
+          sessionId: audio.sessionId,
+          textSnippet: audio.textSnippet,
+          textLength: audio.textLength,
+          sourceTag: 'prefetch',
+          onPlaybackStart: onPlaybackStart,
+        );
+        onPlaybackComplete?.call(played);
+        if (!completer.isCompleted) {
+          completer.complete(played);
+        }
+      } catch (error) {
+        await _logError(
+          message: 'Prefetch playback failed: $error',
+          textSnippet: audio.textSnippet,
+          textLength: audio.textLength,
+          sessionId: audio.sessionId,
+        );
+        onPlaybackComplete?.call(false);
+        if (!completer.isCompleted) {
+          completer.complete(false);
+        }
+      } finally {
+        if (await audio.file.exists()) {
+          await audio.file.delete();
+        }
+      }
+    });
+    return completer.future;
+  }
+
   void enqueue(
     String text, {
     int? sessionId,
@@ -756,6 +875,20 @@ class TtsTestResult {
 
   final TtsTestStatus status;
   final String? path;
+}
+
+class TtsPrefetchedAudio {
+  const TtsPrefetchedAudio({
+    required this.file,
+    required this.textSnippet,
+    required this.textLength,
+    required this.sessionId,
+  });
+
+  final File file;
+  final String? textSnippet;
+  final int? textLength;
+  final int? sessionId;
 }
 
 class TtsPlaybackState {

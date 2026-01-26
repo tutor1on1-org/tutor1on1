@@ -1,11 +1,13 @@
-class TtsChunker {
+﻿class TtsChunker {
   TtsChunker({
     this.minStartChars = 3000,
     this.maxChunkChars = 5000,
+    this.minWordsFromEnd = 10,
   });
 
   final int minStartChars;
   final int maxChunkChars;
+  final int minWordsFromEnd;
   String _buffer = '';
   bool _started = false;
   bool _inCodeBlock = false;
@@ -16,22 +18,47 @@ class TtsChunker {
     _inCodeBlock = false;
   }
 
-  List<String> addText(String text) {
+  List<String> addText(String text, {bool allowCut = true}) {
     if (text.isEmpty) {
       return const [];
     }
     _buffer += text;
-    return _drainChunks(force: false);
+    if (!allowCut) {
+      return const [];
+    }
+    return _drainChunks(ignoreThreshold: false, maxChunks: null);
   }
 
   List<String> flush() {
     if (_buffer.isEmpty) {
       return const [];
     }
-    return _drainChunks(force: true);
+    return _drainChunks(ignoreThreshold: false, maxChunks: null);
   }
 
-  List<String> _drainChunks({required bool force}) {
+  List<String> flushComplete() {
+    if (_buffer.isEmpty) {
+      return const [];
+    }
+    final chunk = _buffer;
+    _buffer = '';
+    _started = true;
+    _inCodeBlock = false;
+    return [chunk];
+  }
+
+  String? prefetchChunk() {
+    final chunks = _drainChunks(ignoreThreshold: true, maxChunks: 1);
+    if (chunks.isEmpty) {
+      return null;
+    }
+    return chunks.first;
+  }
+
+  List<String> _drainChunks({
+    required bool ignoreThreshold,
+    int? maxChunks,
+  }) {
     final chunks = <String>[];
     var buffer = _buffer;
     while (buffer.isNotEmpty) {
@@ -54,8 +81,12 @@ class TtsChunker {
       }
 
       final segment = buffer.substring(0, searchEnd);
-      final minIndex = force ? 0 : minStartChars;
-      final boundary = _findSentenceBoundary(segment, minIndex);
+      final threshold = _started ? maxChunkChars : minStartChars;
+      if (!ignoreThreshold && segment.length < threshold) {
+        break;
+      }
+
+      final boundary = _findSentenceBoundaryNearEnd(segment);
       if (boundary != -1) {
         final chunk = segment.substring(0, boundary);
         if (chunk.trim().isNotEmpty) {
@@ -63,18 +94,9 @@ class TtsChunker {
           _started = true;
         }
         buffer = buffer.substring(boundary);
-        continue;
-      }
-
-      final threshold = _started ? maxChunkChars : minStartChars;
-      if (segment.length >= threshold || force) {
-        final cut = _fallbackCut(segment, maxChunkChars);
-        final chunk = segment.substring(0, cut);
-        if (chunk.trim().isNotEmpty) {
-          chunks.add(chunk);
-          _started = true;
+        if (maxChunks != null && chunks.length >= maxChunks) {
+          break;
         }
-        buffer = buffer.substring(cut);
         continue;
       }
 
@@ -85,30 +107,31 @@ class TtsChunker {
     return chunks;
   }
 
-  int _findSentenceBoundary(String text, int startIndex) {
+  int _findSentenceBoundaryNearEnd(String text) {
     if (text.isEmpty) {
       return -1;
     }
-    final start = startIndex < 0 ? 0 : startIndex;
-    for (var i = start; i < text.length; i++) {
-      final char = text[i];
-      if (_isSentenceBoundary(text, i, char)) {
-        return i + 1;
+    for (var i = text.length - 1; i >= 0; i--) {
+      int? candidate;
+      if (text[i] == '。') {
+        candidate = i + 1;
+      } else if (text[i] == '\t') {
+        candidate = i + 1;
+      } else if (i >= 1 && text[i - 1] == '.' && text[i] == ' ') {
+        if (!_isDecimalPoint(text, i - 1)) {
+          candidate = i + 1;
+        }
+      } else if (i >= 1 && text[i - 1] == ' ' && text[i] == ' ') {
+        candidate = i + 1;
+      }
+      if (candidate != null) {
+        final wordsAfter = _countWords(text.substring(candidate));
+        if (wordsAfter <= minWordsFromEnd) {
+          return candidate;
+        }
       }
     }
     return -1;
-  }
-
-  bool _isSentenceBoundary(String text, int index, String char) {
-    if (char == '.' && _isDecimalPoint(text, index)) {
-      return false;
-    }
-    return char == '.' ||
-        char == '!' ||
-        char == '?' ||
-        char == '。' ||
-        char == '！' ||
-        char == '？';
   }
 
   bool _isDecimalPoint(String text, int index) {
@@ -124,15 +147,11 @@ class TtsChunker {
     return char.codeUnitAt(0) >= 48 && char.codeUnitAt(0) <= 57;
   }
 
-  int _fallbackCut(String text, int maxChars) {
-    if (text.length <= maxChars) {
-      return text.length;
+  int _countWords(String text) {
+    if (text.trim().isEmpty) {
+      return 0;
     }
-    for (var i = maxChars - 1; i >= 0; i--) {
-      if (text[i].trim().isEmpty) {
-        return i + 1;
-      }
-    }
-    return maxChars;
+    final parts = text.trim().split(RegExp(r'\s+'));
+    return parts.where((part) => part.isNotEmpty).length;
   }
 }

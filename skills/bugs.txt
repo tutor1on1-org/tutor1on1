@@ -98,6 +98,11 @@ SKILL: TTS sanitizer placeholder pipeline
 - Fix: Protect code + math with placeholders, parse Markdown via AST, then restore math and code safely.
 - Lesson: Prefer parser-driven text extraction over regex for mixed Markdown + LaTeX.
 
+SKILL: TTS chunk prefetch window
+- Context: Later TTS chunks waited until playback finished, even when LLM output was ready.
+- Fix: Prefetch next chunk at half playback, use sentence-boundary rules, and play sequentially.
+- Lesson: Separate audio fetching from playback to reduce gaps without overlap.
+
 SKILL: TTS duplicate text output
 - Context: Completed streaming chunks were appended again on playback completion.
 - Fix: Track whether the active chunk has been fully displayed and skip the raw append if so.
