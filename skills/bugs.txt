@@ -29,3 +29,59 @@ SKILL: Math parse errors UX
 - Context: Parse errors were shown directly to the user.
 - Fix: Render raw text on error (no error UI).
 - Lesson: Fail soft for LLM output parsing.
+
+SKILL: Progress counts show 0/0
+- Context: Leaf detection relied on line prefixes and missed true leaf nodes.
+- Fix: Use "children.isEmpty" to detect leaves for progress and lit status.
+- Lesson: Prefer structural tree checks over line-format heuristics.
+
+SKILL: Future.then callback signature
+- Context: Chaining `_queue.then(() async {})` caused a type mismatch (missing arg).
+- Fix: Use `_queue.then((_) async { ... })` to match the expected signature.
+- Lesson: Match Future.then callbacks to the value type, even when unused.
+
+SKILL: TTS failures were silent
+- Context: TTS errors were swallowed and users had no visibility when audio failed.
+- Fix: Add persistent TTS error logging and a TTS Logs view in Settings.
+- Lesson: Surface non-fatal failures with lightweight logs to speed diagnosis.
+
+SKILL: TTS playback diagnostics
+- Context: Audio was returned but playback issues were unclear.
+- Fix: Added playback state logs and a test button to play the last saved MP3.
+- Lesson: Add explicit playback tests and state logs to isolate audio pipeline issues.
+
+SKILL: TTS playback fallback
+- Context: Playback could stall before audio started with no sound.
+- Fix: Added playback timeouts and fallback player, with explicit play completion checks.
+- Lesson: Treat audio playback as fallible; include timeouts and fallback paths.
+
+SKILL: TTS playback visibility
+- Context: Silent playback failures needed more diagnostic detail.
+- Fix: Added full playback event logging and file setup/play request traces.
+- Lesson: Emit granular playback events to pinpoint where audio stalls.
+
+SKILL: Windows TTS playback plugin
+- Context: just_audio does not include a Windows implementation by default.
+- Fix: Add just_audio_windows dependency to enable audio playback on Windows.
+- Lesson: For federated plugins, include the platform package explicitly.
+
+SKILL: TTS and text stream alignment
+- Context: Chat text streamed ahead of audio, so the display no longer matched TTS.
+- Fix: Disable DB streaming when TTS is on, gate display updates behind the TTS chunker, and add a configurable initial delay.
+- Update: Stream text token-by-token based on audio duration, starting on playback start and finishing with audio end.
+- Lesson: When syncing audio and text, the UI must control both the display and the timing.
+
+SKILL: TTS replay per message
+- Context: Needed replayable audio for each assistant message with progress UI.
+- Fix: Save per-message MP3 chunks to a configured folder and add replay controls with progress.
+- Lesson: Persisted media needs deterministic file naming and playback state tracking.
+
+SKILL: TTS chunk overlap
+- Context: Long TTS chunks were timing out and the next chunk started, causing overlapping audio.
+- Fix: Remove playback completion timeouts, gate chunk creation until playback finishes, and add stop/pause controls.
+- Lesson: Do not time out long audio; let explicit user actions handle stalls.
+
+SKILL: Log file path defaults and decoding
+- Context: Log files were noisy and UTF-8 decode errors surfaced on read.
+- Fix: Log once per API call, serialize writes, and decode with allowMalformed using configured log paths.
+- Lesson: Use a single write queue and resilient decoding for JSONL logs.

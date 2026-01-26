@@ -149,6 +149,12 @@ class AppSettings extends Table {
   TextColumn get model => text()();
   IntColumn get timeoutSeconds => integer()();
   IntColumn get maxTokens => integer()();
+  IntColumn get ttsInitialDelayMs =>
+      integer().withDefault(const Constant(60000))();
+  TextColumn get ttsAudioPath => text().nullable()();
+  TextColumn get logDirectory => text().nullable()();
+  TextColumn get llmLogPath => text().nullable()();
+  TextColumn get ttsLogPath => text().nullable()();
   TextColumn get llmMode => text()();
   TextColumn get locale => text().nullable()();
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
@@ -204,7 +210,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 11;
+  int get schemaVersion => 14;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -256,6 +262,17 @@ class AppDatabase extends _$AppDatabase {
           }
           if (from < 11) {
             await m.addColumn(courseVersions, courseVersions.sourcePath);
+          }
+          if (from < 12) {
+            await m.addColumn(appSettings, appSettings.ttsInitialDelayMs);
+          }
+          if (from < 13) {
+            await m.addColumn(appSettings, appSettings.ttsAudioPath);
+          }
+          if (from < 14) {
+            await m.addColumn(appSettings, appSettings.logDirectory);
+            await m.addColumn(appSettings, appSettings.llmLogPath);
+            await m.addColumn(appSettings, appSettings.ttsLogPath);
           }
         },
       );
@@ -446,6 +463,16 @@ class AppDatabase extends _$AppDatabase {
           ..where((tbl) => tbl.sessionId.equals(sessionId))
           ..orderBy([(tbl) => OrderingTerm(expression: tbl.createdAt)]))
         .get();
+  }
+
+  Future<void> updateChatMessageContent({
+    required int messageId,
+    required String content,
+  }) {
+    return (update(chatMessages)..where((tbl) => tbl.id.equals(messageId)))
+        .write(
+      ChatMessagesCompanion(content: Value(content)),
+    );
   }
 
   Future<ChatSession?> getSession(int sessionId) {

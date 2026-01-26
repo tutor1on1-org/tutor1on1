@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -10,6 +11,9 @@ import '../llm/llm_models.dart';
 import '../llm/llm_providers.dart';
 import '../models/tutor_action.dart';
 import '../services/app_services.dart';
+import '../services/tts_chunker.dart';
+import '../services/tts_service.dart';
+import '../services/tts_text_sanitizer.dart';
 import '../state/settings_controller.dart';
 import 'widgets/math_markdown_view.dart';
 
@@ -41,6 +45,33 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
   String? _sessionModel;
   String? _sessionTitle;
   RequestHandle<dynamic>? _pending;
+  bool _ttsEnabled = false;
+  final TtsChunker _ttsChunker = TtsChunker();
+  final TtsTextSanitizer _ttsSanitizer = TtsTextSanitizer();
+  final StringBuffer _ttsPendingBuffer = StringBuffer();
+  final StringBuffer _ttsDisplayBuffer = StringBuffer();
+  final StringBuffer _ttsRawBuffer = StringBuffer();
+  final List<_TtsQueuedChunk> _ttsChunkQueue = [];
+  Timer? _ttsGateTimer;
+  Timer? _ttsDisplayFlushTimer;
+  Timer? _ttsWordTimer;
+  bool _ttsGateOpen = false;
+  bool _ttsGateStarted = false;
+  int _ttsInitialDelayMs = 60000;
+  int? _assistantMessageId;
+  int _ttsOutstandingChunks = 0;
+  bool _ttsLlmCompleted = false;
+  bool _ttsFlushPending = false;
+  List<String> _ttsStreamTokens = const [];
+  int _ttsStreamIndex = 0;
+  DateTime? _ttsStreamStart;
+  int _ttsStreamDurationMs = 0;
+  bool _ttsStreamingActive = false;
+  bool _ttsPlaybackActive = false;
+  bool _ttsChunkInFlight = false;
+  bool _ttsStreamPaused = false;
+  DateTime? _ttsStreamPausedAt;
+  String? _ttsAudioDir;
 
   @override
   void initState() {
@@ -50,6 +81,13 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
 
   @override
   void dispose() {
+    if (_ttsEnabled) {
+      context.read<AppServices>().ttsService.stop(sessionId: widget.sessionId);
+    }
+    context.read<AppServices>().ttsService.stopReplay(sessionId: widget.sessionId);
+    _ttsGateTimer?.cancel();
+    _ttsDisplayFlushTimer?.cancel();
+    _ttsWordTimer?.cancel();
     _inputController.dispose();
     _inputFocus.dispose();
     _scrollController.dispose();
@@ -90,6 +128,14 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
         : (LlmProviders.findById(providers, settings.providerId) ??
             LlmProviders.findByBaseUrl(providers, settings.baseUrl) ??
             providers.first);
+    final ttsSupported = settings != null &&
+        (provider.id == 'openai' ||
+            (settings.baseUrl.toLowerCase().contains('api.openai.com')));
+    final livePlaybackActive =
+        _ttsPlaybackActive || _ttsStreamPaused || _ttsChunkInFlight;
+    if (!ttsSupported && _ttsEnabled) {
+      _ttsEnabled = false;
+    }
 
     if (_loadingSession) {
       return const Scaffold(
@@ -186,29 +232,90 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
                             fontFamily: 'Microsoft YaHei UI',
                             fontFamilyFallback: fontFallback,
                           );
-                          return ListTile(
-                            title: Text(
-                              '$label - $timeLabel',
-                              style: labelStyle,
-                            ),
-                            subtitle: message.role == 'assistant'
-                                ? MathMarkdownView(
-                                    key: ValueKey('msg_${message.id}'),
-                                    content: message.content,
-                                    textStyle: contentStyle,
-                                  )
-                                : SelectableText(
-                                    message.content,
-                                    style: contentStyle,
+                          final ttsService =
+                              context.read<AppServices>().ttsService;
+                          final audioDir =
+                              settings?.ttsAudioPath?.trim() ?? '';
+                          final audioPath = (audioDir.isNotEmpty &&
+                                  message.role == 'assistant')
+                              ? TtsService.buildMessageAudioPath(
+                                  baseDir: audioDir,
+                                  messageId: message.id,
+                                )
+                              : null;
+                          final hasAudio = audioPath != null &&
+                              File(audioPath).existsSync() &&
+                              File(audioPath).lengthSync() > 0;
+                          return StreamBuilder<TtsPlaybackState>(
+                            stream: ttsService.playbackStream,
+                            builder: (context, playbackSnapshot) {
+                              final playback = playbackSnapshot.data;
+                              final isPlaying = playback?.messageId ==
+                                      message.id &&
+                                  playback?.isPlaying == true;
+                              final isPaused = playback?.messageId ==
+                                      message.id &&
+                                  playback?.isPaused == true;
+                              final duration = playback?.duration;
+                              final position = playback?.position ??
+                                  Duration.zero;
+                              final progressValue =
+                                  (duration == null ||
+                                          duration.inMilliseconds <= 0)
+                                      ? null
+                                      : (position.inMilliseconds /
+                                              duration.inMilliseconds)
+                                          .clamp(0.0, 1.0);
+                              final showProgress = playback?.messageId ==
+                                      message.id &&
+                                  duration != null &&
+                                  duration.inMilliseconds > 0;
+                              final contentWidget = message.role == 'assistant'
+                                  ? MathMarkdownView(
+                                      key: ValueKey('msg_${message.id}'),
+                                      content: message.content,
+                                      textStyle: contentStyle,
+                                    )
+                                  : SelectableText(
+                                      message.content,
+                                      style: contentStyle,
+                                    );
+                              return ListTile(
+                                title: Text(
+                                  '$label - $timeLabel',
+                                  style: labelStyle,
+                                ),
+                                subtitle: message.role == 'assistant'
+                                    ? Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          contentWidget,
+                                          if (showProgress)
+                                            Padding(
+                                              padding:
+                                                  const EdgeInsets.only(top: 6),
+                                              child: LinearProgressIndicator(
+                                                value: progressValue,
+                                              ),
+                                            ),
+                                        ],
+                                      )
+                                    : contentWidget,
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: _buildMessageActions(
+                                    message,
+                                    lastUserId,
+                                    l10n,
+                                    hasAudio: hasAudio,
+                                    audioPath: audioPath,
+                                    isPlaying: isPlaying,
+                                    isPaused: isPaused,
                                   ),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: _buildMessageActions(
-                                message,
-                                lastUserId,
-                                l10n,
-                              ),
-                            ),
+                                ),
+                              );
+                            },
                           );
                         },
                       );
@@ -292,6 +399,51 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
                         _modeChip(TutorMode.learn, l10n),
                         _modeChip(TutorMode.review, l10n),
                         const SizedBox(width: 12),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('TTS'),
+                            Tooltip(
+                              message: ttsSupported
+                                  ? ''
+                                  : l10n.ttsRequiresOpenAi,
+                              child: Switch(
+                                value: _ttsEnabled,
+                                onChanged: (_sending || !ttsSupported)
+                                    ? null
+                                    : (value) {
+                                        setState(() => _ttsEnabled = value);
+                                        if (!value) {
+                                          _stopLiveTts();
+                                        }
+                                      },
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: _ttsStreamPaused
+                                  ? l10n.ttsResumeTooltip
+                                  : l10n.ttsPauseTooltip,
+                              icon: Icon(
+                                _ttsStreamPaused
+                                    ? Icons.play_arrow
+                                    : Icons.pause,
+                              ),
+                              onPressed: (!_ttsEnabled ||
+                                      !(_ttsPlaybackActive || _ttsStreamPaused))
+                                  ? null
+                                  : (_ttsStreamPaused
+                                      ? _resumeLiveTts
+                                      : _pauseLiveTts),
+                            ),
+                            IconButton(
+                              tooltip: l10n.ttsStopTooltip,
+                              icon: const Icon(Icons.stop),
+                              onPressed: (!_ttsEnabled || !livePlaybackActive)
+                                  ? null
+                                  : _stopLiveTts,
+                            ),
+                          ],
+                        ),
                         ElevatedButton(
                           key: const Key('summary_button'),
                           onPressed: _sending ? null : _requestSummary,
@@ -317,14 +469,47 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     ChatMessage message,
     int? lastUserId,
     AppLocalizations l10n,
+    {required bool hasAudio,
+    String? audioPath,
+    required bool isPlaying,
+    required bool isPaused}
   ) {
-    final actions = <Widget>[
+    final actions = <Widget>[];
+
+    if (hasAudio && audioPath != null && message.role == 'assistant') {
+      final isActive = isPlaying || isPaused;
+      actions.add(
+        IconButton(
+          tooltip: isPlaying
+              ? l10n.ttsPauseTooltip
+              : (isPaused ? l10n.ttsResumeTooltip : l10n.ttsPlayTooltip),
+          icon: Icon(isPlaying ? Icons.pause : Icons.play_arrow),
+          onPressed: () => _toggleMessageAudio(
+            messageId: message.id,
+            audioPath: audioPath,
+            isPlaying: isPlaying,
+            isPaused: isPaused,
+          ),
+        ),
+      );
+      if (isActive) {
+        actions.add(
+          IconButton(
+            tooltip: l10n.ttsStopTooltip,
+            icon: const Icon(Icons.stop),
+            onPressed: _stopMessageAudio,
+          ),
+        );
+      }
+    }
+
+    actions.addAll([
       IconButton(
         tooltip: l10n.copyTooltip,
         icon: const Icon(Icons.copy),
         onPressed: () => _copyMessage(message, l10n),
       ),
-    ];
+    ]);
 
     if (message.role == 'user' &&
         lastUserId != null &&
@@ -375,6 +560,7 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     setState(() => _sending = true);
     final sessionService = context.read<AppServices>().sessionService;
     final modelOverride = _resolveModelOverride();
+    _prepareTts();
     try {
       final llmHandle = await sessionService.startTutorAction(
         sessionId: widget.sessionId,
@@ -383,9 +569,20 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
         courseVersion: widget.courseVersion,
         node: widget.node,
         modelOverride: modelOverride,
+        stream: true,
+        streamToDatabase: !_ttsEnabled,
+        onAssistantMessageCreated:
+            _ttsEnabled ? _handleAssistantMessageCreated : null,
+        onChunk: _ttsEnabled ? _handleTtsChunk : null,
+        onPromptWarning: () =>
+            _showPersistentMessage(l10n.maxTokensTooSmallWarning),
       );
       _pending = llmHandle;
       await llmHandle.future;
+      _flushTts();
+      if (_ttsEnabled) {
+        await _flushDisplay();
+      }
       _inputController.clear();
       _inputFocus.requestFocus();
     } catch (e) {
@@ -412,6 +609,8 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
         courseVersion: widget.courseVersion,
         node: widget.node,
         modelOverride: modelOverride,
+        onPromptWarning: () =>
+            _showPersistentMessage(l10n.maxTokensTooSmallWarning),
       );
       _pending = summarizeHandle;
       final result = await summarizeHandle.future;
@@ -453,7 +652,96 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
 
   void _cancelRequest() {
     _pending?.cancel();
+    if (_ttsEnabled) {
+      _stopLiveTts();
+    }
     setState(() => _sending = false);
+  }
+
+  Future<void> _pauseLiveTts() async {
+    if (!_ttsPlaybackActive || _ttsStreamPaused) {
+      return;
+    }
+    _ttsStreamPaused = true;
+    _ttsStreamPausedAt = DateTime.now();
+    _ttsWordTimer?.cancel();
+    await context.read<AppServices>().ttsService.pause(
+          sessionId: widget.sessionId,
+        );
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  Future<void> _resumeLiveTts() async {
+    if (!_ttsStreamPaused) {
+      return;
+    }
+    final pausedAt = _ttsStreamPausedAt;
+    _ttsStreamPaused = false;
+    _ttsStreamPausedAt = null;
+    if (_ttsStreamingActive && _ttsStreamStart != null && pausedAt != null) {
+      final pausedMs =
+          DateTime.now().difference(pausedAt).inMilliseconds;
+      _ttsStreamStart =
+          _ttsStreamStart!.add(Duration(milliseconds: pausedMs));
+      _startWordTimer();
+    }
+    await context.read<AppServices>().ttsService.resume(
+          sessionId: widget.sessionId,
+        );
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  Future<void> _stopLiveTts() async {
+    _ttsChunkQueue.clear();
+    _ttsPendingBuffer.clear();
+    _ttsChunker.reset();
+    _ttsOutstandingChunks = 0;
+    _ttsFlushPending = false;
+    _ttsStreamingActive = false;
+    _ttsPlaybackActive = false;
+    _ttsChunkInFlight = false;
+    _ttsStreamPaused = false;
+    _ttsStreamPausedAt = null;
+    _ttsWordTimer?.cancel();
+    await context.read<AppServices>().ttsService.stop(
+          sessionId: widget.sessionId,
+        );
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  Future<void> _toggleMessageAudio({
+    required int messageId,
+    required String audioPath,
+    required bool isPlaying,
+    required bool isPaused,
+  }) async {
+    final ttsService = context.read<AppServices>().ttsService;
+    if (isPlaying) {
+      await ttsService.pauseReplay(sessionId: widget.sessionId);
+      return;
+    }
+    if (isPaused) {
+      await ttsService.resumeReplay(sessionId: widget.sessionId);
+      return;
+    }
+    await ttsService.playSavedAudio(
+      messageId: messageId,
+      path: audioPath,
+      sessionId: widget.sessionId,
+    );
+  }
+
+  Future<void> _stopMessageAudio() async {
+    await context
+        .read<AppServices>()
+        .ttsService
+        .stopReplay(sessionId: widget.sessionId);
   }
 
   Future<void> _copyMessage(
@@ -492,6 +780,7 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     setState(() => _sending = true);
     final sessionService = context.read<AppServices>().sessionService;
     final modelOverride = _resolveModelOverride();
+    _prepareTts();
     try {
       final llmHandle = await sessionService.startTutorAction(
         sessionId: widget.sessionId,
@@ -500,9 +789,20 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
         courseVersion: widget.courseVersion,
         node: widget.node,
         modelOverride: modelOverride,
+        stream: true,
+        streamToDatabase: !_ttsEnabled,
+        onAssistantMessageCreated:
+            _ttsEnabled ? _handleAssistantMessageCreated : null,
+        onChunk: _ttsEnabled ? _handleTtsChunk : null,
+        onPromptWarning: () =>
+            _showPersistentMessage(l10n.maxTokensTooSmallWarning),
       );
       _pending = llmHandle;
       await llmHandle.future;
+      _flushTts();
+      if (_ttsEnabled) {
+        await _flushDisplay();
+      }
     } catch (e) {
       await _showErrorDialog(
         title: l10n.refreshFailedTitle,
@@ -550,6 +850,7 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     final db = context.read<AppDatabase>();
     final sessionService = context.read<AppServices>().sessionService;
     final modelOverride = _resolveModelOverride();
+    _prepareTts();
     try {
       await db.deleteMessagesFrom(
         sessionId: widget.sessionId,
@@ -563,9 +864,20 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
         courseVersion: widget.courseVersion,
         node: widget.node,
         modelOverride: modelOverride,
+        stream: true,
+        streamToDatabase: !_ttsEnabled,
+        onAssistantMessageCreated:
+            _ttsEnabled ? _handleAssistantMessageCreated : null,
+        onChunk: _ttsEnabled ? _handleTtsChunk : null,
+        onPromptWarning: () =>
+            _showPersistentMessage(l10n.maxTokensTooSmallWarning),
       );
       _pending = llmHandle;
       await llmHandle.future;
+      _flushTts();
+      if (_ttsEnabled) {
+        await _flushDisplay();
+      }
     } catch (e) {
       await _showErrorDialog(
         title: l10n.editFailedTitle,
@@ -701,6 +1013,25 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     );
   }
 
+  void _showPersistentMessage(String message) {
+    if (!mounted) {
+      return;
+    }
+    final l10n = AppLocalizations.of(context)!;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(days: 1),
+        action: SnackBarAction(
+          label: l10n.closeButton,
+          onPressed: messenger.hideCurrentSnackBar,
+        ),
+      ),
+    );
+  }
+
   String? _resolveModelOverride() {
     final settings = context.read<SettingsController>().settings;
     final selected = _sessionModel?.trim();
@@ -817,8 +1148,400 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     final second = time.second.toString().padLeft(2, '0');
     return '$hour:$minute:$second';
   }
+
+  void _handleAssistantMessageCreated(int messageId) {
+    _assistantMessageId = messageId;
+    if (_ttsDisplayBuffer.isNotEmpty) {
+      _scheduleDisplayFlush();
+    }
+  }
+
+  void _prepareTts() {
+    _ttsChunker.reset();
+    _ttsPendingBuffer.clear();
+    _ttsDisplayBuffer.clear();
+    _ttsRawBuffer.clear();
+    _ttsChunkQueue.clear();
+    _assistantMessageId = null;
+    _ttsGateOpen = false;
+    _ttsGateStarted = false;
+    _ttsGateTimer?.cancel();
+    _ttsDisplayFlushTimer?.cancel();
+    _ttsWordTimer?.cancel();
+    final settings = context.read<SettingsController>().settings;
+    _ttsInitialDelayMs = settings?.ttsInitialDelayMs ?? 60000;
+    _ttsOutstandingChunks = 0;
+    _ttsLlmCompleted = false;
+    _ttsFlushPending = false;
+    _ttsStreamTokens = const [];
+    _ttsStreamIndex = 0;
+    _ttsStreamStart = null;
+    _ttsStreamDurationMs = 0;
+    _ttsStreamingActive = false;
+    _ttsPlaybackActive = false;
+    _ttsChunkInFlight = false;
+    _ttsStreamPaused = false;
+    _ttsStreamPausedAt = null;
+    _ttsAudioDir = settings?.ttsAudioPath?.trim();
+    if (_ttsEnabled) {
+      context.read<AppServices>().ttsService.stop(sessionId: widget.sessionId);
+    }
+  }
+
+  void _handleTtsChunk(String chunk) {
+    if (!_ttsEnabled) {
+      return;
+    }
+    if (chunk.isEmpty) {
+      return;
+    }
+    _ttsRawBuffer.write(chunk);
+    _ttsPendingBuffer.write(chunk);
+    _startTtsGateIfNeeded();
+    if (_ttsGateOpen && !_ttsChunkInFlight && !_ttsStreamPaused) {
+      _processPendingBuffer();
+    }
+  }
+
+  void _flushTts() {
+    if (!_ttsEnabled) {
+      return;
+    }
+    _ttsLlmCompleted = true;
+    _openTtsGate();
+    if (_ttsChunkInFlight || _ttsStreamPaused) {
+      _ttsFlushPending = true;
+      return;
+    }
+    _processPendingBuffer();
+    final chunks = _ttsChunker.flush();
+    _emitTtsChunks(chunks);
+    _scheduleDisplayFlush();
+    _maybeFinalizeDisplay();
+  }
+
+  void _startTtsGateIfNeeded() {
+    if (_ttsGateStarted) {
+      return;
+    }
+    _ttsGateStarted = true;
+    if (_ttsInitialDelayMs <= 0) {
+      _openTtsGate();
+      return;
+    }
+    _ttsGateTimer = Timer(
+      Duration(milliseconds: _ttsInitialDelayMs),
+      _openTtsGate,
+    );
+  }
+
+  void _openTtsGate() {
+    if (_ttsGateOpen) {
+      return;
+    }
+    _ttsGateOpen = true;
+    _processPendingBuffer();
+  }
+
+  void _processPendingBuffer() {
+    if (!_ttsGateOpen) {
+      return;
+    }
+    if (_ttsChunkInFlight || _ttsStreamPaused) {
+      return;
+    }
+    final pending = _ttsPendingBuffer.toString();
+    if (pending.isEmpty) {
+      return;
+    }
+    _ttsPendingBuffer.clear();
+    final chunks = _ttsChunker.addText(pending);
+    _emitTtsChunks(chunks);
+  }
+
+  void _emitTtsChunks(List<String> chunks) {
+    if (chunks.isEmpty) {
+      return;
+    }
+    for (final raw in chunks) {
+      final spoken = _ttsSanitizer.sanitize(raw);
+      if (spoken.trim().isEmpty) {
+        _appendDisplayChunk(raw);
+        continue;
+      }
+      _ttsOutstandingChunks += 1;
+      _ttsChunkQueue.add(_TtsQueuedChunk(raw: raw, spoken: spoken));
+    }
+    _drainTtsQueue();
+  }
+
+  void _drainTtsQueue() {
+    if (!_ttsEnabled || _ttsChunkInFlight || _ttsStreamPaused) {
+      return;
+    }
+    if (_ttsChunkQueue.isEmpty) {
+      _maybeFinalizeDisplay();
+      return;
+    }
+    final tts = context.read<AppServices>().ttsService;
+    final next = _ttsChunkQueue.removeAt(0);
+    _ttsChunkInFlight = true;
+    tts.enqueue(
+      next.spoken,
+      sessionId: widget.sessionId,
+      messageId: _assistantMessageId,
+      audioDirectory: _ttsAudioDir,
+      onPlaybackStart: (duration) {
+        if (!mounted) {
+          return;
+        }
+        _ttsPlaybackActive = true;
+        _ttsStreamPaused = false;
+        _ttsStreamPausedAt = null;
+        _startWordStreaming(
+          rawText: next.raw,
+          spokenText: next.spoken,
+          duration: duration,
+        );
+        setState(() {});
+      },
+      onPlaybackComplete: (success) {
+        if (!mounted) {
+          return;
+        }
+        if (_ttsStreamingActive) {
+          _finishWordStreaming();
+        } else {
+          _appendDisplayChunk(next.raw);
+        }
+        _ttsPlaybackActive = false;
+        _ttsChunkInFlight = false;
+        _ttsStreamPaused = false;
+        _ttsStreamPausedAt = null;
+        final remaining = _ttsOutstandingChunks - 1;
+        _ttsOutstandingChunks = remaining < 0 ? 0 : remaining;
+        _processPendingBuffer();
+        if (_ttsFlushPending) {
+          _ttsFlushPending = false;
+          final chunks = _ttsChunker.flush();
+          _emitTtsChunks(chunks);
+          _scheduleDisplayFlush();
+        }
+        _maybeFinalizeDisplay();
+        _drainTtsQueue();
+        setState(() {});
+      },
+    );
+  }
+
+  void _startWordStreaming({
+    required String rawText,
+    required String spokenText,
+    required Duration? duration,
+  }) {
+    _ttsWordTimer?.cancel();
+    _ttsStreamTokens = _tokenizeForStreaming(rawText);
+    final spokenTokens = _tokenizeForStreaming(spokenText);
+    _ttsStreamIndex = 0;
+    _ttsStreamStart = DateTime.now();
+    _ttsStreamDurationMs = _resolveDurationMs(
+      duration: duration,
+      spokenTokenCount: spokenTokens.length,
+    );
+    if (_ttsStreamTokens.isEmpty) {
+      _ttsStreamingActive = false;
+      _appendDisplayChunk(rawText);
+      return;
+    }
+    _ttsStreamingActive = true;
+    _ttsStreamPaused = false;
+    _ttsStreamPausedAt = null;
+    _appendStreamingTokens(1);
+    _startWordTimer();
+  }
+
+  void _startWordTimer() {
+    _ttsWordTimer?.cancel();
+    _ttsWordTimer = Timer.periodic(
+      const Duration(milliseconds: 40),
+      (_) => _tickWordStreaming(),
+    );
+  }
+
+  void _tickWordStreaming() {
+    if (!_ttsStreamingActive ||
+        _ttsStreamTokens.isEmpty ||
+        _ttsStreamStart == null) {
+      _ttsWordTimer?.cancel();
+      return;
+    }
+    if (_ttsStreamPaused) {
+      _ttsWordTimer?.cancel();
+      return;
+    }
+    final elapsedMs =
+        DateTime.now().difference(_ttsStreamStart!).inMilliseconds;
+    final durationMs =
+        _ttsStreamDurationMs <= 0 ? 1 : _ttsStreamDurationMs;
+    final ratio = elapsedMs / durationMs;
+    final calculated = (ratio * _ttsStreamTokens.length).floor();
+    final target = calculated < 0
+        ? 0
+        : (calculated > _ttsStreamTokens.length
+            ? _ttsStreamTokens.length
+            : calculated);
+    if (target > _ttsStreamIndex) {
+      _appendStreamingTokens(target - _ttsStreamIndex);
+    }
+    if (elapsedMs >= durationMs || _ttsStreamIndex >= _ttsStreamTokens.length) {
+      _finishWordStreaming();
+    }
+  }
+
+  void _finishWordStreaming() {
+    if (_ttsStreamTokens.isEmpty) {
+      _ttsWordTimer?.cancel();
+      _ttsStreamingActive = false;
+      return;
+    }
+    final remaining = _ttsStreamTokens.length - _ttsStreamIndex;
+    if (remaining > 0) {
+      _appendStreamingTokens(remaining);
+    }
+    _ttsWordTimer?.cancel();
+    _ttsStreamingActive = false;
+    _ttsStreamPaused = false;
+    _ttsStreamPausedAt = null;
+  }
+
+  void _appendStreamingTokens(int count) {
+    if (count <= 0 || _ttsStreamTokens.isEmpty) {
+      return;
+    }
+    var end = _ttsStreamIndex + count;
+    if (end < 0) {
+      end = 0;
+    } else if (end > _ttsStreamTokens.length) {
+      end = _ttsStreamTokens.length;
+    }
+    if (end <= _ttsStreamIndex) {
+      return;
+    }
+    final chunk =
+        _ttsStreamTokens.sublist(_ttsStreamIndex, end).join();
+    _ttsStreamIndex = end;
+    if (chunk.isNotEmpty) {
+      _appendDisplayChunk(chunk);
+    }
+  }
+
+  List<String> _tokenizeForStreaming(String text) {
+    if (text.isEmpty) {
+      return const [];
+    }
+    final tokens = <String>[];
+    final buffer = StringBuffer();
+    bool isCjk(int codeUnit) {
+      return (codeUnit >= 0x4E00 && codeUnit <= 0x9FFF) ||
+          (codeUnit >= 0x3400 && codeUnit <= 0x4DBF) ||
+          (codeUnit >= 0xF900 && codeUnit <= 0xFAFF);
+    }
+
+    for (final rune in text.runes) {
+      final char = String.fromCharCode(rune);
+      final code = rune;
+      if (char.trim().isEmpty) {
+        if (buffer.isNotEmpty) {
+          tokens.add(buffer.toString());
+          buffer.clear();
+        }
+        tokens.add(char);
+        continue;
+      }
+      if (isCjk(code)) {
+        if (buffer.isNotEmpty) {
+          tokens.add(buffer.toString());
+          buffer.clear();
+        }
+        tokens.add(char);
+        continue;
+      }
+      buffer.write(char);
+    }
+    if (buffer.isNotEmpty) {
+      tokens.add(buffer.toString());
+    }
+    return tokens;
+  }
+
+  int _resolveDurationMs({
+    required Duration? duration,
+    required int spokenTokenCount,
+  }) {
+    if (duration != null && duration.inMilliseconds > 0) {
+      return duration.inMilliseconds;
+    }
+    if (spokenTokenCount <= 0) {
+      return 0;
+    }
+    const msPerToken = 220;
+    final estimate = spokenTokenCount * msPerToken;
+    return estimate < 400 ? 400 : estimate;
+  }
+
+  void _appendDisplayChunk(String chunk) {
+    _ttsDisplayBuffer.write(chunk);
+    _scheduleDisplayFlush();
+  }
+
+  void _scheduleDisplayFlush() {
+    if (_assistantMessageId == null) {
+      return;
+    }
+    if (_ttsDisplayFlushTimer?.isActive == true) {
+      return;
+    }
+    _ttsDisplayFlushTimer = Timer(const Duration(milliseconds: 80), () async {
+      await _flushDisplay();
+    });
+  }
+
+  Future<void> _flushDisplay() async {
+    if (_assistantMessageId == null) {
+      return;
+    }
+    final db = context.read<AppDatabase>();
+    await db.updateChatMessageContent(
+      messageId: _assistantMessageId!,
+      content: _ttsDisplayBuffer.toString(),
+    );
+  }
+
+  Future<void> _maybeFinalizeDisplay() async {
+    if (!_ttsLlmCompleted || _ttsOutstandingChunks > 0) {
+      return;
+    }
+    if (_assistantMessageId == null) {
+      return;
+    }
+    final db = context.read<AppDatabase>();
+    await db.updateChatMessageContent(
+      messageId: _assistantMessageId!,
+      content: _ttsRawBuffer.toString(),
+    );
+  }
 }
 
 class _SendIntent extends Intent {
   const _SendIntent();
+}
+
+class _TtsQueuedChunk {
+  const _TtsQueuedChunk({
+    required this.raw,
+    required this.spoken,
+  });
+
+  final String raw;
+  final String spoken;
 }

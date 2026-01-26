@@ -33,6 +33,9 @@ class SettingsController extends ChangeNotifier {
     required String model,
     required int timeoutSeconds,
     required int maxTokens,
+    required int ttsInitialDelayMs,
+    required String ttsAudioPath,
+    required String logDirectory,
     required String llmMode,
     String? locale,
   }) async {
@@ -42,6 +45,9 @@ class SettingsController extends ChangeNotifier {
       model: model,
       timeoutSeconds: timeoutSeconds,
       maxTokens: maxTokens,
+      ttsInitialDelayMs: ttsInitialDelayMs,
+      ttsAudioPath: ttsAudioPath,
+      logDirectory: logDirectory,
       llmMode: llmMode,
       locale: locale,
     );

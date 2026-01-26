@@ -46,4 +46,13 @@ class AuthController extends ChangeNotifier {
     _currentUser = null;
     notifyListeners();
   }
+
+  Future<void> refreshCurrentUser() async {
+    final current = _currentUser;
+    if (current == null) {
+      return;
+    }
+    _currentUser = await _db.getUserById(current.id);
+    notifyListeners();
+  }
 }

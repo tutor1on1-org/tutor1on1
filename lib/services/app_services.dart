@@ -5,9 +5,12 @@ import '../llm/schema_validator.dart';
 import 'backup_service.dart';
 import 'course_service.dart';
 import 'llm_call_repository.dart';
+import 'llm_log_repository.dart';
 import 'secure_storage_service.dart';
 import 'settings_repository.dart';
 import 'session_service.dart';
+import 'tts_service.dart';
+import 'tts_log_repository.dart';
 import '../security/pin_hasher.dart';
 
 class AppServices {
@@ -21,6 +24,9 @@ class AppServices {
     required this.backupService,
     required this.courseService,
     required this.sessionService,
+    required this.ttsService,
+    required this.ttsLogRepository,
+    required this.llmLogRepository,
   });
 
   final AppDatabase db;
@@ -32,6 +38,9 @@ class AppServices {
   final BackupService backupService;
   final CourseService courseService;
   final SessionService sessionService;
+  final TtsService ttsService;
+  final TtsLogRepository ttsLogRepository;
+  final LlmLogRepository llmLogRepository;
 
   static Future<AppServices> create({AppDatabase? databaseOverride}) async {
     final db = databaseOverride ?? AppDatabase.open();
@@ -44,10 +53,12 @@ class AppServices {
     final promptRepository = PromptRepository(db: db);
     final schemaValidator = SchemaValidator();
     final callRepository = LlmCallRepository(db);
+    final llmLogRepository = LlmLogRepository(settingsRepository);
     final llmService = LlmService(
       settingsRepository,
       secureStorage,
       callRepository,
+      llmLogRepository,
       schemaValidator,
     );
     final backupService = BackupService(db);
@@ -56,7 +67,10 @@ class AppServices {
       db,
       llmService,
       promptRepository,
+      settingsRepository,
     );
+    final ttsLogRepository = TtsLogRepository(settingsRepository);
+    final ttsService = TtsService(secureStorage, ttsLogRepository);
     return AppServices._(
       db: db,
       settingsRepository: settingsRepository,
@@ -67,6 +81,9 @@ class AppServices {
       backupService: backupService,
       courseService: courseService,
       sessionService: sessionService,
+      ttsService: ttsService,
+      ttsLogRepository: ttsLogRepository,
+      llmLogRepository: llmLogRepository,
     );
   }
 }

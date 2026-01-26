@@ -366,6 +366,8 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
           'Knowledge point description from the course node (raw line).',
       'conversation_history':
           'Chat history built from messages in the current session.',
+      'session_history':
+          'Alias for conversation_history (same session chat history).',
       'student_input': 'Latest student input text in this session.',
       'student_summary':
           'Saved summary for this student/course/kp (falls back to the session summary).',

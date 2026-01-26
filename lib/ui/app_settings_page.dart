@@ -13,9 +13,11 @@ import '../llm/llm_providers.dart';
 import '../security/hash_utils.dart';
 import '../security/pin_hasher.dart';
 import '../services/app_services.dart';
+import '../services/tts_service.dart';
 import '../state/auth_controller.dart';
 import '../state/settings_controller.dart';
 import 'pages/llm_logs_page.dart';
+import 'pages/tts_logs_page.dart';
 import 'widgets/restart_widget.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -28,6 +30,9 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   final _timeoutController = TextEditingController();
   final _maxTokensController = TextEditingController();
+  final _ttsDelayController = TextEditingController();
+  final _ttsAudioPathController = TextEditingController();
+  final _logDirectoryController = TextEditingController();
   final _apiKeyController = TextEditingController();
   String _mode = LlmMode.liveRecord.value;
   bool _initialized = false;
@@ -39,6 +44,9 @@ class _SettingsPageState extends State<SettingsPage> {
   void dispose() {
     _timeoutController.dispose();
     _maxTokensController.dispose();
+    _ttsDelayController.dispose();
+    _ttsAudioPathController.dispose();
+    _logDirectoryController.dispose();
     _apiKeyController.dispose();
     super.dispose();
   }
@@ -49,6 +57,8 @@ class _SettingsPageState extends State<SettingsPage> {
     final settingsController = context.watch<SettingsController>();
     final settings = settingsController.settings;
     final services = context.read<AppServices>();
+    final auth = context.read<AuthController>();
+    final currentUser = auth.currentUser;
 
     if (settings == null || settingsController.isLoading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
@@ -75,6 +85,10 @@ class _SettingsPageState extends State<SettingsPage> {
           : (provider.models.isNotEmpty ? provider.models.first : '');
       _timeoutController.text = settings.timeoutSeconds.toString();
       _maxTokensController.text = settings.maxTokens.toString();
+      _ttsDelayController.text =
+          (settings.ttsInitialDelayMs / 1000).round().toString();
+      _ttsAudioPathController.text = settings.ttsAudioPath ?? '';
+      _logDirectoryController.text = settings.logDirectory ?? '';
       _mode = settings.llmMode;
       _initialized = true;
     }
@@ -186,6 +200,74 @@ class _SettingsPageState extends State<SettingsPage> {
             controller: _maxTokensController,
             keyboardType: TextInputType.number,
           ),
+          TextField(
+            decoration:
+                InputDecoration(labelText: l10n.ttsInitialDelayLabel),
+            controller: _ttsDelayController,
+            keyboardType: TextInputType.number,
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  decoration:
+                      InputDecoration(labelText: l10n.ttsAudioPathLabel),
+                  controller: _ttsAudioPathController,
+                ),
+              ),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: () async {
+                  final selected =
+                      await FilePicker.platform.getDirectoryPath();
+                  if (selected == null) {
+                    return;
+                  }
+                  setState(() {
+                    _ttsAudioPathController.text = selected;
+                  });
+                },
+                child: Text(l10n.browseButton),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  decoration:
+                      InputDecoration(labelText: l10n.logDirectoryLabel),
+                  controller: _logDirectoryController,
+                ),
+              ),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: () async {
+                  final selected =
+                      await FilePicker.platform.getDirectoryPath();
+                  if (selected == null) {
+                    return;
+                  }
+                  setState(() {
+                    _logDirectoryController.text = selected;
+                  });
+                },
+                child: Text(l10n.browseButton),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          InputDecorator(
+            decoration: InputDecoration(labelText: l10n.llmLogPathLabel),
+            child: SelectableText(settings.llmLogPath ?? ''),
+          ),
+          const SizedBox(height: 8),
+          InputDecorator(
+            decoration: InputDecoration(labelText: l10n.ttsLogPathLabel),
+            child: SelectableText(settings.ttsLogPath ?? ''),
+          ),
           const SizedBox(height: 8),
           DropdownButtonFormField<String>(
             initialValue: _mode,
@@ -233,10 +315,6 @@ class _SettingsPageState extends State<SettingsPage> {
               ElevatedButton(
                 onPressed: () async {
                   final apiKey = _apiKeyController.text.trim();
-                  if (apiKey.isEmpty) {
-                    _showMessage(context, l10n.apiKeyMissingMessage);
-                    return;
-                  }
                   final provider =
                       LlmProviders.findById(providers, _providerId) ??
                           providers.first;
@@ -249,6 +327,14 @@ class _SettingsPageState extends State<SettingsPage> {
                     _showMessage(context, l10n.modelMissingMessage);
                     return;
                   }
+                  final audioPath = _ttsAudioPathController.text.trim();
+                  final resolvedAudioPath = audioPath.isEmpty
+                      ? (settings.ttsAudioPath ?? '').trim()
+                      : audioPath;
+                  final logDir = _logDirectoryController.text.trim();
+                  final resolvedLogDir = logDir.isEmpty
+                      ? (settings.logDirectory ?? '').trim()
+                      : logDir;
                   await settingsController.update(
                     providerId: provider.id,
                     baseUrl: provider.baseUrl,
@@ -256,24 +342,31 @@ class _SettingsPageState extends State<SettingsPage> {
                     timeoutSeconds:
                         int.tryParse(_timeoutController.text.trim()) ?? 60,
                     maxTokens:
-                        int.tryParse(_maxTokensController.text.trim()) ?? 800,
+                        int.tryParse(_maxTokensController.text.trim()) ?? 8000,
+                    ttsInitialDelayMs:
+                        _parseDelayMs(settings.ttsInitialDelayMs),
+                    ttsAudioPath: resolvedAudioPath,
+                    logDirectory: resolvedLogDir,
                     llmMode: _mode,
                   );
-                  await services.secureStorage.writeApiKey(apiKey);
-                  final hash = sha256Hex(apiKey);
-                  await services.secureStorage.writeApiKeyForHash(hash, apiKey);
-                  final updated = settingsController.settings;
-                  if (updated != null) {
-                    final insertId = await services.db.insertApiConfig(
-                      baseUrl: updated.baseUrl,
-                      model: updated.model,
-                      apiKeyHash: hash,
-                    );
-                    if (context.mounted) {
-                      final message = insertId == 0
-                          ? l10n.configAlreadySavedMessage
-                          : l10n.configSavedMessage;
-                      _showMessage(context, message);
+                  if (apiKey.isNotEmpty) {
+                    await services.secureStorage.writeApiKey(apiKey);
+                    final hash = sha256Hex(apiKey);
+                    await services.secureStorage
+                        .writeApiKeyForHash(hash, apiKey);
+                    final updated = settingsController.settings;
+                    if (updated != null) {
+                      final insertId = await services.db.insertApiConfig(
+                        baseUrl: updated.baseUrl,
+                        model: updated.model,
+                        apiKeyHash: hash,
+                      );
+                      if (context.mounted) {
+                        final message = insertId == 0
+                            ? l10n.configAlreadySavedMessage
+                            : l10n.configSavedMessage;
+                        _showMessage(context, message);
+                      }
                     }
                   }
                 },
@@ -319,6 +412,62 @@ class _SettingsPageState extends State<SettingsPage> {
             },
             child: Text(l10n.viewLlmLogsButton),
           ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const TtsLogsPage(),
+                ),
+              );
+            },
+            child: Text(l10n.viewTtsLogsButton),
+          ),
+          TextButton(
+            onPressed: () async {
+              final result =
+                  await services.ttsService.playLastAudio();
+              if (!context.mounted) {
+                return;
+              }
+              switch (result.status) {
+                case TtsTestStatus.played:
+                  _showMessage(
+                    context,
+                    l10n.ttsTestStartedMessage(result.path ?? ''),
+                  );
+                  break;
+                case TtsTestStatus.missing:
+                  _showMessage(context, l10n.ttsTestMissingMessage);
+                  break;
+                case TtsTestStatus.failed:
+                  _showMessage(context, l10n.ttsTestFailedMessage);
+                  break;
+              }
+            },
+            child: Text(l10n.ttsTestButton),
+          ),
+          if (currentUser != null) ...[
+            const Divider(height: 32),
+            Text(
+              l10n.passwordSectionTitle,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            ElevatedButton(
+              onPressed: () => _showChangePasswordDialog(
+                context,
+                currentUser,
+              ),
+              child: Text(l10n.changePasswordButton),
+            ),
+            if (currentUser.role == 'teacher')
+              ElevatedButton(
+                onPressed: () => _showChangeStudentPasswordDialog(
+                  context,
+                  currentUser,
+                ),
+                child: Text(l10n.changeStudentPasswordButton),
+              ),
+          ],
           const Divider(height: 32),
           Text(
             l10n.savedApiConfigsTitle,
@@ -557,6 +706,197 @@ class _SettingsPageState extends State<SettingsPage> {
   void _showMessage(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
+    );
+  }
+
+  int _parseDelayMs(int fallbackMs) {
+    final raw = _ttsDelayController.text.trim();
+    if (raw.isEmpty) {
+      return fallbackMs;
+    }
+    final seconds = int.tryParse(raw);
+    if (seconds == null) {
+      return fallbackMs;
+    }
+    if (seconds <= 0) {
+      return 0;
+    }
+    return seconds * 1000;
+  }
+
+  Future<void> _showChangePasswordDialog(
+    BuildContext context,
+    User user,
+  ) async {
+    final l10n = AppLocalizations.of(context)!;
+    final currentController = TextEditingController();
+    final newController = TextEditingController();
+    final confirmController = TextEditingController();
+    final db = context.read<AppDatabase>();
+    final auth = context.read<AuthController>();
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.changePasswordTitle),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: currentController,
+              decoration:
+                  InputDecoration(labelText: l10n.currentPasswordLabel),
+              obscureText: true,
+            ),
+            TextField(
+              controller: newController,
+              decoration: InputDecoration(labelText: l10n.newPasswordLabel),
+              obscureText: true,
+            ),
+            TextField(
+              controller: confirmController,
+              decoration:
+                  InputDecoration(labelText: l10n.confirmPasswordLabel),
+              obscureText: true,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(l10n.cancelButton),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final currentPin = currentController.text.trim();
+              final newPin = newController.text.trim();
+              final confirmPin = confirmController.text.trim();
+              if (currentPin.isEmpty ||
+                  newPin.isEmpty ||
+                  confirmPin.isEmpty) {
+                return;
+              }
+              if (newPin != confirmPin) {
+                _showMessage(context, l10n.passwordMismatchMessage);
+                return;
+              }
+              final latest = await db.getUserById(user.id);
+              if (latest == null) {
+                return;
+              }
+              final hashed = PinHasher.hash(currentPin);
+              if (hashed != latest.pinHash) {
+                _showMessage(context, l10n.passwordInvalidMessage);
+                return;
+              }
+              await db.updateUserPin(
+                userId: user.id,
+                pinHash: PinHasher.hash(newPin),
+              );
+              await auth.refreshCurrentUser();
+              if (context.mounted) {
+                Navigator.of(dialogContext).pop();
+                _showMessage(context, l10n.passwordUpdatedMessage);
+              }
+            },
+            child: Text(l10n.confirmButton),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showChangeStudentPasswordDialog(
+    BuildContext context,
+    User teacher,
+  ) async {
+    final l10n = AppLocalizations.of(context)!;
+    final db = context.read<AppDatabase>();
+    final students = await db.watchStudents(teacher.id).first;
+    if (students.isEmpty) {
+      if (context.mounted) {
+        _showMessage(context, l10n.noStudents);
+      }
+      return;
+    }
+    final teacherPinController = TextEditingController();
+    final studentPinController = TextEditingController();
+    User selectedStudent = students.first;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text(l10n.changeStudentPasswordTitle),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<User>(
+                value: selectedStudent,
+                decoration:
+                    InputDecoration(labelText: l10n.selectStudentLabel),
+                items: students
+                    .map(
+                      (student) => DropdownMenuItem(
+                        value: student,
+                        child: Text(student.username),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) {
+                  if (value == null) {
+                    return;
+                  }
+                  setState(() => selectedStudent = value);
+                },
+              ),
+              TextField(
+                controller: studentPinController,
+                decoration:
+                    InputDecoration(labelText: l10n.studentPasswordLabel),
+                obscureText: true,
+              ),
+              TextField(
+                controller: teacherPinController,
+                decoration:
+                    InputDecoration(labelText: l10n.teacherPasswordLabel),
+                obscureText: true,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(l10n.cancelButton),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final teacherPin = teacherPinController.text.trim();
+                final studentPin = studentPinController.text.trim();
+                if (teacherPin.isEmpty || studentPin.isEmpty) {
+                  return;
+                }
+                final latestTeacher = await db.getUserById(teacher.id);
+                if (latestTeacher == null) {
+                  return;
+                }
+                final hashed = PinHasher.hash(teacherPin);
+                if (hashed != latestTeacher.pinHash) {
+                  _showMessage(context, l10n.passwordInvalidMessage);
+                  return;
+                }
+                await db.updateUserPin(
+                  userId: selectedStudent.id,
+                  pinHash: PinHasher.hash(studentPin),
+                );
+                if (context.mounted) {
+                  Navigator.of(dialogContext).pop();
+                  _showMessage(context, l10n.passwordUpdatedMessage);
+                }
+              },
+              child: Text(l10n.confirmButton),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

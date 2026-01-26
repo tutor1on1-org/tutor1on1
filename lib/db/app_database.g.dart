@@ -4314,6 +4314,38 @@ class $AppSettingsTable extends AppSettings
   late final GeneratedColumn<int> maxTokens = GeneratedColumn<int>(
       'max_tokens', aliasedName, false,
       type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _ttsInitialDelayMsMeta =
+      const VerificationMeta('ttsInitialDelayMs');
+  @override
+  late final GeneratedColumn<int> ttsInitialDelayMs = GeneratedColumn<int>(
+      'tts_initial_delay_ms', aliasedName, false,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(60000));
+  static const VerificationMeta _ttsAudioPathMeta =
+      const VerificationMeta('ttsAudioPath');
+  @override
+  late final GeneratedColumn<String> ttsAudioPath = GeneratedColumn<String>(
+      'tts_audio_path', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _logDirectoryMeta =
+      const VerificationMeta('logDirectory');
+  @override
+  late final GeneratedColumn<String> logDirectory = GeneratedColumn<String>(
+      'log_directory', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _llmLogPathMeta =
+      const VerificationMeta('llmLogPath');
+  @override
+  late final GeneratedColumn<String> llmLogPath = GeneratedColumn<String>(
+      'llm_log_path', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _ttsLogPathMeta =
+      const VerificationMeta('ttsLogPath');
+  @override
+  late final GeneratedColumn<String> ttsLogPath = GeneratedColumn<String>(
+      'tts_log_path', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _llmModeMeta =
       const VerificationMeta('llmMode');
   @override
@@ -4341,6 +4373,11 @@ class $AppSettingsTable extends AppSettings
         model,
         timeoutSeconds,
         maxTokens,
+        ttsInitialDelayMs,
+        ttsAudioPath,
+        logDirectory,
+        llmLogPath,
+        ttsLogPath,
         llmMode,
         locale,
         updatedAt
@@ -4390,6 +4427,36 @@ class $AppSettingsTable extends AppSettings
     } else if (isInserting) {
       context.missing(_maxTokensMeta);
     }
+    if (data.containsKey('tts_initial_delay_ms')) {
+      context.handle(
+          _ttsInitialDelayMsMeta,
+          ttsInitialDelayMs.isAcceptableOrUnknown(
+              data['tts_initial_delay_ms']!, _ttsInitialDelayMsMeta));
+    }
+    if (data.containsKey('tts_audio_path')) {
+      context.handle(
+          _ttsAudioPathMeta,
+          ttsAudioPath.isAcceptableOrUnknown(
+              data['tts_audio_path']!, _ttsAudioPathMeta));
+    }
+    if (data.containsKey('log_directory')) {
+      context.handle(
+          _logDirectoryMeta,
+          logDirectory.isAcceptableOrUnknown(
+              data['log_directory']!, _logDirectoryMeta));
+    }
+    if (data.containsKey('llm_log_path')) {
+      context.handle(
+          _llmLogPathMeta,
+          llmLogPath.isAcceptableOrUnknown(
+              data['llm_log_path']!, _llmLogPathMeta));
+    }
+    if (data.containsKey('tts_log_path')) {
+      context.handle(
+          _ttsLogPathMeta,
+          ttsLogPath.isAcceptableOrUnknown(
+              data['tts_log_path']!, _ttsLogPathMeta));
+    }
     if (data.containsKey('llm_mode')) {
       context.handle(_llmModeMeta,
           llmMode.isAcceptableOrUnknown(data['llm_mode']!, _llmModeMeta));
@@ -4425,6 +4492,16 @@ class $AppSettingsTable extends AppSettings
           .read(DriftSqlType.int, data['${effectivePrefix}timeout_seconds'])!,
       maxTokens: attachedDatabase.typeMapping
           .read(DriftSqlType.int, data['${effectivePrefix}max_tokens'])!,
+      ttsInitialDelayMs: attachedDatabase.typeMapping.read(
+          DriftSqlType.int, data['${effectivePrefix}tts_initial_delay_ms'])!,
+      ttsAudioPath: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}tts_audio_path']),
+      logDirectory: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}log_directory']),
+      llmLogPath: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}llm_log_path']),
+      ttsLogPath: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}tts_log_path']),
       llmMode: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}llm_mode'])!,
       locale: attachedDatabase.typeMapping
@@ -4447,6 +4524,11 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
   final String model;
   final int timeoutSeconds;
   final int maxTokens;
+  final int ttsInitialDelayMs;
+  final String? ttsAudioPath;
+  final String? logDirectory;
+  final String? llmLogPath;
+  final String? ttsLogPath;
   final String llmMode;
   final String? locale;
   final DateTime updatedAt;
@@ -4457,6 +4539,11 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       required this.model,
       required this.timeoutSeconds,
       required this.maxTokens,
+      required this.ttsInitialDelayMs,
+      this.ttsAudioPath,
+      this.logDirectory,
+      this.llmLogPath,
+      this.ttsLogPath,
       required this.llmMode,
       this.locale,
       required this.updatedAt});
@@ -4471,6 +4558,19 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
     map['model'] = Variable<String>(model);
     map['timeout_seconds'] = Variable<int>(timeoutSeconds);
     map['max_tokens'] = Variable<int>(maxTokens);
+    map['tts_initial_delay_ms'] = Variable<int>(ttsInitialDelayMs);
+    if (!nullToAbsent || ttsAudioPath != null) {
+      map['tts_audio_path'] = Variable<String>(ttsAudioPath);
+    }
+    if (!nullToAbsent || logDirectory != null) {
+      map['log_directory'] = Variable<String>(logDirectory);
+    }
+    if (!nullToAbsent || llmLogPath != null) {
+      map['llm_log_path'] = Variable<String>(llmLogPath);
+    }
+    if (!nullToAbsent || ttsLogPath != null) {
+      map['tts_log_path'] = Variable<String>(ttsLogPath);
+    }
     map['llm_mode'] = Variable<String>(llmMode);
     if (!nullToAbsent || locale != null) {
       map['locale'] = Variable<String>(locale);
@@ -4489,7 +4589,22 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       model: Value(model),
       timeoutSeconds: Value(timeoutSeconds),
       maxTokens: Value(maxTokens),
+      ttsInitialDelayMs: Value(ttsInitialDelayMs),
+      ttsAudioPath: ttsAudioPath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(ttsAudioPath),
       llmMode: Value(llmMode),
+      logDirectory: logDirectory == null && nullToAbsent
+          ? const Value.absent()
+          : Value(logDirectory),
+      llmLogPath:
+          llmLogPath == null && nullToAbsent
+              ? const Value.absent()
+              : Value(llmLogPath),
+      ttsLogPath:
+          ttsLogPath == null && nullToAbsent
+              ? const Value.absent()
+              : Value(ttsLogPath),
       locale:
           locale == null && nullToAbsent ? const Value.absent() : Value(locale),
       updatedAt: Value(updatedAt),
@@ -4506,6 +4621,11 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       model: serializer.fromJson<String>(json['model']),
       timeoutSeconds: serializer.fromJson<int>(json['timeoutSeconds']),
       maxTokens: serializer.fromJson<int>(json['maxTokens']),
+      ttsInitialDelayMs: serializer.fromJson<int>(json['ttsInitialDelayMs']),
+      ttsAudioPath: serializer.fromJson<String?>(json['ttsAudioPath']),
+      logDirectory: serializer.fromJson<String?>(json['logDirectory']),
+      llmLogPath: serializer.fromJson<String?>(json['llmLogPath']),
+      ttsLogPath: serializer.fromJson<String?>(json['ttsLogPath']),
       llmMode: serializer.fromJson<String>(json['llmMode']),
       locale: serializer.fromJson<String?>(json['locale']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
@@ -4521,6 +4641,11 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       'model': serializer.toJson<String>(model),
       'timeoutSeconds': serializer.toJson<int>(timeoutSeconds),
       'maxTokens': serializer.toJson<int>(maxTokens),
+      'ttsInitialDelayMs': serializer.toJson<int>(ttsInitialDelayMs),
+      'ttsAudioPath': serializer.toJson<String?>(ttsAudioPath),
+      'logDirectory': serializer.toJson<String?>(logDirectory),
+      'llmLogPath': serializer.toJson<String?>(llmLogPath),
+      'ttsLogPath': serializer.toJson<String?>(ttsLogPath),
       'llmMode': serializer.toJson<String>(llmMode),
       'locale': serializer.toJson<String?>(locale),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
@@ -4534,6 +4659,11 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
           String? model,
           int? timeoutSeconds,
           int? maxTokens,
+          int? ttsInitialDelayMs,
+          Value<String?> ttsAudioPath = const Value.absent(),
+          Value<String?> logDirectory = const Value.absent(),
+          Value<String?> llmLogPath = const Value.absent(),
+          Value<String?> ttsLogPath = const Value.absent(),
           String? llmMode,
           Value<String?> locale = const Value.absent(),
           DateTime? updatedAt}) =>
@@ -4544,6 +4674,13 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
         model: model ?? this.model,
         timeoutSeconds: timeoutSeconds ?? this.timeoutSeconds,
         maxTokens: maxTokens ?? this.maxTokens,
+        ttsInitialDelayMs: ttsInitialDelayMs ?? this.ttsInitialDelayMs,
+        ttsAudioPath:
+            ttsAudioPath.present ? ttsAudioPath.value : this.ttsAudioPath,
+        logDirectory:
+            logDirectory.present ? logDirectory.value : this.logDirectory,
+        llmLogPath: llmLogPath.present ? llmLogPath.value : this.llmLogPath,
+        ttsLogPath: ttsLogPath.present ? ttsLogPath.value : this.ttsLogPath,
         llmMode: llmMode ?? this.llmMode,
         locale: locale.present ? locale.value : this.locale,
         updatedAt: updatedAt ?? this.updatedAt,
@@ -4559,6 +4696,19 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
           ? data.timeoutSeconds.value
           : this.timeoutSeconds,
       maxTokens: data.maxTokens.present ? data.maxTokens.value : this.maxTokens,
+      ttsInitialDelayMs: data.ttsInitialDelayMs.present
+          ? data.ttsInitialDelayMs.value
+          : this.ttsInitialDelayMs,
+      ttsAudioPath: data.ttsAudioPath.present
+          ? data.ttsAudioPath.value
+          : this.ttsAudioPath,
+      logDirectory: data.logDirectory.present
+          ? data.logDirectory.value
+          : this.logDirectory,
+      llmLogPath:
+          data.llmLogPath.present ? data.llmLogPath.value : this.llmLogPath,
+      ttsLogPath:
+          data.ttsLogPath.present ? data.ttsLogPath.value : this.ttsLogPath,
       llmMode: data.llmMode.present ? data.llmMode.value : this.llmMode,
       locale: data.locale.present ? data.locale.value : this.locale,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
@@ -4574,6 +4724,11 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
           ..write('model: $model, ')
           ..write('timeoutSeconds: $timeoutSeconds, ')
           ..write('maxTokens: $maxTokens, ')
+          ..write('ttsInitialDelayMs: $ttsInitialDelayMs, ')
+          ..write('ttsAudioPath: $ttsAudioPath, ')
+          ..write('logDirectory: $logDirectory, ')
+          ..write('llmLogPath: $llmLogPath, ')
+          ..write('ttsLogPath: $ttsLogPath, ')
           ..write('llmMode: $llmMode, ')
           ..write('locale: $locale, ')
           ..write('updatedAt: $updatedAt')
@@ -4582,8 +4737,21 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
   }
 
   @override
-  int get hashCode => Object.hash(id, baseUrl, providerId, model,
-      timeoutSeconds, maxTokens, llmMode, locale, updatedAt);
+  int get hashCode => Object.hash(
+      id,
+      baseUrl,
+      providerId,
+      model,
+      timeoutSeconds,
+      maxTokens,
+      ttsInitialDelayMs,
+      ttsAudioPath,
+      logDirectory,
+      llmLogPath,
+      ttsLogPath,
+      llmMode,
+      locale,
+      updatedAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -4594,6 +4762,11 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
           other.model == this.model &&
           other.timeoutSeconds == this.timeoutSeconds &&
           other.maxTokens == this.maxTokens &&
+          other.ttsInitialDelayMs == this.ttsInitialDelayMs &&
+          other.ttsAudioPath == this.ttsAudioPath &&
+          other.logDirectory == this.logDirectory &&
+          other.llmLogPath == this.llmLogPath &&
+          other.ttsLogPath == this.ttsLogPath &&
           other.llmMode == this.llmMode &&
           other.locale == this.locale &&
           other.updatedAt == this.updatedAt);
@@ -4606,6 +4779,11 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
   final Value<String> model;
   final Value<int> timeoutSeconds;
   final Value<int> maxTokens;
+  final Value<int> ttsInitialDelayMs;
+  final Value<String?> ttsAudioPath;
+  final Value<String?> logDirectory;
+  final Value<String?> llmLogPath;
+  final Value<String?> ttsLogPath;
   final Value<String> llmMode;
   final Value<String?> locale;
   final Value<DateTime> updatedAt;
@@ -4616,6 +4794,11 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     this.model = const Value.absent(),
     this.timeoutSeconds = const Value.absent(),
     this.maxTokens = const Value.absent(),
+    this.ttsInitialDelayMs = const Value.absent(),
+    this.ttsAudioPath = const Value.absent(),
+    this.logDirectory = const Value.absent(),
+    this.llmLogPath = const Value.absent(),
+    this.ttsLogPath = const Value.absent(),
     this.llmMode = const Value.absent(),
     this.locale = const Value.absent(),
     this.updatedAt = const Value.absent(),
@@ -4627,6 +4810,11 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     required String model,
     required int timeoutSeconds,
     required int maxTokens,
+    this.ttsInitialDelayMs = const Value.absent(),
+    this.ttsAudioPath = const Value.absent(),
+    this.logDirectory = const Value.absent(),
+    this.llmLogPath = const Value.absent(),
+    this.ttsLogPath = const Value.absent(),
     required String llmMode,
     this.locale = const Value.absent(),
     this.updatedAt = const Value.absent(),
@@ -4642,6 +4830,11 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     Expression<String>? model,
     Expression<int>? timeoutSeconds,
     Expression<int>? maxTokens,
+    Expression<int>? ttsInitialDelayMs,
+    Expression<String>? ttsAudioPath,
+    Expression<String>? logDirectory,
+    Expression<String>? llmLogPath,
+    Expression<String>? ttsLogPath,
     Expression<String>? llmMode,
     Expression<String>? locale,
     Expression<DateTime>? updatedAt,
@@ -4653,6 +4846,11 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
       if (model != null) 'model': model,
       if (timeoutSeconds != null) 'timeout_seconds': timeoutSeconds,
       if (maxTokens != null) 'max_tokens': maxTokens,
+      if (ttsInitialDelayMs != null) 'tts_initial_delay_ms': ttsInitialDelayMs,
+      if (ttsAudioPath != null) 'tts_audio_path': ttsAudioPath,
+      if (logDirectory != null) 'log_directory': logDirectory,
+      if (llmLogPath != null) 'llm_log_path': llmLogPath,
+      if (ttsLogPath != null) 'tts_log_path': ttsLogPath,
       if (llmMode != null) 'llm_mode': llmMode,
       if (locale != null) 'locale': locale,
       if (updatedAt != null) 'updated_at': updatedAt,
@@ -4666,6 +4864,11 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
       Value<String>? model,
       Value<int>? timeoutSeconds,
       Value<int>? maxTokens,
+      Value<int>? ttsInitialDelayMs,
+      Value<String?>? ttsAudioPath,
+      Value<String?>? logDirectory,
+      Value<String?>? llmLogPath,
+      Value<String?>? ttsLogPath,
       Value<String>? llmMode,
       Value<String?>? locale,
       Value<DateTime>? updatedAt}) {
@@ -4676,6 +4879,11 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
       model: model ?? this.model,
       timeoutSeconds: timeoutSeconds ?? this.timeoutSeconds,
       maxTokens: maxTokens ?? this.maxTokens,
+      ttsInitialDelayMs: ttsInitialDelayMs ?? this.ttsInitialDelayMs,
+      ttsAudioPath: ttsAudioPath ?? this.ttsAudioPath,
+      logDirectory: logDirectory ?? this.logDirectory,
+      llmLogPath: llmLogPath ?? this.llmLogPath,
+      ttsLogPath: ttsLogPath ?? this.ttsLogPath,
       llmMode: llmMode ?? this.llmMode,
       locale: locale ?? this.locale,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -4703,6 +4911,21 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     if (maxTokens.present) {
       map['max_tokens'] = Variable<int>(maxTokens.value);
     }
+    if (ttsInitialDelayMs.present) {
+      map['tts_initial_delay_ms'] = Variable<int>(ttsInitialDelayMs.value);
+    }
+    if (ttsAudioPath.present) {
+      map['tts_audio_path'] = Variable<String>(ttsAudioPath.value);
+    }
+    if (logDirectory.present) {
+      map['log_directory'] = Variable<String>(logDirectory.value);
+    }
+    if (llmLogPath.present) {
+      map['llm_log_path'] = Variable<String>(llmLogPath.value);
+    }
+    if (ttsLogPath.present) {
+      map['tts_log_path'] = Variable<String>(ttsLogPath.value);
+    }
     if (llmMode.present) {
       map['llm_mode'] = Variable<String>(llmMode.value);
     }
@@ -4724,6 +4947,11 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
           ..write('model: $model, ')
           ..write('timeoutSeconds: $timeoutSeconds, ')
           ..write('maxTokens: $maxTokens, ')
+          ..write('ttsInitialDelayMs: $ttsInitialDelayMs, ')
+          ..write('ttsAudioPath: $ttsAudioPath, ')
+          ..write('logDirectory: $logDirectory, ')
+          ..write('llmLogPath: $llmLogPath, ')
+          ..write('ttsLogPath: $ttsLogPath, ')
           ..write('llmMode: $llmMode, ')
           ..write('locale: $locale, ')
           ..write('updatedAt: $updatedAt')

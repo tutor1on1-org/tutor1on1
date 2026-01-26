@@ -188,6 +188,29 @@
   "modelLabel": "Model",
   "timeoutSecondsLabel": "Timeout (seconds)",
   "maxTokensLabel": "Max tokens",
+  "ttsInitialDelayLabel": "TTS initial delay (seconds)",
+  "ttsAudioPathLabel": "TTS audio save folder",
+  "logDirectoryLabel": "Log directory",
+  "llmLogPathLabel": "LLM log file",
+  "ttsLogPathLabel": "TTS log file",
+  "ttsPlayTooltip": "Play audio",
+  "ttsPauseTooltip": "Pause audio",
+  "ttsResumeTooltip": "Resume audio",
+  "ttsStopTooltip": "Stop audio",
+  "passwordSectionTitle": "Password",
+  "changePasswordButton": "Change password",
+  "changeStudentPasswordButton": "Change student password",
+  "changePasswordTitle": "Change password",
+  "currentPasswordLabel": "Current password",
+  "newPasswordLabel": "New password",
+  "confirmPasswordLabel": "Confirm new password",
+  "passwordMismatchMessage": "Passwords do not match.",
+  "passwordInvalidMessage": "Current password is incorrect.",
+  "passwordUpdatedMessage": "Password updated.",
+  "changeStudentPasswordTitle": "Change student password",
+  "selectStudentLabel": "Student",
+  "studentPasswordLabel": "New student password",
+  "teacherPasswordLabel": "Teacher password",
   "llmModeLabel": "LLM Mode",
   "llmModeLiveRecord": "Live (Record)",
   "llmModeReplay": "Replay",
@@ -196,8 +219,18 @@
   "modelMissingMessage": "Model is required.",
   "useSiliconflowDefaults": "Use SiliconFlow defaults",
   "useEnvDefaults": "Use env defaults",
-  "saveLlmConfigButton": "Save LLM Config",
+  "saveLlmConfigButton": "Save",
   "viewLlmLogsButton": "View LLM Logs",
+  "viewTtsLogsButton": "View TTS Logs",
+  "ttsTestButton": "Play last TTS audio",
+  "ttsTestStartedMessage": "Playing last TTS audio: {path}",
+  "@ttsTestStartedMessage": {
+    "placeholders": {
+      "path": {}
+    }
+  },
+  "ttsTestMissingMessage": "No saved TTS audio found yet.",
+  "ttsTestFailedMessage": "TTS test failed. Check TTS logs.",
   "apiKeyLabel": "API Key",
   "clearKeyButton": "Clear Key",
   "loadKeyFromEnvButton": "Load key from env",
@@ -326,6 +359,69 @@
     }
   },
   "noLlmLogs": "No LLM logs yet.",
+  "ttsLogsTitle": "TTS Logs",
+  "noTtsLogs": "No TTS logs yet.",
+  "ttsLogEntryTitle": "TTS {event} - {time}",
+  "@ttsLogEntryTitle": {
+    "placeholders": {
+      "event": {},
+      "time": {}
+    }
+  },
+  "ttsLogEntrySubtitle": "Status: {status}",
+  "@ttsLogEntrySubtitle": {
+    "placeholders": {
+      "status": {}
+    }
+  },
+  "ttsLogDetailsTitle": "TTS Log Details",
+  "ttsTimeLabel": "Time: {time}",
+  "@ttsTimeLabel": {
+    "placeholders": {
+      "time": {}
+    }
+  },
+  "ttsStatusLabel": "Status: {status}",
+  "@ttsStatusLabel": {
+    "placeholders": {
+      "status": {}
+    }
+  },
+  "ttsEventLabel": "Event: {event}",
+  "@ttsEventLabel": {
+    "placeholders": {
+      "event": {}
+    }
+  },
+  "ttsStatusUnknown": "Unknown",
+  "ttsModelLabel": "Model: {model}",
+  "@ttsModelLabel": {
+    "placeholders": {
+      "model": {}
+    }
+  },
+  "ttsVoiceLabel": "Voice: {voice}",
+  "@ttsVoiceLabel": {
+    "placeholders": {
+      "voice": {}
+    }
+  },
+  "ttsBaseUrlLabel": "Base URL: {baseUrl}",
+  "@ttsBaseUrlLabel": {
+    "placeholders": {
+      "baseUrl": {}
+    }
+  },
+  "ttsSessionIdLabel": "Session ID: {sessionId}",
+  "@ttsSessionIdLabel": {
+    "placeholders": {
+      "sessionId": {}
+    }
+  },
+  "ttsMessageLabel": "Message",
+  "ttsSnippetLabel": "Text snippet",
+  "ttsRequiresOpenAi": "TTS requires the OpenAI API.",
+  "maxTokensTooSmallWarning": "Max tokens too small. Prompt history was truncated.",
   "llmCallDetailsTitle": "LLM Call Details",
   "llmTimeLabel": "Time: {time}",
   "@llmTimeLabel": {

@@ -770,11 +770,23 @@ class _SkillTreePageState extends State<SkillTreePage> {
   List<SkillNode> _detailNodesForSelection(SkillNode node) {
     final path = _pathToNode(node);
     final result = <SkillNode>[...path];
-    if (!_isLeafNode(node) && _expanded.contains(node.id)) {
-      for (final child in node.children) {
-        result.add(child);
+    final parent =
+        node.parentId == null ? node : _nodeById(node.parentId!);
+    if (parent != null) {
+      for (final sibling in parent.children) {
+        if (!result.contains(sibling)) {
+          result.add(sibling);
+        }
       }
     }
+    if (node.children.isNotEmpty && _expanded.contains(node.id)) {
+      for (final child in node.children) {
+        if (!result.contains(child)) {
+          result.add(child);
+        }
+      }
+    }
+    result.sort((a, b) => a.id.compareTo(b.id));
     return result;
   }
 

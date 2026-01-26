@@ -188,6 +188,29 @@
   "modelLabel": "模型",
   "timeoutSecondsLabel": "超时（秒）",
   "maxTokensLabel": "最大 tokens",
+  "ttsInitialDelayLabel": "TTS 启动延迟（秒）",
+  "ttsAudioPathLabel": "TTS 音频保存目录",
+  "logDirectoryLabel": "日志目录",
+  "llmLogPathLabel": "LLM 日志文件",
+  "ttsLogPathLabel": "TTS 日志文件",
+  "ttsPlayTooltip": "播放语音",
+  "ttsPauseTooltip": "暂停语音",
+  "ttsResumeTooltip": "继续语音",
+  "ttsStopTooltip": "停止播放",
+  "passwordSectionTitle": "密码",
+  "changePasswordButton": "修改密码",
+  "changeStudentPasswordButton": "修改学生密码",
+  "changePasswordTitle": "修改密码",
+  "currentPasswordLabel": "当前密码",
+  "newPasswordLabel": "新密码",
+  "confirmPasswordLabel": "确认新密码",
+  "passwordMismatchMessage": "两次密码不一致。",
+  "passwordInvalidMessage": "当前密码不正确。",
+  "passwordUpdatedMessage": "密码已更新。",
+  "changeStudentPasswordTitle": "修改学生密码",
+  "selectStudentLabel": "学生",
+  "studentPasswordLabel": "学生新密码",
+  "teacherPasswordLabel": "教师密码",
   "llmModeLabel": "LLM 模式",
   "llmModeLiveRecord": "实时（记录）",
   "llmModeReplay": "回放",
@@ -196,8 +219,18 @@
   "modelMissingMessage": "需要选择模型。",
   "useSiliconflowDefaults": "使用 SiliconFlow 默认",
   "useEnvDefaults": "使用环境变量默认",
-  "saveLlmConfigButton": "保存 LLM 配置",
+  "saveLlmConfigButton": "保存",
   "viewLlmLogsButton": "查看 LLM 日志",
+  "viewTtsLogsButton": "查看 TTS 日志",
+  "ttsTestButton": "播放最近一次 TTS 音频",
+  "ttsTestStartedMessage": "正在播放最近一次 TTS 音频：{path}",
+  "@ttsTestStartedMessage": {
+    "placeholders": {
+      "path": {}
+    }
+  },
+  "ttsTestMissingMessage": "还没有保存的 TTS 音频。",
+  "ttsTestFailedMessage": "TTS 测试失败，请查看 TTS 日志。",
   "apiKeyLabel": "API Key",
   "clearKeyButton": "清除 Key",
   "loadKeyFromEnvButton": "从环境变量加载 Key",
@@ -326,6 +359,69 @@
     }
   },
   "noLlmLogs": "暂无 LLM 日志。",
+  "ttsLogsTitle": "TTS 日志",
+  "noTtsLogs": "暂无 TTS 日志。",
+  "ttsLogEntryTitle": "TTS {event} - {time}",
+  "@ttsLogEntryTitle": {
+    "placeholders": {
+      "event": {},
+      "time": {}
+    }
+  },
+  "ttsLogEntrySubtitle": "状态：{status}",
+  "@ttsLogEntrySubtitle": {
+    "placeholders": {
+      "status": {}
+    }
+  },
+  "ttsLogDetailsTitle": "TTS 日志详情",
+  "ttsTimeLabel": "时间：{time}",
+  "@ttsTimeLabel": {
+    "placeholders": {
+      "time": {}
+    }
+  },
+  "ttsStatusLabel": "状态：{status}",
+  "@ttsStatusLabel": {
+    "placeholders": {
+      "status": {}
+    }
+  },
+  "ttsEventLabel": "事件：{event}",
+  "@ttsEventLabel": {
+    "placeholders": {
+      "event": {}
+    }
+  },
+  "ttsStatusUnknown": "未知",
+  "ttsModelLabel": "模型：{model}",
+  "@ttsModelLabel": {
+    "placeholders": {
+      "model": {}
+    }
+  },
+  "ttsVoiceLabel": "声音：{voice}",
+  "@ttsVoiceLabel": {
+    "placeholders": {
+      "voice": {}
+    }
+  },
+  "ttsBaseUrlLabel": "Base URL：{baseUrl}",
+  "@ttsBaseUrlLabel": {
+    "placeholders": {
+      "baseUrl": {}
+    }
+  },
+  "ttsSessionIdLabel": "会话 ID：{sessionId}",
+  "@ttsSessionIdLabel": {
+    "placeholders": {
+      "sessionId": {}
+    }
+  },
+  "ttsMessageLabel": "信息",
+  "ttsSnippetLabel": "文本片段",
+  "ttsRequiresOpenAi": "TTS 需要使用 OpenAI API。",
+  "maxTokensTooSmallWarning": "Max tokens 太小，已截断会话历史。",
   "llmCallDetailsTitle": "LLM 调用详情",
   "llmTimeLabel": "时间：{time}",
   "@llmTimeLabel": {

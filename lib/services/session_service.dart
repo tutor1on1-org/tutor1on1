@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -9,6 +10,7 @@ import '../llm/llm_models.dart';
 import '../llm/llm_service.dart';
 import '../llm/prompt_renderer.dart';
 import '../llm/prompt_repository.dart';
+import 'settings_repository.dart';
 
 class SummarizeResult {
   SummarizeResult({
@@ -26,16 +28,28 @@ class SummarizeResult {
   final String? masterLevel;
 }
 
+class _RenderResult {
+  _RenderResult({
+    required this.rendered,
+    required this.maxTokensTooSmall,
+  });
+
+  final String rendered;
+  final bool maxTokensTooSmall;
+}
+
 class SessionService {
   SessionService(
     this._db,
     this._llmService,
     this._promptRepository,
+    this._settingsRepository,
   );
 
   final AppDatabase _db;
   final LlmService _llmService;
   final PromptRepository _promptRepository;
+  final SettingsRepository _settingsRepository;
   final PromptRenderer _renderer = PromptRenderer();
 
   Future<int> startSession({
@@ -108,6 +122,11 @@ class SessionService {
     required CourseVersion courseVersion,
     required CourseNode node,
     String? modelOverride,
+    bool stream = false,
+    void Function(String chunk)? onChunk,
+    void Function()? onPromptWarning,
+    bool streamToDatabase = true,
+    void Function(int assistantMessageId)? onAssistantMessageCreated,
   }) async {
     if (studentInput.trim().isNotEmpty) {
       await _db.into(_db.chatMessages).insert(
@@ -135,37 +154,138 @@ class SessionService {
       mode,
       teacherId: courseVersion.teacherId,
     );
-    var rendered = _renderer.render(template, {
+    final settings = await _settingsRepository.load();
+    final values = {
       'subject': courseVersion.subject,
       'course_version_id': courseVersion.id,
       'kp_key': node.kpKey,
       'kp_title': node.title,
       'kp_description': node.description,
       'conversation_history': history,
+      'session_history': history,
       'student_input': studentInput.trim(),
       'student_summary': progress?.summaryText ?? session?.summaryText ?? '',
-    });
+    };
     final hasAssistant = messages.any((message) => message.role == 'assistant');
+    String? lectureText;
+    String? questionsText;
+    String? questionLevel;
     if (mode == 'learn' && !hasAssistant) {
-      final lectureText = await _loadLectureText(
+      lectureText = await _loadLectureText(
         courseVersion: courseVersion,
         kpKey: node.kpKey,
       );
-      rendered = _appendLecture(rendered, lectureText);
     } else if (mode == 'review') {
-      final level = _normalizeLevel(progress?.questionLevel) ?? 'easy';
-      final questionsText = await _loadQuestionsText(
+      questionLevel = _normalizeLevel(progress?.questionLevel) ?? 'easy';
+      questionsText = await _loadQuestionsText(
         courseVersion: courseVersion,
         kpKey: node.kpKey,
-        level: level,
+        level: questionLevel,
       );
-      rendered = _appendQuestionBank(rendered, questionsText, level);
+    }
+    final renderResult = _renderWithHistoryLimit(
+      template: template,
+      values: values,
+      maxTokens: settings.maxTokens,
+      applyExtras: (rendered) {
+        if (lectureText != null) {
+          return _appendLecture(rendered, lectureText!);
+        }
+        if (questionsText != null && questionLevel != null) {
+          return _appendQuestionBank(
+            rendered,
+            questionsText!,
+            questionLevel!,
+          );
+        }
+        return rendered;
+      },
+    );
+    if (renderResult.maxTokensTooSmall && onPromptWarning != null) {
+      onPromptWarning();
+    }
+    final rendered = renderResult.rendered;
+
+    if (!stream) {
+      final handle = _llmService.startCall(
+        promptName: mode,
+        renderedPrompt: rendered,
+        modelOverride: modelOverride,
+        context: LlmCallContext(
+          teacherId: courseVersion.teacherId,
+          studentId: session?.studentId,
+          courseVersionId: courseVersion.id,
+          sessionId: sessionId,
+          kpKey: node.kpKey,
+          action: mode,
+        ),
+      );
+      final future = handle.future.then((result) async {
+        if (result.responseText.trim().isEmpty) {
+          throw StateError('LLM returned an empty response.');
+        }
+        await _db.into(_db.chatMessages).insert(
+              ChatMessagesCompanion.insert(
+                sessionId: sessionId,
+                role: 'assistant',
+                content: result.responseText,
+                action: Value(mode),
+              ),
+            );
+        return result;
+      });
+      return LlmRequestHandle(future: future, cancel: handle.cancel);
     }
 
-    final handle = _llmService.startCall(
+    final assistantId = await _db.into(_db.chatMessages).insert(
+          ChatMessagesCompanion.insert(
+            sessionId: sessionId,
+            role: 'assistant',
+            content: '',
+            action: Value(mode),
+          ),
+        );
+    if (onAssistantMessageCreated != null) {
+      onAssistantMessageCreated(assistantId);
+    }
+    final buffer = StringBuffer();
+    Timer? flushTimer;
+
+    Future<void> flush() async {
+      if (!streamToDatabase) {
+        return;
+      }
+      await _db.updateChatMessageContent(
+        messageId: assistantId,
+        content: buffer.toString(),
+      );
+    }
+
+    void scheduleFlush() {
+      if (!streamToDatabase) {
+        return;
+      }
+      if (flushTimer?.isActive == true) {
+        return;
+      }
+      flushTimer = Timer(const Duration(milliseconds: 80), () async {
+        await flush();
+      });
+    }
+
+    void handleChunk(String chunk) {
+      buffer.write(chunk);
+      scheduleFlush();
+      if (onChunk != null) {
+        onChunk(chunk);
+      }
+    }
+
+    final handle = _llmService.startStreamingCall(
       promptName: mode,
       renderedPrompt: rendered,
       modelOverride: modelOverride,
+      onChunk: handleChunk,
       context: LlmCallContext(
         teacherId: courseVersion.teacherId,
         studentId: session?.studentId,
@@ -176,17 +296,18 @@ class SessionService {
       ),
     );
     final future = handle.future.then((result) async {
-      if (result.responseText.trim().isEmpty) {
+      flushTimer?.cancel();
+      final finalText =
+          result.responseText.trim().isNotEmpty ? result.responseText : buffer.toString();
+      if (finalText.trim().isEmpty) {
         throw StateError('LLM returned an empty response.');
       }
-      await _db.into(_db.chatMessages).insert(
-            ChatMessagesCompanion.insert(
-              sessionId: sessionId,
-              role: 'assistant',
-              content: result.responseText,
-              action: Value(mode),
-            ),
-          );
+      if (streamToDatabase || onAssistantMessageCreated == null) {
+        await _db.updateChatMessageContent(
+          messageId: assistantId,
+          content: finalText,
+        );
+      }
       return result;
     });
     return LlmRequestHandle(future: future, cancel: handle.cancel);
@@ -197,6 +318,7 @@ class SessionService {
     required CourseVersion courseVersion,
     required CourseNode node,
     String? modelOverride,
+    void Function()? onPromptWarning,
   }) async {
     final session = await _db.getSession(sessionId);
     final progress = session == null
@@ -213,15 +335,27 @@ class SessionService {
       teacherId: courseVersion.teacherId,
     );
     final schema = await _promptRepository.loadSchema('summarize');
-    final rendered = _renderer.render(template, {
+    final settings = await _settingsRepository.load();
+    final values = {
       'subject': courseVersion.subject,
       'course_version_id': courseVersion.id,
       'kp_key': node.kpKey,
       'kp_title': node.title,
       'kp_description': node.description,
       'conversation_history': history,
+      'session_history': history,
       'student_summary': progress?.summaryText ?? session?.summaryText ?? '',
-    });
+    };
+    final renderResult = _renderWithHistoryLimit(
+      template: template,
+      values: values,
+      maxTokens: settings.maxTokens,
+      applyExtras: (rendered) => rendered,
+    );
+    if (renderResult.maxTokensTooSmall && onPromptWarning != null) {
+      onPromptWarning();
+    }
+    final rendered = renderResult.rendered;
 
     final handle = _llmService.startCall(
       promptName: 'summarize',
@@ -313,6 +447,77 @@ class SessionService {
       );
     }
     return buffer.toString().trim();
+  }
+
+  _RenderResult _renderWithHistoryLimit({
+    required String template,
+    required Map<String, Object?> values,
+    required int maxTokens,
+    required String Function(String rendered) applyExtras,
+  }) {
+    final historyValue = (values['conversation_history'] ?? '').toString();
+    final usesHistory = _hasVariable(template, 'conversation_history') ||
+        _hasVariable(template, 'session_history');
+    String renderWithHistory(String history) {
+      final updated = Map<String, Object?>.from(values);
+      updated['conversation_history'] = history;
+      updated['session_history'] = history;
+      return applyExtras(_renderer.render(template, updated));
+    }
+
+    final full = renderWithHistory(historyValue);
+    if (!usesHistory || maxTokens <= 0 || full.length <= maxTokens) {
+      return _RenderResult(
+        rendered: full,
+        maxTokensTooSmall: false,
+      );
+    }
+
+    final target = (maxTokens * 0.8).floor();
+    final baseWithoutHistory = renderWithHistory('');
+    if (baseWithoutHistory.length > target) {
+      return _RenderResult(
+        rendered: baseWithoutHistory,
+        maxTokensTooSmall: true,
+      );
+    }
+
+    final overflow = full.length - target;
+    if (overflow <= 0) {
+      return _RenderResult(
+        rendered: full,
+        maxTokensTooSmall: false,
+      );
+    }
+
+    final historyLength = historyValue.length;
+    final availableHistoryLength = historyLength - overflow;
+    if (availableHistoryLength <= 0) {
+      return _RenderResult(
+        rendered: baseWithoutHistory,
+        maxTokensTooSmall: true,
+      );
+    }
+
+    final keepFirst = (availableHistoryLength / 3).floor();
+    final keepLast = availableHistoryLength - keepFirst;
+    if (keepFirst > historyLength || keepLast > historyLength) {
+      return _RenderResult(
+        rendered: baseWithoutHistory,
+        maxTokensTooSmall: true,
+      );
+    }
+
+    final trimmedHistory = historyValue.substring(0, keepFirst) +
+        historyValue.substring(historyLength - keepLast);
+    return _RenderResult(
+      rendered: renderWithHistory(trimmedHistory),
+      maxTokensTooSmall: false,
+    );
+  }
+
+  bool _hasVariable(String template, String name) {
+    return RegExp('{{\\s*$name\\s*}}').hasMatch(template);
   }
 
   Map<String, dynamic>? _tryDecodeJsonObject(String input) {
