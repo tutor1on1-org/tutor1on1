@@ -85,3 +85,20 @@ SKILL: Log file path defaults and decoding
 - Context: Log files were noisy and UTF-8 decode errors surfaced on read.
 - Fix: Log once per API call, serialize writes, and decode with allowMalformed using configured log paths.
 - Lesson: Use a single write queue and resilient decoding for JSONL logs.
+
+SKILL: TTS playback start sync
+- Context: Text streaming started when the player reported "playing" but audio output had not begun.
+- Fix: Start streaming only after playback position advances beyond a small threshold.
+- Update: Removed the wait on `playerStateStream.playing` to avoid blocking start when the state never flips.
+- Update: Added a playback start watchdog; if position never advances, stop and fall back.
+- Lesson: Use actual playback progress, not just state, to sync text with audio.
+
+SKILL: TTS sanitizer placeholder pipeline
+- Context: Regex Markdown stripping and naive math parsing produced "$1" artifacts and dropped content.
+- Fix: Protect code + math with placeholders, parse Markdown via AST, then restore math and code safely.
+- Lesson: Prefer parser-driven text extraction over regex for mixed Markdown + LaTeX.
+
+SKILL: TTS duplicate text output
+- Context: Completed streaming chunks were appended again on playback completion.
+- Fix: Track whether the active chunk has been fully displayed and skip the raw append if so.
+- Lesson: Keep per-chunk display state to prevent duplicate UI writes.

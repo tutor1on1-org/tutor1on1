@@ -71,6 +71,7 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
   bool _ttsChunkInFlight = false;
   bool _ttsStreamPaused = false;
   DateTime? _ttsStreamPausedAt;
+  bool _ttsActiveChunkDisplayed = false;
   String? _ttsAudioDir;
 
   @override
@@ -1182,6 +1183,7 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     _ttsChunkInFlight = false;
     _ttsStreamPaused = false;
     _ttsStreamPausedAt = null;
+    _ttsActiveChunkDisplayed = false;
     _ttsAudioDir = settings?.ttsAudioPath?.trim();
     if (_ttsEnabled) {
       context.read<AppServices>().ttsService.stop(sessionId: widget.sessionId);
@@ -1264,7 +1266,7 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
       return;
     }
     for (final raw in chunks) {
-      final spoken = _ttsSanitizer.sanitize(raw);
+      final spoken = _ttsSanitizer.sanitizeForTts(raw);
       if (spoken.trim().isEmpty) {
         _appendDisplayChunk(raw);
         continue;
@@ -1286,6 +1288,7 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     final tts = context.read<AppServices>().ttsService;
     final next = _ttsChunkQueue.removeAt(0);
     _ttsChunkInFlight = true;
+    _ttsActiveChunkDisplayed = false;
     tts.enqueue(
       next.spoken,
       sessionId: widget.sessionId,
@@ -1311,8 +1314,9 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
         }
         if (_ttsStreamingActive) {
           _finishWordStreaming();
-        } else {
+        } else if (!_ttsActiveChunkDisplayed) {
           _appendDisplayChunk(next.raw);
+          _ttsActiveChunkDisplayed = true;
         }
         _ttsPlaybackActive = false;
         _ttsChunkInFlight = false;
@@ -1351,6 +1355,7 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     if (_ttsStreamTokens.isEmpty) {
       _ttsStreamingActive = false;
       _appendDisplayChunk(rawText);
+      _ttsActiveChunkDisplayed = true;
       return;
     }
     _ttsStreamingActive = true;
@@ -1412,6 +1417,7 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     _ttsStreamingActive = false;
     _ttsStreamPaused = false;
     _ttsStreamPausedAt = null;
+    _ttsActiveChunkDisplayed = true;
   }
 
   void _appendStreamingTokens(int count) {

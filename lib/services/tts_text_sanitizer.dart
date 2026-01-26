@@ -1,34 +1,201 @@
+﻿import 'dart:convert';
+
+import 'package:markdown/markdown.dart' as md;
+
 class TtsTextSanitizer {
-  String sanitize(String input) {
+  String sanitize(String input) => sanitizeForTts(input);
+
+  String sanitizeForTts(String input) {
     if (input.trim().isEmpty) {
       return '';
     }
-    var text = _stripCodeBlocks(input);
-    final segments = _tokenizeMathSegments(text);
+    final protected = _protectSegments(input);
+    final plainText = _markdownToPlainText(protected.text);
+    final restoredMath = _restoreMathSegments(
+      plainText,
+      protected.mathSegments,
+    );
+    final restored = _restoreCodeSegments(
+      restoredMath,
+      protected.codeSegments,
+    );
+    return _normalizeWhitespace(restored);
+  }
+
+  _ProtectedText _protectSegments(String input) {
     final buffer = StringBuffer();
-    for (final segment in segments) {
-      if (segment.isMath) {
-        buffer.write(_sanitizeMath(segment.text));
-      } else {
-        buffer.write(_stripMarkdown(segment.text));
+    final mathSegments = <String>[];
+    final codeSegments = <String>[];
+    var index = 0;
+
+    while (index < input.length) {
+      if (!_isEscaped(input, index) && _matchesAt(input, index, '```')) {
+        final end = _findClosingToken(input, index + 3, '```');
+        if (end != -1) {
+          final content = input.substring(index + 3, end);
+          final placeholder = '@@C${codeSegments.length}@@';
+          codeSegments.add(content);
+          buffer.write(placeholder);
+          index = end + 3;
+          continue;
+        }
+        buffer.write('```');
+        index += 3;
+        continue;
       }
+
+      if (!_isEscaped(input, index) && _matchesAt(input, index, '`')) {
+        final end = _findClosingToken(input, index + 1, '`');
+        if (end != -1) {
+          final content = input.substring(index + 1, end);
+          final placeholder = '@@C${codeSegments.length}@@';
+          codeSegments.add(content);
+          buffer.write(placeholder);
+          index = end + 1;
+          continue;
+        }
+        buffer.write('`');
+        index += 1;
+        continue;
+      }
+
+      if (!_isEscaped(input, index) && _matchesAt(input, index, r'$$')) {
+        final end = _findClosingToken(input, index + 2, r'$$');
+        if (end != -1) {
+          final content = input.substring(index + 2, end);
+          final placeholder = '@@M${mathSegments.length}@@';
+          mathSegments.add(content);
+          buffer.write(placeholder);
+          index = end + 2;
+          continue;
+        }
+        buffer.write(r'$$');
+        index += 2;
+        continue;
+      }
+
+      if (!_isEscaped(input, index) && _matchesAt(input, index, r'\[')) {
+        final end = _findClosingToken(input, index + 2, r'\]',
+            respectEscape: true);
+        if (end != -1) {
+          final content = input.substring(index + 2, end);
+          final placeholder = '@@M${mathSegments.length}@@';
+          mathSegments.add(content);
+          buffer.write(placeholder);
+          index = end + 2;
+          continue;
+        }
+        buffer.write(r'\[');
+        index += 2;
+        continue;
+      }
+
+      if (!_isEscaped(input, index) && _matchesAt(input, index, r'\(')) {
+        final end = _findClosingToken(input, index + 2, r'\)',
+            respectEscape: true);
+        if (end != -1) {
+          final content = input.substring(index + 2, end);
+          final placeholder = '@@M${mathSegments.length}@@';
+          mathSegments.add(content);
+          buffer.write(placeholder);
+          index = end + 2;
+          continue;
+        }
+        buffer.write(r'\(');
+        index += 2;
+        continue;
+      }
+
+      if (_matchesAt(input, index, r'$') && !_isEscaped(input, index)) {
+        if (_matchesAt(input, index, r'$$')) {
+          buffer.write(r'$');
+          index += 1;
+          continue;
+        }
+        final lineEnd = _lineEnd(input, index);
+        final end = _findInlineDollarEnd(input, index + 1, lineEnd);
+        if (end != -1) {
+          final content = input.substring(index + 1, end);
+          if (_shouldTreatInlineMath(content)) {
+            final placeholder = '@@M${mathSegments.length}@@';
+            mathSegments.add(content);
+            buffer.write(placeholder);
+            index = end + 1;
+            continue;
+          }
+        }
+        buffer.write(r'$');
+        index += 1;
+        continue;
+      }
+
+      buffer.write(input[index]);
+      index += 1;
     }
-    return _normalizeWhitespace(buffer.toString());
+
+    return _ProtectedText(
+      text: buffer.toString(),
+      mathSegments: mathSegments,
+      codeSegments: codeSegments,
+    );
   }
 
-  String _stripCodeBlocks(String input) {
-    return input.replaceAll(RegExp(r'```[\s\S]*?```'), ' ');
+  String _markdownToPlainText(String input) {
+    final doc = md.Document(
+      encodeHtml: false,
+      extensionSet: md.ExtensionSet.gitHubFlavored,
+    );
+    final lines = const LineSplitter().convert(input.replaceAll('\r', ''));
+    final nodes = doc.parseLines(lines);
+    final renderer = _MarkdownPlainTextRenderer();
+    for (final node in nodes) {
+      renderer.render(node);
+    }
+    return renderer.toString();
   }
 
-  String _stripMarkdown(String input) {
-    var text = input;
-    text = text.replaceAll(RegExp(r'\*\*(.+?)\*\*'), r'$1');
-    text = text.replaceAll(RegExp(r'\*(.+?)\*'), r'$1');
-    text = text.replaceAll(RegExp(r'__(.+?)__'), r'$1');
-    text = text.replaceAll(RegExp(r'_(.+?)_'), r'$1');
-    text = text.replaceAll(RegExp(r'`([^`]+)`'), r'$1');
-    text = text.replaceAll(RegExp(r'^\s*[-*]\s+', multiLine: true), '');
-    return text;
+  String _restoreMathSegments(String input, List<String> mathSegments) {
+    if (mathSegments.isEmpty) {
+      return input;
+    }
+    final buffer = StringBuffer();
+    var cursor = 0;
+    final regex = RegExp(r'@@M(\d+)@@');
+    for (final match in regex.allMatches(input)) {
+      buffer.write(input.substring(cursor, match.start));
+      final rawIndex = int.tryParse(match.group(1) ?? '');
+      if (rawIndex == null || rawIndex < 0 || rawIndex >= mathSegments.length) {
+        buffer.write(match.group(0));
+      } else {
+        buffer.write(_sanitizeMath(mathSegments[rawIndex]));
+      }
+      cursor = match.end;
+    }
+    buffer.write(input.substring(cursor));
+    return buffer.toString();
+  }
+
+  String _restoreCodeSegments(String input, List<String> codeSegments) {
+    if (codeSegments.isEmpty) {
+      return input;
+    }
+    final buffer = StringBuffer();
+    var cursor = 0;
+    final regex = RegExp(r'@@C(\d+)@@');
+    for (final match in regex.allMatches(input)) {
+      buffer.write(input.substring(cursor, match.start));
+      final rawIndex = int.tryParse(match.group(1) ?? '');
+      if (rawIndex == null ||
+          rawIndex < 0 ||
+          rawIndex >= codeSegments.length) {
+        buffer.write(match.group(0));
+      } else {
+        buffer.write(codeSegments[rawIndex]);
+      }
+      cursor = match.end;
+    }
+    buffer.write(input.substring(cursor));
+    return buffer.toString();
   }
 
   String _sanitizeMath(String input) {
@@ -45,25 +212,37 @@ class TtsTextSanitizer {
 
   String _replaceFraction(String input) {
     var text = input;
-    final pattern = RegExp(r'\\frac\s*{([^{}]+)}\s*{([^{}]+)}');
-    while (pattern.hasMatch(text)) {
-      text = text.replaceAllMapped(pattern, (match) {
-        final numerator = match.group(1) ?? '';
-        final denominator = match.group(2) ?? '';
-        return '$numerator over $denominator';
-      });
+    var index = text.indexOf(r'\frac');
+    while (index != -1) {
+      final first = _extractBraceContent(text, index + 5);
+      if (first == null) {
+        index = text.indexOf(r'\frac', index + 5);
+        continue;
+      }
+      final second = _extractBraceContent(text, first.endIndex);
+      if (second == null) {
+        index = text.indexOf(r'\frac', index + 5);
+        continue;
+      }
+      final replacement = '${first.content} over ${second.content}';
+      text = text.replaceRange(index, second.endIndex, replacement);
+      index = text.indexOf(r'\frac', index + replacement.length);
     }
     return text;
   }
 
   String _replaceRoot(String input) {
     var text = input;
-    final pattern = RegExp(r'\\sqrt\s*{([^{}]+)}');
-    while (pattern.hasMatch(text)) {
-      text = text.replaceAllMapped(pattern, (match) {
-        final inner = match.group(1) ?? '';
-        return 'square root of $inner';
-      });
+    var index = text.indexOf(r'\sqrt');
+    while (index != -1) {
+      final content = _extractBraceContent(text, index + 5);
+      if (content == null) {
+        index = text.indexOf(r'\sqrt', index + 5);
+        continue;
+      }
+      final replacement = 'square root of ${content.content}';
+      text = text.replaceRange(index, content.endIndex, replacement);
+      index = text.indexOf(r'\sqrt', index + replacement.length);
     }
     return text;
   }
@@ -125,111 +304,247 @@ class TtsTextSanitizer {
     replacements.forEach((key, value) {
       text = text.replaceAll(key, value);
     });
+    text = text.replaceAll('<', ' less than ');
+    text = text.replaceAll('>', ' greater than ');
     text = text.replaceAll(RegExp(r'\\[a-zA-Z]+'), ' ');
     return text;
   }
 
   String _normalizeWhitespace(String input) {
     return input
+        .replaceAll(RegExp(r'[ \t]+'), ' ')
+        .replaceAll(RegExp(r'\s*\n\s*'), ' ')
         .replaceAll(RegExp(r'\s+'), ' ')
-        .replaceAll(' .', '.')
-        .replaceAll(' ,', ',')
         .trim();
+  }
+
+  bool _matchesAt(String input, int index, String token) {
+    if (index < 0 || index + token.length > input.length) {
+      return false;
+    }
+    return input.startsWith(token, index);
+  }
+
+  int _lineEnd(String input, int index) {
+    final end = input.indexOf('\n', index);
+    return end == -1 ? input.length : end;
+  }
+
+  int _findClosingToken(
+    String input,
+    int from,
+    String token, {
+    bool respectEscape = false,
+  }) {
+    var index = from;
+    while (index < input.length) {
+      final found = input.indexOf(token, index);
+      if (found == -1) {
+        return -1;
+      }
+      if (respectEscape && _isEscaped(input, found)) {
+        index = found + token.length;
+        continue;
+      }
+      return found;
+    }
+    return -1;
+  }
+
+  int _findInlineDollarEnd(String input, int from, int lineEnd) {
+    var index = from;
+    while (index < lineEnd) {
+      final found = input.indexOf(r'$', index);
+      if (found == -1 || found >= lineEnd) {
+        return -1;
+      }
+      if (_isEscaped(input, found)) {
+        index = found + 1;
+        continue;
+      }
+      return found;
+    }
+    return -1;
+  }
+
+  bool _shouldTreatInlineMath(String content) {
+    final trimmed = content.trim();
+    if (trimmed.isEmpty) {
+      return false;
+    }
+    if (trimmed.contains('\n')) {
+      return false;
+    }
+    final hasSpace = RegExp(r'\s').hasMatch(trimmed);
+    final hasCommand = trimmed.contains('\\');
+    final hasOperator = RegExp(r'[=<>^+\-*/]').hasMatch(trimmed);
+    final hasLetter = RegExp(r'[A-Za-z]').hasMatch(trimmed);
+    final hasDigit = RegExp(r'\d').hasMatch(trimmed);
+    if (hasSpace && !(hasCommand || hasOperator)) {
+      return false;
+    }
+    if (hasCommand || hasOperator) {
+      return true;
+    }
+    if (hasLetter && !hasSpace) {
+      return true;
+    }
+    if (hasDigit && !hasSpace) {
+      return true;
+    }
+    return false;
+  }
+
+  bool _isEscaped(String input, int index) {
+    var backslashes = 0;
+    var i = index - 1;
+    while (i >= 0 && input[i] == '\\') {
+      backslashes += 1;
+      i -= 1;
+    }
+    return backslashes.isOdd;
+  }
+
+  _BraceContent? _extractBraceContent(String input, int startIndex) {
+    var index = startIndex;
+    while (index < input.length && input[index].trim().isEmpty) {
+      index += 1;
+    }
+    if (index >= input.length || input[index] != '{') {
+      return null;
+    }
+    index += 1;
+    final contentStart = index;
+    var depth = 0;
+    while (index < input.length) {
+      final char = input[index];
+      if (char == '{') {
+        depth += 1;
+      } else if (char == '}') {
+        if (depth == 0) {
+          final content = input.substring(contentStart, index);
+          return _BraceContent(content: content, endIndex: index + 1);
+        }
+        depth -= 1;
+      }
+      index += 1;
+    }
+    return null;
   }
 }
 
-class _MathSegment {
-  _MathSegment({
+class _ProtectedText {
+  _ProtectedText({
     required this.text,
-    required this.isMath,
+    required this.mathSegments,
+    required this.codeSegments,
   });
 
   final String text;
-  final bool isMath;
+  final List<String> mathSegments;
+  final List<String> codeSegments;
 }
 
-List<_MathSegment> _tokenizeMathSegments(String input) {
-  final segments = <_MathSegment>[];
-  var index = 0;
-  while (index < input.length) {
-    final match = _findNextDelimiter(input, index);
-    if (match == null) {
-      segments.add(_MathSegment(text: input.substring(index), isMath: false));
-      break;
-    }
-    if (match.start > index) {
-      segments.add(
-        _MathSegment(
-          text: input.substring(index, match.start),
-          isMath: false,
-        ),
-      );
-    }
-    final end = _findEndDelimiter(
-      input,
-      match,
-      match.start + match.startToken.length,
-    );
-    if (end == null) {
-      segments.add(
-        _MathSegment(text: match.startToken, isMath: false),
-      );
-      index = match.start + match.startToken.length;
-      continue;
-    }
-    final content =
-        input.substring(match.start + match.startToken.length, end);
-    segments.add(_MathSegment(text: content, isMath: true));
-    index = end + match.endToken.length;
-  }
-  return segments;
-}
-
-class _DelimiterMatch {
-  _DelimiterMatch({
-    required this.start,
-    required this.startToken,
-    required this.endToken,
+class _BraceContent {
+  _BraceContent({
+    required this.content,
+    required this.endIndex,
   });
 
-  final int start;
-  final String startToken;
-  final String endToken;
+  final String content;
+  final int endIndex;
 }
 
-_DelimiterMatch? _findNextDelimiter(String input, int start) {
-  final candidates = <_DelimiterMatch>[];
-  final dollar = input.indexOf(r'$', start);
-  if (dollar != -1) {
-    final isDouble = dollar + 1 < input.length && input[dollar + 1] == r'$';
-    candidates.add(
-      _DelimiterMatch(
-        start: dollar,
-        startToken: isDouble ? r'$$' : r'$',
-        endToken: isDouble ? r'$$' : r'$',
-      ),
-    );
-  }
-  final inline = input.indexOf(r'\(', start);
-  if (inline != -1) {
-    candidates.add(
-      _DelimiterMatch(start: inline, startToken: r'\(', endToken: r'\)'),
-    );
-  }
-  final display = input.indexOf(r'\[', start);
-  if (display != -1) {
-    candidates.add(
-      _DelimiterMatch(start: display, startToken: r'\[', endToken: r'\]'),
-    );
-  }
-  if (candidates.isEmpty) {
-    return null;
-  }
-  candidates.sort((a, b) => a.start.compareTo(b.start));
-  return candidates.first;
-}
+class _MarkdownPlainTextRenderer {
+  final StringBuffer _buffer = StringBuffer();
+  bool _endsWithNewline = false;
 
-int? _findEndDelimiter(String input, _DelimiterMatch match, int from) {
-  final end = input.indexOf(match.endToken, from);
-  return end == -1 ? null : end;
+  void render(md.Node node) {
+    if (node is md.Text) {
+      _write(node.text);
+      return;
+    }
+    if (node is md.Element) {
+      switch (node.tag) {
+        case 'p':
+        case 'blockquote':
+        case 'h1':
+        case 'h2':
+        case 'h3':
+        case 'h4':
+        case 'h5':
+        case 'h6':
+          _renderChildren(node);
+          _writeNewline();
+          return;
+        case 'br':
+          _writeNewline();
+          return;
+        case 'ul':
+        case 'ol':
+          _renderChildren(node);
+          _writeNewline();
+          return;
+        case 'li':
+          _write('- ');
+          _renderChildren(node);
+          _writeNewline();
+          return;
+        case 'code':
+          _write(node.textContent);
+          return;
+        case 'pre':
+          _write(node.textContent);
+          _writeNewline();
+          return;
+        case 'a':
+          final text = node.textContent;
+          if (text.isNotEmpty) {
+            _write(text);
+          } else {
+            final href = node.attributes['href'] ?? '';
+            _write(href);
+          }
+          return;
+        case 'img':
+          final alt = node.attributes['alt'] ?? '';
+          if (alt.isNotEmpty) {
+            _write(alt);
+          }
+          return;
+        default:
+          _renderChildren(node);
+          return;
+      }
+    }
+  }
+
+  void _renderChildren(md.Element node) {
+    final children = node.children;
+    if (children == null) {
+      return;
+    }
+    for (final child in children) {
+      render(child);
+    }
+  }
+
+  void _write(String text) {
+    if (text.isEmpty) {
+      return;
+    }
+    _buffer.write(text);
+    _endsWithNewline = text.endsWith('\n');
+  }
+
+  void _writeNewline() {
+    if (_endsWithNewline) {
+      return;
+    }
+    _buffer.write('\n');
+    _endsWithNewline = true;
+  }
+
+  @override
+  String toString() => _buffer.toString();
 }

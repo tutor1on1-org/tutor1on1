@@ -450,6 +450,22 @@ class TtsService {
     required String tag,
     void Function(Duration? duration)? onPlaybackStart,
   }) async {
+    StreamSubscription<Duration>? startSub;
+    StreamSubscription<ProcessingState>? stateSub;
+    Timer? startTimer;
+    bool hasStarted = false;
+    void stopStartSub() {
+      startSub?.cancel();
+      startSub = null;
+    }
+    void stopStateSub() {
+      stateSub?.cancel();
+      stateSub = null;
+    }
+    void stopStartTimer() {
+      startTimer?.cancel();
+      startTimer = null;
+    }
     try {
       await player.setVolume(1.0);
       await _logEvent(
@@ -470,29 +486,57 @@ class TtsService {
         sessionId: sessionId,
       );
       final completer = Completer<bool>();
-      late final StreamSubscription<ProcessingState> stateSub;
+      final duration = player.duration;
+      startSub = player.positionStream.listen((position) {
+        if (position > const Duration(milliseconds: 20)) {
+          hasStarted = true;
+          stopStartTimer();
+          onPlaybackStart?.call(duration);
+          stopStartSub();
+        }
+      });
       stateSub = player.processingStateStream.listen((state) {
         if (completer.isCompleted) {
           return;
         }
         if (state == ProcessingState.completed) {
+          stopStartTimer();
+          stopStartSub();
           completer.complete(true);
-          stateSub.cancel();
+          stopStateSub();
           return;
         }
         if (state == ProcessingState.idle && !player.playing) {
+          stopStartTimer();
+          stopStartSub();
           completer.complete(false);
-          stateSub.cancel();
+          stopStateSub();
         }
       });
       player.play();
-      await player.playerStateStream
-          .firstWhere((state) => state.playing)
-          .timeout(const Duration(seconds: 10));
-      final duration = player.duration;
-      onPlaybackStart?.call(duration);
+      startTimer = Timer(const Duration(seconds: 3), () async {
+        if (completer.isCompleted || hasStarted) {
+          return;
+        }
+        await _logEvent(
+          event: 'start_timeout',
+          message: 'Playback did not start (no position updates).',
+          textSnippet: textSnippet,
+          textLength: textLength,
+          sessionId: sessionId,
+        );
+        stopStartSub();
+        stopStateSub();
+        if (!completer.isCompleted) {
+          completer.complete(false);
+        }
+        player.stop();
+      });
       return await completer.future;
     } catch (error) {
+      stopStartSub();
+      stopStateSub();
+      stopStartTimer();
       await _logError(
         message: 'Playback failed ($tag): $error',
         textSnippet: textSnippet,
@@ -500,6 +544,8 @@ class TtsService {
         sessionId: sessionId,
       );
       return false;
+    } finally {
+      stopStartTimer();
     }
   }
 
