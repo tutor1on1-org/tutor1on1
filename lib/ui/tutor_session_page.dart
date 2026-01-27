@@ -23,11 +23,13 @@ class ChatSessionPage extends StatefulWidget {
     required this.sessionId,
     required this.courseVersion,
     required this.node,
+    this.readOnly = false,
   });
 
   final int sessionId;
   final CourseVersion courseVersion;
   final CourseNode node;
+  final bool readOnly;
 
   @override
   State<ChatSessionPage> createState() => _ChatSessionPageState();
@@ -138,11 +140,15 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
         : (LlmProviders.findById(providers, settings.providerId) ??
             LlmProviders.findByBaseUrl(providers, settings.baseUrl) ??
             providers.first);
+    final baseUrlLower = settings?.baseUrl.toLowerCase() ?? '';
     final ttsSupported = settings != null &&
         (provider.id == 'openai' ||
-            (settings.baseUrl.toLowerCase().contains('api.openai.com')));
+            provider.id == 'siliconflow' ||
+            baseUrlLower.contains('api.openai.com') ||
+            baseUrlLower.contains('siliconflow'));
     final livePlaybackActive =
         _ttsPlaybackActive || _ttsStreamPaused || _ttsChunkInFlight;
+    final canInteract = !_closed && !widget.readOnly;
     if (!ttsSupported && _ttsEnabled) {
       _ttsEnabled = false;
     }
@@ -162,7 +168,7 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
         actions: {
           _SendIntent: CallbackAction<_SendIntent>(
             onInvoke: (_) {
-              if (!_sending && !_closed) {
+              if (!_sending && canInteract) {
                 _sendMessage();
               }
               return null;
@@ -179,7 +185,7 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
                     : l10n.sessionTitle(widget.sessionId),
               ),
               actions: [
-                if (!_closed)
+                if (!_closed && !widget.readOnly)
                   IconButton(
                     tooltip: l10n.renameSessionButton,
                     icon: const Icon(Icons.edit),
@@ -352,7 +358,7 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
                     ),
                   ),
                 if (_sending) const LinearProgressIndicator(minHeight: 2),
-                if (!_closed)
+                if (canInteract)
                   Padding(
                     padding: const EdgeInsets.all(8),
                     child: Row(
@@ -389,7 +395,7 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
                       ],
                     ),
                   ),
-                if (!_closed)
+                if (canInteract)
                   Padding(
                     padding: const EdgeInsets.all(8),
                     child: Wrap(
@@ -534,25 +540,27 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
       ),
     ]);
 
-    if (message.role == 'user' &&
-        lastUserId != null &&
-        message.id == lastUserId) {
-      actions.add(
-        IconButton(
-          tooltip: l10n.editTooltip,
-          icon: const Icon(Icons.edit),
-          onPressed: _sending ? null : () => _editMessage(message, l10n),
-        ),
-      );
-    } else if (_isRefreshableMessage(message)) {
-      actions.add(
-        IconButton(
-          tooltip: l10n.refreshTooltip,
-          icon: const Icon(Icons.refresh),
-          onPressed: _sending ? null : () => _refreshAnswer(message, l10n),
-        ),
-      );
-    }
+      if (!widget.readOnly) {
+        if (message.role == 'user' &&
+            lastUserId != null &&
+            message.id == lastUserId) {
+          actions.add(
+            IconButton(
+              tooltip: l10n.editTooltip,
+              icon: const Icon(Icons.edit),
+              onPressed: _sending ? null : () => _editMessage(message, l10n),
+            ),
+          );
+        } else if (_isRefreshableMessage(message)) {
+          actions.add(
+            IconButton(
+              tooltip: l10n.refreshTooltip,
+              icon: const Icon(Icons.refresh),
+              onPressed: _sending ? null : () => _refreshAnswer(message, l10n),
+            ),
+          );
+        }
+      }
 
     return actions;
   }
@@ -573,6 +581,9 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
 
   Future<void> _sendMessage() async {
     final l10n = AppLocalizations.of(context)!;
+    if (widget.readOnly) {
+      return;
+    }
     if (_inputController.text.trim().isEmpty) {
       await _showErrorDialog(
         title: l10n.messageRequiredTitle,

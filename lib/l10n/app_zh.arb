@@ -123,8 +123,16 @@
   "statusNotLit": "状态：未点亮",
   "startContinueSession": "开始/继续会话",
   "startNewSession": "开始新会话",
+  "newSessionConfirmTitle": "再新建一个会话？",
+  "newSessionConfirmBody": "此知识点已有 {count} 个会话，仍要新建一个吗？",
+  "@newSessionConfirmBody": {
+    "placeholders": {
+      "count": {}
+    }
+  },
   "sessionHistoryTitle": "会话历史",
   "noSessionsYet": "暂无会话。",
+  "noAssignedStudentMessage": "此课程尚未分配学生。",
   "sessionLabel": "会话 {id}",
   "@sessionLabel": {
     "placeholders": {
@@ -421,7 +429,7 @@
   },
   "ttsMessageLabel": "信息",
   "ttsSnippetLabel": "文本片段",
-  "ttsRequiresOpenAi": "TTS 需要使用 OpenAI API。",
+  "ttsRequiresOpenAi": "TTS 需要使用 OpenAI 或 SiliconFlow API。",
   "ttsPreparingLabel": "正在准备 TTS...",
   "maxTokensTooSmallWarning": "Max tokens 太小，已截断会话历史。",
   "llmCallDetailsTitle": "LLM 调用详情",

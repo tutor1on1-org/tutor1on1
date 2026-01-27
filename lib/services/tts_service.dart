@@ -8,10 +8,15 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'secure_storage_service.dart';
+import 'settings_repository.dart';
 import 'tts_log_repository.dart';
 
 class TtsService {
-  TtsService(this._secureStorage, this._logRepository) {
+  TtsService(
+    this._secureStorage,
+    this._settingsRepository,
+    this._logRepository,
+  ) {
     _attachPlayerListeners(_player, tag: 'primary');
     _attachReplayListeners();
   }
@@ -20,8 +25,11 @@ class TtsService {
   static const _ttsModel = 'gpt-4o-mini-tts';
   static const _ttsVoice = 'alloy';
   static const _ttsFormat = 'mp3';
+  static const _siliconModel = 'FunAudioLLM/CosyVoice2-0.5B';
+  static const _siliconVoice = 'FunAudioLLM/CosyVoice2-0.5B:alex';
 
   final SecureStorageService _secureStorage;
+  final SettingsRepository _settingsRepository;
   final TtsLogRepository _logRepository;
   final AudioPlayer _player = AudioPlayer();
   final AudioPlayer _replayPlayer = AudioPlayer();
@@ -37,6 +45,9 @@ class TtsService {
   Duration? _replayDuration;
   bool _replayIsPlaying = false;
   bool _replayIsPaused = false;
+  String _lastBaseUrl = _ttsBaseUrl;
+  String _lastModel = _ttsModel;
+  String _lastVoice = _ttsVoice;
 
   Stream<TtsPlaybackState> get playbackStream => _playbackController.stream;
 
@@ -466,14 +477,26 @@ class TtsService {
     if ((apiKey ?? '').trim().isEmpty) {
       return null;
     }
+    final config = await _resolveTtsConfig();
+    if (config == null) {
+      return null;
+    }
+    _lastBaseUrl = config.baseUrl;
+    _lastModel = config.model;
+    _lastVoice = config.voice;
     try {
-      final url = Uri.parse('$_ttsBaseUrl/audio/speech');
-      final payload = jsonEncode({
-        'model': _ttsModel,
-        'voice': _ttsVoice,
+      final url = Uri.parse('${config.baseUrl}/audio/speech');
+      final payload = <String, dynamic>{
+        'model': config.model,
         'input': text,
         'response_format': _ttsFormat,
-      });
+      };
+      if (config.voice.trim().isNotEmpty) {
+        payload['voice'] = config.voice;
+      }
+      if (config.stream != null) {
+        payload['stream'] = config.stream;
+      }
       final response = await http
           .post(
             url,
@@ -481,12 +504,17 @@ class TtsService {
               'Content-Type': 'application/json',
               'Authorization': 'Bearer ${apiKey!.trim()}',
             },
-            body: payload,
+            body: jsonEncode(payload),
           )
           .timeout(const Duration(seconds: 30));
+      final traceId = response.headers['x-siliconcloud-trace-id'];
       if (response.statusCode < 200 || response.statusCode >= 300) {
         await _logError(
-          message: 'HTTP ${response.statusCode}: ${response.body}',
+          message: _formatErrorMessage(
+            response.statusCode,
+            response.body,
+            traceId,
+          ),
           statusCode: response.statusCode,
           textSnippet: text,
           textLength: text.length,
@@ -497,7 +525,10 @@ class TtsService {
       }
       await _logEvent(
         event: 'response',
-        message: 'Received TTS audio bytes (${response.bodyBytes.length}).',
+        message: _formatResponseMessage(
+          response.bodyBytes.length,
+          traceId,
+        ),
         statusCode: response.statusCode,
         textSnippet: text,
         textLength: text.length,
@@ -742,6 +773,49 @@ class TtsService {
     }
   }
 
+  Future<_TtsConfig?> _resolveTtsConfig() async {
+    final settings = await _settingsRepository.load();
+    final baseUrl = _normalizeBaseUrl(settings.baseUrl);
+    final providerId = (settings.providerId ?? '').trim().toLowerCase();
+    final isSiliconflow =
+        providerId == 'siliconflow' || baseUrl.contains('siliconflow');
+    final isOpenAi =
+        providerId == 'openai' || baseUrl.contains('openai.com');
+    if (!isSiliconflow && !isOpenAi) {
+      return null;
+    }
+    return _TtsConfig(
+      baseUrl: baseUrl,
+      model: isSiliconflow ? _siliconModel : _ttsModel,
+      voice: isSiliconflow ? _siliconVoice : _ttsVoice,
+      stream: isSiliconflow ? false : null,
+    );
+  }
+
+  String _normalizeBaseUrl(String value) {
+    var trimmed = value.trim();
+    while (trimmed.endsWith('/')) {
+      trimmed = trimmed.substring(0, trimmed.length - 1);
+    }
+    return trimmed;
+  }
+
+  String _formatResponseMessage(int length, String? traceId) {
+    final base = 'Received TTS audio bytes ($length).';
+    if (traceId == null || traceId.trim().isEmpty) {
+      return base;
+    }
+    return '$base trace_id=${traceId.trim()}';
+  }
+
+  String _formatErrorMessage(int status, String body, String? traceId) {
+    final base = 'HTTP $status: $body';
+    if (traceId == null || traceId.trim().isEmpty) {
+      return base;
+    }
+    return '$base trace_id=${traceId.trim()}';
+  }
+
   Future<void> _logError({
     required String message,
     String? textSnippet,
@@ -755,9 +829,9 @@ class TtsService {
     }
     return _logRepository.appendError(
       message: message,
-      baseUrl: _ttsBaseUrl,
-      model: _ttsModel,
-      voice: _ttsVoice,
+      baseUrl: _lastBaseUrl,
+      model: _lastModel,
+      voice: _lastVoice,
       textSnippet: textSnippet,
       textLength: textLength,
       statusCode: statusCode,
@@ -780,9 +854,9 @@ class TtsService {
     return _logRepository.appendEvent(
       event: event,
       message: message,
-      baseUrl: _ttsBaseUrl,
-      model: _ttsModel,
-      voice: _ttsVoice,
+      baseUrl: _lastBaseUrl,
+      model: _lastModel,
+      voice: _lastVoice,
       textSnippet: textSnippet,
       textLength: textLength,
       statusCode: statusCode,
@@ -885,6 +959,20 @@ class TtsService {
   }) {
     return p.join(baseDir, 'tts_message_$messageId.mp3');
   }
+}
+
+class _TtsConfig {
+  const _TtsConfig({
+    required this.baseUrl,
+    required this.model,
+    required this.voice,
+    required this.stream,
+  });
+
+  final String baseUrl;
+  final String model;
+  final String voice;
+  final bool? stream;
 }
 
 enum TtsTestStatus { played, missing, failed }

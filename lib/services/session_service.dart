@@ -97,12 +97,20 @@ class SessionService {
     if (provided != null && provided.isNotEmpty) {
       return provided;
     }
+    final dateSuffix = _formatSessionDate(DateTime.now());
     final node = await _db.getCourseNodeByKey(courseVersionId, kpKey);
     final nodeName = node?.title.trim();
     if (nodeName != null && nodeName.isNotEmpty) {
-      return '$kpKey: $nodeName';
+      return '$kpKey: $nodeName $dateSuffix';
     }
-    return kpKey;
+    return '$kpKey $dateSuffix';
+  }
+
+  String _formatSessionDate(DateTime date) {
+    final year = date.year.toString().padLeft(4, '0');
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    return '$year$month$day';
   }
 
   Future<void> closeSession(int sessionId) async {

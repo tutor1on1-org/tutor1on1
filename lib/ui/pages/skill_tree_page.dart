@@ -242,6 +242,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
     final auth = context.read<AuthController>();
     final currentUser = auth.currentUser;
     final isStudent = currentUser?.role == 'student';
+    final isTeacher = currentUser?.role == 'teacher';
     final db = context.read<AppDatabase>();
     final targetStudentId =
         isStudent ? currentUser?.id : _teacherStudentId;
@@ -504,8 +505,10 @@ class _SkillTreePageState extends State<SkillTreePage> {
                         onTap: () => _handleNodeTap(
                           node,
                           isStudent,
+                          isTeacher,
                           db,
                           currentUser?.id,
+                          targetStudentId,
                         ),
                         child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 4),
@@ -677,11 +680,22 @@ class _SkillTreePageState extends State<SkillTreePage> {
   Future<void> _handleNodeTap(
     SkillNode node,
     bool isStudent,
+    bool isTeacher,
     AppDatabase db,
     int? userId,
+    int? targetStudentId,
   ) async {
     _selectNode(node);
-    if (!isStudent || userId == null) {
+    if (!isStudent && !isTeacher) {
+      return;
+    }
+    final studentId = isStudent ? userId : targetStudentId;
+    if (studentId == null) {
+      if (isTeacher) {
+        await _showLeafError(
+          AppLocalizations.of(context)!.noAssignedStudentMessage,
+        );
+      }
       return;
     }
     final courseVersion = await db.getCourseVersionById(widget.courseVersionId);
@@ -699,7 +713,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
       return;
     }
     final sessions = await db.getSessionsForNode(
-      studentId: userId,
+      studentId: studentId,
       courseVersionId: widget.courseVersionId,
       kpKey: node.id,
     );
@@ -708,16 +722,25 @@ class _SkillTreePageState extends State<SkillTreePage> {
     }
     int? selectedId;
     if (sessions.isEmpty) {
+      if (isTeacher) {
+        await _showLeafError(
+          AppLocalizations.of(context)!.noSessionsYet,
+        );
+        return;
+      }
       selectedId = _newSessionChoice;
     } else {
-      selectedId = await _showSessionPicker(sessions);
+      selectedId = await _showSessionPicker(
+        sessions,
+        allowNew: isStudent,
+      );
     }
     if (selectedId == null) {
       return;
     }
     final sessionId = selectedId == _newSessionChoice
         ? await context.read<AppServices>().sessionService.startSession(
-              studentId: userId,
+              studentId: studentId,
               courseVersionId: widget.courseVersionId,
               kpKey: node.id,
             )
@@ -729,6 +752,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
       sessionId: sessionId,
       courseVersion: courseVersion,
       node: courseNode,
+      readOnly: isTeacher,
     );
   }
 
@@ -840,6 +864,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
     required int sessionId,
     required CourseVersion courseVersion,
     required CourseNode node,
+    bool readOnly = false,
   }) {
     return Navigator.of(context).push(
       MaterialPageRoute(
@@ -847,12 +872,16 @@ class _SkillTreePageState extends State<SkillTreePage> {
           sessionId: sessionId,
           courseVersion: courseVersion,
           node: node,
+          readOnly: readOnly,
         ),
       ),
     );
   }
 
-  Future<int?> _showSessionPicker(List<ChatSession> sessions) {
+  Future<int?> _showSessionPicker(
+    List<ChatSession> sessions, {
+    required bool allowNew,
+  }) {
     final l10n = AppLocalizations.of(context)!;
     return showModalBottomSheet<int>(
       context: context,
@@ -861,12 +890,22 @@ class _SkillTreePageState extends State<SkillTreePage> {
           child: ListView(
             shrinkWrap: true,
             children: [
-              ListTile(
-                leading: const Icon(Icons.add),
-                title: Text(l10n.startNewSession),
-                onTap: () => Navigator.of(context).pop(_newSessionChoice),
-              ),
-              const Divider(height: 1),
+              if (allowNew) ...[
+                ListTile(
+                  leading: const Icon(Icons.add),
+                  title: Text(l10n.startNewSession),
+                  onTap: () async {
+                    if (sessions.isNotEmpty &&
+                        !await _confirmNewSession(sessions.length)) {
+                      return;
+                    }
+                    if (context.mounted) {
+                      Navigator.of(context).pop(_newSessionChoice);
+                    }
+                  },
+                ),
+                const Divider(height: 1),
+              ],
               ...sessions.map((session) {
                 final title = (session.title ?? '').trim().isNotEmpty
                     ? session.title!.trim()
@@ -881,6 +920,28 @@ class _SkillTreePageState extends State<SkillTreePage> {
         );
       },
     );
+  }
+
+  Future<bool> _confirmNewSession(int existingCount) async {
+    final l10n = AppLocalizations.of(context)!;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(l10n.newSessionConfirmTitle),
+        content: Text(l10n.newSessionConfirmBody(existingCount)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(l10n.cancelButton),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(l10n.startNewSession),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
   }
 
   Future<void> _showLeafError(String message) {

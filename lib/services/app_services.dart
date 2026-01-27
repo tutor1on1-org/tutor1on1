@@ -70,7 +70,8 @@ class AppServices {
       settingsRepository,
     );
     final ttsLogRepository = TtsLogRepository(settingsRepository);
-    final ttsService = TtsService(secureStorage, ttsLogRepository);
+    final ttsService =
+        TtsService(secureStorage, settingsRepository, ttsLogRepository);
     return AppServices._(
       db: db,
       settingsRepository: settingsRepository,

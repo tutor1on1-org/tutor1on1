@@ -123,8 +123,16 @@
   "statusNotLit": "Status: Not lit",
   "startContinueSession": "Start/Continue Session",
   "startNewSession": "Start new session",
+  "newSessionConfirmTitle": "Start another session?",
+  "newSessionConfirmBody": "There are already {count} sessions for this knowledge point. Start another one?",
+  "@newSessionConfirmBody": {
+    "placeholders": {
+      "count": {}
+    }
+  },
   "sessionHistoryTitle": "Session History",
   "noSessionsYet": "No sessions yet.",
+  "noAssignedStudentMessage": "No assigned student for this course.",
   "sessionLabel": "Session {id}",
   "@sessionLabel": {
     "placeholders": {
@@ -421,7 +429,7 @@
   },
   "ttsMessageLabel": "Message",
   "ttsSnippetLabel": "Text snippet",
-  "ttsRequiresOpenAi": "TTS requires the OpenAI API.",
+  "ttsRequiresOpenAi": "TTS requires the OpenAI or SiliconFlow API.",
   "ttsPreparingLabel": "Preparing TTS...",
   "maxTokensTooSmallWarning": "Max tokens too small. Prompt history was truncated.",
   "llmCallDetailsTitle": "LLM Call Details",
