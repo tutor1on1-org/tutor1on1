@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../db/app_database.dart';
 import '../../models/skill_tree.dart';
 import '../../security/pin_hasher.dart';
+import '../../services/app_services.dart';
 import '../../state/auth_controller.dart';
 import 'course_version_page.dart';
 import 'prompt_settings_page.dart';
@@ -317,6 +318,12 @@ class TeacherHomePage extends StatelessWidget {
                 return;
               }
               await db.assignStudent(
+                studentId: selectedId!,
+                courseVersionId: courseVersionId,
+              );
+              final services = context.read<AppServices>();
+              await services.promptRepository.ensureAssignmentPrompts(
+                teacherId: teacherId,
                 studentId: selectedId!,
                 courseVersionId: courseVersionId,
               );

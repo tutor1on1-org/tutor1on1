@@ -5327,6 +5327,18 @@ class $PromptTemplatesTable extends PromptTemplates
   late final GeneratedColumn<int> teacherId = GeneratedColumn<int>(
       'teacher_id', aliasedName, false,
       type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _courseKeyMeta =
+      const VerificationMeta('courseKey');
+  @override
+  late final GeneratedColumn<String> courseKey = GeneratedColumn<String>(
+      'course_key', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _studentIdMeta =
+      const VerificationMeta('studentId');
+  @override
+  late final GeneratedColumn<int> studentId = GeneratedColumn<int>(
+      'student_id', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
   static const VerificationMeta _promptNameMeta =
       const VerificationMeta('promptName');
   @override
@@ -5358,8 +5370,16 @@ class $PromptTemplatesTable extends PromptTemplates
       requiredDuringInsert: false,
       defaultValue: currentDateAndTime);
   @override
-  List<GeneratedColumn> get $columns =>
-      [id, teacherId, promptName, content, isActive, createdAt];
+  List<GeneratedColumn> get $columns => [
+        id,
+        teacherId,
+        courseKey,
+        studentId,
+        promptName,
+        content,
+        isActive,
+        createdAt
+      ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -5378,6 +5398,18 @@ class $PromptTemplatesTable extends PromptTemplates
           teacherId.isAcceptableOrUnknown(data['teacher_id']!, _teacherIdMeta));
     } else if (isInserting) {
       context.missing(_teacherIdMeta);
+    }
+    if (data.containsKey('course_key')) {
+      context.handle(
+          _courseKeyMeta,
+          courseKey.isAcceptableOrUnknown(
+              data['course_key']!, _courseKeyMeta));
+    }
+    if (data.containsKey('student_id')) {
+      context.handle(
+          _studentIdMeta,
+          studentId.isAcceptableOrUnknown(
+              data['student_id']!, _studentIdMeta));
     }
     if (data.containsKey('prompt_name')) {
       context.handle(
@@ -5414,6 +5446,10 @@ class $PromptTemplatesTable extends PromptTemplates
           .read(DriftSqlType.int, data['${effectivePrefix}id'])!,
       teacherId: attachedDatabase.typeMapping
           .read(DriftSqlType.int, data['${effectivePrefix}teacher_id'])!,
+      courseKey: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}course_key']),
+      studentId: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}student_id']),
       promptName: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}prompt_name'])!,
       content: attachedDatabase.typeMapping
@@ -5434,6 +5470,8 @@ class $PromptTemplatesTable extends PromptTemplates
 class PromptTemplate extends DataClass implements Insertable<PromptTemplate> {
   final int id;
   final int teacherId;
+  final String? courseKey;
+  final int? studentId;
   final String promptName;
   final String content;
   final bool isActive;
@@ -5441,6 +5479,8 @@ class PromptTemplate extends DataClass implements Insertable<PromptTemplate> {
   const PromptTemplate(
       {required this.id,
       required this.teacherId,
+      this.courseKey,
+      this.studentId,
       required this.promptName,
       required this.content,
       required this.isActive,
@@ -5450,6 +5490,12 @@ class PromptTemplate extends DataClass implements Insertable<PromptTemplate> {
     final map = <String, Expression>{};
     map['id'] = Variable<int>(id);
     map['teacher_id'] = Variable<int>(teacherId);
+    if (!nullToAbsent || courseKey != null) {
+      map['course_key'] = Variable<String>(courseKey);
+    }
+    if (!nullToAbsent || studentId != null) {
+      map['student_id'] = Variable<int>(studentId);
+    }
     map['prompt_name'] = Variable<String>(promptName);
     map['content'] = Variable<String>(content);
     map['is_active'] = Variable<bool>(isActive);
@@ -5461,6 +5507,12 @@ class PromptTemplate extends DataClass implements Insertable<PromptTemplate> {
     return PromptTemplatesCompanion(
       id: Value(id),
       teacherId: Value(teacherId),
+      courseKey: courseKey == null && nullToAbsent
+          ? const Value.absent()
+          : Value(courseKey),
+      studentId: studentId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(studentId),
       promptName: Value(promptName),
       content: Value(content),
       isActive: Value(isActive),
@@ -5474,6 +5526,8 @@ class PromptTemplate extends DataClass implements Insertable<PromptTemplate> {
     return PromptTemplate(
       id: serializer.fromJson<int>(json['id']),
       teacherId: serializer.fromJson<int>(json['teacherId']),
+      courseKey: serializer.fromJson<String?>(json['courseKey']),
+      studentId: serializer.fromJson<int?>(json['studentId']),
       promptName: serializer.fromJson<String>(json['promptName']),
       content: serializer.fromJson<String>(json['content']),
       isActive: serializer.fromJson<bool>(json['isActive']),
@@ -5486,6 +5540,8 @@ class PromptTemplate extends DataClass implements Insertable<PromptTemplate> {
     return <String, dynamic>{
       'id': serializer.toJson<int>(id),
       'teacherId': serializer.toJson<int>(teacherId),
+      'courseKey': serializer.toJson<String?>(courseKey),
+      'studentId': serializer.toJson<int?>(studentId),
       'promptName': serializer.toJson<String>(promptName),
       'content': serializer.toJson<String>(content),
       'isActive': serializer.toJson<bool>(isActive),
@@ -5496,6 +5552,8 @@ class PromptTemplate extends DataClass implements Insertable<PromptTemplate> {
   PromptTemplate copyWith(
           {int? id,
           int? teacherId,
+          Value<String?> courseKey = const Value.absent(),
+          Value<int?> studentId = const Value.absent(),
           String? promptName,
           String? content,
           bool? isActive,
@@ -5503,6 +5561,8 @@ class PromptTemplate extends DataClass implements Insertable<PromptTemplate> {
       PromptTemplate(
         id: id ?? this.id,
         teacherId: teacherId ?? this.teacherId,
+        courseKey: courseKey.present ? courseKey.value : this.courseKey,
+        studentId: studentId.present ? studentId.value : this.studentId,
         promptName: promptName ?? this.promptName,
         content: content ?? this.content,
         isActive: isActive ?? this.isActive,
@@ -5512,6 +5572,9 @@ class PromptTemplate extends DataClass implements Insertable<PromptTemplate> {
     return PromptTemplate(
       id: data.id.present ? data.id.value : this.id,
       teacherId: data.teacherId.present ? data.teacherId.value : this.teacherId,
+      courseKey: data.courseKey.present ? data.courseKey.value : this.courseKey,
+      studentId:
+          data.studentId.present ? data.studentId.value : this.studentId,
       promptName:
           data.promptName.present ? data.promptName.value : this.promptName,
       content: data.content.present ? data.content.value : this.content,
@@ -5525,6 +5588,8 @@ class PromptTemplate extends DataClass implements Insertable<PromptTemplate> {
     return (StringBuffer('PromptTemplate(')
           ..write('id: $id, ')
           ..write('teacherId: $teacherId, ')
+          ..write('courseKey: $courseKey, ')
+          ..write('studentId: $studentId, ')
           ..write('promptName: $promptName, ')
           ..write('content: $content, ')
           ..write('isActive: $isActive, ')
@@ -5535,13 +5600,16 @@ class PromptTemplate extends DataClass implements Insertable<PromptTemplate> {
 
   @override
   int get hashCode =>
-      Object.hash(id, teacherId, promptName, content, isActive, createdAt);
+      Object.hash(id, teacherId, courseKey, studentId, promptName, content,
+          isActive, createdAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       (other is PromptTemplate &&
           other.id == this.id &&
           other.teacherId == this.teacherId &&
+          other.courseKey == this.courseKey &&
+          other.studentId == this.studentId &&
           other.promptName == this.promptName &&
           other.content == this.content &&
           other.isActive == this.isActive &&
@@ -5551,6 +5619,8 @@ class PromptTemplate extends DataClass implements Insertable<PromptTemplate> {
 class PromptTemplatesCompanion extends UpdateCompanion<PromptTemplate> {
   final Value<int> id;
   final Value<int> teacherId;
+  final Value<String?> courseKey;
+  final Value<int?> studentId;
   final Value<String> promptName;
   final Value<String> content;
   final Value<bool> isActive;
@@ -5558,6 +5628,8 @@ class PromptTemplatesCompanion extends UpdateCompanion<PromptTemplate> {
   const PromptTemplatesCompanion({
     this.id = const Value.absent(),
     this.teacherId = const Value.absent(),
+    this.courseKey = const Value.absent(),
+    this.studentId = const Value.absent(),
     this.promptName = const Value.absent(),
     this.content = const Value.absent(),
     this.isActive = const Value.absent(),
@@ -5566,6 +5638,8 @@ class PromptTemplatesCompanion extends UpdateCompanion<PromptTemplate> {
   PromptTemplatesCompanion.insert({
     this.id = const Value.absent(),
     required int teacherId,
+    this.courseKey = const Value.absent(),
+    this.studentId = const Value.absent(),
     required String promptName,
     required String content,
     this.isActive = const Value.absent(),
@@ -5576,6 +5650,8 @@ class PromptTemplatesCompanion extends UpdateCompanion<PromptTemplate> {
   static Insertable<PromptTemplate> custom({
     Expression<int>? id,
     Expression<int>? teacherId,
+    Expression<String>? courseKey,
+    Expression<int>? studentId,
     Expression<String>? promptName,
     Expression<String>? content,
     Expression<bool>? isActive,
@@ -5584,6 +5660,8 @@ class PromptTemplatesCompanion extends UpdateCompanion<PromptTemplate> {
     return RawValuesInsertable({
       if (id != null) 'id': id,
       if (teacherId != null) 'teacher_id': teacherId,
+      if (courseKey != null) 'course_key': courseKey,
+      if (studentId != null) 'student_id': studentId,
       if (promptName != null) 'prompt_name': promptName,
       if (content != null) 'content': content,
       if (isActive != null) 'is_active': isActive,
@@ -5594,6 +5672,8 @@ class PromptTemplatesCompanion extends UpdateCompanion<PromptTemplate> {
   PromptTemplatesCompanion copyWith(
       {Value<int>? id,
       Value<int>? teacherId,
+      Value<String?>? courseKey,
+      Value<int?>? studentId,
       Value<String>? promptName,
       Value<String>? content,
       Value<bool>? isActive,
@@ -5601,6 +5681,8 @@ class PromptTemplatesCompanion extends UpdateCompanion<PromptTemplate> {
     return PromptTemplatesCompanion(
       id: id ?? this.id,
       teacherId: teacherId ?? this.teacherId,
+      courseKey: courseKey ?? this.courseKey,
+      studentId: studentId ?? this.studentId,
       promptName: promptName ?? this.promptName,
       content: content ?? this.content,
       isActive: isActive ?? this.isActive,
@@ -5616,6 +5698,12 @@ class PromptTemplatesCompanion extends UpdateCompanion<PromptTemplate> {
     }
     if (teacherId.present) {
       map['teacher_id'] = Variable<int>(teacherId.value);
+    }
+    if (courseKey.present) {
+      map['course_key'] = Variable<String>(courseKey.value);
+    }
+    if (studentId.present) {
+      map['student_id'] = Variable<int>(studentId.value);
     }
     if (promptName.present) {
       map['prompt_name'] = Variable<String>(promptName.value);
@@ -5637,6 +5725,8 @@ class PromptTemplatesCompanion extends UpdateCompanion<PromptTemplate> {
     return (StringBuffer('PromptTemplatesCompanion(')
           ..write('id: $id, ')
           ..write('teacherId: $teacherId, ')
+          ..write('courseKey: $courseKey, ')
+          ..write('studentId: $studentId, ')
           ..write('promptName: $promptName, ')
           ..write('content: $content, ')
           ..write('isActive: $isActive, ')
@@ -8079,6 +8169,8 @@ typedef $$PromptTemplatesTableCreateCompanionBuilder = PromptTemplatesCompanion
     Function({
   Value<int> id,
   required int teacherId,
+  Value<String?> courseKey,
+  Value<int?> studentId,
   required String promptName,
   required String content,
   Value<bool> isActive,
@@ -8088,6 +8180,8 @@ typedef $$PromptTemplatesTableUpdateCompanionBuilder = PromptTemplatesCompanion
     Function({
   Value<int> id,
   Value<int> teacherId,
+  Value<String?> courseKey,
+  Value<int?> studentId,
   Value<String> promptName,
   Value<String> content,
   Value<bool> isActive,
@@ -8108,6 +8202,12 @@ class $$PromptTemplatesTableFilterComposer
 
   ColumnFilters<int> get teacherId => $composableBuilder(
       column: $table.teacherId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get courseKey => $composableBuilder(
+      column: $table.courseKey, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get studentId => $composableBuilder(
+      column: $table.studentId, builder: (column) => ColumnFilters(column));
 
   ColumnFilters<String> get promptName => $composableBuilder(
       column: $table.promptName, builder: (column) => ColumnFilters(column));
@@ -8137,6 +8237,12 @@ class $$PromptTemplatesTableOrderingComposer
   ColumnOrderings<int> get teacherId => $composableBuilder(
       column: $table.teacherId, builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<String> get courseKey => $composableBuilder(
+      column: $table.courseKey, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get studentId => $composableBuilder(
+      column: $table.studentId, builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<String> get promptName => $composableBuilder(
       column: $table.promptName, builder: (column) => ColumnOrderings(column));
 
@@ -8164,6 +8270,12 @@ class $$PromptTemplatesTableAnnotationComposer
 
   GeneratedColumn<int> get teacherId =>
       $composableBuilder(column: $table.teacherId, builder: (column) => column);
+
+  GeneratedColumn<String> get courseKey =>
+      $composableBuilder(column: $table.courseKey, builder: (column) => column);
+
+  GeneratedColumn<int> get studentId =>
+      $composableBuilder(column: $table.studentId, builder: (column) => column);
 
   GeneratedColumn<String> get promptName => $composableBuilder(
       column: $table.promptName, builder: (column) => column);
@@ -8207,6 +8319,8 @@ class $$PromptTemplatesTableTableManager extends RootTableManager<
           updateCompanionCallback: ({
             Value<int> id = const Value.absent(),
             Value<int> teacherId = const Value.absent(),
+            Value<String?> courseKey = const Value.absent(),
+            Value<int?> studentId = const Value.absent(),
             Value<String> promptName = const Value.absent(),
             Value<String> content = const Value.absent(),
             Value<bool> isActive = const Value.absent(),
@@ -8215,6 +8329,8 @@ class $$PromptTemplatesTableTableManager extends RootTableManager<
               PromptTemplatesCompanion(
             id: id,
             teacherId: teacherId,
+            courseKey: courseKey,
+            studentId: studentId,
             promptName: promptName,
             content: content,
             isActive: isActive,
@@ -8223,6 +8339,8 @@ class $$PromptTemplatesTableTableManager extends RootTableManager<
           createCompanionCallback: ({
             Value<int> id = const Value.absent(),
             required int teacherId,
+            Value<String?> courseKey = const Value.absent(),
+            Value<int?> studentId = const Value.absent(),
             required String promptName,
             required String content,
             Value<bool> isActive = const Value.absent(),
@@ -8231,6 +8349,8 @@ class $$PromptTemplatesTableTableManager extends RootTableManager<
               PromptTemplatesCompanion.insert(
             id: id,
             teacherId: teacherId,
+            courseKey: courseKey,
+            studentId: studentId,
             promptName: promptName,
             content: content,
             isActive: isActive,

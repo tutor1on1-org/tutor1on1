@@ -294,6 +294,8 @@
   "languageSavedMessage": "语言已更新。",
   "promptTemplatesTitle": "提示词模板",
   "promptTemplatesButton": "提示词",
+  "promptScopeLabel": "提示词范围",
+  "promptScopeDefault": "老师默认",
   "promptLearn": "学习",
   "promptPractice": "练习",
   "promptReview": "复习",

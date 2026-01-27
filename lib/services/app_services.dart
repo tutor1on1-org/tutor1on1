@@ -72,6 +72,7 @@ class AppServices {
     final ttsLogRepository = TtsLogRepository(settingsRepository);
     final ttsService =
         TtsService(secureStorage, settingsRepository, ttsLogRepository);
+    await promptRepository.backfillAssignmentPrompts();
     return AppServices._(
       db: db,
       settingsRepository: settingsRepository,

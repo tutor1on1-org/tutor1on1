@@ -178,6 +178,8 @@ class ApiConfigs extends Table {
 class PromptTemplates extends Table {
   IntColumn get id => integer().autoIncrement()();
   IntColumn get teacherId => integer()();
+  TextColumn get courseKey => text().nullable()();
+  IntColumn get studentId => integer().nullable()();
   TextColumn get promptName => text()();
   TextColumn get content => text()();
   BoolColumn get isActive => boolean().withDefault(const Constant(false))();
@@ -212,7 +214,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 15;
+  int get schemaVersion => 16;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -258,6 +260,10 @@ class AppDatabase extends _$AppDatabase {
           }
           if (from < 9) {
             await m.addColumn(chatSessions, chatSessions.title);
+          }
+          if (from < 16) {
+            await m.addColumn(promptTemplates, promptTemplates.courseKey);
+            await m.addColumn(promptTemplates, promptTemplates.studentId);
           }
           if (from < 10) {
             await m.addColumn(progressEntries, progressEntries.questionLevel);
@@ -949,12 +955,20 @@ ORDER BY l.created_at DESC
   Future<PromptTemplate?> getActivePromptTemplate({
     required int teacherId,
     required String promptName,
+    String? courseKey,
+    int? studentId,
   }) {
+    final normalizedCourseKey = _normalizeCourseKey(courseKey);
+    final scopeMatch = _promptScopeMatch(
+      courseKey: normalizedCourseKey,
+      studentId: studentId,
+    );
     return (select(promptTemplates)
           ..where((tbl) =>
               tbl.teacherId.equals(teacherId) &
               tbl.promptName.equals(promptName) &
-              tbl.isActive.equals(true))
+              tbl.isActive.equals(true) &
+              scopeMatch(tbl))
           ..orderBy([
             (tbl) => OrderingTerm(
                   expression: tbl.createdAt,
@@ -968,11 +982,19 @@ ORDER BY l.created_at DESC
   Stream<List<PromptTemplate>> watchPromptTemplates({
     required int teacherId,
     required String promptName,
+    String? courseKey,
+    int? studentId,
   }) {
+    final normalizedCourseKey = _normalizeCourseKey(courseKey);
+    final scopeMatch = _promptScopeMatch(
+      courseKey: normalizedCourseKey,
+      studentId: studentId,
+    );
     return (select(promptTemplates)
           ..where((tbl) =>
               tbl.teacherId.equals(teacherId) &
-              tbl.promptName.equals(promptName))
+              tbl.promptName.equals(promptName) &
+              scopeMatch(tbl))
           ..orderBy([
             (tbl) => OrderingTerm(
                   expression: tbl.createdAt,
@@ -986,18 +1008,27 @@ ORDER BY l.created_at DESC
     required int teacherId,
     required String promptName,
     required String content,
+    String? courseKey,
+    int? studentId,
   }) async {
+    final normalizedCourseKey = _normalizeCourseKey(courseKey);
     return transaction(() async {
       await (update(promptTemplates)
             ..where((tbl) =>
                 tbl.teacherId.equals(teacherId) &
-                tbl.promptName.equals(promptName)))
+                tbl.promptName.equals(promptName) &
+                _promptScopeMatch(
+                  courseKey: normalizedCourseKey,
+                  studentId: studentId,
+                )(tbl)))
           .write(
         const PromptTemplatesCompanion(isActive: Value(false)),
       );
       return into(promptTemplates).insert(
         PromptTemplatesCompanion.insert(
           teacherId: teacherId,
+          courseKey: Value(normalizedCourseKey),
+          studentId: Value(studentId),
           promptName: promptName,
           content: content,
           isActive: const Value(true),
@@ -1010,12 +1041,19 @@ ORDER BY l.created_at DESC
     required int teacherId,
     required String promptName,
     required int templateId,
+    String? courseKey,
+    int? studentId,
   }) async {
+    final normalizedCourseKey = _normalizeCourseKey(courseKey);
     await transaction(() async {
       await (update(promptTemplates)
             ..where((tbl) =>
                 tbl.teacherId.equals(teacherId) &
-                tbl.promptName.equals(promptName)))
+                tbl.promptName.equals(promptName) &
+                _promptScopeMatch(
+                  courseKey: normalizedCourseKey,
+                  studentId: studentId,
+                )(tbl)))
           .write(
         const PromptTemplatesCompanion(isActive: Value(false)),
       );
@@ -1023,7 +1061,11 @@ ORDER BY l.created_at DESC
             ..where((tbl) =>
                 tbl.id.equals(templateId) &
                 tbl.teacherId.equals(teacherId) &
-                tbl.promptName.equals(promptName)))
+                tbl.promptName.equals(promptName) &
+                _promptScopeMatch(
+                  courseKey: normalizedCourseKey,
+                  studentId: studentId,
+                )(tbl)))
           .write(
         const PromptTemplatesCompanion(isActive: Value(true)),
       );
@@ -1033,14 +1075,43 @@ ORDER BY l.created_at DESC
   Future<void> clearActivePromptTemplates({
     required int teacherId,
     required String promptName,
+    String? courseKey,
+    int? studentId,
   }) {
+    final normalizedCourseKey = _normalizeCourseKey(courseKey);
     return (update(promptTemplates)
           ..where((tbl) =>
               tbl.teacherId.equals(teacherId) &
-              tbl.promptName.equals(promptName)))
+              tbl.promptName.equals(promptName) &
+              _promptScopeMatch(
+                courseKey: normalizedCourseKey,
+                studentId: studentId,
+              )(tbl)))
         .write(
       const PromptTemplatesCompanion(isActive: Value(false)),
     );
+  }
+
+  String? _normalizeCourseKey(String? value) {
+    final trimmed = value?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return null;
+    }
+    return p.normalize(trimmed);
+  }
+
+  Expression<bool> Function($PromptTemplatesTable) _promptScopeMatch({
+    required String? courseKey,
+    required int? studentId,
+  }) {
+    return (tbl) {
+      final courseMatch =
+          courseKey == null ? tbl.courseKey.isNull() : tbl.courseKey.equals(courseKey);
+      final studentMatch = studentId == null
+          ? tbl.studentId.isNull()
+          : tbl.studentId.equals(studentId);
+      return courseMatch & studentMatch;
+    };
   }
 }
 

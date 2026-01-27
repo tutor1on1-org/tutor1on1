@@ -294,6 +294,8 @@
   "languageSavedMessage": "Language updated.",
   "promptTemplatesTitle": "Prompt Templates",
   "promptTemplatesButton": "Prompts",
+  "promptScopeLabel": "Prompt scope",
+  "promptScopeDefault": "Teacher default",
   "promptLearn": "Learn",
   "promptPractice": "Practice",
   "promptReview": "Review",

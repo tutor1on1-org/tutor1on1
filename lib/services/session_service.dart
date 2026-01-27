@@ -106,6 +106,14 @@ class SessionService {
     return '$kpKey $dateSuffix';
   }
 
+  String? _normalizeCourseKey(String? value) {
+    final trimmed = value?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return null;
+    }
+    return p.normalize(trimmed);
+  }
+
   String _formatSessionDate(DateTime date) {
     final year = date.year.toString().padLeft(4, '0');
     final month = date.month.toString().padLeft(2, '0');
@@ -157,10 +165,20 @@ class SessionService {
           );
     final messages = await _db.getMessagesForSession(sessionId);
     final history = _buildHistory(messages);
+    final courseKey = _normalizeCourseKey(courseVersion.sourcePath);
+    if (session != null) {
+      await _promptRepository.ensureAssignmentPrompts(
+        teacherId: courseVersion.teacherId,
+        studentId: session.studentId,
+        courseVersionId: courseVersion.id,
+      );
+    }
 
     final template = await _promptRepository.loadPrompt(
       mode,
       teacherId: courseVersion.teacherId,
+      courseKey: courseKey,
+      studentId: session?.studentId,
     );
     final settings = await _settingsRepository.load();
     final values = {
@@ -338,9 +356,19 @@ class SessionService {
           );
     final messages = await _db.getMessagesForSession(sessionId);
     final history = _buildHistory(messages);
+    final courseKey = _normalizeCourseKey(courseVersion.sourcePath);
+    if (session != null) {
+      await _promptRepository.ensureAssignmentPrompts(
+        teacherId: courseVersion.teacherId,
+        studentId: session.studentId,
+        courseVersionId: courseVersion.id,
+      );
+    }
     final template = await _promptRepository.loadPrompt(
       'summarize',
       teacherId: courseVersion.teacherId,
+      courseKey: courseKey,
+      studentId: session?.studentId,
     );
     final schema = await _promptRepository.loadSchema('summarize');
     final settings = await _settingsRepository.load();
