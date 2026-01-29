@@ -29,7 +29,9 @@ class CourseAssetResolution {
       return '$basePath$relativePath';
     }
     final segments = relativePath.split('/');
-    return p.join(basePath!, ...segments);
+    final allSegments = <String>[basePath!];
+    allSegments.addAll(segments);
+    return p.joinAll(allSegments);
   }
 
   bool exists(String resolvedPath) {
@@ -88,7 +90,8 @@ class CourseAssetResolver {
     final courseNorm = _normalizeToken(courseName);
     String? bestMatch;
     var bestDepth = 999;
-    final options = {...fsScan.options};
+    final options = <String>{};
+    options.addAll(fsScan.options);
 
     for (final asset in keys) {
       if (!asset.startsWith('assets/teachers/')) {

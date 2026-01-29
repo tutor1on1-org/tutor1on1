@@ -15,7 +15,7 @@ class SettingsRepository {
   Future<AppSetting> load() async {
     final existing = await _db.select(_db.appSettings).getSingleOrNull();
     if (existing != null) {
-      final providerId = existing.providerId?.trim();
+      final providerId = existing.providerId?.trim().toLowerCase();
       var needsUpdate = false;
       var companion = AppSettingsCompanion(
         updatedAt: Value(DateTime.now()),
@@ -101,6 +101,8 @@ class SettingsRepository {
             ttsInitialDelayMs: const Value(60000),
             ttsTextLeadMs: const Value(1000),
             ttsAudioPath: Value(ttsAudioPath),
+            sttAutoSend: const Value(false),
+            studyModeEnabled: const Value(false),
             logDirectory: Value(logDirectory),
             llmLogPath: Value(logPaths['llm']!),
             ttsLogPath: Value(logPaths['tts']!),
@@ -115,6 +117,8 @@ class SettingsRepository {
     required String providerId,
     required String baseUrl,
     required String model,
+    required String ttsModel,
+    required String sttModel,
     required int timeoutSeconds,
     required int maxTokens,
     required int ttsInitialDelayMs,
@@ -122,6 +126,8 @@ class SettingsRepository {
     required String ttsAudioPath,
     required String logDirectory,
     required String llmMode,
+    required bool sttAutoSend,
+    required bool studyModeEnabled,
     String? locale,
   }) async {
     final current = await load();
@@ -136,16 +142,31 @@ class SettingsRepository {
       baseUrl: Value(_normalizeBaseUrl(baseUrl)),
       providerId: Value(providerId),
       model: Value(model.trim()),
+      ttsModel: Value(ttsModel.trim().isEmpty ? null : ttsModel.trim()),
+      sttModel: Value(sttModel.trim().isEmpty ? null : sttModel.trim()),
       timeoutSeconds: Value(timeoutSeconds),
       maxTokens: Value(maxTokens),
       ttsInitialDelayMs: Value(ttsInitialDelayMs),
       ttsTextLeadMs: Value(ttsTextLeadMs),
       ttsAudioPath: Value(resolvedPath),
+      sttAutoSend: Value(sttAutoSend),
+      studyModeEnabled: Value(studyModeEnabled),
       logDirectory: Value(resolvedLogDir),
       llmLogPath: Value(logPaths['llm']!),
       ttsLogPath: Value(logPaths['tts']!),
       llmMode: Value(llmMode),
       locale: Value(locale ?? current.locale),
+      updatedAt: Value(DateTime.now()),
+    );
+    await (_db.update(_db.appSettings)..where((tbl) => tbl.id.equals(current.id)))
+        .write(companion);
+    return (await _db.select(_db.appSettings).getSingle());
+  }
+
+  Future<AppSetting> updateStudyModeEnabled(bool enabled) async {
+    final current = await load();
+    final companion = AppSettingsCompanion(
+      studyModeEnabled: Value(enabled),
       updatedAt: Value(DateTime.now()),
     );
     await (_db.update(_db.appSettings)..where((tbl) => tbl.id.equals(current.id)))

@@ -11,6 +11,7 @@ import '../llm/llm_models.dart';
 import '../llm/llm_providers.dart';
 import '../models/tutor_action.dart';
 import '../services/app_services.dart';
+import '../services/stt_service.dart';
 import '../services/tts_chunker.dart';
 import '../services/tts_service.dart';
 import '../services/tts_text_sanitizer.dart';
@@ -83,6 +84,11 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
   TtsPrefetchedAudio? _ttsPrefetchedAudio;
   _TtsQueuedChunk? _ttsPrefetchedChunk;
   String? _ttsAudioDir;
+  bool _sttRecording = false;
+  bool _sttTranscribing = false;
+  bool _sttPressActive = false;
+  bool _sttCancelHover = false;
+  final GlobalKey _sttCancelKey = GlobalKey();
 
   @override
   void initState() {
@@ -96,6 +102,10 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
       context.read<AppServices>().ttsService.stop(sessionId: widget.sessionId);
     }
     context.read<AppServices>().ttsService.stopReplay(sessionId: widget.sessionId);
+    context
+        .read<AppServices>()
+        .sttService
+        .cancelRecording(sessionId: widget.sessionId);
     _ttsGateTimer?.cancel();
     _ttsDisplayFlushTimer?.cancel();
     _ttsWordTimer?.cancel();
@@ -141,14 +151,19 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
             LlmProviders.findByBaseUrl(providers, settings.baseUrl) ??
             providers.first);
     final baseUrlLower = settings?.baseUrl.toLowerCase() ?? '';
-    final ttsSupported = settings != null &&
+    final isAudioProvider = settings != null &&
         (provider.id == 'openai' ||
             provider.id == 'siliconflow' ||
-            baseUrlLower.contains('api.openai.com') ||
+            baseUrlLower.contains('openai.com') ||
             baseUrlLower.contains('siliconflow'));
+    final ttsSupported = isAudioProvider &&
+        (settings?.ttsModel?.trim().isNotEmpty ?? false);
+    final sttSupported = isAudioProvider &&
+        (settings?.sttModel?.trim().isNotEmpty ?? false);
     final livePlaybackActive =
         _ttsPlaybackActive || _ttsStreamPaused || _ttsChunkInFlight;
     final canInteract = !_closed && !widget.readOnly;
+    final sttBusy = _sttPressActive || _sttRecording || _sttTranscribing;
     if (!ttsSupported && _ttsEnabled) {
       _ttsEnabled = false;
     }
@@ -193,8 +208,10 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
                   ),
               ],
             ),
-            body: Column(
+            body: Stack(
               children: [
+                Column(
+                  children: [
                 Expanded(
                   child: StreamBuilder<List<ChatMessage>>(
                     stream: db.watchMessagesForSession(widget.sessionId),
@@ -370,7 +387,7 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
                             focusNode: _inputFocus,
                             maxLines: 3,
                             minLines: 1,
-                            enabled: !_sending,
+                            enabled: !_sending && !_sttTranscribing,
                             decoration: InputDecoration(
                               labelText: l10n.chatInputLabel,
                               hintText: l10n.chatInputHint,
@@ -385,9 +402,77 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
                           ),
                         ),
                         const SizedBox(width: 8),
+                        Tooltip(
+                          message: sttSupported
+                              ? (_sttTranscribing
+                                  ? l10n.sttTranscribingLabel
+                                  : (_sttRecording
+                                      ? l10n.sttStopTooltip
+                                      : l10n.sttRecordTooltip))
+                              : l10n.sttRequiresOpenAi,
+                          child: Listener(
+                            key: const Key('chat_mic_button'),
+                            behavior: HitTestBehavior.opaque,
+                            onPointerDown: (_sending ||
+                                    _sttTranscribing ||
+                                    !sttSupported)
+                                ? null
+                                : _handleSttPointerDown,
+                            onPointerMove: (_sttPressActive &&
+                                    !_sttTranscribing &&
+                                    sttSupported)
+                                ? _handleSttPointerMove
+                                : null,
+                            onPointerUp: (_sttPressActive &&
+                                    !_sttTranscribing &&
+                                    sttSupported)
+                                ? _handleSttPointerUp
+                                : null,
+                            onPointerCancel: (_sttPressActive &&
+                                    !_sttTranscribing &&
+                                    sttSupported)
+                                ? _handleSttPointerCancel
+                                : null,
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 150),
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: _sttRecording
+                                    ? Theme.of(context)
+                                        .colorScheme
+                                        .errorContainer
+                                    : Theme.of(context)
+                                        .colorScheme
+                                        .surfaceContainerHighest,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: _sttTranscribing
+                                  ? const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : Icon(
+                                      Icons.mic,
+                                      color: _sttRecording
+                                          ? Theme.of(context)
+                                              .colorScheme
+                                              .onErrorContainer
+                                          : Theme.of(context)
+                                              .colorScheme
+                                              .onSurfaceVariant,
+                                    ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
                         IconButton(
                           key: const Key('chat_send_button'),
-                          onPressed: _sending ? _cancelRequest : _sendMessage,
+                          onPressed: _sending
+                              ? _cancelRequest
+                              : (sttBusy ? null : _sendMessage),
                           icon: Icon(_sending ? Icons.stop : Icons.send),
                           tooltip:
                               _sending ? l10n.stopTooltip : l10n.sendTooltip,
@@ -486,6 +571,10 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
                       ],
                     ),
                   ),
+                  ],
+                ),
+                if (_sttPressActive || _sttRecording)
+                  _buildSttCancelOverlay(context),
               ],
             ),
           ),
@@ -576,6 +665,196 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
                 setState(() => _mode = mode);
               }
             },
+    );
+  }
+
+  void _handleSttPointerDown(PointerDownEvent event) {
+    if (_sttPressActive || _sttTranscribing) {
+      return;
+    }
+    setState(() {
+      _sttPressActive = true;
+      _sttCancelHover = false;
+    });
+    _startSttRecording();
+  }
+
+  void _handleSttPointerMove(PointerMoveEvent event) {
+    if (!_sttPressActive) {
+      return;
+    }
+    _updateSttCancelHover(event.position);
+  }
+
+  void _handleSttPointerUp(PointerUpEvent event) {
+    if (!_sttPressActive) {
+      return;
+    }
+    _updateSttCancelHover(event.position);
+    _finishSttPress(canceled: _sttCancelHover);
+  }
+
+  void _handleSttPointerCancel(PointerCancelEvent event) {
+    if (!_sttPressActive) {
+      return;
+    }
+    _finishSttPress(canceled: true);
+  }
+
+  Future<void> _startSttRecording() async {
+    final l10n = AppLocalizations.of(context)!;
+    final sttService = context.read<AppServices>().sttService;
+    SttStartResult startResult;
+    try {
+      startResult =
+          await sttService.startRecording(sessionId: widget.sessionId);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _sttPressActive = false;
+        _sttRecording = false;
+        _sttCancelHover = false;
+      });
+      _showMessage('${l10n.sttFailedMessage} ($error)');
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    if (startResult.started) {
+      setState(() => _sttRecording = true);
+    } else {
+      setState(() {
+        _sttPressActive = false;
+        _sttRecording = false;
+        _sttCancelHover = false;
+      });
+      _showMessage(
+        startResult.permissionDenied
+            ? l10n.sttPermissionDenied
+            : (startResult.error ?? l10n.sttFailedMessage),
+      );
+    }
+  }
+
+  Future<void> _finishSttPress({required bool canceled}) async {
+    final l10n = AppLocalizations.of(context)!;
+    final sttService = context.read<AppServices>().sttService;
+    setState(() {
+      _sttPressActive = false;
+      _sttCancelHover = false;
+    });
+    if (canceled) {
+      await sttService.cancelRecording(sessionId: widget.sessionId);
+      if (mounted) {
+        setState(() => _sttRecording = false);
+      }
+      return;
+    }
+    if (!_sttRecording) {
+      return;
+    }
+    setState(() {
+      _sttRecording = false;
+      _sttTranscribing = true;
+    });
+    SttTranscriptionResult result;
+    try {
+      result = await sttService.stopAndTranscribe(sessionId: widget.sessionId);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _sttTranscribing = false);
+      _showMessage('${l10n.sttFailedMessage} ($error)');
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() => _sttTranscribing = false);
+    if (result.isSuccess) {
+      final autoSend =
+          context.read<SettingsController>().settings?.sttAutoSend ?? false;
+      _applyTranscription(result.text!);
+      if (autoSend && !_sending) {
+        Future.microtask(_sendMessage);
+      }
+    } else {
+      _showMessage(result.error ?? l10n.sttFailedMessage);
+    }
+  }
+
+  void _updateSttCancelHover(Offset globalPosition) {
+    final box = _sttCancelKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) {
+      return;
+    }
+    final rect = box.localToGlobal(Offset.zero) & box.size;
+    final hovering = rect.contains(globalPosition);
+    if (hovering == _sttCancelHover) {
+      return;
+    }
+    setState(() => _sttCancelHover = hovering);
+  }
+
+  void _applyTranscription(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) {
+      return;
+    }
+    final existing = _inputController.text.trim();
+    final merged = existing.isEmpty ? trimmed : '$existing $trimmed';
+    _inputController.value = TextEditingValue(
+      text: merged,
+      selection: TextSelection.collapsed(offset: merged.length),
+    );
+    _inputFocus.requestFocus();
+  }
+
+  Widget _buildSttCancelOverlay(BuildContext context) {
+    final theme = Theme.of(context);
+    final background = _sttCancelHover
+        ? theme.colorScheme.errorContainer
+        : theme.colorScheme.surface;
+    final foreground = _sttCancelHover
+        ? theme.colorScheme.onErrorContainer
+        : theme.colorScheme.onSurfaceVariant;
+    return Positioned.fill(
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerMove: _handleSttPointerMove,
+        onPointerUp: _handleSttPointerUp,
+        onPointerCancel: _handleSttPointerCancel,
+        child: Align(
+          alignment: const Alignment(0, 0.6),
+          child: AnimatedContainer(
+            key: _sttCancelKey,
+            duration: const Duration(milliseconds: 150),
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: background,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: theme.colorScheme.shadow.withOpacity(0.25),
+                  blurRadius: 12,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+              border: Border.all(
+                color: _sttCancelHover
+                    ? theme.colorScheme.error
+                    : theme.colorScheme.outline,
+                width: 2,
+              ),
+            ),
+            child: Icon(Icons.close, color: foreground, size: 28),
+          ),
+        ),
+      ),
     );
   }
 

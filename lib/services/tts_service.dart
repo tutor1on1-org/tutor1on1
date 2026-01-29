@@ -473,12 +473,12 @@ class TtsService {
     String text, {
     int? sessionId,
   }) async {
-    final apiKey = await _secureStorage.readApiKey();
-    if ((apiKey ?? '').trim().isEmpty) {
-      return null;
-    }
     final config = await _resolveTtsConfig();
     if (config == null) {
+      return null;
+    }
+    final apiKey = await _secureStorage.readApiKeyForBaseUrl(config.baseUrl);
+    if ((apiKey ?? '').trim().isEmpty) {
       return null;
     }
     _lastBaseUrl = config.baseUrl;
@@ -781,12 +781,16 @@ class TtsService {
         providerId == 'siliconflow' || baseUrl.contains('siliconflow');
     final isOpenAi =
         providerId == 'openai' || baseUrl.contains('openai.com');
+    final model = (settings.ttsModel ?? '').trim();
+    if (model.isEmpty) {
+      return null;
+    }
     if (!isSiliconflow && !isOpenAi) {
       return null;
     }
     return _TtsConfig(
       baseUrl: baseUrl,
-      model: isSiliconflow ? _siliconModel : _ttsModel,
+      model: model,
       voice: isSiliconflow ? _siliconVoice : _ttsVoice,
       stream: isSiliconflow ? false : null,
     );

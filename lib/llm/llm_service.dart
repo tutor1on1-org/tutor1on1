@@ -150,7 +150,8 @@ class LlmService {
       );
     }
 
-    final apiKey = await _secureStorage.readApiKey();
+    final apiKey =
+        await _secureStorage.readApiKeyForBaseUrl(settings.baseUrl);
     if ((apiKey ?? '').isEmpty) {
       throw StateError('Missing API key. Set it in Settings.');
     }
@@ -323,7 +324,8 @@ class LlmService {
       );
     }
 
-    final apiKey = await _secureStorage.readApiKey();
+    final apiKey =
+        await _secureStorage.readApiKeyForBaseUrl(settings.baseUrl);
     if ((apiKey ?? '').isEmpty) {
       throw StateError('Missing API key. Set it in Settings.');
     }

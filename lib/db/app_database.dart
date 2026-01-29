@@ -147,6 +147,8 @@ class AppSettings extends Table {
   TextColumn get baseUrl => text()();
   TextColumn get providerId => text().nullable()();
   TextColumn get model => text()();
+  TextColumn get ttsModel => text().nullable()();
+  TextColumn get sttModel => text().nullable()();
   IntColumn get timeoutSeconds => integer()();
   IntColumn get maxTokens => integer()();
   IntColumn get ttsInitialDelayMs =>
@@ -154,6 +156,9 @@ class AppSettings extends Table {
   IntColumn get ttsTextLeadMs =>
       integer().withDefault(const Constant(1000))();
   TextColumn get ttsAudioPath => text().nullable()();
+  BoolColumn get sttAutoSend => boolean().withDefault(const Constant(false))();
+  BoolColumn get studyModeEnabled =>
+      boolean().withDefault(const Constant(false))();
   TextColumn get logDirectory => text().nullable()();
   TextColumn get llmLogPath => text().nullable()();
   TextColumn get ttsLogPath => text().nullable()();
@@ -166,12 +171,14 @@ class ApiConfigs extends Table {
   IntColumn get id => integer().autoIncrement()();
   TextColumn get baseUrl => text()();
   TextColumn get model => text()();
+  TextColumn get ttsModel => text().nullable()();
+  TextColumn get sttModel => text().nullable()();
   TextColumn get apiKeyHash => text()();
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
 
   @override
   List<Set<Column>> get uniqueKeys => [
-        {baseUrl, model, apiKeyHash},
+        {baseUrl, model, ttsModel, sttModel, apiKeyHash},
       ];
 }
 
@@ -214,7 +221,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 16;
+  int get schemaVersion => 18;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -284,6 +291,16 @@ class AppDatabase extends _$AppDatabase {
           }
           if (from < 15) {
             await m.addColumn(appSettings, appSettings.ttsTextLeadMs);
+          }
+          if (from < 17) {
+            await m.addColumn(appSettings, appSettings.ttsModel);
+            await m.addColumn(appSettings, appSettings.sttModel);
+            await m.addColumn(appSettings, appSettings.sttAutoSend);
+            await m.addColumn(apiConfigs, apiConfigs.ttsModel);
+            await m.addColumn(apiConfigs, apiConfigs.sttModel);
+          }
+          if (from < 18) {
+            await m.addColumn(appSettings, appSettings.studyModeEnabled);
           }
         },
       );
@@ -778,9 +795,11 @@ ORDER BY l.created_at DESC
   Stream<List<ApiConfig>> watchApiConfigs() {
     return (select(apiConfigs)
           ..orderBy([
+            (tbl) => OrderingTerm(
+                  expression: tbl.createdAt,
+                  mode: OrderingMode.desc,
+                ),
             (tbl) => OrderingTerm(expression: tbl.baseUrl),
-            (tbl) => OrderingTerm(expression: tbl.model),
-            (tbl) => OrderingTerm(expression: tbl.apiKeyHash),
           ]))
         .watch();
   }
@@ -796,16 +815,56 @@ ORDER BY l.created_at DESC
   Future<int> insertApiConfig({
     required String baseUrl,
     required String model,
+    required String ttsModel,
+    required String sttModel,
     required String apiKeyHash,
   }) {
     return into(apiConfigs).insert(
       ApiConfigsCompanion.insert(
         baseUrl: baseUrl.trim(),
         model: model.trim(),
+        ttsModel: Value(ttsModel.trim().isEmpty ? null : ttsModel.trim()),
+        sttModel: Value(sttModel.trim().isEmpty ? null : sttModel.trim()),
         apiKeyHash: apiKeyHash.trim(),
       ),
       mode: InsertMode.insertOrIgnore,
     );
+  }
+
+  Future<void> backfillApiConfigModels({
+    required String openAiTtsModel,
+    required String openAiSttModel,
+    required String siliconTtsModel,
+    required String siliconSttModel,
+  }) async {
+    final configs = await select(apiConfigs).get();
+    for (final config in configs) {
+      final normalized = _normalizeBaseUrl(config.baseUrl).toLowerCase();
+      final isOpenAi = normalized.contains('openai.com');
+      final isSilicon = normalized.contains('siliconflow');
+      final desiredTts = isSilicon
+          ? siliconTtsModel
+          : (isOpenAi ? openAiTtsModel : '');
+      final desiredStt = isSilicon
+          ? siliconSttModel
+          : (isOpenAi ? openAiSttModel : '');
+      final currentTts = (config.ttsModel ?? '').trim();
+      final currentStt = (config.sttModel ?? '').trim();
+      final shouldUpdateTts =
+          currentTts.isEmpty && desiredTts.trim().isNotEmpty;
+      final shouldUpdateStt =
+          currentStt.isEmpty && desiredStt.trim().isNotEmpty;
+      if (!shouldUpdateTts && !shouldUpdateStt) {
+        continue;
+      }
+      await (update(apiConfigs)..where((tbl) => tbl.id.equals(config.id)))
+          .write(
+        ApiConfigsCompanion(
+          ttsModel: shouldUpdateTts ? Value(desiredTts.trim()) : const Value.absent(),
+          sttModel: shouldUpdateStt ? Value(desiredStt.trim()) : const Value.absent(),
+        ),
+      );
+    }
   }
 
   Future<int> deleteApiConfigById(int id) {
@@ -819,6 +878,14 @@ ORDER BY l.created_at DESC
     return (update(users)..where((tbl) => tbl.id.equals(userId))).write(
       UsersCompanion(pinHash: Value(pinHash)),
     );
+  }
+
+  String _normalizeBaseUrl(String value) {
+    var trimmed = value.trim();
+    if (trimmed.endsWith('/')) {
+      trimmed = trimmed.substring(0, trimmed.length - 1);
+    }
+    return trimmed;
   }
 
   Future<void> deleteStudent(int studentId) async {

@@ -700,8 +700,7 @@ class CourseVersion extends DataClass implements Insertable<CourseVersion> {
         id: id ?? this.id,
         teacherId: teacherId ?? this.teacherId,
         subject: subject ?? this.subject,
-        sourcePath:
-            sourcePath.present ? sourcePath.value : this.sourcePath,
+        sourcePath: sourcePath.present ? sourcePath.value : this.sourcePath,
         granularity: granularity ?? this.granularity,
         textbookText: textbookText ?? this.textbookText,
         treeGenStatus: treeGenStatus ?? this.treeGenStatus,
@@ -2032,8 +2031,8 @@ class $ProgressEntriesTable extends ProgressEntries
           .read(DriftSqlType.string, data['${effectivePrefix}kp_key'])!,
       lit: attachedDatabase.typeMapping
           .read(DriftSqlType.bool, data['${effectivePrefix}lit'])!,
-      questionLevel: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}question_level']),
+      questionLevel: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}question_level']),
       summaryText: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}summary_text']),
       summaryRawResponse: attachedDatabase.typeMapping.read(
@@ -2171,9 +2170,8 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
         courseVersionId: courseVersionId ?? this.courseVersionId,
         kpKey: kpKey ?? this.kpKey,
         lit: lit ?? this.lit,
-        questionLevel: questionLevel.present
-            ? questionLevel.value
-            : this.questionLevel,
+        questionLevel:
+            questionLevel.present ? questionLevel.value : this.questionLevel,
         summaryText: summaryText.present ? summaryText.value : this.summaryText,
         summaryRawResponse: summaryRawResponse.present
             ? summaryRawResponse.value
@@ -4302,6 +4300,18 @@ class $AppSettingsTable extends AppSettings
   late final GeneratedColumn<String> model = GeneratedColumn<String>(
       'model', aliasedName, false,
       type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _ttsModelMeta =
+      const VerificationMeta('ttsModel');
+  @override
+  late final GeneratedColumn<String> ttsModel = GeneratedColumn<String>(
+      'tts_model', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _sttModelMeta =
+      const VerificationMeta('sttModel');
+  @override
+  late final GeneratedColumn<String> sttModel = GeneratedColumn<String>(
+      'stt_model', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _timeoutSecondsMeta =
       const VerificationMeta('timeoutSeconds');
   @override
@@ -4336,6 +4346,26 @@ class $AppSettingsTable extends AppSettings
   late final GeneratedColumn<String> ttsAudioPath = GeneratedColumn<String>(
       'tts_audio_path', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _sttAutoSendMeta =
+      const VerificationMeta('sttAutoSend');
+  @override
+  late final GeneratedColumn<bool> sttAutoSend = GeneratedColumn<bool>(
+      'stt_auto_send', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'CHECK ("stt_auto_send" IN (0, 1))'),
+      defaultValue: const Constant(false));
+  static const VerificationMeta _studyModeEnabledMeta =
+      const VerificationMeta('studyModeEnabled');
+  @override
+  late final GeneratedColumn<bool> studyModeEnabled = GeneratedColumn<bool>(
+      'study_mode_enabled', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'CHECK ("study_mode_enabled" IN (0, 1))'),
+      defaultValue: const Constant(false));
   static const VerificationMeta _logDirectoryMeta =
       const VerificationMeta('logDirectory');
   @override
@@ -4379,11 +4409,15 @@ class $AppSettingsTable extends AppSettings
         baseUrl,
         providerId,
         model,
+        ttsModel,
+        sttModel,
         timeoutSeconds,
         maxTokens,
         ttsInitialDelayMs,
         ttsTextLeadMs,
         ttsAudioPath,
+        sttAutoSend,
+        studyModeEnabled,
         logDirectory,
         llmLogPath,
         ttsLogPath,
@@ -4422,6 +4456,14 @@ class $AppSettingsTable extends AppSettings
     } else if (isInserting) {
       context.missing(_modelMeta);
     }
+    if (data.containsKey('tts_model')) {
+      context.handle(_ttsModelMeta,
+          ttsModel.isAcceptableOrUnknown(data['tts_model']!, _ttsModelMeta));
+    }
+    if (data.containsKey('stt_model')) {
+      context.handle(_sttModelMeta,
+          sttModel.isAcceptableOrUnknown(data['stt_model']!, _sttModelMeta));
+    }
     if (data.containsKey('timeout_seconds')) {
       context.handle(
           _timeoutSecondsMeta,
@@ -4453,6 +4495,18 @@ class $AppSettingsTable extends AppSettings
           _ttsAudioPathMeta,
           ttsAudioPath.isAcceptableOrUnknown(
               data['tts_audio_path']!, _ttsAudioPathMeta));
+    }
+    if (data.containsKey('stt_auto_send')) {
+      context.handle(
+          _sttAutoSendMeta,
+          sttAutoSend.isAcceptableOrUnknown(
+              data['stt_auto_send']!, _sttAutoSendMeta));
+    }
+    if (data.containsKey('study_mode_enabled')) {
+      context.handle(
+          _studyModeEnabledMeta,
+          studyModeEnabled.isAcceptableOrUnknown(
+              data['study_mode_enabled']!, _studyModeEnabledMeta));
     }
     if (data.containsKey('log_directory')) {
       context.handle(
@@ -4503,16 +4557,24 @@ class $AppSettingsTable extends AppSettings
           .read(DriftSqlType.string, data['${effectivePrefix}provider_id']),
       model: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}model'])!,
+      ttsModel: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}tts_model']),
+      sttModel: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}stt_model']),
       timeoutSeconds: attachedDatabase.typeMapping
           .read(DriftSqlType.int, data['${effectivePrefix}timeout_seconds'])!,
       maxTokens: attachedDatabase.typeMapping
           .read(DriftSqlType.int, data['${effectivePrefix}max_tokens'])!,
       ttsInitialDelayMs: attachedDatabase.typeMapping.read(
           DriftSqlType.int, data['${effectivePrefix}tts_initial_delay_ms'])!,
-      ttsTextLeadMs: attachedDatabase.typeMapping.read(
-          DriftSqlType.int, data['${effectivePrefix}tts_text_lead_ms'])!,
+      ttsTextLeadMs: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}tts_text_lead_ms'])!,
       ttsAudioPath: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}tts_audio_path']),
+      sttAutoSend: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}stt_auto_send'])!,
+      studyModeEnabled: attachedDatabase.typeMapping.read(
+          DriftSqlType.bool, data['${effectivePrefix}study_mode_enabled'])!,
       logDirectory: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}log_directory']),
       llmLogPath: attachedDatabase.typeMapping
@@ -4539,11 +4601,15 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
   final String baseUrl;
   final String? providerId;
   final String model;
+  final String? ttsModel;
+  final String? sttModel;
   final int timeoutSeconds;
   final int maxTokens;
   final int ttsInitialDelayMs;
   final int ttsTextLeadMs;
   final String? ttsAudioPath;
+  final bool sttAutoSend;
+  final bool studyModeEnabled;
   final String? logDirectory;
   final String? llmLogPath;
   final String? ttsLogPath;
@@ -4555,11 +4621,15 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       required this.baseUrl,
       this.providerId,
       required this.model,
+      this.ttsModel,
+      this.sttModel,
       required this.timeoutSeconds,
       required this.maxTokens,
       required this.ttsInitialDelayMs,
       required this.ttsTextLeadMs,
       this.ttsAudioPath,
+      required this.sttAutoSend,
+      required this.studyModeEnabled,
       this.logDirectory,
       this.llmLogPath,
       this.ttsLogPath,
@@ -4575,6 +4645,12 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       map['provider_id'] = Variable<String>(providerId);
     }
     map['model'] = Variable<String>(model);
+    if (!nullToAbsent || ttsModel != null) {
+      map['tts_model'] = Variable<String>(ttsModel);
+    }
+    if (!nullToAbsent || sttModel != null) {
+      map['stt_model'] = Variable<String>(sttModel);
+    }
     map['timeout_seconds'] = Variable<int>(timeoutSeconds);
     map['max_tokens'] = Variable<int>(maxTokens);
     map['tts_initial_delay_ms'] = Variable<int>(ttsInitialDelayMs);
@@ -4582,6 +4658,8 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
     if (!nullToAbsent || ttsAudioPath != null) {
       map['tts_audio_path'] = Variable<String>(ttsAudioPath);
     }
+    map['stt_auto_send'] = Variable<bool>(sttAutoSend);
+    map['study_mode_enabled'] = Variable<bool>(studyModeEnabled);
     if (!nullToAbsent || logDirectory != null) {
       map['log_directory'] = Variable<String>(logDirectory);
     }
@@ -4607,6 +4685,12 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
           ? const Value.absent()
           : Value(providerId),
       model: Value(model),
+      ttsModel: ttsModel == null && nullToAbsent
+          ? const Value.absent()
+          : Value(ttsModel),
+      sttModel: sttModel == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sttModel),
       timeoutSeconds: Value(timeoutSeconds),
       maxTokens: Value(maxTokens),
       ttsInitialDelayMs: Value(ttsInitialDelayMs),
@@ -4614,18 +4698,18 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       ttsAudioPath: ttsAudioPath == null && nullToAbsent
           ? const Value.absent()
           : Value(ttsAudioPath),
-      llmMode: Value(llmMode),
+      sttAutoSend: Value(sttAutoSend),
+      studyModeEnabled: Value(studyModeEnabled),
       logDirectory: logDirectory == null && nullToAbsent
           ? const Value.absent()
           : Value(logDirectory),
-      llmLogPath:
-          llmLogPath == null && nullToAbsent
-              ? const Value.absent()
-              : Value(llmLogPath),
-      ttsLogPath:
-          ttsLogPath == null && nullToAbsent
-              ? const Value.absent()
-              : Value(ttsLogPath),
+      llmLogPath: llmLogPath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(llmLogPath),
+      ttsLogPath: ttsLogPath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(ttsLogPath),
+      llmMode: Value(llmMode),
       locale:
           locale == null && nullToAbsent ? const Value.absent() : Value(locale),
       updatedAt: Value(updatedAt),
@@ -4640,11 +4724,15 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       baseUrl: serializer.fromJson<String>(json['baseUrl']),
       providerId: serializer.fromJson<String?>(json['providerId']),
       model: serializer.fromJson<String>(json['model']),
+      ttsModel: serializer.fromJson<String?>(json['ttsModel']),
+      sttModel: serializer.fromJson<String?>(json['sttModel']),
       timeoutSeconds: serializer.fromJson<int>(json['timeoutSeconds']),
       maxTokens: serializer.fromJson<int>(json['maxTokens']),
       ttsInitialDelayMs: serializer.fromJson<int>(json['ttsInitialDelayMs']),
       ttsTextLeadMs: serializer.fromJson<int>(json['ttsTextLeadMs']),
       ttsAudioPath: serializer.fromJson<String?>(json['ttsAudioPath']),
+      sttAutoSend: serializer.fromJson<bool>(json['sttAutoSend']),
+      studyModeEnabled: serializer.fromJson<bool>(json['studyModeEnabled']),
       logDirectory: serializer.fromJson<String?>(json['logDirectory']),
       llmLogPath: serializer.fromJson<String?>(json['llmLogPath']),
       ttsLogPath: serializer.fromJson<String?>(json['ttsLogPath']),
@@ -4661,11 +4749,15 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       'baseUrl': serializer.toJson<String>(baseUrl),
       'providerId': serializer.toJson<String?>(providerId),
       'model': serializer.toJson<String>(model),
+      'ttsModel': serializer.toJson<String?>(ttsModel),
+      'sttModel': serializer.toJson<String?>(sttModel),
       'timeoutSeconds': serializer.toJson<int>(timeoutSeconds),
       'maxTokens': serializer.toJson<int>(maxTokens),
       'ttsInitialDelayMs': serializer.toJson<int>(ttsInitialDelayMs),
       'ttsTextLeadMs': serializer.toJson<int>(ttsTextLeadMs),
       'ttsAudioPath': serializer.toJson<String?>(ttsAudioPath),
+      'sttAutoSend': serializer.toJson<bool>(sttAutoSend),
+      'studyModeEnabled': serializer.toJson<bool>(studyModeEnabled),
       'logDirectory': serializer.toJson<String?>(logDirectory),
       'llmLogPath': serializer.toJson<String?>(llmLogPath),
       'ttsLogPath': serializer.toJson<String?>(ttsLogPath),
@@ -4680,12 +4772,16 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
           String? baseUrl,
           Value<String?> providerId = const Value.absent(),
           String? model,
+          Value<String?> ttsModel = const Value.absent(),
+          Value<String?> sttModel = const Value.absent(),
           int? timeoutSeconds,
           int? maxTokens,
           int? ttsInitialDelayMs,
-          int? ttsTextLeadMs,
-          Value<String?> ttsAudioPath = const Value.absent(),
-          Value<String?> logDirectory = const Value.absent(),
+      int? ttsTextLeadMs,
+      Value<String?> ttsAudioPath = const Value.absent(),
+      bool? sttAutoSend,
+      bool? studyModeEnabled,
+      Value<String?> logDirectory = const Value.absent(),
           Value<String?> llmLogPath = const Value.absent(),
           Value<String?> ttsLogPath = const Value.absent(),
           String? llmMode,
@@ -4696,12 +4792,16 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
         baseUrl: baseUrl ?? this.baseUrl,
         providerId: providerId.present ? providerId.value : this.providerId,
         model: model ?? this.model,
+        ttsModel: ttsModel.present ? ttsModel.value : this.ttsModel,
+        sttModel: sttModel.present ? sttModel.value : this.sttModel,
         timeoutSeconds: timeoutSeconds ?? this.timeoutSeconds,
         maxTokens: maxTokens ?? this.maxTokens,
         ttsInitialDelayMs: ttsInitialDelayMs ?? this.ttsInitialDelayMs,
         ttsTextLeadMs: ttsTextLeadMs ?? this.ttsTextLeadMs,
         ttsAudioPath:
             ttsAudioPath.present ? ttsAudioPath.value : this.ttsAudioPath,
+        sttAutoSend: sttAutoSend ?? this.sttAutoSend,
+        studyModeEnabled: studyModeEnabled ?? this.studyModeEnabled,
         logDirectory:
             logDirectory.present ? logDirectory.value : this.logDirectory,
         llmLogPath: llmLogPath.present ? llmLogPath.value : this.llmLogPath,
@@ -4717,6 +4817,8 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       providerId:
           data.providerId.present ? data.providerId.value : this.providerId,
       model: data.model.present ? data.model.value : this.model,
+      ttsModel: data.ttsModel.present ? data.ttsModel.value : this.ttsModel,
+      sttModel: data.sttModel.present ? data.sttModel.value : this.sttModel,
       timeoutSeconds: data.timeoutSeconds.present
           ? data.timeoutSeconds.value
           : this.timeoutSeconds,
@@ -4730,6 +4832,11 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       ttsAudioPath: data.ttsAudioPath.present
           ? data.ttsAudioPath.value
           : this.ttsAudioPath,
+      sttAutoSend:
+          data.sttAutoSend.present ? data.sttAutoSend.value : this.sttAutoSend,
+      studyModeEnabled: data.studyModeEnabled.present
+          ? data.studyModeEnabled.value
+          : this.studyModeEnabled,
       logDirectory: data.logDirectory.present
           ? data.logDirectory.value
           : this.logDirectory,
@@ -4750,11 +4857,15 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
           ..write('baseUrl: $baseUrl, ')
           ..write('providerId: $providerId, ')
           ..write('model: $model, ')
+          ..write('ttsModel: $ttsModel, ')
+          ..write('sttModel: $sttModel, ')
           ..write('timeoutSeconds: $timeoutSeconds, ')
           ..write('maxTokens: $maxTokens, ')
           ..write('ttsInitialDelayMs: $ttsInitialDelayMs, ')
           ..write('ttsTextLeadMs: $ttsTextLeadMs, ')
           ..write('ttsAudioPath: $ttsAudioPath, ')
+          ..write('sttAutoSend: $sttAutoSend, ')
+          ..write('studyModeEnabled: $studyModeEnabled, ')
           ..write('logDirectory: $logDirectory, ')
           ..write('llmLogPath: $llmLogPath, ')
           ..write('ttsLogPath: $ttsLogPath, ')
@@ -4771,11 +4882,15 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       baseUrl,
       providerId,
       model,
+      ttsModel,
+      sttModel,
       timeoutSeconds,
       maxTokens,
       ttsInitialDelayMs,
       ttsTextLeadMs,
       ttsAudioPath,
+      sttAutoSend,
+      studyModeEnabled,
       logDirectory,
       llmLogPath,
       ttsLogPath,
@@ -4790,11 +4905,15 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
           other.baseUrl == this.baseUrl &&
           other.providerId == this.providerId &&
           other.model == this.model &&
+          other.ttsModel == this.ttsModel &&
+          other.sttModel == this.sttModel &&
           other.timeoutSeconds == this.timeoutSeconds &&
           other.maxTokens == this.maxTokens &&
           other.ttsInitialDelayMs == this.ttsInitialDelayMs &&
           other.ttsTextLeadMs == this.ttsTextLeadMs &&
           other.ttsAudioPath == this.ttsAudioPath &&
+          other.sttAutoSend == this.sttAutoSend &&
+          other.studyModeEnabled == this.studyModeEnabled &&
           other.logDirectory == this.logDirectory &&
           other.llmLogPath == this.llmLogPath &&
           other.ttsLogPath == this.ttsLogPath &&
@@ -4808,11 +4927,15 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
   final Value<String> baseUrl;
   final Value<String?> providerId;
   final Value<String> model;
+  final Value<String?> ttsModel;
+  final Value<String?> sttModel;
   final Value<int> timeoutSeconds;
   final Value<int> maxTokens;
   final Value<int> ttsInitialDelayMs;
   final Value<int> ttsTextLeadMs;
   final Value<String?> ttsAudioPath;
+  final Value<bool> sttAutoSend;
+  final Value<bool> studyModeEnabled;
   final Value<String?> logDirectory;
   final Value<String?> llmLogPath;
   final Value<String?> ttsLogPath;
@@ -4824,11 +4947,15 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     this.baseUrl = const Value.absent(),
     this.providerId = const Value.absent(),
     this.model = const Value.absent(),
+    this.ttsModel = const Value.absent(),
+    this.sttModel = const Value.absent(),
     this.timeoutSeconds = const Value.absent(),
     this.maxTokens = const Value.absent(),
     this.ttsInitialDelayMs = const Value.absent(),
     this.ttsTextLeadMs = const Value.absent(),
     this.ttsAudioPath = const Value.absent(),
+    this.sttAutoSend = const Value.absent(),
+    this.studyModeEnabled = const Value.absent(),
     this.logDirectory = const Value.absent(),
     this.llmLogPath = const Value.absent(),
     this.ttsLogPath = const Value.absent(),
@@ -4841,11 +4968,15 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     required String baseUrl,
     this.providerId = const Value.absent(),
     required String model,
+    this.ttsModel = const Value.absent(),
+    this.sttModel = const Value.absent(),
     required int timeoutSeconds,
     required int maxTokens,
     this.ttsInitialDelayMs = const Value.absent(),
     this.ttsTextLeadMs = const Value.absent(),
     this.ttsAudioPath = const Value.absent(),
+    this.sttAutoSend = const Value.absent(),
+    this.studyModeEnabled = const Value.absent(),
     this.logDirectory = const Value.absent(),
     this.llmLogPath = const Value.absent(),
     this.ttsLogPath = const Value.absent(),
@@ -4862,11 +4993,15 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     Expression<String>? baseUrl,
     Expression<String>? providerId,
     Expression<String>? model,
+    Expression<String>? ttsModel,
+    Expression<String>? sttModel,
     Expression<int>? timeoutSeconds,
     Expression<int>? maxTokens,
     Expression<int>? ttsInitialDelayMs,
     Expression<int>? ttsTextLeadMs,
     Expression<String>? ttsAudioPath,
+    Expression<bool>? sttAutoSend,
+    Expression<bool>? studyModeEnabled,
     Expression<String>? logDirectory,
     Expression<String>? llmLogPath,
     Expression<String>? ttsLogPath,
@@ -4879,11 +5014,15 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
       if (baseUrl != null) 'base_url': baseUrl,
       if (providerId != null) 'provider_id': providerId,
       if (model != null) 'model': model,
+      if (ttsModel != null) 'tts_model': ttsModel,
+      if (sttModel != null) 'stt_model': sttModel,
       if (timeoutSeconds != null) 'timeout_seconds': timeoutSeconds,
       if (maxTokens != null) 'max_tokens': maxTokens,
       if (ttsInitialDelayMs != null) 'tts_initial_delay_ms': ttsInitialDelayMs,
       if (ttsTextLeadMs != null) 'tts_text_lead_ms': ttsTextLeadMs,
       if (ttsAudioPath != null) 'tts_audio_path': ttsAudioPath,
+      if (sttAutoSend != null) 'stt_auto_send': sttAutoSend,
+      if (studyModeEnabled != null) 'study_mode_enabled': studyModeEnabled,
       if (logDirectory != null) 'log_directory': logDirectory,
       if (llmLogPath != null) 'llm_log_path': llmLogPath,
       if (ttsLogPath != null) 'tts_log_path': ttsLogPath,
@@ -4898,11 +5037,15 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
       Value<String>? baseUrl,
       Value<String?>? providerId,
       Value<String>? model,
+      Value<String?>? ttsModel,
+      Value<String?>? sttModel,
       Value<int>? timeoutSeconds,
       Value<int>? maxTokens,
       Value<int>? ttsInitialDelayMs,
       Value<int>? ttsTextLeadMs,
       Value<String?>? ttsAudioPath,
+      Value<bool>? sttAutoSend,
+      Value<bool>? studyModeEnabled,
       Value<String?>? logDirectory,
       Value<String?>? llmLogPath,
       Value<String?>? ttsLogPath,
@@ -4914,11 +5057,15 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
       baseUrl: baseUrl ?? this.baseUrl,
       providerId: providerId ?? this.providerId,
       model: model ?? this.model,
+      ttsModel: ttsModel ?? this.ttsModel,
+      sttModel: sttModel ?? this.sttModel,
       timeoutSeconds: timeoutSeconds ?? this.timeoutSeconds,
       maxTokens: maxTokens ?? this.maxTokens,
       ttsInitialDelayMs: ttsInitialDelayMs ?? this.ttsInitialDelayMs,
       ttsTextLeadMs: ttsTextLeadMs ?? this.ttsTextLeadMs,
       ttsAudioPath: ttsAudioPath ?? this.ttsAudioPath,
+      sttAutoSend: sttAutoSend ?? this.sttAutoSend,
+      studyModeEnabled: studyModeEnabled ?? this.studyModeEnabled,
       logDirectory: logDirectory ?? this.logDirectory,
       llmLogPath: llmLogPath ?? this.llmLogPath,
       ttsLogPath: ttsLogPath ?? this.ttsLogPath,
@@ -4943,6 +5090,12 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     if (model.present) {
       map['model'] = Variable<String>(model.value);
     }
+    if (ttsModel.present) {
+      map['tts_model'] = Variable<String>(ttsModel.value);
+    }
+    if (sttModel.present) {
+      map['stt_model'] = Variable<String>(sttModel.value);
+    }
     if (timeoutSeconds.present) {
       map['timeout_seconds'] = Variable<int>(timeoutSeconds.value);
     }
@@ -4957,6 +5110,12 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     }
     if (ttsAudioPath.present) {
       map['tts_audio_path'] = Variable<String>(ttsAudioPath.value);
+    }
+    if (sttAutoSend.present) {
+      map['stt_auto_send'] = Variable<bool>(sttAutoSend.value);
+    }
+    if (studyModeEnabled.present) {
+      map['study_mode_enabled'] = Variable<bool>(studyModeEnabled.value);
     }
     if (logDirectory.present) {
       map['log_directory'] = Variable<String>(logDirectory.value);
@@ -4986,11 +5145,15 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
           ..write('baseUrl: $baseUrl, ')
           ..write('providerId: $providerId, ')
           ..write('model: $model, ')
+          ..write('ttsModel: $ttsModel, ')
+          ..write('sttModel: $sttModel, ')
           ..write('timeoutSeconds: $timeoutSeconds, ')
           ..write('maxTokens: $maxTokens, ')
           ..write('ttsInitialDelayMs: $ttsInitialDelayMs, ')
           ..write('ttsTextLeadMs: $ttsTextLeadMs, ')
           ..write('ttsAudioPath: $ttsAudioPath, ')
+          ..write('sttAutoSend: $sttAutoSend, ')
+          ..write('studyModeEnabled: $studyModeEnabled, ')
           ..write('logDirectory: $logDirectory, ')
           ..write('llmLogPath: $llmLogPath, ')
           ..write('ttsLogPath: $ttsLogPath, ')
@@ -5028,6 +5191,18 @@ class $ApiConfigsTable extends ApiConfigs
   late final GeneratedColumn<String> model = GeneratedColumn<String>(
       'model', aliasedName, false,
       type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _ttsModelMeta =
+      const VerificationMeta('ttsModel');
+  @override
+  late final GeneratedColumn<String> ttsModel = GeneratedColumn<String>(
+      'tts_model', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _sttModelMeta =
+      const VerificationMeta('sttModel');
+  @override
+  late final GeneratedColumn<String> sttModel = GeneratedColumn<String>(
+      'stt_model', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _apiKeyHashMeta =
       const VerificationMeta('apiKeyHash');
   @override
@@ -5044,7 +5219,7 @@ class $ApiConfigsTable extends ApiConfigs
       defaultValue: currentDateAndTime);
   @override
   List<GeneratedColumn> get $columns =>
-      [id, baseUrl, model, apiKeyHash, createdAt];
+      [id, baseUrl, model, ttsModel, sttModel, apiKeyHash, createdAt];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -5070,6 +5245,14 @@ class $ApiConfigsTable extends ApiConfigs
     } else if (isInserting) {
       context.missing(_modelMeta);
     }
+    if (data.containsKey('tts_model')) {
+      context.handle(_ttsModelMeta,
+          ttsModel.isAcceptableOrUnknown(data['tts_model']!, _ttsModelMeta));
+    }
+    if (data.containsKey('stt_model')) {
+      context.handle(_sttModelMeta,
+          sttModel.isAcceptableOrUnknown(data['stt_model']!, _sttModelMeta));
+    }
     if (data.containsKey('api_key_hash')) {
       context.handle(
           _apiKeyHashMeta,
@@ -5089,7 +5272,7 @@ class $ApiConfigsTable extends ApiConfigs
   Set<GeneratedColumn> get $primaryKey => {id};
   @override
   List<Set<GeneratedColumn>> get uniqueKeys => [
-        {baseUrl, model, apiKeyHash},
+        {baseUrl, model, ttsModel, sttModel, apiKeyHash},
       ];
   @override
   ApiConfig map(Map<String, dynamic> data, {String? tablePrefix}) {
@@ -5101,6 +5284,10 @@ class $ApiConfigsTable extends ApiConfigs
           .read(DriftSqlType.string, data['${effectivePrefix}base_url'])!,
       model: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}model'])!,
+      ttsModel: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}tts_model']),
+      sttModel: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}stt_model']),
       apiKeyHash: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}api_key_hash'])!,
       createdAt: attachedDatabase.typeMapping
@@ -5118,12 +5305,16 @@ class ApiConfig extends DataClass implements Insertable<ApiConfig> {
   final int id;
   final String baseUrl;
   final String model;
+  final String? ttsModel;
+  final String? sttModel;
   final String apiKeyHash;
   final DateTime createdAt;
   const ApiConfig(
       {required this.id,
       required this.baseUrl,
       required this.model,
+      this.ttsModel,
+      this.sttModel,
       required this.apiKeyHash,
       required this.createdAt});
   @override
@@ -5132,6 +5323,12 @@ class ApiConfig extends DataClass implements Insertable<ApiConfig> {
     map['id'] = Variable<int>(id);
     map['base_url'] = Variable<String>(baseUrl);
     map['model'] = Variable<String>(model);
+    if (!nullToAbsent || ttsModel != null) {
+      map['tts_model'] = Variable<String>(ttsModel);
+    }
+    if (!nullToAbsent || sttModel != null) {
+      map['stt_model'] = Variable<String>(sttModel);
+    }
     map['api_key_hash'] = Variable<String>(apiKeyHash);
     map['created_at'] = Variable<DateTime>(createdAt);
     return map;
@@ -5142,6 +5339,12 @@ class ApiConfig extends DataClass implements Insertable<ApiConfig> {
       id: Value(id),
       baseUrl: Value(baseUrl),
       model: Value(model),
+      ttsModel: ttsModel == null && nullToAbsent
+          ? const Value.absent()
+          : Value(ttsModel),
+      sttModel: sttModel == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sttModel),
       apiKeyHash: Value(apiKeyHash),
       createdAt: Value(createdAt),
     );
@@ -5154,6 +5357,8 @@ class ApiConfig extends DataClass implements Insertable<ApiConfig> {
       id: serializer.fromJson<int>(json['id']),
       baseUrl: serializer.fromJson<String>(json['baseUrl']),
       model: serializer.fromJson<String>(json['model']),
+      ttsModel: serializer.fromJson<String?>(json['ttsModel']),
+      sttModel: serializer.fromJson<String?>(json['sttModel']),
       apiKeyHash: serializer.fromJson<String>(json['apiKeyHash']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
     );
@@ -5165,6 +5370,8 @@ class ApiConfig extends DataClass implements Insertable<ApiConfig> {
       'id': serializer.toJson<int>(id),
       'baseUrl': serializer.toJson<String>(baseUrl),
       'model': serializer.toJson<String>(model),
+      'ttsModel': serializer.toJson<String?>(ttsModel),
+      'sttModel': serializer.toJson<String?>(sttModel),
       'apiKeyHash': serializer.toJson<String>(apiKeyHash),
       'createdAt': serializer.toJson<DateTime>(createdAt),
     };
@@ -5174,12 +5381,16 @@ class ApiConfig extends DataClass implements Insertable<ApiConfig> {
           {int? id,
           String? baseUrl,
           String? model,
+          Value<String?> ttsModel = const Value.absent(),
+          Value<String?> sttModel = const Value.absent(),
           String? apiKeyHash,
           DateTime? createdAt}) =>
       ApiConfig(
         id: id ?? this.id,
         baseUrl: baseUrl ?? this.baseUrl,
         model: model ?? this.model,
+        ttsModel: ttsModel.present ? ttsModel.value : this.ttsModel,
+        sttModel: sttModel.present ? sttModel.value : this.sttModel,
         apiKeyHash: apiKeyHash ?? this.apiKeyHash,
         createdAt: createdAt ?? this.createdAt,
       );
@@ -5188,6 +5399,8 @@ class ApiConfig extends DataClass implements Insertable<ApiConfig> {
       id: data.id.present ? data.id.value : this.id,
       baseUrl: data.baseUrl.present ? data.baseUrl.value : this.baseUrl,
       model: data.model.present ? data.model.value : this.model,
+      ttsModel: data.ttsModel.present ? data.ttsModel.value : this.ttsModel,
+      sttModel: data.sttModel.present ? data.sttModel.value : this.sttModel,
       apiKeyHash:
           data.apiKeyHash.present ? data.apiKeyHash.value : this.apiKeyHash,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
@@ -5200,6 +5413,8 @@ class ApiConfig extends DataClass implements Insertable<ApiConfig> {
           ..write('id: $id, ')
           ..write('baseUrl: $baseUrl, ')
           ..write('model: $model, ')
+          ..write('ttsModel: $ttsModel, ')
+          ..write('sttModel: $sttModel, ')
           ..write('apiKeyHash: $apiKeyHash, ')
           ..write('createdAt: $createdAt')
           ..write(')'))
@@ -5207,7 +5422,8 @@ class ApiConfig extends DataClass implements Insertable<ApiConfig> {
   }
 
   @override
-  int get hashCode => Object.hash(id, baseUrl, model, apiKeyHash, createdAt);
+  int get hashCode => Object.hash(
+      id, baseUrl, model, ttsModel, sttModel, apiKeyHash, createdAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -5215,6 +5431,8 @@ class ApiConfig extends DataClass implements Insertable<ApiConfig> {
           other.id == this.id &&
           other.baseUrl == this.baseUrl &&
           other.model == this.model &&
+          other.ttsModel == this.ttsModel &&
+          other.sttModel == this.sttModel &&
           other.apiKeyHash == this.apiKeyHash &&
           other.createdAt == this.createdAt);
 }
@@ -5223,12 +5441,16 @@ class ApiConfigsCompanion extends UpdateCompanion<ApiConfig> {
   final Value<int> id;
   final Value<String> baseUrl;
   final Value<String> model;
+  final Value<String?> ttsModel;
+  final Value<String?> sttModel;
   final Value<String> apiKeyHash;
   final Value<DateTime> createdAt;
   const ApiConfigsCompanion({
     this.id = const Value.absent(),
     this.baseUrl = const Value.absent(),
     this.model = const Value.absent(),
+    this.ttsModel = const Value.absent(),
+    this.sttModel = const Value.absent(),
     this.apiKeyHash = const Value.absent(),
     this.createdAt = const Value.absent(),
   });
@@ -5236,6 +5458,8 @@ class ApiConfigsCompanion extends UpdateCompanion<ApiConfig> {
     this.id = const Value.absent(),
     required String baseUrl,
     required String model,
+    this.ttsModel = const Value.absent(),
+    this.sttModel = const Value.absent(),
     required String apiKeyHash,
     this.createdAt = const Value.absent(),
   })  : baseUrl = Value(baseUrl),
@@ -5245,6 +5469,8 @@ class ApiConfigsCompanion extends UpdateCompanion<ApiConfig> {
     Expression<int>? id,
     Expression<String>? baseUrl,
     Expression<String>? model,
+    Expression<String>? ttsModel,
+    Expression<String>? sttModel,
     Expression<String>? apiKeyHash,
     Expression<DateTime>? createdAt,
   }) {
@@ -5252,6 +5478,8 @@ class ApiConfigsCompanion extends UpdateCompanion<ApiConfig> {
       if (id != null) 'id': id,
       if (baseUrl != null) 'base_url': baseUrl,
       if (model != null) 'model': model,
+      if (ttsModel != null) 'tts_model': ttsModel,
+      if (sttModel != null) 'stt_model': sttModel,
       if (apiKeyHash != null) 'api_key_hash': apiKeyHash,
       if (createdAt != null) 'created_at': createdAt,
     });
@@ -5261,12 +5489,16 @@ class ApiConfigsCompanion extends UpdateCompanion<ApiConfig> {
       {Value<int>? id,
       Value<String>? baseUrl,
       Value<String>? model,
+      Value<String?>? ttsModel,
+      Value<String?>? sttModel,
       Value<String>? apiKeyHash,
       Value<DateTime>? createdAt}) {
     return ApiConfigsCompanion(
       id: id ?? this.id,
       baseUrl: baseUrl ?? this.baseUrl,
       model: model ?? this.model,
+      ttsModel: ttsModel ?? this.ttsModel,
+      sttModel: sttModel ?? this.sttModel,
       apiKeyHash: apiKeyHash ?? this.apiKeyHash,
       createdAt: createdAt ?? this.createdAt,
     );
@@ -5284,6 +5516,12 @@ class ApiConfigsCompanion extends UpdateCompanion<ApiConfig> {
     if (model.present) {
       map['model'] = Variable<String>(model.value);
     }
+    if (ttsModel.present) {
+      map['tts_model'] = Variable<String>(ttsModel.value);
+    }
+    if (sttModel.present) {
+      map['stt_model'] = Variable<String>(sttModel.value);
+    }
     if (apiKeyHash.present) {
       map['api_key_hash'] = Variable<String>(apiKeyHash.value);
     }
@@ -5299,6 +5537,8 @@ class ApiConfigsCompanion extends UpdateCompanion<ApiConfig> {
           ..write('id: $id, ')
           ..write('baseUrl: $baseUrl, ')
           ..write('model: $model, ')
+          ..write('ttsModel: $ttsModel, ')
+          ..write('sttModel: $sttModel, ')
           ..write('apiKeyHash: $apiKeyHash, ')
           ..write('createdAt: $createdAt')
           ..write(')'))
@@ -5400,16 +5640,12 @@ class $PromptTemplatesTable extends PromptTemplates
       context.missing(_teacherIdMeta);
     }
     if (data.containsKey('course_key')) {
-      context.handle(
-          _courseKeyMeta,
-          courseKey.isAcceptableOrUnknown(
-              data['course_key']!, _courseKeyMeta));
+      context.handle(_courseKeyMeta,
+          courseKey.isAcceptableOrUnknown(data['course_key']!, _courseKeyMeta));
     }
     if (data.containsKey('student_id')) {
-      context.handle(
-          _studentIdMeta,
-          studentId.isAcceptableOrUnknown(
-              data['student_id']!, _studentIdMeta));
+      context.handle(_studentIdMeta,
+          studentId.isAcceptableOrUnknown(data['student_id']!, _studentIdMeta));
     }
     if (data.containsKey('prompt_name')) {
       context.handle(
@@ -5573,8 +5809,7 @@ class PromptTemplate extends DataClass implements Insertable<PromptTemplate> {
       id: data.id.present ? data.id.value : this.id,
       teacherId: data.teacherId.present ? data.teacherId.value : this.teacherId,
       courseKey: data.courseKey.present ? data.courseKey.value : this.courseKey,
-      studentId:
-          data.studentId.present ? data.studentId.value : this.studentId,
+      studentId: data.studentId.present ? data.studentId.value : this.studentId,
       promptName:
           data.promptName.present ? data.promptName.value : this.promptName,
       content: data.content.present ? data.content.value : this.content,
@@ -5599,9 +5834,8 @@ class PromptTemplate extends DataClass implements Insertable<PromptTemplate> {
   }
 
   @override
-  int get hashCode =>
-      Object.hash(id, teacherId, courseKey, studentId, promptName, content,
-          isActive, createdAt);
+  int get hashCode => Object.hash(id, teacherId, courseKey, studentId,
+      promptName, content, isActive, createdAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -5952,6 +6186,7 @@ typedef $$CourseVersionsTableCreateCompanionBuilder = CourseVersionsCompanion
   Value<int> id,
   required int teacherId,
   required String subject,
+  Value<String?> sourcePath,
   required int granularity,
   required String textbookText,
   Value<String> treeGenStatus,
@@ -5966,6 +6201,7 @@ typedef $$CourseVersionsTableUpdateCompanionBuilder = CourseVersionsCompanion
   Value<int> id,
   Value<int> teacherId,
   Value<String> subject,
+  Value<String?> sourcePath,
   Value<int> granularity,
   Value<String> textbookText,
   Value<String> treeGenStatus,
@@ -5993,6 +6229,9 @@ class $$CourseVersionsTableFilterComposer
 
   ColumnFilters<String> get subject => $composableBuilder(
       column: $table.subject, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get sourcePath => $composableBuilder(
+      column: $table.sourcePath, builder: (column) => ColumnFilters(column));
 
   ColumnFilters<int> get granularity => $composableBuilder(
       column: $table.granularity, builder: (column) => ColumnFilters(column));
@@ -6038,6 +6277,9 @@ class $$CourseVersionsTableOrderingComposer
 
   ColumnOrderings<String> get subject => $composableBuilder(
       column: $table.subject, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get sourcePath => $composableBuilder(
+      column: $table.sourcePath, builder: (column) => ColumnOrderings(column));
 
   ColumnOrderings<int> get granularity => $composableBuilder(
       column: $table.granularity, builder: (column) => ColumnOrderings(column));
@@ -6086,6 +6328,9 @@ class $$CourseVersionsTableAnnotationComposer
 
   GeneratedColumn<String> get subject =>
       $composableBuilder(column: $table.subject, builder: (column) => column);
+
+  GeneratedColumn<String> get sourcePath => $composableBuilder(
+      column: $table.sourcePath, builder: (column) => column);
 
   GeneratedColumn<int> get granularity => $composableBuilder(
       column: $table.granularity, builder: (column) => column);
@@ -6142,6 +6387,7 @@ class $$CourseVersionsTableTableManager extends RootTableManager<
             Value<int> id = const Value.absent(),
             Value<int> teacherId = const Value.absent(),
             Value<String> subject = const Value.absent(),
+            Value<String?> sourcePath = const Value.absent(),
             Value<int> granularity = const Value.absent(),
             Value<String> textbookText = const Value.absent(),
             Value<String> treeGenStatus = const Value.absent(),
@@ -6155,6 +6401,7 @@ class $$CourseVersionsTableTableManager extends RootTableManager<
             id: id,
             teacherId: teacherId,
             subject: subject,
+            sourcePath: sourcePath,
             granularity: granularity,
             textbookText: textbookText,
             treeGenStatus: treeGenStatus,
@@ -6168,6 +6415,7 @@ class $$CourseVersionsTableTableManager extends RootTableManager<
             Value<int> id = const Value.absent(),
             required int teacherId,
             required String subject,
+            Value<String?> sourcePath = const Value.absent(),
             required int granularity,
             required String textbookText,
             Value<String> treeGenStatus = const Value.absent(),
@@ -6181,6 +6429,7 @@ class $$CourseVersionsTableTableManager extends RootTableManager<
             id: id,
             teacherId: teacherId,
             subject: subject,
+            sourcePath: sourcePath,
             granularity: granularity,
             textbookText: textbookText,
             treeGenStatus: treeGenStatus,
@@ -6706,6 +6955,7 @@ typedef $$ProgressEntriesTableCreateCompanionBuilder = ProgressEntriesCompanion
   required int courseVersionId,
   required String kpKey,
   Value<bool> lit,
+  Value<String?> questionLevel,
   Value<String?> summaryText,
   Value<String?> summaryRawResponse,
   Value<bool?> summaryValid,
@@ -6718,6 +6968,7 @@ typedef $$ProgressEntriesTableUpdateCompanionBuilder = ProgressEntriesCompanion
   Value<int> courseVersionId,
   Value<String> kpKey,
   Value<bool> lit,
+  Value<String?> questionLevel,
   Value<String?> summaryText,
   Value<String?> summaryRawResponse,
   Value<bool?> summaryValid,
@@ -6748,6 +6999,9 @@ class $$ProgressEntriesTableFilterComposer
 
   ColumnFilters<bool> get lit => $composableBuilder(
       column: $table.lit, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get questionLevel => $composableBuilder(
+      column: $table.questionLevel, builder: (column) => ColumnFilters(column));
 
   ColumnFilters<String> get summaryText => $composableBuilder(
       column: $table.summaryText, builder: (column) => ColumnFilters(column));
@@ -6788,6 +7042,10 @@ class $$ProgressEntriesTableOrderingComposer
   ColumnOrderings<bool> get lit => $composableBuilder(
       column: $table.lit, builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<String> get questionLevel => $composableBuilder(
+      column: $table.questionLevel,
+      builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<String> get summaryText => $composableBuilder(
       column: $table.summaryText, builder: (column) => ColumnOrderings(column));
 
@@ -6826,6 +7084,9 @@ class $$ProgressEntriesTableAnnotationComposer
 
   GeneratedColumn<bool> get lit =>
       $composableBuilder(column: $table.lit, builder: (column) => column);
+
+  GeneratedColumn<String> get questionLevel => $composableBuilder(
+      column: $table.questionLevel, builder: (column) => column);
 
   GeneratedColumn<String> get summaryText => $composableBuilder(
       column: $table.summaryText, builder: (column) => column);
@@ -6872,6 +7133,7 @@ class $$ProgressEntriesTableTableManager extends RootTableManager<
             Value<int> courseVersionId = const Value.absent(),
             Value<String> kpKey = const Value.absent(),
             Value<bool> lit = const Value.absent(),
+            Value<String?> questionLevel = const Value.absent(),
             Value<String?> summaryText = const Value.absent(),
             Value<String?> summaryRawResponse = const Value.absent(),
             Value<bool?> summaryValid = const Value.absent(),
@@ -6883,6 +7145,7 @@ class $$ProgressEntriesTableTableManager extends RootTableManager<
             courseVersionId: courseVersionId,
             kpKey: kpKey,
             lit: lit,
+            questionLevel: questionLevel,
             summaryText: summaryText,
             summaryRawResponse: summaryRawResponse,
             summaryValid: summaryValid,
@@ -6894,6 +7157,7 @@ class $$ProgressEntriesTableTableManager extends RootTableManager<
             required int courseVersionId,
             required String kpKey,
             Value<bool> lit = const Value.absent(),
+            Value<String?> questionLevel = const Value.absent(),
             Value<String?> summaryText = const Value.absent(),
             Value<String?> summaryRawResponse = const Value.absent(),
             Value<bool?> summaryValid = const Value.absent(),
@@ -6905,6 +7169,7 @@ class $$ProgressEntriesTableTableManager extends RootTableManager<
             courseVersionId: courseVersionId,
             kpKey: kpKey,
             lit: lit,
+            questionLevel: questionLevel,
             summaryText: summaryText,
             summaryRawResponse: summaryRawResponse,
             summaryValid: summaryValid,
@@ -7789,8 +8054,17 @@ typedef $$AppSettingsTableCreateCompanionBuilder = AppSettingsCompanion
   required String baseUrl,
   Value<String?> providerId,
   required String model,
+  Value<String?> ttsModel,
+  Value<String?> sttModel,
   required int timeoutSeconds,
   required int maxTokens,
+  Value<int> ttsInitialDelayMs,
+  Value<int> ttsTextLeadMs,
+  Value<String?> ttsAudioPath,
+  Value<bool> sttAutoSend,
+  Value<String?> logDirectory,
+  Value<String?> llmLogPath,
+  Value<String?> ttsLogPath,
   required String llmMode,
   Value<String?> locale,
   Value<DateTime> updatedAt,
@@ -7801,8 +8075,17 @@ typedef $$AppSettingsTableUpdateCompanionBuilder = AppSettingsCompanion
   Value<String> baseUrl,
   Value<String?> providerId,
   Value<String> model,
+  Value<String?> ttsModel,
+  Value<String?> sttModel,
   Value<int> timeoutSeconds,
   Value<int> maxTokens,
+  Value<int> ttsInitialDelayMs,
+  Value<int> ttsTextLeadMs,
+  Value<String?> ttsAudioPath,
+  Value<bool> sttAutoSend,
+  Value<String?> logDirectory,
+  Value<String?> llmLogPath,
+  Value<String?> ttsLogPath,
   Value<String> llmMode,
   Value<String?> locale,
   Value<DateTime> updatedAt,
@@ -7829,12 +8112,40 @@ class $$AppSettingsTableFilterComposer
   ColumnFilters<String> get model => $composableBuilder(
       column: $table.model, builder: (column) => ColumnFilters(column));
 
+  ColumnFilters<String> get ttsModel => $composableBuilder(
+      column: $table.ttsModel, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get sttModel => $composableBuilder(
+      column: $table.sttModel, builder: (column) => ColumnFilters(column));
+
   ColumnFilters<int> get timeoutSeconds => $composableBuilder(
       column: $table.timeoutSeconds,
       builder: (column) => ColumnFilters(column));
 
   ColumnFilters<int> get maxTokens => $composableBuilder(
       column: $table.maxTokens, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get ttsInitialDelayMs => $composableBuilder(
+      column: $table.ttsInitialDelayMs,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get ttsTextLeadMs => $composableBuilder(
+      column: $table.ttsTextLeadMs, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get ttsAudioPath => $composableBuilder(
+      column: $table.ttsAudioPath, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get sttAutoSend => $composableBuilder(
+      column: $table.sttAutoSend, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get logDirectory => $composableBuilder(
+      column: $table.logDirectory, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get llmLogPath => $composableBuilder(
+      column: $table.llmLogPath, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get ttsLogPath => $composableBuilder(
+      column: $table.ttsLogPath, builder: (column) => ColumnFilters(column));
 
   ColumnFilters<String> get llmMode => $composableBuilder(
       column: $table.llmMode, builder: (column) => ColumnFilters(column));
@@ -7867,12 +8178,43 @@ class $$AppSettingsTableOrderingComposer
   ColumnOrderings<String> get model => $composableBuilder(
       column: $table.model, builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<String> get ttsModel => $composableBuilder(
+      column: $table.ttsModel, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get sttModel => $composableBuilder(
+      column: $table.sttModel, builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<int> get timeoutSeconds => $composableBuilder(
       column: $table.timeoutSeconds,
       builder: (column) => ColumnOrderings(column));
 
   ColumnOrderings<int> get maxTokens => $composableBuilder(
       column: $table.maxTokens, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get ttsInitialDelayMs => $composableBuilder(
+      column: $table.ttsInitialDelayMs,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get ttsTextLeadMs => $composableBuilder(
+      column: $table.ttsTextLeadMs,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get ttsAudioPath => $composableBuilder(
+      column: $table.ttsAudioPath,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get sttAutoSend => $composableBuilder(
+      column: $table.sttAutoSend, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get logDirectory => $composableBuilder(
+      column: $table.logDirectory,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get llmLogPath => $composableBuilder(
+      column: $table.llmLogPath, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get ttsLogPath => $composableBuilder(
+      column: $table.ttsLogPath, builder: (column) => ColumnOrderings(column));
 
   ColumnOrderings<String> get llmMode => $composableBuilder(
       column: $table.llmMode, builder: (column) => ColumnOrderings(column));
@@ -7905,11 +8247,38 @@ class $$AppSettingsTableAnnotationComposer
   GeneratedColumn<String> get model =>
       $composableBuilder(column: $table.model, builder: (column) => column);
 
+  GeneratedColumn<String> get ttsModel =>
+      $composableBuilder(column: $table.ttsModel, builder: (column) => column);
+
+  GeneratedColumn<String> get sttModel =>
+      $composableBuilder(column: $table.sttModel, builder: (column) => column);
+
   GeneratedColumn<int> get timeoutSeconds => $composableBuilder(
       column: $table.timeoutSeconds, builder: (column) => column);
 
   GeneratedColumn<int> get maxTokens =>
       $composableBuilder(column: $table.maxTokens, builder: (column) => column);
+
+  GeneratedColumn<int> get ttsInitialDelayMs => $composableBuilder(
+      column: $table.ttsInitialDelayMs, builder: (column) => column);
+
+  GeneratedColumn<int> get ttsTextLeadMs => $composableBuilder(
+      column: $table.ttsTextLeadMs, builder: (column) => column);
+
+  GeneratedColumn<String> get ttsAudioPath => $composableBuilder(
+      column: $table.ttsAudioPath, builder: (column) => column);
+
+  GeneratedColumn<bool> get sttAutoSend => $composableBuilder(
+      column: $table.sttAutoSend, builder: (column) => column);
+
+  GeneratedColumn<String> get logDirectory => $composableBuilder(
+      column: $table.logDirectory, builder: (column) => column);
+
+  GeneratedColumn<String> get llmLogPath => $composableBuilder(
+      column: $table.llmLogPath, builder: (column) => column);
+
+  GeneratedColumn<String> get ttsLogPath => $composableBuilder(
+      column: $table.ttsLogPath, builder: (column) => column);
 
   GeneratedColumn<String> get llmMode =>
       $composableBuilder(column: $table.llmMode, builder: (column) => column);
@@ -7948,8 +8317,17 @@ class $$AppSettingsTableTableManager extends RootTableManager<
             Value<String> baseUrl = const Value.absent(),
             Value<String?> providerId = const Value.absent(),
             Value<String> model = const Value.absent(),
+            Value<String?> ttsModel = const Value.absent(),
+            Value<String?> sttModel = const Value.absent(),
             Value<int> timeoutSeconds = const Value.absent(),
             Value<int> maxTokens = const Value.absent(),
+            Value<int> ttsInitialDelayMs = const Value.absent(),
+            Value<int> ttsTextLeadMs = const Value.absent(),
+            Value<String?> ttsAudioPath = const Value.absent(),
+            Value<bool> sttAutoSend = const Value.absent(),
+            Value<String?> logDirectory = const Value.absent(),
+            Value<String?> llmLogPath = const Value.absent(),
+            Value<String?> ttsLogPath = const Value.absent(),
             Value<String> llmMode = const Value.absent(),
             Value<String?> locale = const Value.absent(),
             Value<DateTime> updatedAt = const Value.absent(),
@@ -7959,8 +8337,17 @@ class $$AppSettingsTableTableManager extends RootTableManager<
             baseUrl: baseUrl,
             providerId: providerId,
             model: model,
+            ttsModel: ttsModel,
+            sttModel: sttModel,
             timeoutSeconds: timeoutSeconds,
             maxTokens: maxTokens,
+            ttsInitialDelayMs: ttsInitialDelayMs,
+            ttsTextLeadMs: ttsTextLeadMs,
+            ttsAudioPath: ttsAudioPath,
+            sttAutoSend: sttAutoSend,
+            logDirectory: logDirectory,
+            llmLogPath: llmLogPath,
+            ttsLogPath: ttsLogPath,
             llmMode: llmMode,
             locale: locale,
             updatedAt: updatedAt,
@@ -7970,8 +8357,17 @@ class $$AppSettingsTableTableManager extends RootTableManager<
             required String baseUrl,
             Value<String?> providerId = const Value.absent(),
             required String model,
+            Value<String?> ttsModel = const Value.absent(),
+            Value<String?> sttModel = const Value.absent(),
             required int timeoutSeconds,
             required int maxTokens,
+            Value<int> ttsInitialDelayMs = const Value.absent(),
+            Value<int> ttsTextLeadMs = const Value.absent(),
+            Value<String?> ttsAudioPath = const Value.absent(),
+            Value<bool> sttAutoSend = const Value.absent(),
+            Value<String?> logDirectory = const Value.absent(),
+            Value<String?> llmLogPath = const Value.absent(),
+            Value<String?> ttsLogPath = const Value.absent(),
             required String llmMode,
             Value<String?> locale = const Value.absent(),
             Value<DateTime> updatedAt = const Value.absent(),
@@ -7981,8 +8377,17 @@ class $$AppSettingsTableTableManager extends RootTableManager<
             baseUrl: baseUrl,
             providerId: providerId,
             model: model,
+            ttsModel: ttsModel,
+            sttModel: sttModel,
             timeoutSeconds: timeoutSeconds,
             maxTokens: maxTokens,
+            ttsInitialDelayMs: ttsInitialDelayMs,
+            ttsTextLeadMs: ttsTextLeadMs,
+            ttsAudioPath: ttsAudioPath,
+            sttAutoSend: sttAutoSend,
+            logDirectory: logDirectory,
+            llmLogPath: llmLogPath,
+            ttsLogPath: ttsLogPath,
             llmMode: llmMode,
             locale: locale,
             updatedAt: updatedAt,
@@ -8010,6 +8415,8 @@ typedef $$ApiConfigsTableCreateCompanionBuilder = ApiConfigsCompanion Function({
   Value<int> id,
   required String baseUrl,
   required String model,
+  Value<String?> ttsModel,
+  Value<String?> sttModel,
   required String apiKeyHash,
   Value<DateTime> createdAt,
 });
@@ -8017,6 +8424,8 @@ typedef $$ApiConfigsTableUpdateCompanionBuilder = ApiConfigsCompanion Function({
   Value<int> id,
   Value<String> baseUrl,
   Value<String> model,
+  Value<String?> ttsModel,
+  Value<String?> sttModel,
   Value<String> apiKeyHash,
   Value<DateTime> createdAt,
 });
@@ -8038,6 +8447,12 @@ class $$ApiConfigsTableFilterComposer
 
   ColumnFilters<String> get model => $composableBuilder(
       column: $table.model, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get ttsModel => $composableBuilder(
+      column: $table.ttsModel, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get sttModel => $composableBuilder(
+      column: $table.sttModel, builder: (column) => ColumnFilters(column));
 
   ColumnFilters<String> get apiKeyHash => $composableBuilder(
       column: $table.apiKeyHash, builder: (column) => ColumnFilters(column));
@@ -8064,6 +8479,12 @@ class $$ApiConfigsTableOrderingComposer
   ColumnOrderings<String> get model => $composableBuilder(
       column: $table.model, builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<String> get ttsModel => $composableBuilder(
+      column: $table.ttsModel, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get sttModel => $composableBuilder(
+      column: $table.sttModel, builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<String> get apiKeyHash => $composableBuilder(
       column: $table.apiKeyHash, builder: (column) => ColumnOrderings(column));
 
@@ -8088,6 +8509,12 @@ class $$ApiConfigsTableAnnotationComposer
 
   GeneratedColumn<String> get model =>
       $composableBuilder(column: $table.model, builder: (column) => column);
+
+  GeneratedColumn<String> get ttsModel =>
+      $composableBuilder(column: $table.ttsModel, builder: (column) => column);
+
+  GeneratedColumn<String> get sttModel =>
+      $composableBuilder(column: $table.sttModel, builder: (column) => column);
 
   GeneratedColumn<String> get apiKeyHash => $composableBuilder(
       column: $table.apiKeyHash, builder: (column) => column);
@@ -8122,6 +8549,8 @@ class $$ApiConfigsTableTableManager extends RootTableManager<
             Value<int> id = const Value.absent(),
             Value<String> baseUrl = const Value.absent(),
             Value<String> model = const Value.absent(),
+            Value<String?> ttsModel = const Value.absent(),
+            Value<String?> sttModel = const Value.absent(),
             Value<String> apiKeyHash = const Value.absent(),
             Value<DateTime> createdAt = const Value.absent(),
           }) =>
@@ -8129,6 +8558,8 @@ class $$ApiConfigsTableTableManager extends RootTableManager<
             id: id,
             baseUrl: baseUrl,
             model: model,
+            ttsModel: ttsModel,
+            sttModel: sttModel,
             apiKeyHash: apiKeyHash,
             createdAt: createdAt,
           ),
@@ -8136,6 +8567,8 @@ class $$ApiConfigsTableTableManager extends RootTableManager<
             Value<int> id = const Value.absent(),
             required String baseUrl,
             required String model,
+            Value<String?> ttsModel = const Value.absent(),
+            Value<String?> sttModel = const Value.absent(),
             required String apiKeyHash,
             Value<DateTime> createdAt = const Value.absent(),
           }) =>
@@ -8143,6 +8576,8 @@ class $$ApiConfigsTableTableManager extends RootTableManager<
             id: id,
             baseUrl: baseUrl,
             model: model,
+            ttsModel: ttsModel,
+            sttModel: sttModel,
             apiKeyHash: apiKeyHash,
             createdAt: createdAt,
           ),

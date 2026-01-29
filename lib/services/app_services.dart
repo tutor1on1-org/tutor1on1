@@ -9,6 +9,7 @@ import 'llm_log_repository.dart';
 import 'secure_storage_service.dart';
 import 'settings_repository.dart';
 import 'session_service.dart';
+import 'stt_service.dart';
 import 'tts_service.dart';
 import 'tts_log_repository.dart';
 import '../security/pin_hasher.dart';
@@ -24,6 +25,7 @@ class AppServices {
     required this.backupService,
     required this.courseService,
     required this.sessionService,
+    required this.sttService,
     required this.ttsService,
     required this.ttsLogRepository,
     required this.llmLogRepository,
@@ -38,6 +40,7 @@ class AppServices {
   final BackupService backupService;
   final CourseService courseService;
   final SessionService sessionService;
+  final SttService sttService;
   final TtsService ttsService;
   final TtsLogRepository ttsLogRepository;
   final LlmLogRepository llmLogRepository;
@@ -50,6 +53,15 @@ class AppServices {
     );
     final settingsRepository = SettingsRepository(db);
     final secureStorage = SecureStorageService();
+    final settings = await settingsRepository.load();
+    final baseUrl = settings.baseUrl.trim();
+    final legacyKey = await secureStorage.readApiKey();
+    if ((legacyKey ?? '').trim().isNotEmpty) {
+      final stored = await secureStorage.readApiKeyForBaseUrl(baseUrl);
+      if ((stored ?? '').trim().isEmpty) {
+        await secureStorage.writeApiKeyForBaseUrl(baseUrl, legacyKey!.trim());
+      }
+    }
     final promptRepository = PromptRepository(db: db);
     final schemaValidator = SchemaValidator();
     final callRepository = LlmCallRepository(db);
@@ -72,6 +84,8 @@ class AppServices {
     final ttsLogRepository = TtsLogRepository(settingsRepository);
     final ttsService =
         TtsService(secureStorage, settingsRepository, ttsLogRepository);
+    final sttService =
+        SttService(secureStorage, settingsRepository, ttsLogRepository);
     await promptRepository.backfillAssignmentPrompts();
     return AppServices._(
       db: db,
@@ -83,6 +97,7 @@ class AppServices {
       backupService: backupService,
       courseService: courseService,
       sessionService: sessionService,
+      sttService: sttService,
       ttsService: ttsService,
       ttsLogRepository: ttsLogRepository,
       llmLogRepository: llmLogRepository,

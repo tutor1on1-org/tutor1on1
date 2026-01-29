@@ -5,6 +5,7 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   flutter_secure_storage_windows
   just_audio_windows
+  record_windows
   screen_retriever
   sqlite3_flutter_libs
   window_manager
