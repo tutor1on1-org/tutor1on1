@@ -1,6 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
+import 'dart:typed_data';
 
+import 'package:ffmpeg_kit_flutter/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter/return_code.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -32,6 +37,15 @@ class SttService {
   String? _activePath;
 
   bool get isRecording => _recording;
+
+  static const int _minKeepDurationMs = 400;
+  static const int _veryShortDurationMs = 1200;
+  static const int _shortDurationMs = 3000;
+  static const int _minDataBytes = 4096;
+  static const double _silentPeakThreshold = 0.02;
+  static const double _silentRmsThreshold = 0.01;
+  static const double _veryShortPeakThreshold = 0.05;
+  static const double _veryShortRmsThreshold = 0.02;
 
   Future<SttStartResult> startRecording({int? sessionId}) async {
     if (_recording) {
@@ -151,6 +165,20 @@ class SttService {
         audioPath: resolved,
       );
     }
+    final discarded = await _discardIfShortSilentWav(
+      file,
+      sessionId: sessionId,
+    );
+    if (discarded) {
+      return SttTranscriptionResult(
+        error: 'Recording too short or silent.',
+        audioPath: resolved,
+      );
+    }
+    await _cleanupTempWavs(
+      keepPath: resolved,
+      sessionId: sessionId,
+    );
     await _logEvent(
       event: 'stt_saved',
       message: 'Saved recording: $resolved',
@@ -280,19 +308,480 @@ class SttService {
     }
   }
 
+  Future<SttSaveResult> saveMessageAudio({
+    required int messageId,
+    required String sourcePath,
+    int? sessionId,
+  }) async {
+    try {
+      final resolved = sourcePath.trim();
+      if (resolved.isEmpty) {
+        return const SttSaveResult(
+          success: false,
+          error: 'Empty source path.',
+        );
+      }
+      final inputFile = File(resolved);
+      if (!await inputFile.exists()) {
+        await _logError(
+          message: 'STT audio file missing: $resolved',
+          sessionId: sessionId,
+        );
+        return const SttSaveResult(
+          success: false,
+          error: 'Source audio missing.',
+        );
+      }
+      final baseDir = await _resolveAudioBaseDirectory();
+      final outputPath = buildMessageAudioPath(
+        baseDir: baseDir,
+        messageId: messageId,
+      );
+      final outputDir = Directory(p.dirname(outputPath));
+      if (!await outputDir.exists()) {
+        await outputDir.create(recursive: true);
+      }
+      final converted = await _convertToMp3(
+        inputPath: resolved,
+        outputPath: outputPath,
+        sessionId: sessionId,
+      );
+      if (!converted) {
+        return const SttSaveResult(
+          success: false,
+          conversionFailed: true,
+          error: 'Conversion failed.',
+        );
+      }
+      try {
+        await inputFile.delete();
+      } catch (_) {}
+      return SttSaveResult(
+        success: true,
+        outputPath: outputPath,
+      );
+    } catch (error) {
+      await _logError(
+        message: 'Failed to save STT audio: $error',
+        sessionId: sessionId,
+      );
+      return const SttSaveResult(
+        success: false,
+        error: 'Save failed.',
+      );
+    }
+  }
+
   Future<String> _buildRecordingPath(int? sessionId) async {
-    final settings = await _settingsRepository.load();
-    final baseDir = (settings.logDirectory ?? '').trim();
-    final parent = baseDir.isNotEmpty
-        ? baseDir
-        : (await getApplicationDocumentsDirectory()).path;
-    final dir = Directory(p.join(parent, 'stt_audio'));
+    final tmpDir = await getTemporaryDirectory();
+    final dir = Directory(p.join(tmpDir.path, 'stt_tmp'));
     if (!await dir.exists()) {
       await dir.create(recursive: true);
     }
     final timestamp = DateTime.now().microsecondsSinceEpoch;
     final suffix = sessionId == null ? '' : '_s$sessionId';
     return p.join(dir.path, 'stt_$timestamp$suffix.wav');
+  }
+
+  Future<String> _resolveAudioBaseDirectory() async {
+    final settings = await _settingsRepository.load();
+    final baseDir = (settings.logDirectory ?? '').trim();
+    final parent = baseDir.isNotEmpty
+        ? baseDir
+        : (await getApplicationDocumentsDirectory()).path;
+    return parent;
+  }
+
+  Future<bool> _convertToMp3({
+    required String inputPath,
+    required String outputPath,
+    int? sessionId,
+  }) async {
+    try {
+      final command = [
+        '-y',
+        '-i',
+        '"$inputPath"',
+        '-codec:a',
+        'libmp3lame',
+        '-b:a',
+        '128k',
+        '"$outputPath"',
+      ].join(' ');
+      final session = await FFmpegKit.execute(command);
+      final returnCode = await session.getReturnCode();
+      if (ReturnCode.isSuccess(returnCode)) {
+        return true;
+      }
+      final logs = await session.getAllLogsAsString();
+      await _logError(
+        message: 'FFmpeg conversion failed: $logs',
+        sessionId: sessionId,
+      );
+      return await _convertWithSystemFfmpeg(
+        inputPath: inputPath,
+        outputPath: outputPath,
+        sessionId: sessionId,
+        hint: 'ffmpeg_kit_failed',
+      );
+    } on MissingPluginException catch (error) {
+      await _logError(
+        message: 'FFmpeg plugin missing: $error',
+        sessionId: sessionId,
+      );
+      return await _convertWithSystemFfmpeg(
+        inputPath: inputPath,
+        outputPath: outputPath,
+        sessionId: sessionId,
+        hint: 'missing_plugin',
+      );
+    } catch (error) {
+      await _logError(
+        message: 'FFmpeg conversion error: $error',
+        sessionId: sessionId,
+      );
+      return await _convertWithSystemFfmpeg(
+        inputPath: inputPath,
+        outputPath: outputPath,
+        sessionId: sessionId,
+        hint: 'ffmpeg_kit_error',
+      );
+    }
+  }
+
+  Future<bool> _convertWithSystemFfmpeg({
+    required String inputPath,
+    required String outputPath,
+    int? sessionId,
+    required String hint,
+  }) async {
+    final candidates = <String>[];
+    if (Platform.isWindows) {
+      final exeDir = File(Platform.resolvedExecutable).parent.path;
+      candidates.add(p.join(exeDir, 'ffmpeg.exe'));
+      candidates.add(p.join(Directory.current.path, 'ffmpeg.exe'));
+    }
+    candidates.add('ffmpeg');
+    final args = [
+      '-y',
+      '-i',
+      inputPath,
+      '-codec:a',
+      'libmp3lame',
+      '-b:a',
+      '128k',
+      outputPath,
+    ];
+    for (final bin in candidates) {
+      try {
+        final result = await Process.run(
+          bin,
+          args,
+          runInShell: true,
+        );
+        if (result.exitCode == 0) {
+          final file = File(outputPath);
+          if (await file.exists() && await file.length() > 0) {
+            await _logEvent(
+              event: 'stt_convert_fallback',
+              message: 'Converted via system ffmpeg ($bin) after $hint.',
+              sessionId: sessionId,
+            );
+            return true;
+          }
+        }
+        await _logError(
+          message:
+              'System ffmpeg failed ($bin): ${result.exitCode} ${result.stderr}',
+          sessionId: sessionId,
+        );
+      } catch (error) {
+        await _logError(
+          message: 'System ffmpeg error ($bin): $error',
+          sessionId: sessionId,
+        );
+      }
+    }
+    return false;
+  }
+
+  Future<bool> _discardIfShortSilentWav(
+    File file, {
+    int? sessionId,
+  }) async {
+    final info = await _readWavInfo(file);
+    if (info == null) {
+      return false;
+    }
+    if (info.dataSize <= 0) {
+      return false;
+    }
+    final durationMs = info.durationMs;
+    final stats = await _measureAmplitudeStats(file, info);
+    var discard = false;
+    if (durationMs < _minKeepDurationMs || info.dataSize < _minDataBytes) {
+      discard = true;
+    } else if (stats != null) {
+      if (durationMs < _veryShortDurationMs &&
+          stats.peak < _veryShortPeakThreshold &&
+          stats.rms < _veryShortRmsThreshold) {
+        discard = true;
+      } else if (durationMs < _shortDurationMs &&
+          stats.peak < _silentPeakThreshold &&
+          stats.rms < _silentRmsThreshold) {
+        discard = true;
+      }
+    } else if (durationMs < _veryShortDurationMs) {
+      discard = true;
+    }
+    if (!discard) {
+      return false;
+    }
+    await _logEvent(
+      event: 'stt_discard_short_silent',
+      message:
+          'Discarded short/silent WAV: ${file.path} (${durationMs}ms, peak ${(stats?.peak ?? -1).toStringAsFixed(4)}, rms ${(stats?.rms ?? -1).toStringAsFixed(4)})',
+      sessionId: sessionId,
+    );
+    try {
+      await file.delete();
+    } catch (_) {}
+    return true;
+  }
+
+  Future<void> _cleanupTempWavs({
+    required String keepPath,
+    int? sessionId,
+  }) async {
+    try {
+      final tmpDir = await getTemporaryDirectory();
+      final dir = Directory(p.join(tmpDir.path, 'stt_tmp'));
+      if (!await dir.exists()) {
+        return;
+      }
+      await for (final entity in dir.list()) {
+        if (entity is! File) {
+          continue;
+        }
+        if (!entity.path.toLowerCase().endsWith('.wav')) {
+          continue;
+        }
+        if (p.equals(entity.path, keepPath)) {
+          continue;
+        }
+        await _discardIfShortSilentWav(entity, sessionId: sessionId);
+      }
+    } catch (_) {}
+  }
+
+  Future<_WavInfo?> _readWavInfo(File file) async {
+    RandomAccessFile? raf;
+    try {
+      raf = await file.open();
+      final header = await raf.read(12);
+      if (header.length < 12) {
+        return null;
+      }
+      final riff = ascii.decode(header.sublist(0, 4));
+      final wave = ascii.decode(header.sublist(8, 12));
+      if (riff != 'RIFF' || wave != 'WAVE') {
+        return null;
+      }
+      int? audioFormat;
+      int? sampleRate;
+      int? bitsPerSample;
+      int? channels;
+      int? byteRate;
+      int? blockAlign;
+      int? dataOffset;
+      int? dataSize;
+      while (true) {
+        final chunkHeader = await raf.read(8);
+        if (chunkHeader.length < 8) {
+          break;
+        }
+        final id = ascii.decode(chunkHeader.sublist(0, 4));
+        final size = _readLe32(chunkHeader, 4);
+        final chunkStart = await raf.position();
+        if (id == 'fmt ') {
+          if (size < 16) {
+            return null;
+          }
+          final fmt = await raf.read(size);
+          if (fmt.length >= 16) {
+            audioFormat = _readLe16(fmt, 0);
+            channels = _readLe16(fmt, 2);
+            sampleRate = _readLe32(fmt, 4);
+            byteRate = _readLe32(fmt, 8);
+            blockAlign = _readLe16(fmt, 12);
+            bitsPerSample = _readLe16(fmt, 14);
+          }
+        } else if (id == 'data') {
+          dataOffset = chunkStart;
+          dataSize = size;
+          break;
+        }
+        final next = chunkStart + size + (size.isOdd ? 1 : 0);
+        await raf.setPosition(next);
+      }
+      if (audioFormat == null ||
+          sampleRate == null ||
+          bitsPerSample == null ||
+          channels == null ||
+          dataOffset == null ||
+          dataSize == null ||
+          byteRate == null ||
+          blockAlign == null ||
+          byteRate == 0) {
+        return null;
+      }
+      return _WavInfo(
+        audioFormat: audioFormat,
+        sampleRate: sampleRate,
+        bitsPerSample: bitsPerSample,
+        channels: channels,
+        byteRate: byteRate,
+        blockAlign: blockAlign,
+        dataOffset: dataOffset,
+        dataSize: dataSize,
+      );
+    } catch (_) {
+      return null;
+    } finally {
+      await raf?.close();
+    }
+  }
+
+  Future<_AmplitudeStats?> _measureAmplitudeStats(
+    File file,
+    _WavInfo info,
+  ) async {
+    RandomAccessFile? raf;
+    try {
+      raf = await file.open();
+      await raf.setPosition(info.dataOffset);
+      var sampleBytes = math.min(info.dataSize, (info.byteRate * 0.5).floor());
+      if (info.blockAlign > 0) {
+        sampleBytes -= sampleBytes % info.blockAlign;
+      }
+      if (sampleBytes <= 0) {
+        return null;
+      }
+      final bytes = await raf.read(sampleBytes);
+      if (bytes.isEmpty) {
+        return null;
+      }
+      final data = Uint8List.fromList(bytes);
+      final view = ByteData.sublistView(data);
+      var peak = 0.0;
+      var sumSquares = 0.0;
+      var samples = 0;
+      final format = info.audioFormat;
+      if (format == 1) {
+        if (info.bitsPerSample == 8) {
+          for (final b in data) {
+            final value = (b - 128) / 128.0;
+            final abs = value.abs();
+            if (abs > peak) {
+              peak = abs;
+            }
+            sumSquares += value * value;
+            samples += 1;
+          }
+        } else if (info.bitsPerSample == 16) {
+          for (var i = 0; i + 1 < data.length; i += 2) {
+            final value = view.getInt16(i, Endian.little) / 32768.0;
+            final abs = value.abs();
+            if (abs > peak) {
+              peak = abs;
+            }
+            sumSquares += value * value;
+            samples += 1;
+          }
+        } else if (info.bitsPerSample == 24) {
+          for (var i = 0; i + 2 < data.length; i += 3) {
+            var value =
+                data[i] | (data[i + 1] << 8) | (data[i + 2] << 16);
+            if ((value & 0x800000) != 0) {
+              value -= 0x1000000;
+            }
+            final normalized = value / 8388608.0;
+            final abs = normalized.abs();
+            if (abs > peak) {
+              peak = abs;
+            }
+            sumSquares += normalized * normalized;
+            samples += 1;
+          }
+        } else if (info.bitsPerSample == 32) {
+          for (var i = 0; i + 3 < data.length; i += 4) {
+            final value = view.getInt32(i, Endian.little) / 2147483648.0;
+            final abs = value.abs();
+            if (abs > peak) {
+              peak = abs;
+            }
+            sumSquares += value * value;
+            samples += 1;
+          }
+        } else {
+          return null;
+        }
+      } else if (format == 3) {
+        if (info.bitsPerSample == 32) {
+          for (var i = 0; i + 3 < data.length; i += 4) {
+            var value = view.getFloat32(i, Endian.little);
+            if (value.isNaN) {
+              continue;
+            }
+            value = value.clamp(-1.0, 1.0).toDouble();
+            final abs = value.abs();
+            if (abs > peak) {
+              peak = abs;
+            }
+            sumSquares += value * value;
+            samples += 1;
+          }
+        } else if (info.bitsPerSample == 64) {
+          for (var i = 0; i + 7 < data.length; i += 8) {
+            var value = view.getFloat64(i, Endian.little);
+            if (value.isNaN) {
+              continue;
+            }
+            value = value.clamp(-1.0, 1.0).toDouble();
+            final abs = value.abs();
+            if (abs > peak) {
+              peak = abs;
+            }
+            sumSquares += value * value;
+            samples += 1;
+          }
+        } else {
+          return null;
+        }
+      } else {
+        return null;
+      }
+      if (samples <= 0) {
+        return null;
+      }
+      final rms = math.sqrt(sumSquares / samples);
+      return _AmplitudeStats(peak: peak, rms: rms);
+    } catch (_) {
+      return null;
+    } finally {
+      await raf?.close();
+    }
+  }
+
+  int _readLe16(List<int> bytes, int offset) {
+    return bytes[offset] | (bytes[offset + 1] << 8);
+  }
+
+  int _readLe32(List<int> bytes, int offset) {
+    return bytes[offset] |
+        (bytes[offset + 1] << 8) |
+        (bytes[offset + 2] << 16) |
+        (bytes[offset + 3] << 24);
   }
 
   Future<_SttConfig?> _resolveSttConfig() async {
@@ -384,6 +873,13 @@ class SttService {
         ? 'STT response received ($bytes bytes).'
         : 'STT response received ($bytes bytes, trace $trace).';
   }
+
+  static String buildMessageAudioPath({
+    required String baseDir,
+    required int messageId,
+  }) {
+    return p.join(baseDir, 'stt_audio', 'stt_message_$messageId.mp3');
+  }
 }
 
 class SttTranscriptionResult {
@@ -412,6 +908,55 @@ class SttStartResult {
   final bool started;
   final bool permissionDenied;
   final String? error;
+}
+
+class SttSaveResult {
+  const SttSaveResult({
+    required this.success,
+    this.outputPath,
+    this.conversionFailed = false,
+    this.error,
+  });
+
+  final bool success;
+  final String? outputPath;
+  final bool conversionFailed;
+  final String? error;
+}
+
+class _WavInfo {
+  const _WavInfo({
+    required this.audioFormat,
+    required this.sampleRate,
+    required this.bitsPerSample,
+    required this.channels,
+    required this.byteRate,
+    required this.blockAlign,
+    required this.dataOffset,
+    required this.dataSize,
+  });
+
+  final int audioFormat;
+  final int sampleRate;
+  final int bitsPerSample;
+  final int channels;
+  final int byteRate;
+  final int blockAlign;
+  final int dataOffset;
+  final int dataSize;
+
+  int get durationMs =>
+      byteRate <= 0 ? 0 : ((dataSize / byteRate) * 1000).round();
+}
+
+class _AmplitudeStats {
+  const _AmplitudeStats({
+    required this.peak,
+    required this.rms,
+  });
+
+  final double peak;
+  final double rms;
 }
 
 class _SttConfig {

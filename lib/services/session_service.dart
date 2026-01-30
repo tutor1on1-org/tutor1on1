@@ -143,9 +143,10 @@ class SessionService {
     void Function()? onPromptWarning,
     bool streamToDatabase = true,
     void Function(int assistantMessageId)? onAssistantMessageCreated,
+    void Function(int studentMessageId)? onStudentMessageCreated,
   }) async {
     if (studentInput.trim().isNotEmpty) {
-      await _db.into(_db.chatMessages).insert(
+      final studentMessageId = await _db.into(_db.chatMessages).insert(
             ChatMessagesCompanion.insert(
               sessionId: sessionId,
               role: 'user',
@@ -153,6 +154,9 @@ class SessionService {
               action: Value(mode),
             ),
           );
+      if (onStudentMessageCreated != null) {
+        onStudentMessageCreated(studentMessageId);
+      }
     }
 
     final session = await _db.getSession(sessionId);

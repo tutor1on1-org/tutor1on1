@@ -167,6 +167,7 @@
   "sttRequiresOpenAi": "STT requires the OpenAI or SiliconFlow API.",
   "sttPermissionDenied": "Microphone permission denied.",
   "sttFailedMessage": "Transcription failed. Check TTS logs.",
+  "sttAudioConvertFailedMessage": "Audio conversion failed. Check TTS logs.",
   "summaryButton": "Summary",
   "exitButton": "Exit",
   "messageRequiredTitle": "Message required",

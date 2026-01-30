@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:family_teacher/l10n/app_localizations.dart';
+import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 
 import '../db/app_database.dart';
@@ -88,11 +89,16 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
   bool _sttTranscribing = false;
   bool _sttPressActive = false;
   bool _sttCancelHover = false;
+  String? _pendingSttAudioPath;
+  String? _pendingSttText;
+  bool _applyingTranscription = false;
   final GlobalKey _sttCancelKey = GlobalKey();
+  final LayerLink _sttButtonLink = LayerLink();
 
   @override
   void initState() {
     super.initState();
+    _inputController.addListener(_handleInputChanged);
     _loadSession();
   }
 
@@ -267,15 +273,38 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
                           );
                           final ttsService =
                               context.read<AppServices>().ttsService;
-                          final audioDir =
+                          final ttsAudioDir =
                               settings?.ttsAudioPath?.trim() ?? '';
-                          final audioPath = (audioDir.isNotEmpty &&
-                                  message.role == 'assistant')
-                              ? TtsService.buildMessageAudioPath(
-                                  baseDir: audioDir,
-                                  messageId: message.id,
-                                )
-                              : null;
+                          final logDir = (settings?.logDirectory ?? '').trim();
+                          final sttAudioDir = logDir.isNotEmpty
+                              ? logDir
+                              : () {
+                                  final llmLog =
+                                      (settings?.llmLogPath ?? '').trim();
+                                  if (llmLog.isNotEmpty) {
+                                    return p.dirname(llmLog);
+                                  }
+                                  final ttsLog =
+                                      (settings?.ttsLogPath ?? '').trim();
+                                  if (ttsLog.isNotEmpty) {
+                                    return p.dirname(ttsLog);
+                                  }
+                                  return '';
+                                }();
+                          String? audioPath;
+                          if (message.role == 'assistant' &&
+                              ttsAudioDir.isNotEmpty) {
+                            audioPath = TtsService.buildMessageAudioPath(
+                              baseDir: ttsAudioDir,
+                              messageId: message.id,
+                            );
+                          } else if (message.role == 'user' &&
+                              sttAudioDir.isNotEmpty) {
+                            audioPath = SttService.buildMessageAudioPath(
+                              baseDir: sttAudioDir,
+                              messageId: message.id,
+                            );
+                          }
                           final hasAudio = audioPath != null &&
                               File(audioPath).existsSync() &&
                               File(audioPath).lengthSync() > 0;
@@ -313,28 +342,28 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
                                       message.content,
                                       style: contentStyle,
                                     );
+                              final messageBody = showProgress
+                                  ? Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        contentWidget,
+                                        Padding(
+                                          padding:
+                                              const EdgeInsets.only(top: 6),
+                                          child: LinearProgressIndicator(
+                                            value: progressValue,
+                                          ),
+                                        ),
+                                      ],
+                                    )
+                                  : contentWidget;
                               return ListTile(
                                 title: Text(
                                   '$label - $timeLabel',
                                   style: labelStyle,
                                 ),
-                                subtitle: message.role == 'assistant'
-                                    ? Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          contentWidget,
-                                          if (showProgress)
-                                            Padding(
-                                              padding:
-                                                  const EdgeInsets.only(top: 6),
-                                              child: LinearProgressIndicator(
-                                                value: progressValue,
-                                              ),
-                                            ),
-                                        ],
-                                      )
-                                    : contentWidget,
+                                subtitle: messageBody,
                                 trailing: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: _buildMessageActions(
@@ -433,37 +462,40 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
                                     sttSupported)
                                 ? _handleSttPointerCancel
                                 : null,
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 150),
-                              padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(
-                                color: _sttRecording
-                                    ? Theme.of(context)
-                                        .colorScheme
-                                        .errorContainer
-                                    : Theme.of(context)
-                                        .colorScheme
-                                        .surfaceContainerHighest,
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: _sttTranscribing
-                                  ? const SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
+                            child: CompositedTransformTarget(
+                              link: _sttButtonLink,
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 150),
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: _sttRecording
+                                      ? Theme.of(context)
+                                          .colorScheme
+                                          .errorContainer
+                                      : Theme.of(context)
+                                          .colorScheme
+                                          .surfaceContainerHighest,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: _sttTranscribing
+                                    ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : Icon(
+                                        Icons.mic,
+                                        color: _sttRecording
+                                            ? Theme.of(context)
+                                                .colorScheme
+                                                .onErrorContainer
+                                            : Theme.of(context)
+                                                .colorScheme
+                                                .onSurfaceVariant,
                                       ),
-                                    )
-                                  : Icon(
-                                      Icons.mic,
-                                      color: _sttRecording
-                                          ? Theme.of(context)
-                                              .colorScheme
-                                              .onErrorContainer
-                                          : Theme.of(context)
-                                              .colorScheme
-                                              .onSurfaceVariant,
-                                    ),
+                              ),
                             ),
                           ),
                         ),
@@ -594,7 +626,7 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
   ) {
     final actions = <Widget>[];
 
-    if (hasAudio && audioPath != null && message.role == 'assistant') {
+    if (hasAudio && audioPath != null) {
       final isActive = isPlaying || isPaused;
       actions.add(
         IconButton(
@@ -704,6 +736,8 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
   Future<void> _startSttRecording() async {
     final l10n = AppLocalizations.of(context)!;
     final sttService = context.read<AppServices>().sttService;
+    _pendingSttAudioPath = null;
+    _pendingSttText = null;
     SttStartResult startResult;
     try {
       startResult =
@@ -748,6 +782,8 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     });
     if (canceled) {
       await sttService.cancelRecording(sessionId: widget.sessionId);
+      _pendingSttAudioPath = null;
+      _pendingSttText = null;
       if (mounted) {
         setState(() => _sttRecording = false);
       }
@@ -778,11 +814,15 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     if (result.isSuccess) {
       final autoSend =
           context.read<SettingsController>().settings?.sttAutoSend ?? false;
+      _pendingSttAudioPath = result.audioPath;
       _applyTranscription(result.text!);
+      _pendingSttText = _inputController.text.trim();
       if (autoSend && !_sending) {
         Future.microtask(_sendMessage);
       }
     } else {
+      _pendingSttAudioPath = null;
+      _pendingSttText = null;
       _showMessage(result.error ?? l10n.sttFailedMessage);
     }
   }
@@ -805,6 +845,7 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     if (trimmed.isEmpty) {
       return;
     }
+    _applyingTranscription = true;
     final existing = _inputController.text.trim();
     final merged = existing.isEmpty ? trimmed : '$existing $trimmed';
     _inputController.value = TextEditingValue(
@@ -812,6 +853,27 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
       selection: TextSelection.collapsed(offset: merged.length),
     );
     _inputFocus.requestFocus();
+    _applyingTranscription = false;
+  }
+
+  void _handleInputChanged() {
+    if (_applyingTranscription) {
+      return;
+    }
+    if (_pendingSttAudioPath == null) {
+      return;
+    }
+    final current = _inputController.text.trim();
+    final pending = (_pendingSttText ?? '').trim();
+    if (pending.isEmpty) {
+      _pendingSttAudioPath = null;
+      _pendingSttText = null;
+      return;
+    }
+    if (current != pending) {
+      _pendingSttAudioPath = null;
+      _pendingSttText = null;
+    }
   }
 
   Widget _buildSttCancelOverlay(BuildContext context) {
@@ -828,30 +890,37 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
         onPointerMove: _handleSttPointerMove,
         onPointerUp: _handleSttPointerUp,
         onPointerCancel: _handleSttPointerCancel,
-        child: Align(
-          alignment: const Alignment(0, 0.6),
-          child: AnimatedContainer(
-            key: _sttCancelKey,
-            duration: const Duration(milliseconds: 150),
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: background,
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: theme.colorScheme.shadow.withOpacity(0.25),
-                  blurRadius: 12,
-                  offset: const Offset(0, 6),
+        child: CompositedTransformFollower(
+          link: _sttButtonLink,
+          targetAnchor: Alignment.topCenter,
+          followerAnchor: Alignment.bottomCenter,
+          offset: const Offset(0, -8),
+          child: SizedBox(
+            width: 44,
+            height: 44,
+            child: AnimatedContainer(
+              key: _sttCancelKey,
+              duration: const Duration(milliseconds: 150),
+              decoration: BoxDecoration(
+                color: background,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: theme.colorScheme.shadow.withOpacity(0.25),
+                    blurRadius: 12,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+                border: Border.all(
+                  color: _sttCancelHover
+                      ? theme.colorScheme.error
+                      : theme.colorScheme.outline,
+                  width: 2,
                 ),
-              ],
-              border: Border.all(
-                color: _sttCancelHover
-                    ? theme.colorScheme.error
-                    : theme.colorScheme.outline,
-                width: 2,
               ),
+              alignment: Alignment.center,
+              child: Icon(Icons.close, color: foreground, size: 20),
             ),
-            child: Icon(Icons.close, color: foreground, size: 28),
           ),
         ),
       ),
@@ -872,8 +941,16 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     }
     setState(() => _sending = true);
     final sessionService = context.read<AppServices>().sessionService;
+    final sttService = context.read<AppServices>().sttService;
     final modelOverride = _resolveModelOverride();
     _prepareTts();
+    final pendingAudioPath = _pendingSttAudioPath;
+    final pendingText = (_pendingSttText ?? '').trim();
+    final inputText = _inputController.text.trim();
+    final shouldSaveSttAudio =
+        pendingAudioPath != null && pendingText.isNotEmpty && pendingText == inputText;
+    _pendingSttAudioPath = null;
+    _pendingSttText = null;
     try {
       final llmHandle = await sessionService.startTutorAction(
         sessionId: widget.sessionId,
@@ -884,6 +961,24 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
         modelOverride: modelOverride,
         stream: true,
         streamToDatabase: !_ttsEnabled,
+        onStudentMessageCreated: shouldSaveSttAudio
+            ? (messageId) {
+                sttService
+                    .saveMessageAudio(
+                      messageId: messageId,
+                      sourcePath: pendingAudioPath!,
+                      sessionId: widget.sessionId,
+                    )
+                    .then((result) {
+                  if (mounted) {
+                    if (!result.success) {
+                      _showMessage(l10n.sttAudioConvertFailedMessage);
+                    }
+                    setState(() {});
+                  }
+                });
+              }
+            : null,
         onAssistantMessageCreated:
             _ttsEnabled ? _handleAssistantMessageCreated : null,
         onChunk: _ttsEnabled ? _handleTtsChunk : null,

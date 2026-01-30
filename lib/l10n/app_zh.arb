@@ -167,6 +167,7 @@
   "sttRequiresOpenAi": "语音转文字需要 OpenAI 或 SiliconFlow API。",
   "sttPermissionDenied": "麦克风权限被拒绝。",
   "sttFailedMessage": "转写失败，请查看 TTS 日志。",
+  "sttAudioConvertFailedMessage": "音频转换失败，请查看 TTS 日志。",
   "summaryButton": "总结",
   "exitButton": "退出",
   "messageRequiredTitle": "需要消息",
