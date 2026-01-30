@@ -37,7 +37,8 @@ class ChatSessionPage extends StatefulWidget {
   State<ChatSessionPage> createState() => _ChatSessionPageState();
 }
 
-class _ChatSessionPageState extends State<ChatSessionPage> {
+class _ChatSessionPageState extends State<ChatSessionPage>
+    with WidgetsBindingObserver {
   final _inputController = TextEditingController();
   final FocusNode _inputFocus = FocusNode();
   final ScrollController _scrollController = ScrollController();
@@ -90,7 +91,6 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
   bool _sttPressActive = false;
   bool _sttCancelHover = false;
   String? _pendingSttAudioPath;
-  String? _pendingSttText;
   bool _applyingTranscription = false;
   final GlobalKey _sttCancelKey = GlobalKey();
   final LayerLink _sttButtonLink = LayerLink();
@@ -98,12 +98,14 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _inputController.addListener(_handleInputChanged);
     _loadSession();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     if (_ttsEnabled) {
       context.read<AppServices>().ttsService.stop(sessionId: widget.sessionId);
     }
@@ -120,6 +122,36 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     _inputFocus.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!mounted) {
+      return;
+    }
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _handleSttAppPaused();
+    }
+  }
+
+  Future<void> _handleSttAppPaused() async {
+    if (!_sttPressActive && !_sttRecording && !_sttTranscribing) {
+      return;
+    }
+    _sttPressActive = false;
+    _sttRecording = false;
+    _sttTranscribing = false;
+    _sttCancelHover = false;
+    _pendingSttAudioPath = null;
+    await context
+        .read<AppServices>()
+        .sttService
+        .cancelRecording(sessionId: widget.sessionId);
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   Future<void> _loadSession() async {
@@ -737,7 +769,6 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     final l10n = AppLocalizations.of(context)!;
     final sttService = context.read<AppServices>().sttService;
     _pendingSttAudioPath = null;
-    _pendingSttText = null;
     SttStartResult startResult;
     try {
       startResult =
@@ -783,7 +814,6 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     if (canceled) {
       await sttService.cancelRecording(sessionId: widget.sessionId);
       _pendingSttAudioPath = null;
-      _pendingSttText = null;
       if (mounted) {
         setState(() => _sttRecording = false);
       }
@@ -816,13 +846,11 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
           context.read<SettingsController>().settings?.sttAutoSend ?? false;
       _pendingSttAudioPath = result.audioPath;
       _applyTranscription(result.text!);
-      _pendingSttText = _inputController.text.trim();
       if (autoSend && !_sending) {
         Future.microtask(_sendMessage);
       }
     } else {
       _pendingSttAudioPath = null;
-      _pendingSttText = null;
       _showMessage(result.error ?? l10n.sttFailedMessage);
     }
   }
@@ -860,20 +888,7 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     if (_applyingTranscription) {
       return;
     }
-    if (_pendingSttAudioPath == null) {
-      return;
-    }
-    final current = _inputController.text.trim();
-    final pending = (_pendingSttText ?? '').trim();
-    if (pending.isEmpty) {
-      _pendingSttAudioPath = null;
-      _pendingSttText = null;
-      return;
-    }
-    if (current != pending) {
-      _pendingSttAudioPath = null;
-      _pendingSttText = null;
-    }
+    return;
   }
 
   Widget _buildSttCancelOverlay(BuildContext context) {
@@ -890,38 +905,42 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
         onPointerMove: _handleSttPointerMove,
         onPointerUp: _handleSttPointerUp,
         onPointerCancel: _handleSttPointerCancel,
-        child: CompositedTransformFollower(
-          link: _sttButtonLink,
-          targetAnchor: Alignment.topCenter,
-          followerAnchor: Alignment.bottomCenter,
-          offset: const Offset(0, -8),
-          child: SizedBox(
-            width: 44,
-            height: 44,
-            child: AnimatedContainer(
-              key: _sttCancelKey,
-              duration: const Duration(milliseconds: 150),
-              decoration: BoxDecoration(
-                color: background,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: theme.colorScheme.shadow.withOpacity(0.25),
-                    blurRadius: 12,
-                    offset: const Offset(0, 6),
+        child: Stack(
+          children: [
+            CompositedTransformFollower(
+              link: _sttButtonLink,
+              targetAnchor: Alignment.topCenter,
+              followerAnchor: Alignment.bottomCenter,
+              offset: const Offset(0, -8),
+              child: SizedBox(
+                width: 44,
+                height: 44,
+                child: AnimatedContainer(
+                  key: _sttCancelKey,
+                  duration: const Duration(milliseconds: 150),
+                  decoration: BoxDecoration(
+                    color: background,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: theme.colorScheme.shadow.withOpacity(0.25),
+                        blurRadius: 12,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                    border: Border.all(
+                      color: _sttCancelHover
+                          ? theme.colorScheme.error
+                          : theme.colorScheme.outline,
+                      width: 2,
+                    ),
                   ),
-                ],
-                border: Border.all(
-                  color: _sttCancelHover
-                      ? theme.colorScheme.error
-                      : theme.colorScheme.outline,
-                  width: 2,
+                  alignment: Alignment.center,
+                  child: Icon(Icons.close, color: foreground, size: 20),
                 ),
               ),
-              alignment: Alignment.center,
-              child: Icon(Icons.close, color: foreground, size: 20),
             ),
-          ),
+          ],
         ),
       ),
     );
@@ -945,12 +964,8 @@ class _ChatSessionPageState extends State<ChatSessionPage> {
     final modelOverride = _resolveModelOverride();
     _prepareTts();
     final pendingAudioPath = _pendingSttAudioPath;
-    final pendingText = (_pendingSttText ?? '').trim();
-    final inputText = _inputController.text.trim();
-    final shouldSaveSttAudio =
-        pendingAudioPath != null && pendingText.isNotEmpty && pendingText == inputText;
+    final shouldSaveSttAudio = pendingAudioPath != null;
     _pendingSttAudioPath = null;
-    _pendingSttText = null;
     try {
       final llmHandle = await sessionService.startTutorAction(
         sessionId: widget.sessionId,

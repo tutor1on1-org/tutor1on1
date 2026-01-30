@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -35,6 +36,10 @@ class SttService {
   String _lastModel = _openAiModel;
   bool _recording = false;
   String? _activePath;
+  DateTime? _recordStartedAt;
+  double? _recordPeakDb;
+  bool _recordAmplitudeHasData = false;
+  StreamSubscription<Amplitude>? _amplitudeSubscription;
 
   bool get isRecording => _recording;
 
@@ -42,10 +47,8 @@ class SttService {
   static const int _veryShortDurationMs = 1200;
   static const int _shortDurationMs = 3000;
   static const int _minDataBytes = 4096;
-  static const double _silentPeakThreshold = 0.02;
-  static const double _silentRmsThreshold = 0.01;
-  static const double _veryShortPeakThreshold = 0.05;
-  static const double _veryShortRmsThreshold = 0.02;
+  static const double _silentDbThreshold = -55.0;
+  static const double _veryShortDbThreshold = -45.0;
 
   Future<SttStartResult> startRecording({int? sessionId}) async {
     if (_recording) {
@@ -74,28 +77,50 @@ class SttService {
         permissionDenied: true,
       );
     }
-    final path = await _buildRecordingPath(sessionId);
+    final encoder = AudioEncoder.aacLc;
+    final supported = await _recorder.isEncoderSupported(encoder);
+    if (!supported) {
+      await _logError(
+        message: 'Encoder $encoder not supported.',
+        sessionId: sessionId,
+      );
+      return SttStartResult(
+        started: false,
+        error: 'Microphone encoder not supported.',
+      );
+    }
+    final path = await _buildRecordingPath(sessionId, encoder: encoder);
     try {
-      final encoder = AudioEncoder.wav;
-      final supported = await _recorder.isEncoderSupported(encoder);
-      if (!supported) {
-        await _logError(
-          message: 'Encoder $encoder not supported.',
-          sessionId: sessionId,
-        );
-        return SttStartResult(
-          started: false,
-          error: 'Microphone encoder not supported.',
-        );
-      }
       final config = RecordConfig(
         encoder: encoder,
-        bitRate: 128000,
-        sampleRate: 16000,
+        bitRate: 96000,
+        sampleRate: 44100,
+        numChannels: 1,
       );
       await _recorder.start(config, path: path);
       _recording = true;
       _activePath = path;
+      _recordStartedAt = DateTime.now();
+      _recordPeakDb = null;
+      _recordAmplitudeHasData = false;
+      _amplitudeSubscription ??= _recorder
+          .onAmplitudeChanged(const Duration(milliseconds: 120))
+          .listen((amplitude) {
+            if (!_recording) {
+              return;
+            }
+            final current = amplitude.current;
+            final maxValue = amplitude.max;
+            if (current == 0 && maxValue == 0) {
+              return;
+            }
+            _recordAmplitudeHasData = true;
+            final localMax = math.max(current, maxValue);
+            final peak = _recordPeakDb;
+            if (peak == null || localMax > peak) {
+              _recordPeakDb = localMax;
+            }
+          });
       await _logEvent(
         event: 'stt_record_start',
         message: 'Recording started.',
@@ -105,6 +130,9 @@ class SttService {
     } catch (error) {
       _recording = false;
       _activePath = null;
+      _recordStartedAt = null;
+      _recordPeakDb = null;
+      _recordAmplitudeHasData = false;
       await _logError(
         message: 'Recording start failed: $error',
         sessionId: sessionId,
@@ -123,6 +151,11 @@ class SttService {
       );
     }
     _recording = false;
+    final startedAt = _recordStartedAt;
+    _recordStartedAt = null;
+    final peakDb = _recordAmplitudeHasData ? _recordPeakDb : null;
+    _recordPeakDb = null;
+    _recordAmplitudeHasData = false;
     String? path;
     try {
       path = await _recorder.stop();
@@ -165,17 +198,30 @@ class SttService {
         audioPath: resolved,
       );
     }
-    final discarded = await _discardIfShortSilentWav(
+    final durationMs = startedAt == null
+        ? null
+        : DateTime.now().difference(startedAt).inMilliseconds;
+    var discarded = await _discardIfShortSilentRecording(
       file,
+      durationMs: durationMs,
+      peakDb: peakDb,
       sessionId: sessionId,
     );
+    if (!discarded &&
+        peakDb == null &&
+        file.path.toLowerCase().endsWith('.wav')) {
+      discarded = await _discardIfShortSilentWav(
+        file,
+        sessionId: sessionId,
+      );
+    }
     if (discarded) {
       return SttTranscriptionResult(
         error: 'Recording too short or silent.',
         audioPath: resolved,
       );
     }
-    await _cleanupTempWavs(
+    await _cleanupTempRecordings(
       keepPath: resolved,
       sessionId: sessionId,
     );
@@ -193,6 +239,9 @@ class SttService {
     }
     _recording = false;
     _activePath = null;
+    _recordStartedAt = null;
+    _recordPeakDb = null;
+    _recordAmplitudeHasData = false;
     try {
       await _recorder.stop();
     } catch (_) {}
@@ -372,7 +421,10 @@ class SttService {
     }
   }
 
-  Future<String> _buildRecordingPath(int? sessionId) async {
+  Future<String> _buildRecordingPath(
+    int? sessionId, {
+    required AudioEncoder encoder,
+  }) async {
     final tmpDir = await getTemporaryDirectory();
     final dir = Directory(p.join(tmpDir.path, 'stt_tmp'));
     if (!await dir.exists()) {
@@ -380,7 +432,28 @@ class SttService {
     }
     final timestamp = DateTime.now().microsecondsSinceEpoch;
     final suffix = sessionId == null ? '' : '_s$sessionId';
-    return p.join(dir.path, 'stt_$timestamp$suffix.wav');
+    final ext = _extensionForEncoder(encoder);
+    return p.join(dir.path, 'stt_$timestamp$suffix$ext');
+  }
+
+  String _extensionForEncoder(AudioEncoder encoder) {
+    switch (encoder) {
+      case AudioEncoder.aacLc:
+      case AudioEncoder.aacEld:
+      case AudioEncoder.aacHe:
+        return '.m4a';
+      case AudioEncoder.opus:
+        return '.opus';
+      case AudioEncoder.flac:
+        return '.flac';
+      case AudioEncoder.pcm16bits:
+        return '.pcm';
+      case AudioEncoder.wav:
+        return '.wav';
+      case AudioEncoder.amrNb:
+      case AudioEncoder.amrWb:
+        return '.3gp';
+    }
   }
 
   Future<String> _resolveAudioBaseDirectory() async {
@@ -505,6 +578,45 @@ class SttService {
     return false;
   }
 
+  Future<bool> _discardIfShortSilentRecording(
+    File file, {
+    int? durationMs,
+    double? peakDb,
+    int? sessionId,
+  }) async {
+    final length = await file.length();
+    final resolvedDuration = durationMs ?? 0;
+    var discard = false;
+    if (resolvedDuration > 0 && resolvedDuration < _minKeepDurationMs) {
+      discard = true;
+    }
+    if (length > 0 && length < _minDataBytes) {
+      discard = true;
+    }
+    if (!discard && peakDb != null && resolvedDuration > 0) {
+      if (resolvedDuration < _veryShortDurationMs &&
+          peakDb < _veryShortDbThreshold) {
+        discard = true;
+      } else if (resolvedDuration < _shortDurationMs &&
+          peakDb < _silentDbThreshold) {
+        discard = true;
+      }
+    }
+    if (!discard) {
+      return false;
+    }
+    await _logEvent(
+      event: 'stt_discard_short_silent',
+      message:
+          'Discarded short/silent audio: ${file.path} (${resolvedDuration}ms, peakDb ${(peakDb ?? 0).toStringAsFixed(1)}, bytes $length)',
+      sessionId: sessionId,
+    );
+    try {
+      await file.delete();
+    } catch (_) {}
+    return true;
+  }
+
   Future<bool> _discardIfShortSilentWav(
     File file, {
     int? sessionId,
@@ -523,12 +635,12 @@ class SttService {
       discard = true;
     } else if (stats != null) {
       if (durationMs < _veryShortDurationMs &&
-          stats.peak < _veryShortPeakThreshold &&
-          stats.rms < _veryShortRmsThreshold) {
+          stats.peak < 0.05 &&
+          stats.rms < 0.02) {
         discard = true;
       } else if (durationMs < _shortDurationMs &&
-          stats.peak < _silentPeakThreshold &&
-          stats.rms < _silentRmsThreshold) {
+          stats.peak < 0.02 &&
+          stats.rms < 0.01) {
         discard = true;
       }
     } else if (durationMs < _veryShortDurationMs) {
@@ -549,7 +661,7 @@ class SttService {
     return true;
   }
 
-  Future<void> _cleanupTempWavs({
+  Future<void> _cleanupTempRecordings({
     required String keepPath,
     int? sessionId,
   }) async {
@@ -563,13 +675,35 @@ class SttService {
         if (entity is! File) {
           continue;
         }
-        if (!entity.path.toLowerCase().endsWith('.wav')) {
+        final lower = entity.path.toLowerCase();
+        if (!lower.contains('${p.separator}stt_')) {
+          continue;
+        }
+        final hasKnownExtension =
+            lower.endsWith('.m4a') ||
+            lower.endsWith('.wav') ||
+            lower.endsWith('.aac') ||
+            lower.endsWith('.mp4') ||
+            lower.endsWith('.opus') ||
+            lower.endsWith('.flac') ||
+            lower.endsWith('.pcm') ||
+            lower.endsWith('.3gp');
+        if (!hasKnownExtension) {
           continue;
         }
         if (p.equals(entity.path, keepPath)) {
           continue;
         }
-        await _discardIfShortSilentWav(entity, sessionId: sessionId);
+        var discarded = await _discardIfShortSilentRecording(
+          entity,
+          sessionId: sessionId,
+        );
+        if (!discarded && lower.endsWith('.wav')) {
+          discarded = await _discardIfShortSilentWav(
+            entity,
+            sessionId: sessionId,
+          );
+        }
       }
     } catch (_) {}
   }
