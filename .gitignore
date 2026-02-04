@@ -1,3 +1,4 @@
+.DS_Store
 .gradle_home/
 .gradle/
 **/.gradle/
