@@ -275,130 +275,129 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                           _scrollController.position.maxScrollExtent,
                         );
                       });
-                      return ListView.builder(
-                        controller: _scrollController,
-                        itemCount: messages.length,
-                        itemBuilder: (context, index) {
-                          final message = messages[index];
-                          final label = _messageLabel(message, l10n);
-                          final timeLabel = _formatTime(message.createdAt);
-                          final theme = Theme.of(context);
-                          final baseTextStyle = theme.textTheme.bodyMedium ??
-                              const TextStyle(fontSize: 14);
-                          const fontFallback = [
-                            'Microsoft YaHei UI',
-                            'Microsoft YaHei',
-                            'Noto Sans CJK SC',
-                            'Source Han Sans SC',
-                            'PingFang SC',
-                            'SimHei',
-                          ];
-                          final contentStyle = baseTextStyle.copyWith(
-                            fontSize: (baseTextStyle.fontSize ?? 14) + 2,
-                            height: 1.55,
-                            fontFamily: 'Microsoft YaHei UI',
-                            fontFamilyFallback: fontFallback,
-                          );
-                          final labelStyle = baseTextStyle.copyWith(
-                            fontFamily: 'Microsoft YaHei UI',
-                            fontFamilyFallback: fontFallback,
-                          );
-                          final ttsService =
-                              context.read<AppServices>().ttsService;
-                          final ttsAudioDir =
-                              settings?.ttsAudioPath?.trim() ?? '';
-                          final logDir = (settings?.logDirectory ?? '').trim();
-                          final sttAudioDir = logDir.isNotEmpty
-                              ? logDir
-                              : () {
-                                  final llmLog =
-                                      (settings?.llmLogPath ?? '').trim();
-                                  if (llmLog.isNotEmpty) {
-                                    return p.dirname(llmLog);
-                                  }
-                                  final ttsLog =
-                                      (settings?.ttsLogPath ?? '').trim();
-                                  if (ttsLog.isNotEmpty) {
-                                    return p.dirname(ttsLog);
-                                  }
-                                  return '';
-                                }();
-                          String? audioPath;
-                          if (message.role == 'assistant' &&
-                              ttsAudioDir.isNotEmpty) {
-                            audioPath = TtsService.buildMessageAudioPath(
-                              baseDir: ttsAudioDir,
-                              messageId: message.id,
-                            );
-                          } else if (message.role == 'user' &&
-                              sttAudioDir.isNotEmpty) {
-                            audioPath = SttService.buildMessageAudioPath(
-                              baseDir: sttAudioDir,
-                              messageId: message.id,
-                            );
-                          }
-                          final hasAudio = audioPath != null &&
-                              File(audioPath).existsSync() &&
-                              File(audioPath).lengthSync() > 0;
-                          return StreamBuilder<TtsPlaybackState>(
-                            stream: ttsService.playbackStream,
-                            builder: (context, playbackSnapshot) {
-                              final playback = playbackSnapshot.data;
-                              final isPlaying = playback?.messageId ==
-                                      message.id &&
-                                  playback?.isPlaying == true;
-                              final isPaused = playback?.messageId ==
-                                      message.id &&
-                                  playback?.isPaused == true;
-                              final duration = playback?.duration;
-                              final position = playback?.position ??
-                                  Duration.zero;
-                              final progressValue =
-                                  (duration == null ||
-                                          duration.inMilliseconds <= 0)
-                                      ? null
-                                      : (position.inMilliseconds /
-                                              duration.inMilliseconds)
-                                          .clamp(0.0, 1.0);
-                              final showProgress = playback?.messageId ==
-                                      message.id &&
-                                  duration != null &&
-                                  duration.inMilliseconds > 0;
-                              final contentWidget = message.role == 'assistant'
-                                  ? MathMarkdownView(
-                                      key: ValueKey('msg_${message.id}'),
-                                      content: message.content,
-                                      textStyle: contentStyle,
-                                    )
-                                  : SelectableText(
-                                      message.content,
-                                      style: contentStyle,
-                                    );
-                              final messageBody = showProgress
-                                  ? Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        contentWidget,
-                                        Padding(
-                                          padding:
-                                              const EdgeInsets.only(top: 6),
-                                          child: LinearProgressIndicator(
-                                            value: progressValue,
-                                          ),
-                                        ),
-                                      ],
-                                    )
-                                  : contentWidget;
-                              return ListTile(
-                                title: Text(
-                                  '$label - $timeLabel',
-                                  style: labelStyle,
-                                ),
-                                subtitle: messageBody,
-                                trailing: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: _buildMessageActions(
+                      return LayoutBuilder(
+                        builder: (context, constraints) {
+                          final isNarrow = constraints.maxWidth < 520;
+                          return ListView.builder(
+                            controller: _scrollController,
+                            itemCount: messages.length,
+                            itemBuilder: (context, index) {
+                              final message = messages[index];
+                              final label = _messageLabel(message, l10n);
+                              final timeLabel = _formatTime(message.createdAt);
+                              final theme = Theme.of(context);
+                              final baseTextStyle =
+                                  theme.textTheme.bodyMedium ??
+                                      const TextStyle(fontSize: 14);
+                              const fontFallback = [
+                                'Microsoft YaHei UI',
+                                'Microsoft YaHei',
+                                'Noto Sans CJK SC',
+                                'Source Han Sans SC',
+                                'PingFang SC',
+                                'SimHei',
+                              ];
+                              final contentStyle = baseTextStyle.copyWith(
+                                fontSize: (baseTextStyle.fontSize ?? 14) + 2,
+                                height: 1.55,
+                                fontFamily: 'Microsoft YaHei UI',
+                                fontFamilyFallback: fontFallback,
+                              );
+                              final labelStyle = baseTextStyle.copyWith(
+                                fontFamily: 'Microsoft YaHei UI',
+                                fontFamilyFallback: fontFallback,
+                              );
+                              final ttsService =
+                                  context.read<AppServices>().ttsService;
+                              final ttsAudioDir =
+                                  settings?.ttsAudioPath?.trim() ?? '';
+                              final logDir =
+                                  (settings?.logDirectory ?? '').trim();
+                              final sttAudioDir = logDir.isNotEmpty
+                                  ? logDir
+                                  : () {
+                                      final llmLog =
+                                          (settings?.llmLogPath ?? '').trim();
+                                      if (llmLog.isNotEmpty) {
+                                        return p.dirname(llmLog);
+                                      }
+                                      final ttsLog =
+                                          (settings?.ttsLogPath ?? '').trim();
+                                      if (ttsLog.isNotEmpty) {
+                                        return p.dirname(ttsLog);
+                                      }
+                                      return '';
+                                    }();
+                              String? audioPath;
+                              if (message.role == 'assistant' &&
+                                  ttsAudioDir.isNotEmpty) {
+                                audioPath = TtsService.buildMessageAudioPath(
+                                  baseDir: ttsAudioDir,
+                                  messageId: message.id,
+                                );
+                              } else if (message.role == 'user' &&
+                                  sttAudioDir.isNotEmpty) {
+                                audioPath = SttService.buildMessageAudioPath(
+                                  baseDir: sttAudioDir,
+                                  messageId: message.id,
+                                );
+                              }
+                              final hasAudio = audioPath != null &&
+                                  File(audioPath).existsSync() &&
+                                  File(audioPath).lengthSync() > 0;
+                              return StreamBuilder<TtsPlaybackState>(
+                                stream: ttsService.playbackStream,
+                                builder: (context, playbackSnapshot) {
+                                  final playback = playbackSnapshot.data;
+                                  final isPlaying = playback?.messageId ==
+                                          message.id &&
+                                      playback?.isPlaying == true;
+                                  final isPaused = playback?.messageId ==
+                                          message.id &&
+                                      playback?.isPaused == true;
+                                  final duration = playback?.duration;
+                                  final position = playback?.position ??
+                                      Duration.zero;
+                                  final progressValue =
+                                      (duration == null ||
+                                              duration.inMilliseconds <= 0)
+                                          ? null
+                                          : (position.inMilliseconds /
+                                                  duration.inMilliseconds)
+                                              .clamp(0.0, 1.0);
+                                  final showProgress = playback?.messageId ==
+                                          message.id &&
+                                      duration != null &&
+                                      duration.inMilliseconds > 0;
+                                  final contentWidget =
+                                      message.role == 'assistant'
+                                          ? MathMarkdownView(
+                                              key:
+                                                  ValueKey('msg_${message.id}'),
+                                              content: message.content,
+                                              textStyle: contentStyle,
+                                            )
+                                          : SelectableText(
+                                              message.content,
+                                              style: contentStyle,
+                                            );
+                                  final messageBody = showProgress
+                                      ? Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            contentWidget,
+                                            Padding(
+                                              padding:
+                                                  const EdgeInsets.only(top: 6),
+                                              child: LinearProgressIndicator(
+                                                value: progressValue,
+                                              ),
+                                            ),
+                                          ],
+                                        )
+                                      : contentWidget;
+                                  final actions = _buildMessageActions(
                                     message,
                                     lastUserId,
                                     l10n,
@@ -406,8 +405,41 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                     audioPath: audioPath,
                                     isPlaying: isPlaying,
                                     isPaused: isPaused,
-                                  ),
-                                ),
+                                  );
+                                  final actionStrip = Wrap(
+                                    spacing: 4,
+                                    runSpacing: 4,
+                                    children: actions,
+                                  );
+                                  final messageSubtitle = isNarrow &&
+                                          actions.isNotEmpty
+                                      ? Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            messageBody,
+                                            const SizedBox(height: 8),
+                                            Align(
+                                              alignment: Alignment.centerRight,
+                                              child: actionStrip,
+                                            ),
+                                          ],
+                                        )
+                                      : messageBody;
+                                  return ListTile(
+                                    title: Text(
+                                      '$label - $timeLabel',
+                                      style: labelStyle,
+                                    ),
+                                    subtitle: messageSubtitle,
+                                    trailing: isNarrow || actions.isEmpty
+                                        ? null
+                                        : Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: actions,
+                                          ),
+                                  );
+                                },
                               );
                             },
                           );
