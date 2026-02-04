@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:family_teacher/l10n/app_localizations.dart';
@@ -6,6 +8,7 @@ import 'package:provider/provider.dart';
 
 import '../../db/app_database.dart';
 import '../../services/app_services.dart';
+import '../../services/course_import_service.dart';
 import '../../services/course_service.dart';
 import '../pages/skill_tree_page.dart';
 
@@ -231,15 +234,32 @@ class _CourseVersionPageState extends State<CourseVersionPage> {
 
   Future<void> _browseFolder() async {
     final l10n = AppLocalizations.of(context)!;
-    final path = await FilePicker.platform.getDirectoryPath(
-      dialogTitle: l10n.courseFolderPickerTitle,
-    );
-    if (path == null) {
+    String? path;
+    try {
+      if (Platform.isAndroid) {
+        path = await CourseImportService.pickAndImportCourseFolder();
+      } else {
+        path = await FilePicker.platform.getDirectoryPath(
+          dialogTitle: l10n.courseFolderPickerTitle,
+        );
+      }
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      await _showErrorDialog(
+        title: l10n.courseLoadFailedTitle,
+        message: e.toString(),
+      );
+      return;
+    }
+    final resolvedPath = path?.trim();
+    if (resolvedPath == null || resolvedPath.isEmpty) {
       return;
     }
     setState(() {
-      _folderController.text = path;
-      _courseName = p.basename(p.normalize(path));
+      _folderController.text = resolvedPath;
+      _courseName = p.basename(p.normalize(resolvedPath));
     });
   }
 

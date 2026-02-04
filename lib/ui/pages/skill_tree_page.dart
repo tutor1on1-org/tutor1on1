@@ -423,7 +423,11 @@ class _SkillTreePageState extends State<SkillTreePage> {
                 ),
               const SizedBox(height: 8),
               Expanded(
-                child: Container(
+                child: InteractiveViewer(
+                  constrained: false,
+                  boundaryMargin: const EdgeInsets.all(200),
+                  minScale: 0.4,
+                  maxScale: 3.0,
                   child: GraphView(
                     key: ValueKey('graph_${_graphRevision}'),
                     graph: graph,
