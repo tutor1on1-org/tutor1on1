@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:family_teacher/l10n/app_localizations.dart';
@@ -12,6 +13,7 @@ import '../../models/skill_tree.dart';
 import '../../services/app_services.dart';
 import '../../state/auth_controller.dart';
 import '../tutor_session_page.dart';
+import '../widgets/pan_scroll_view.dart';
 
 class SkillTreePage extends StatefulWidget {
   const SkillTreePage({
@@ -306,299 +308,329 @@ class _SkillTreePageState extends State<SkillTreePage> {
             ..addAll(_calculateNodeProgress(_parseResult!.root, litMap));
           final graph = _graph ?? (Graph()..isTree = true);
 
-          return Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(12),
-                child: TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    labelText: l10n.searchNodeLabel,
-                    hintText: l10n.searchNodeHint,
-                    prefixIcon: const Icon(Icons.search),
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Wrap(
-                  spacing: 12,
-                  runSpacing: 8,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    SizedBox(
-                      width: 160,
-                      child: DropdownButtonFormField<int>(
-                        value: _levelLimit,
-                        decoration: InputDecoration(
-                          labelText: l10n.levelFilterLabel,
-                          border: const OutlineInputBorder(),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 10,
-                          ),
-                        ),
-                        items: List.generate(
-                          _maxDepth,
-                          (index) => DropdownMenuItem(
-                            value: index + 1,
-                            child: Text('${index + 1}'),
-                          ),
-                        ),
-                        onChanged: (value) {
-                          if (value == null) {
-                            return;
-                          }
-                          setState(() {
-                            _levelLimit = value;
-                            _expanded
-                              ..clear()
-                              ..addAll(_expandedForLevel(value));
-                            _graph = _buildGraphForLevel(_levelLimit);
-                            _graphRevision++;
-                          });
-                          _scheduleViewStateSave();
-                        },
-                      ),
-                    ),
-                    SizedBox(
-                      width: 180,
-                      child: DropdownButtonFormField<int?>(
-                        value: _yearFilter,
-                        decoration: InputDecoration(
-                          labelText: l10n.yearFilterLabel,
-                          border: const OutlineInputBorder(),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 10,
-                          ),
-                        ),
-                        items: [
-                          DropdownMenuItem<int?>(
-                            value: null,
-                            child: Text(l10n.yearFilterAll),
-                          ),
-                          ..._yearOptions().map(
-                            (year) => DropdownMenuItem<int?>(
-                              value: year,
-                              child: Text('Y$year'),
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              final bottomItems = <Widget>[];
+              if (_parseResult!.unparsedLines.isNotEmpty) {
+                bottomItems.add(
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            l10n.unparsedLinesLabel(
+                              _parseResult!.unparsedLines.length,
                             ),
                           ),
-                        ],
-                        onChanged: (value) {
-                          setState(() {
-                            _yearFilter = value;
-                            _graph = _buildGraphForLevel(_levelLimit);
-                            _graphRevision++;
-                          });
-                          _scheduleViewStateSave();
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (_searchQuery.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: matches.isEmpty
-                      ? Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text(l10n.noSearchResults),
-                        )
-                      : Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: matches
-                              .take(12)
-                              .map(
-                                (node) => ActionChip(
-                                  label: Text(node.id),
-                                  onPressed: () => _selectNode(node),
-                                ),
-                              )
-                              .toList(),
                         ),
-                ),
-              const SizedBox(height: 8),
-              Expanded(
-                child: InteractiveViewer(
-                  constrained: false,
-                  boundaryMargin: const EdgeInsets.all(200),
-                  minScale: 0.4,
-                  maxScale: 3.0,
-                  child: GraphView(
-                    key: ValueKey('graph_${_graphRevision}'),
-                    graph: graph,
-                    algorithm: _graphAlgorithm,
-                    animated: false,
-                    builder: (Node node) {
-                      final data = _graphNodeData[node];
-                      if (data == null) {
-                        return const SizedBox.shrink();
-                      }
-                      return _buildNodeWidget(
-                        data,
-                        litMap[data.id] == true,
-                        isStudent,
-                        db,
-                        currentUser?.id,
-                      );
-                    },
+                        TextButton(
+                          onPressed: () {
+                            setState(() => _showRaw = !_showRaw);
+                            _scheduleViewStateSave();
+                          },
+                          child: Text(
+                            _showRaw ? l10n.hideRawButton : l10n.showRawButton,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ),
-              if (_parseResult!.unparsedLines.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          l10n.unparsedLinesLabel(
-                            _parseResult!.unparsedLines.length,
+                );
+                if (_showRaw) {
+                  bottomItems.add(
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: SizedBox(
+                        height: 120,
+                        child: SingleChildScrollView(
+                          child: SelectableText(
+                            _parseResult!.unparsedLines.join('\n'),
                           ),
                         ),
                       ),
-                      TextButton(
-                        onPressed: () {
-                          setState(() => _showRaw = !_showRaw);
-                          _scheduleViewStateSave();
-                        },
-                        child: Text(
-                          _showRaw ? l10n.hideRawButton : l10n.showRawButton,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              if (_showRaw)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: SizedBox(
-                    height: 120,
-                    child: SingleChildScrollView(
-                      child: SelectableText(
-                        _parseResult!.unparsedLines.join('\n'),
-                      ),
                     ),
-                  ),
-                ),
-              if (selectedNode != null)
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color:
-                        Theme.of(context).colorScheme.surfaceContainerHighest,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: _detailNodesForSelection(selectedNode).map((node) {
-                      final text = _nodeDisplayText(node);
-                      final isActive = node.id == _selectedId;
-                      final background = _branchColor(node.id);
-                      final showTeacherControls = widget.isTeacherView &&
-                          isActive &&
-                          targetStudentId != null;
-                      final isLit = _isNodeFullyLit(node, litMap);
-                      final idLabel =
-                          node.id == _parseResult!.root.id ? '' : node.id;
-                      return InkWell(
-                        onTap: () => _handleNodeTap(
-                          node,
-                          isStudent,
-                          isTeacher,
-                          db,
-                          currentUser?.id,
-                          targetStudentId,
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              vertical: 6,
-                              horizontal: 8,
-                            ),
-                            decoration: BoxDecoration(
-                              color: background,
-                              borderRadius: BorderRadius.circular(6),
-                              border: Border.all(
-                                color:
-                                    isActive ? Colors.orange : Colors.transparent,
-                                width: isActive ? 2 : 1,
+                  );
+                }
+              }
+
+              if (selectedNode != null) {
+                bottomItems.add(
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .surfaceContainerHighest,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children:
+                          _detailNodesForSelection(selectedNode).map((node) {
+                        final text = _nodeDisplayText(node);
+                        final isActive = node.id == _selectedId;
+                        final background = _branchColor(node.id);
+                        final showTeacherControls = widget.isTeacherView &&
+                            isActive &&
+                            targetStudentId != null;
+                        final isLit = _isNodeFullyLit(node, litMap);
+                        final idLabel =
+                            node.id == _parseResult!.root.id ? '' : node.id;
+                        return InkWell(
+                          onTap: () => _handleNodeTap(
+                            node,
+                            isStudent,
+                            isTeacher,
+                            db,
+                            currentUser?.id,
+                            targetStudentId,
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 6,
+                                horizontal: 8,
                               ),
-                            ),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                SizedBox(
-                                  width: 80,
-                                  child: Text(
-                                    idLabel,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w600,
+                              decoration: BoxDecoration(
+                                color: background,
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: isActive
+                                      ? Colors.orange
+                                      : Colors.transparent,
+                                  width: isActive ? 2 : 1,
+                                ),
+                              ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  SizedBox(
+                                    width: 80,
+                                    child: Text(
+                                      idLabel,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                     ),
                                   ),
-                                ),
-                                Expanded(
-                                  child: Text(text),
-                                ),
-                                if (showTeacherControls)
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      FilledButton(
-                                        style: FilledButton.styleFrom(
-                                          backgroundColor: isLit
-                                              ? Colors.green
-                                              : Colors.grey,
-                                          foregroundColor: Colors.white,
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 10,
-                                            vertical: 6,
-                                          ),
-                                          minimumSize: const Size(0, 32),
-                                        ),
-                                        onPressed: () => _toggleNodeLit(
-                                          node: node,
-                                          litMap: litMap,
-                                          db: db,
-                                          studentId: targetStudentId!,
-                                          includeAll: !_isLeafNode(node),
-                                        ),
-                                        child: const Text('lit'),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      OutlinedButton(
-                                        style: OutlinedButton.styleFrom(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 10,
-                                            vertical: 6,
-                                          ),
-                                          minimumSize: const Size(0, 32),
-                                        ),
-                                        onPressed: () => _toggleNodeLit(
-                                          node: node,
-                                          litMap: litMap,
-                                          db: db,
-                                          studentId: targetStudentId!,
-                                          includeAll: true,
-                                        ),
-                                        child: const Text('all'),
-                                      ),
-                                    ],
+                                  Expanded(
+                                    child: Text(text),
                                   ),
-                              ],
+                                  if (showTeacherControls)
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        FilledButton(
+                                          style: FilledButton.styleFrom(
+                                            backgroundColor: isLit
+                                                ? Colors.green
+                                                : Colors.grey,
+                                            foregroundColor: Colors.white,
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 10,
+                                              vertical: 6,
+                                            ),
+                                            minimumSize: const Size(0, 32),
+                                          ),
+                                          onPressed: () => _toggleNodeLit(
+                                            node: node,
+                                            litMap: litMap,
+                                            db: db,
+                                            studentId: targetStudentId!,
+                                            includeAll: !_isLeafNode(node),
+                                          ),
+                                          child: const Text('lit'),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        OutlinedButton(
+                                          style: OutlinedButton.styleFrom(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 10,
+                                              vertical: 6,
+                                            ),
+                                            minimumSize: const Size(0, 32),
+                                          ),
+                                          onPressed: () => _toggleNodeLit(
+                                            node: node,
+                                            litMap: litMap,
+                                            db: db,
+                                            studentId: targetStudentId!,
+                                            includeAll: true,
+                                          ),
+                                          child: const Text('all'),
+                                        ),
+                                      ],
+                                    ),
+                                ],
+                              ),
                             ),
                           ),
-                        ),
-                      );
-                    }).toList(),
+                        );
+                      }).toList(),
+                    ),
                   ),
-                ),
-            ],
+                );
+              }
+
+              final showBottom = bottomItems.isNotEmpty;
+              final maxBottomHeight =
+                  math.min(260.0, constraints.maxHeight * 0.35);
+
+              return Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: TextField(
+                      controller: _searchController,
+                      decoration: InputDecoration(
+                        labelText: l10n.searchNodeLabel,
+                        hintText: l10n.searchNodeHint,
+                        prefixIcon: const Icon(Icons.search),
+                        border: const OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Wrap(
+                      spacing: 12,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: 160,
+                          child: DropdownButtonFormField<int>(
+                            value: _levelLimit,
+                            decoration: InputDecoration(
+                              labelText: l10n.levelFilterLabel,
+                              border: const OutlineInputBorder(),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 10,
+                              ),
+                            ),
+                            items: List.generate(
+                              _maxDepth,
+                              (index) => DropdownMenuItem(
+                                value: index + 1,
+                                child: Text('${index + 1}'),
+                              ),
+                            ),
+                            onChanged: (value) {
+                              if (value == null) {
+                                return;
+                              }
+                              setState(() {
+                                _levelLimit = value;
+                                _expanded
+                                  ..clear()
+                                  ..addAll(_expandedForLevel(value));
+                                _graph = _buildGraphForLevel(_levelLimit);
+                                _graphRevision++;
+                              });
+                              _scheduleViewStateSave();
+                            },
+                          ),
+                        ),
+                        SizedBox(
+                          width: 180,
+                          child: DropdownButtonFormField<int?>(
+                            value: _yearFilter,
+                            decoration: InputDecoration(
+                              labelText: l10n.yearFilterLabel,
+                              border: const OutlineInputBorder(),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 10,
+                              ),
+                            ),
+                            items: [
+                              DropdownMenuItem<int?>(
+                                value: null,
+                                child: Text(l10n.yearFilterAll),
+                              ),
+                              ..._yearOptions().map(
+                                (year) => DropdownMenuItem<int?>(
+                                  value: year,
+                                  child: Text('Y$year'),
+                                ),
+                              ),
+                            ],
+                            onChanged: (value) {
+                              setState(() {
+                                _yearFilter = value;
+                                _graph = _buildGraphForLevel(_levelLimit);
+                                _graphRevision++;
+                              });
+                              _scheduleViewStateSave();
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (_searchQuery.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: matches.isEmpty
+                          ? Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(l10n.noSearchResults),
+                            )
+                          : Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: matches
+                                  .take(12)
+                                  .map(
+                                    (node) => ActionChip(
+                                      label: Text(node.id),
+                                      onPressed: () => _selectNode(node),
+                                    ),
+                                  )
+                                  .toList(),
+                            ),
+                    ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: PanScrollView(
+                      padding: const EdgeInsets.all(200),
+                      child: GraphView(
+                        key: ValueKey('graph_${_graphRevision}'),
+                        graph: graph,
+                        algorithm: _graphAlgorithm,
+                        animated: false,
+                        builder: (Node node) {
+                          final data = _graphNodeData[node];
+                          if (data == null) {
+                            return const SizedBox.shrink();
+                          }
+                          return _buildNodeWidget(
+                            data,
+                            litMap[data.id] == true,
+                            isStudent,
+                            db,
+                            currentUser?.id,
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                  if (showBottom)
+                    SizedBox(
+                      height: maxBottomHeight,
+                      child: PanScrollView(
+                        horizontal: false,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: bottomItems,
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
           );
         },
       ),

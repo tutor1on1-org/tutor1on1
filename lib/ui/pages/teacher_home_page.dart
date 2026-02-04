@@ -12,6 +12,7 @@ import 'prompt_settings_page.dart';
 import '../app_settings_page.dart';
 import 'skill_tree_page.dart';
 import 'student_sessions_page.dart';
+import '../widgets/pan_scroll_view.dart';
 
 class TeacherHomePage extends StatelessWidget {
   const TeacherHomePage({super.key});
@@ -619,41 +620,53 @@ class _CourseAssignmentTileState extends State<_CourseAssignmentTile> {
                     ? widget.course.subject
                     : '${widget.course.subject} • $studentName ($litCount/$_totalLeaves)';
                 return Card(
-                  child: ListTile(
-                    key: Key('course_item_${widget.course.id}'),
-                    title: Text(titleText),
-                    trailing: Wrap(
-                      spacing: 8,
-                      children: [
-                        TextButton(
-                          key: Key('course_edit_${widget.course.id}'),
-                          onPressed: widget.onReload,
-                          child: Text(
-                            widget.isLoaded
-                                ? l10n.reloadCourseButton
-                                : l10n.loadCourseButton,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    child: PanScrollView(
+                      horizontal: true,
+                      vertical: false,
+                      child: Row(
+                        key: Key('course_item_${widget.course.id}'),
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            titleText,
+                            softWrap: false,
                           ),
-                        ),
-                        IconButton(
-                          tooltip: l10n.deleteCourseButton,
-                          icon: const Icon(Icons.delete),
-                          onPressed: widget.onDelete,
-                        ),
-                        TextButton(
-                          style: widget.isLoaded
-                              ? null
-                              : TextButton.styleFrom(
-                                  foregroundColor:
-                                      Theme.of(context).disabledColor,
-                                ),
-                          onPressed: widget.onViewTree,
-                          child: Text(l10n.treeButton),
-                        ),
-                        TextButton(
-                          onPressed: assignEnabled ? widget.onAssign : null,
-                          child: Text(l10n.assignButton),
-                        ),
-                      ],
+                          const SizedBox(width: 12),
+                          TextButton(
+                            key: Key('course_edit_${widget.course.id}'),
+                            onPressed: widget.onReload,
+                            child: Text(
+                              widget.isLoaded
+                                  ? l10n.reloadCourseButton
+                                  : l10n.loadCourseButton,
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: l10n.deleteCourseButton,
+                            icon: const Icon(Icons.delete),
+                            onPressed: widget.onDelete,
+                          ),
+                          TextButton(
+                            style: widget.isLoaded
+                                ? null
+                                : TextButton.styleFrom(
+                                    foregroundColor:
+                                        Theme.of(context).disabledColor,
+                                  ),
+                            onPressed: widget.onViewTree,
+                            child: Text(l10n.treeButton),
+                          ),
+                          TextButton(
+                            onPressed: assignEnabled ? widget.onAssign : null,
+                            child: Text(l10n.assignButton),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 );
