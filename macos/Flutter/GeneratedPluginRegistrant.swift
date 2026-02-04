@@ -6,7 +6,7 @@ import FlutterMacOS
 import Foundation
 
 import audio_session
-import ffmpeg_kit_flutter
+import ffmpeg_kit_flutter_new_https
 import file_picker
 import flutter_secure_storage_macos
 import just_audio
