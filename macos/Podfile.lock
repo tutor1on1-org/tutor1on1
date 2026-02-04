@@ -1,10 +1,10 @@
 PODS:
   - audio_session (0.0.1):
     - FlutterMacOS
-  - ffmpeg_kit_flutter_new_https (7.1.1):
-    - ffmpeg_kit_flutter_new_https/https (= 7.1.1)
+  - ffmpeg_kit_flutter_new_full (7.1.1):
+    - ffmpeg_kit_flutter_new_full/full (= 7.1.1)
     - FlutterMacOS
-  - ffmpeg_kit_flutter_new_https/https (7.1.1):
+  - ffmpeg_kit_flutter_new_full/full (7.1.1):
     - FlutterMacOS
   - file_picker (0.0.1):
     - FlutterMacOS
@@ -48,7 +48,7 @@ PODS:
 
 DEPENDENCIES:
   - audio_session (from `Flutter/ephemeral/.symlinks/plugins/audio_session/macos`)
-  - ffmpeg_kit_flutter_new_https (from `Flutter/ephemeral/.symlinks/plugins/ffmpeg_kit_flutter_new_https/macos`)
+  - ffmpeg_kit_flutter_new_full (from `Flutter/ephemeral/.symlinks/plugins/ffmpeg_kit_flutter_new_full/macos`)
   - file_picker (from `Flutter/ephemeral/.symlinks/plugins/file_picker/macos`)
   - flutter_secure_storage_macos (from `Flutter/ephemeral/.symlinks/plugins/flutter_secure_storage_macos/macos`)
   - FlutterMacOS (from `Flutter/ephemeral`)
@@ -65,8 +65,8 @@ SPEC REPOS:
 EXTERNAL SOURCES:
   audio_session:
     :path: Flutter/ephemeral/.symlinks/plugins/audio_session/macos
-  ffmpeg_kit_flutter_new_https:
-    :path: Flutter/ephemeral/.symlinks/plugins/ffmpeg_kit_flutter_new_https/macos
+  ffmpeg_kit_flutter_new_full:
+    :path: Flutter/ephemeral/.symlinks/plugins/ffmpeg_kit_flutter_new_full/macos
   file_picker:
     :path: Flutter/ephemeral/.symlinks/plugins/file_picker/macos
   flutter_secure_storage_macos:
@@ -86,7 +86,7 @@ EXTERNAL SOURCES:
 
 SPEC CHECKSUMS:
   audio_session: eaca2512cf2b39212d724f35d11f46180ad3a33e
-  ffmpeg_kit_flutter_new_https: aa6ce55bed62ce006969e5ff17a3df540bcb640f
+  ffmpeg_kit_flutter_new_full: 633f11e0948681455c57ca8b6c761a95ca068cc7
   file_picker: 7584aae6fa07a041af2b36a2655122d42f578c1a
   flutter_secure_storage_macos: 7f45e30f838cf2659862a4e4e3ee1c347c2b3b54
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
