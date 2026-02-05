@@ -13,6 +13,8 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            // Prevent stripping FFmpegKit native libs in release.
+            keepDebugSymbols += listOf("**/libffmpegkit*.so")
         }
     }
 
@@ -41,6 +43,10 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 }
