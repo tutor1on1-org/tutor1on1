@@ -76,9 +76,10 @@ class PromptRepository {
     int? studentId,
     String? courseAppendOverride,
     String? studentAppendOverride,
+    bool includeSystem = true,
   }) async {
     final normalizedCourseKey = _normalizeCourseKey(courseKey);
-    final systemPrompt = await _loadSystemPrompt(name);
+    final systemPrompt = includeSystem ? await _loadSystemPrompt(name) : '';
     final courseAppend = courseAppendOverride ??
         await _loadAppendPrompt(
           name,

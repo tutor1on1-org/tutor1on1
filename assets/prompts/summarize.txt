@@ -19,7 +19,7 @@ Student summary (prior state; use if useful):
  
 Session transcript (may be truncated):
 {{conversation_history}}
-
+ 
 Required JSON format:
 {"summary_text":"...","master_level":"easy|medium|hard","lit":true}
 

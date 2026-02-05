@@ -176,6 +176,16 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
                             child: Text(l10n.editButton),
                           ),
                           TextButton(
+                            onPressed: () => _showCurrentPreview(
+                              context,
+                              promptRepo,
+                              item.name,
+                              courseKey: courseKey,
+                              studentId: studentId,
+                            ),
+                            child: Text(l10n.previewButton),
+                          ),
+                          TextButton(
                             onPressed: () async {
                               if (scope == null) {
                                 return;
@@ -228,7 +238,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
                                   spacing: 8,
                                   children: [
                                     TextButton(
-                                      onPressed: () => _showPromptPreview(
+                                      onPressed: () => _showPromptDiff(
                                         context,
                                         promptRepo,
                                         item.name,
@@ -236,7 +246,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
                                         courseKey: courseKey,
                                         studentId: studentId,
                                       ),
-                                      child: Text(l10n.previewButton),
+                                      child: const Text('Diff'),
                                     ),
                                     TextButton(
                                       onPressed: () async {
@@ -375,23 +385,20 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
     }
   }
 
-  Future<void> _showPromptPreview(
+  Future<void> _showCurrentPreview(
     BuildContext context,
     PromptRepository promptRepo,
-    String promptName,
-    PromptTemplate entry, {
+    String promptName, {
     String? courseKey,
     int? studentId,
-  }
-  ) async {
+  }) async {
     final l10n = AppLocalizations.of(context)!;
     final preview = await promptRepo.buildPromptPreview(
       name: promptName,
       teacherId: widget.teacherId,
       courseKey: courseKey,
       studentId: studentId,
-      courseAppendOverride: studentId == null ? entry.content : null,
-      studentAppendOverride: studentId == null ? null : entry.content,
+      includeSystem: false,
     );
     await showDialog<void>(
       context: context,
@@ -411,6 +418,113 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
         ],
       ),
     );
+  }
+
+  Future<void> _showPromptDiff(
+    BuildContext context,
+    PromptRepository promptRepo,
+    String promptName,
+    PromptTemplate entry, {
+    String? courseKey,
+    int? studentId,
+  }) async {
+    final l10n = AppLocalizations.of(context)!;
+    final current = await promptRepo.buildPromptPreview(
+      name: promptName,
+      teacherId: widget.teacherId,
+      courseKey: courseKey,
+      studentId: studentId,
+      includeSystem: false,
+    );
+    final historical = await promptRepo.buildPromptPreview(
+      name: promptName,
+      teacherId: widget.teacherId,
+      courseKey: courseKey,
+      studentId: studentId,
+      courseAppendOverride: studentId == null ? entry.content : null,
+      studentAppendOverride: studentId == null ? null : entry.content,
+      includeSystem: false,
+    );
+    final diff = _buildUnifiedDiff(
+      current,
+      historical,
+      fromLabel: 'current',
+      toLabel: 'historical',
+    );
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Diff to current'),
+        content: SizedBox(
+          width: 700,
+          child: SingleChildScrollView(
+            child: SelectableText(diff),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(l10n.closeButton),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _buildUnifiedDiff(
+    String from,
+    String to, {
+    required String fromLabel,
+    required String toLabel,
+  }) {
+    final fromLines = _splitLines(from);
+    final toLines = _splitLines(to);
+    final diffLines = _lineDiff(fromLines, toLines);
+    return [
+      '--- $fromLabel',
+      '+++ $toLabel',
+      ...diffLines,
+    ].join('\n');
+  }
+
+  List<String> _splitLines(String input) {
+    return input.split('\n');
+  }
+
+  List<String> _lineDiff(List<String> from, List<String> to) {
+    final m = from.length;
+    final n = to.length;
+    final dp = List.generate(m + 1, (_) => List.filled(n + 1, 0));
+    for (var i = 1; i <= m; i++) {
+      final fromLine = from[i - 1];
+      for (var j = 1; j <= n; j++) {
+        if (fromLine == to[j - 1]) {
+          dp[i][j] = dp[i - 1][j - 1] + 1;
+        } else {
+          final a = dp[i - 1][j];
+          final b = dp[i][j - 1];
+          dp[i][j] = a >= b ? a : b;
+        }
+      }
+    }
+
+    final result = <String>[];
+    var i = m;
+    var j = n;
+    while (i > 0 || j > 0) {
+      if (i > 0 && j > 0 && from[i - 1] == to[j - 1]) {
+        result.add('  ${from[i - 1]}');
+        i--;
+        j--;
+      } else if (j > 0 && (i == 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+        result.add('+ ${to[j - 1]}');
+        j--;
+      } else if (i > 0) {
+        result.add('- ${from[i - 1]}');
+        i--;
+      }
+    }
+    return result.reversed.toList();
   }
 
   Future<void> _showValidationErrors(
