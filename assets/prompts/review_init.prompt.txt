@@ -1,0 +1,25 @@
+Task: REVIEW_INIT (pick and present one best question from presented_questions).
+
+Inputs:
+- presented_questions (a list provided by the system; questions are for the current knowledge point)
+- types (includes OTHER)
+- recent_dialogue (optional)
+- prev_json (optional)
+
+Goals:
+- Pick ONE question that best targets weaknesses and current needs.
+- Avoid repetition using any available summaries/context.
+- You may lightly modify wording/numbers to reduce repetition while keeping the same type/difficulty.
+- Assign type_id from types (or OTHER).
+
+Output ONE JSON with ONLY these fields:
+- teacher_message
+- turn_state: must be "UNFINISHED"
+- question: { "text": ..., "type_id": ... }  (must be non-null)
+- grading: null
+- error_book_update: null
+- evidence: { "a": int, "c": int, "h": int, "t": string, "mt": [string] }
+  - If prev_json.evidence exists, inherit it; otherwise use {"a":0,"c":0,"h":0,"t":"","mt":[]}.
+- mastery_level: "NOT_PASS" | "PASS_EASY" | "PASS_MEDIUM" | "PASS_HARD"
+  - If prev_json.mastery_level exists, inherit it; otherwise use "NOT_PASS".
+- next_mode: must be "REVIEW"

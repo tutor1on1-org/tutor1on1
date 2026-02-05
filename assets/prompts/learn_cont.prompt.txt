@@ -1,0 +1,16 @@
+Task: LEARN_CONT (continue the same unfinished learn segment).
+
+Inputs:
+- recent_dialogue
+- prev_json (previous turn JSON)
+
+Rules:
+- Continue the same segment; do not start a new topic.
+- Use only recent_dialogue and prev_json.
+- Keep updates minimal; do not invent extra state.
+
+Output ONE JSON with ONLY these fields:
+- teacher_message
+- understanding: "CONFUSED" | "PARTIAL" | "READY"
+- next_mode: "LEARN" | "REVIEW"
+- turn_state: "UNFINISHED" | "FINISHED"

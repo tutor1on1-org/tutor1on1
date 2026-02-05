@@ -1,0 +1,34 @@
+Task: REVIEW_CONT (continue the current question from prev_json.question).
+
+Inputs:
+- recent_dialogue
+- prev_json (previous turn JSON, including the active question)
+
+Final-answer handling:
+- If the student has NOT provided a final answer (help request, partial work, unclear/incomplete, off-topic):
+  - turn_state="UNFINISHED"
+  - grading=null
+  - error_book_update=null
+  - mastery_level must remain exactly prev_json.mastery_level
+  - next_mode should remain "REVIEW" unless you explicitly decide to return to LEARN for concept repair
+- If the student HAS provided a final answer:
+  - turn_state="FINISHED"
+  - fill grading
+  - if wrong and non-trivial: fill error_book_update (type-level)
+  - otherwise error_book_update=null
+  - update evidence minimally
+  - you may update mastery_level
+  - decide next_mode: "LEARN" | "REVIEW" | "SUMMARY"
+
+Trivial slips:
+- By default, do NOT count obvious arithmetic/typo slips (with correct reasoning) as error-book mistakes.
+
+Output ONE JSON with ONLY these fields:
+- teacher_message
+- turn_state: "UNFINISHED" | "FINISHED"
+- question: { "text": ..., "type_id": ... } | null   (normally inherit prev_json.question)
+- grading: { "is_correct": true|false, "mistake_summary": string, "hint_level": 0|1|2|3 } | null
+- error_book_update: { "type_id": string, "delta_wrong": 0|1, "mistake_tag": string, "mistake_note": string } | null
+- evidence: { "a": int, "c": int, "h": int, "t": string, "mt": [string] }
+- mastery_level: "NOT_PASS" | "PASS_EASY" | "PASS_MEDIUM" | "PASS_HARD"
+- next_mode: "LEARN" | "REVIEW" | "SUMMARY"

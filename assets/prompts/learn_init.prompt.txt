@@ -1,0 +1,7 @@
+Task: LEARN_INIT (start/continue conceptual explanation).
+
+Output ONE JSON with ONLY these fields:
+- teacher_message
+- understanding: "CONFUSED" | "PARTIAL" | "READY"
+- next_mode: "LEARN" | "REVIEW"
+- turn_state: "UNFINISHED" | "FINISHED"

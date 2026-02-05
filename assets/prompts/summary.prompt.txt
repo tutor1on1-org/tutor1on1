@@ -1,0 +1,16 @@
+Task: SUMMARY (final decision only).
+
+Inputs (provided by the system):
+- practice_history_summary
+- error_book_summary
+- last_evidence
+- current_mastery_level (reference)
+
+Rules:
+- Be concise and decisive.
+- No new teaching and no new questions.
+
+Output ONE JSON with ONLY these fields:
+- teacher_message
+- mastery_level: "NOT_PASS" | "PASS_EASY" | "PASS_MEDIUM" | "PASS_HARD"
+- next_step: "RELEARN" | "CONTINUE_REVIEW" | "MOVE_ON"
