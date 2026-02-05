@@ -15,11 +15,12 @@ class PromptTemplateValidator {
   PromptValidationResult validate({
     required String promptName,
     required String content,
+    bool allowMissingRequired = false,
   }) {
     final required = requiredVariables(promptName);
     final allowed = allowedVariables(promptName);
     final used = _extractVariables(content);
-    final missing = required.difference(used);
+    final missing = allowMissingRequired ? <String>{} : required.difference(used);
     if (_requiresHistory(promptName) &&
         missing.contains('conversation_history') &&
         used.contains('session_history')) {

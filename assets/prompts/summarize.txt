@@ -16,7 +16,7 @@ KP_DESCRIPTION: {{kp_description}}
 
 Student summary (prior state; use if useful):
 {{student_summary}}
-
+ 
 Session transcript (may be truncated):
 {{conversation_history}}
 

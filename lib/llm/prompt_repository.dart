@@ -10,6 +10,7 @@ class PromptRepository {
 
   final AppDatabase? _db;
   final Map<String, String> _promptCache = {};
+  final Map<String, String> _systemPromptCache = {};
   final Map<String, Map<String, dynamic>> _schemaCache = {};
   final Map<String, String> _textbookCache = {};
 
@@ -19,31 +20,7 @@ class PromptRepository {
     String? courseKey,
     int? studentId,
   }) async {
-    final db = _db;
     final normalizedCourseKey = _normalizeCourseKey(courseKey);
-    if (teacherId != null &&
-        db != null &&
-        normalizedCourseKey != null &&
-        studentId != null) {
-      final override = await db.getActivePromptTemplate(
-        teacherId: teacherId,
-        promptName: name,
-        courseKey: normalizedCourseKey,
-        studentId: studentId,
-      );
-      if (override != null) {
-        return override.content;
-      }
-    }
-    if (teacherId != null && db != null) {
-      final teacherDefault = await db.getActivePromptTemplate(
-        teacherId: teacherId,
-        promptName: name,
-      );
-      if (teacherDefault != null) {
-        return teacherDefault.content;
-      }
-    }
     final cacheKey = [
       teacherId?.toString() ?? 'default',
       normalizedCourseKey ?? 'default',
@@ -53,12 +30,72 @@ class PromptRepository {
     if (_promptCache.containsKey(cacheKey)) {
       return _promptCache[cacheKey]!;
     }
-    final teacherDefault = await _loadTeacherDefaultPrompt(
+
+    final systemPrompt = await _loadSystemPrompt(name);
+    final courseAppend = await _loadAppendPrompt(
       name,
       teacherId: teacherId,
+      courseKey: normalizedCourseKey,
     );
-    _promptCache[cacheKey] = teacherDefault;
-    return teacherDefault;
+    final studentAppend = studentId == null
+        ? ''
+        : await _loadAppendPrompt(
+            name,
+            teacherId: teacherId,
+            courseKey: normalizedCourseKey,
+            studentId: studentId,
+          );
+    final combined = _combinePrompts([
+      systemPrompt,
+      courseAppend,
+      studentAppend,
+    ]);
+    _promptCache[cacheKey] = combined;
+    return combined;
+  }
+
+  Future<String> loadAppendPrompt(
+    String name, {
+    required int teacherId,
+    String? courseKey,
+    int? studentId,
+  }) async {
+    final normalizedCourseKey = _normalizeCourseKey(courseKey);
+    return _loadAppendPrompt(
+      name,
+      teacherId: teacherId,
+      courseKey: normalizedCourseKey,
+      studentId: studentId,
+    );
+  }
+
+  Future<String> buildPromptPreview({
+    required String name,
+    required int teacherId,
+    String? courseKey,
+    int? studentId,
+    String? courseAppendOverride,
+    String? studentAppendOverride,
+  }) async {
+    final normalizedCourseKey = _normalizeCourseKey(courseKey);
+    final systemPrompt = await _loadSystemPrompt(name);
+    final courseAppend = courseAppendOverride ??
+        await _loadAppendPrompt(
+          name,
+          teacherId: teacherId,
+          courseKey: normalizedCourseKey,
+        );
+    String studentAppend = '';
+    if (studentId != null) {
+      studentAppend = studentAppendOverride ??
+          await _loadAppendPrompt(
+            name,
+            teacherId: teacherId,
+            courseKey: normalizedCourseKey,
+            studentId: studentId,
+          );
+    }
+    return _combinePrompts([systemPrompt, courseAppend, studentAppend]);
   }
 
   Future<void> ensureAssignmentPrompts({
@@ -66,84 +103,22 @@ class PromptRepository {
     required int studentId,
     required int courseVersionId,
   }) async {
-    final db = _db;
-    if (db == null) {
-      return;
-    }
-    final course = await db.getCourseVersionById(courseVersionId);
-    final courseKey = _normalizeCourseKey(course?.sourcePath);
-    if (courseKey == null) {
-      return;
-    }
-    for (final promptName in const ['learn', 'review', 'summarize']) {
-      final existing = await db.getActivePromptTemplate(
-        teacherId: teacherId,
-        promptName: promptName,
-        courseKey: courseKey,
-        studentId: studentId,
-      );
-      if (existing != null) {
-        continue;
-      }
-      try {
-        final defaultContent = await loadPrompt(
-          promptName,
-          teacherId: teacherId,
-        );
-        await db.insertPromptTemplate(
-          teacherId: teacherId,
-          promptName: promptName,
-          content: defaultContent,
-          courseKey: courseKey,
-          studentId: studentId,
-        );
-      } catch (_) {
-        // Ignore missing defaults to avoid blocking course assignment.
-      }
-    }
+    // Append prompts default to empty; no need to pre-seed per-assignment rows.
+    return;
   }
 
   Future<void> backfillAssignmentPrompts() async {
-    final db = _db;
-    if (db == null) {
-      return;
-    }
-    final assignments = await db.select(db.studentCourseAssignments).get();
-    for (final assignment in assignments) {
-      final course = await db.getCourseVersionById(assignment.courseVersionId);
-      if (course == null) {
-        continue;
-      }
-      try {
-        await ensureAssignmentPrompts(
-          teacherId: course.teacherId,
-          studentId: assignment.studentId,
-          courseVersionId: assignment.courseVersionId,
-        );
-      } catch (_) {
-        // Best-effort backfill.
-      }
-    }
+    // Append prompts default to empty; no backfill required.
+    return;
   }
 
-  Future<String> _loadTeacherDefaultPrompt(
-    String name, {
-    int? teacherId,
-  }) async {
-    if (teacherId != null && _db != null) {
-      final teacher = await _db!.getUserById(teacherId);
-      final teacherName = teacher?.username;
-      if (teacherName != null && teacherName.trim().isNotEmpty) {
-        final teacherPath =
-            'assets/teachers/$teacherName/prompts/$name.txt';
-        try {
-          return await rootBundle.loadString(teacherPath);
-        } catch (_) {
-          // Try shared defaults.
-        }
-      }
+  Future<String> _loadSystemPrompt(String name) async {
+    if (_systemPromptCache.containsKey(name)) {
+      return _systemPromptCache[name]!;
     }
-    return rootBundle.loadString('assets/prompts/$name.txt');
+    final content = await rootBundle.loadString('assets/prompts/$name.txt');
+    _systemPromptCache[name] = content;
+    return content;
   }
 
   String? _normalizeCourseKey(String? value) {
@@ -152,6 +127,37 @@ class PromptRepository {
       return null;
     }
     return p.normalize(trimmed);
+  }
+
+  Future<String> _loadAppendPrompt(
+    String name, {
+    required int? teacherId,
+    required String? courseKey,
+    int? studentId,
+  }) async {
+    final db = _db;
+    if (db == null || teacherId == null || courseKey == null) {
+      return '';
+    }
+    final append = await db.getActivePromptTemplate(
+      teacherId: teacherId,
+      promptName: name,
+      courseKey: courseKey,
+      studentId: studentId,
+    );
+    return (append?.content ?? '').trim();
+  }
+
+  String _combinePrompts(List<String?> parts) {
+    final cleaned = parts
+        .whereType<String>()
+        .map((part) => part.trim())
+        .where((part) => part.isNotEmpty)
+        .toList();
+    if (cleaned.isEmpty) {
+      return '';
+    }
+    return cleaned.join('\n\n');
   }
 
   Future<Map<String, dynamic>> loadSchema(String name) async {

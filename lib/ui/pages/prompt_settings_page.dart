@@ -40,31 +40,33 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
 
   Future<void> _loadScopes() async {
     final db = context.read<AppDatabase>();
-    final l10n = AppLocalizations.of(context)!;
     final courses = await db.watchCourseVersions(widget.teacherId).first;
-    final scopes = <_PromptScope>[
-      _PromptScope.defaultScope(l10n.promptScopeDefault),
-    ];
+    final scopes = <_PromptScope>[];
     for (final course in courses) {
-      final assignments = await db.getAssignmentsForCourse(course.id);
-      if (assignments.isEmpty) {
-        continue;
-      }
-      final studentId = assignments.first.studentId;
-      final student = await db.getUserById(studentId);
       final courseKey = (course.sourcePath ?? '').trim();
       if (courseKey.isEmpty) {
         continue;
       }
-      final label =
-          '${course.subject} - ${student?.username ?? studentId.toString()}';
       scopes.add(
-        _PromptScope(
-          label: label,
+        _PromptScope.courseScope(
+          label: course.subject,
           courseKey: courseKey,
-          studentId: studentId,
         ),
       );
+      final assignments = await db.getAssignmentsForCourse(course.id);
+      for (final assignment in assignments) {
+        final studentId = assignment.studentId;
+        final student = await db.getUserById(studentId);
+        final label =
+            '${course.subject} - ${student?.username ?? studentId.toString()}';
+        scopes.add(
+          _PromptScope(
+            label: label,
+            courseKey: courseKey,
+            studentId: studentId,
+          ),
+        );
+      }
     }
     if (!mounted) {
       return;
@@ -109,6 +111,11 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
               padding: EdgeInsets.symmetric(vertical: 12),
               child: LinearProgressIndicator(),
             )
+          else if (_scopes.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Text('No prompt scopes available yet.'),
+            )
           else
             DropdownButtonFormField<_PromptScope>(
               value: _selectedScope,
@@ -126,142 +133,141 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
               },
             ),
           const SizedBox(height: 16),
-          ...items.map((item) {
-            final scope = _selectedScope;
-            final courseKey = scope?.courseKey;
-            final studentId = scope?.studentId;
-            return FutureBuilder<PromptTemplate?>(
-            future: db.getActivePromptTemplate(
-              teacherId: widget.teacherId,
-              promptName: item.name,
-              courseKey: courseKey,
-              studentId: studentId,
-            ),
-            builder: (context, snapshot) {
-              final active = snapshot.data;
-              final statusText = active == null
-                  ? l10n.promptStatusDefault
-                  : l10n.promptStatusCustom(
-                      _formatTime(active.createdAt),
-                    );
-              return ExpansionTile(
-                title: Text(item.title),
-                subtitle: Text(statusText),
-                childrenPadding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
+          if (_selectedScope != null)
+            ...items.map((item) {
+              final scope = _selectedScope;
+              final courseKey = scope?.courseKey;
+              final studentId = scope?.studentId;
+              return FutureBuilder<PromptTemplate?>(
+                future: db.getActivePromptTemplate(
+                  teacherId: widget.teacherId,
+                  promptName: item.name,
+                  courseKey: courseKey,
+                  studentId: studentId,
                 ),
-                children: [
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+                builder: (context, snapshot) {
+                  final active = snapshot.data;
+                  final statusText = active == null
+                      ? l10n.promptStatusDefault
+                      : l10n.promptStatusCustom(
+                          _formatTime(active.createdAt),
+                        );
+                  return ExpansionTile(
+                    title: Text(item.title),
+                    subtitle: Text(statusText),
+                    childrenPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
                     children: [
-                      ElevatedButton(
-                        onPressed: () => _openEditor(
-                          context,
-                          promptRepo,
-                          item,
-                          active?.content,
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          ElevatedButton(
+                            onPressed: () => _openEditor(
+                              context,
+                              promptRepo,
+                              item,
+                              active?.content,
+                              courseKey: courseKey,
+                              studentId: studentId,
+                            ),
+                            child: Text(l10n.editButton),
+                          ),
+                          TextButton(
+                            onPressed: () async {
+                              if (scope == null) {
+                                return;
+                              }
+                              await db.clearActivePromptTemplates(
+                                teacherId: widget.teacherId,
+                                promptName: item.name,
+                                courseKey: courseKey,
+                                studentId: studentId,
+                              );
+                              if (context.mounted) {
+                                _showMessage(context, l10n.promptReverted);
+                              }
+                            },
+                            child: Text(l10n.useDefaultButton),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          l10n.promptHistoryTitle,
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      StreamBuilder<List<PromptTemplate>>(
+                        stream: db.watchPromptTemplates(
+                          teacherId: widget.teacherId,
+                          promptName: item.name,
                           courseKey: courseKey,
                           studentId: studentId,
                         ),
-                        child: Text(l10n.editButton),
-                      ),
-                      TextButton(
-                        onPressed: () async {
-                          if (scope != null && !scope.isDefault) {
-                            final defaultContent = await promptRepo.loadPrompt(
-                              item.name,
-                              teacherId: widget.teacherId,
-                            );
-                            await db.insertPromptTemplate(
-                              teacherId: widget.teacherId,
-                              promptName: item.name,
-                              content: defaultContent,
-                              courseKey: courseKey,
-                              studentId: studentId,
-                            );
-                          } else {
-                            await db.clearActivePromptTemplates(
-                              teacherId: widget.teacherId,
-                              promptName: item.name,
+                        builder: (context, historySnapshot) {
+                          final history = historySnapshot.data ?? [];
+                          if (history.isEmpty) {
+                            return Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 8),
+                              child: Text(l10n.promptHistoryEmpty),
                             );
                           }
-                          if (context.mounted) {
-                            _showMessage(context, l10n.promptReverted);
-                          }
+                          return Column(
+                            children: history.map((entry) {
+                              final snippet = _snippet(entry.content);
+                              return ListTile(
+                                title: Text(_formatTime(entry.createdAt)),
+                                subtitle: Text(snippet),
+                                trailing: Wrap(
+                                  spacing: 8,
+                                  children: [
+                                    TextButton(
+                                      onPressed: () => _showPromptPreview(
+                                        context,
+                                        promptRepo,
+                                        item.name,
+                                        entry,
+                                        courseKey: courseKey,
+                                        studentId: studentId,
+                                      ),
+                                      child: Text(l10n.previewButton),
+                                    ),
+                                    TextButton(
+                                      onPressed: () async {
+                                        await db.setActivePromptTemplate(
+                                          teacherId: widget.teacherId,
+                                          promptName: item.name,
+                                          templateId: entry.id,
+                                          courseKey: courseKey,
+                                          studentId: studentId,
+                                        );
+                                        if (context.mounted) {
+                                          _showMessage(
+                                            context,
+                                            l10n.promptActivated,
+                                          );
+                                        }
+                                      },
+                                      child: Text(l10n.useButton),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }).toList(),
+                          );
                         },
-                        child: Text(l10n.useDefaultButton),
                       ),
                     ],
-                  ),
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      l10n.promptHistoryTitle,
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  StreamBuilder<List<PromptTemplate>>(
-                    stream: db.watchPromptTemplates(
-                      teacherId: widget.teacherId,
-                      promptName: item.name,
-                      courseKey: courseKey,
-                      studentId: studentId,
-                    ),
-                    builder: (context, historySnapshot) {
-                      final history = historySnapshot.data ?? [];
-                      if (history.isEmpty) {
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          child: Text(l10n.promptHistoryEmpty),
-                        );
-                      }
-                      return Column(
-                        children: history.map((entry) {
-                          final snippet = _snippet(entry.content);
-                          return ListTile(
-                            title: Text(_formatTime(entry.createdAt)),
-                            subtitle: Text(snippet),
-                            trailing: Wrap(
-                              spacing: 8,
-                              children: [
-                                TextButton(
-                                  onPressed: () =>
-                                      _showPromptPreview(context, entry),
-                                  child: Text(l10n.previewButton),
-                                ),
-                                TextButton(
-                                  onPressed: () async {
-                                    await db.setActivePromptTemplate(
-                                      teacherId: widget.teacherId,
-                                      promptName: item.name,
-                                      templateId: entry.id,
-                                      courseKey: courseKey,
-                                      studentId: studentId,
-                                    );
-                                    if (context.mounted) {
-                                      _showMessage(
-                                        context,
-                                        l10n.promptActivated,
-                                      );
-                                    }
-                                  },
-                                  child: Text(l10n.useButton),
-                                ),
-                              ],
-                            ),
-                          );
-                        }).toList(),
-                      );
-                    },
-                  ),
-                ],
+                  );
+                },
               );
-            },
-          );
-          }).toList(),
+            }).toList(),
         ],
       ),
     );
@@ -276,7 +282,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
     int? studentId}
   ) async {
     final l10n = AppLocalizations.of(context)!;
-    final defaultContent = await promptRepo.loadPrompt(
+    final defaultContent = await promptRepo.loadAppendPrompt(
       item.name,
       teacherId: widget.teacherId,
       courseKey: courseKey,
@@ -349,6 +355,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
     final validation = _validator.validate(
       promptName: item.name,
       content: result,
+      allowMissingRequired: true,
     );
     if (!validation.isValid) {
       await _showValidationErrors(context, validation);
@@ -370,9 +377,22 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
 
   Future<void> _showPromptPreview(
     BuildContext context,
-    PromptTemplate entry,
+    PromptRepository promptRepo,
+    String promptName,
+    PromptTemplate entry, {
+    String? courseKey,
+    int? studentId,
+  }
   ) async {
     final l10n = AppLocalizations.of(context)!;
+    final preview = await promptRepo.buildPromptPreview(
+      name: promptName,
+      teacherId: widget.teacherId,
+      courseKey: courseKey,
+      studentId: studentId,
+      courseAppendOverride: studentId == null ? entry.content : null,
+      studentAppendOverride: studentId == null ? null : entry.content,
+    );
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
@@ -380,7 +400,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
         content: SizedBox(
           width: 640,
           child: SingleChildScrollView(
-            child: SelectableText(entry.content),
+            child: SelectableText(preview),
           ),
         ),
         actions: [
@@ -499,16 +519,16 @@ class _PromptScope {
     required this.label,
     this.courseKey,
     this.studentId,
-  }) : isDefault = courseKey == null && studentId == null;
+  });
 
-  _PromptScope.defaultScope(String label)
-      : label = label,
-        courseKey = null,
-        studentId = null,
-        isDefault = true;
+  _PromptScope.courseScope({
+    required String label,
+    required String courseKey,
+  })  : label = label,
+        courseKey = courseKey,
+        studentId = null;
 
   final String label;
   final String? courseKey;
   final int? studentId;
-  final bool isDefault;
 }

@@ -11,9 +11,11 @@ final SingleInstanceService _singleInstanceService =
     SingleInstanceService('family_teacher');
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final acquired = await _singleInstanceService.acquire();
-  if (!acquired) {
-    exit(0);
+  if (Platform.isWindows) {
+    final acquired = await _singleInstanceService.acquire();
+    if (!acquired) {
+      exit(0);
+    }
   }
 
   if (Platform.isWindows) {
