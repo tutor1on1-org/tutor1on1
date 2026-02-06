@@ -17,15 +17,21 @@ class SummarizeResult {
     required this.success,
     required this.message,
     this.lit,
+    this.litPercent,
     this.summaryText,
     this.masterLevel,
+    this.masteryLevel,
+    this.nextStep,
   });
 
   final bool success;
   final String message;
   final bool? lit;
+  final int? litPercent;
   final String? summaryText;
   final String? masterLevel;
+  final String? masteryLevel;
+  final String? nextStep;
 }
 
 class _RenderResult {
@@ -36,6 +42,18 @@ class _RenderResult {
 
   final String rendered;
   final bool maxTokensTooSmall;
+}
+
+class _TutorPromptResolution {
+  _TutorPromptResolution({
+    required this.promptName,
+    required this.lastAssistantIndex,
+    required this.prevJson,
+  });
+
+  final String promptName;
+  final int? lastAssistantIndex;
+  final Map<String, dynamic>? prevJson;
 }
 
 class SessionService {
@@ -122,7 +140,8 @@ class SessionService {
   }
 
   Future<void> closeSession(int sessionId) async {
-    await (_db.update(_db.chatSessions)..where((tbl) => tbl.id.equals(sessionId)))
+    await (_db.update(_db.chatSessions)
+          ..where((tbl) => tbl.id.equals(sessionId)))
         .write(
       ChatSessionsCompanion(
         endedAt: Value(DateTime.now()),
@@ -145,13 +164,14 @@ class SessionService {
     void Function(int assistantMessageId)? onAssistantMessageCreated,
     void Function(int studentMessageId)? onStudentMessageCreated,
   }) async {
+    final actionMode = _resolveActionMode(mode);
     if (studentInput.trim().isNotEmpty) {
       final studentMessageId = await _db.into(_db.chatMessages).insert(
             ChatMessagesCompanion.insert(
               sessionId: sessionId,
               role: 'user',
               content: studentInput.trim(),
-              action: Value(mode),
+              action: Value(actionMode),
             ),
           );
       if (onStudentMessageCreated != null) {
@@ -168,7 +188,42 @@ class SessionService {
             kpKey: node.kpKey,
           );
     final messages = await _db.getMessagesForSession(sessionId);
+    final promptResolution = _resolveTutorPrompt(
+      mode: mode,
+      messages: messages,
+    );
+    final promptName = promptResolution.promptName;
     final history = _buildHistory(messages);
+    final recentDialogue = _buildRecentDialogue(
+      messages,
+      lastAssistantIndex: promptResolution.lastAssistantIndex,
+    );
+    final prevJsonText = promptResolution.prevJson == null
+        ? '{}'
+        : jsonEncode(promptResolution.prevJson);
+    final lastEvidence = _extractLatestEvidence(messages);
+    final lastEvidenceText = jsonEncode(
+      lastEvidence ??
+          {
+            'a': 0,
+            'c': 0,
+            'h': 0,
+            't': '',
+            'mt': <String>[],
+          },
+    );
+    final masteryFromProgress =
+        _questionLevelToMasteryLevel(progress?.questionLevel);
+    final masteryFromPrev = _normalizeMasteryLevel(
+      promptResolution.prevJson?['mastery_level'],
+    );
+    final currentMasteryLevel =
+        masteryFromProgress ?? masteryFromPrev ?? 'NOT_PASS';
+    final practiceHistorySummary = _buildPracticeHistorySummary(messages);
+    final errorBookSummary = _buildErrorBookSummary(
+      progress: progress,
+      previousJson: promptResolution.prevJson,
+    );
     final courseKey = _normalizeCourseKey(courseVersion.sourcePath);
     if (session != null) {
       await _promptRepository.ensureAssignmentPrompts(
@@ -179,7 +234,7 @@ class SessionService {
     }
 
     final template = await _promptRepository.loadPrompt(
-      mode,
+      promptName,
       teacherId: courseVersion.teacherId,
       courseKey: courseKey,
       studentId: session?.studentId,
@@ -195,37 +250,58 @@ class SessionService {
       'session_history': history,
       'student_input': studentInput.trim(),
       'student_summary': progress?.summaryText ?? session?.summaryText ?? '',
+      'lesson_content': '',
+      'types': '[{"type_id":"OTHER","name":"General"}]',
+      'error_book_summary': errorBookSummary,
+      'practice_history_summary': practiceHistorySummary,
+      'presented_questions': '',
+      'recent_dialogue': recentDialogue,
+      'prev_json': prevJsonText,
+      'last_evidence': lastEvidenceText,
+      'current_mastery_level': currentMasteryLevel,
     };
-    final hasAssistant = messages.any((message) => message.role == 'assistant');
     String? lectureText;
     String? questionsText;
     String? questionLevel;
-    if (mode == 'learn' && !hasAssistant) {
-      lectureText = await _loadLectureText(
+    final needsLessonContent =
+        promptName == 'learn_init' || promptName == 'review_init';
+    if (needsLessonContent) {
+      lectureText = await _loadLectureTextIfPresent(
         courseVersion: courseVersion,
         kpKey: node.kpKey,
       );
-    } else if (mode == 'review') {
+      values['lesson_content'] = lectureText;
+    }
+    final usesReviewQuestionBank = actionMode == 'review';
+    if (usesReviewQuestionBank) {
       questionLevel = _normalizeLevel(progress?.questionLevel) ?? 'easy';
       questionsText = await _loadQuestionsText(
         courseVersion: courseVersion,
         kpKey: node.kpKey,
         level: questionLevel,
       );
+      values['presented_questions'] = questionsText;
     }
+    final useLegacyPrompt = promptName == 'learn' || promptName == 'review';
     final renderResult = _renderWithHistoryLimit(
       template: template,
       values: values,
       maxTokens: settings.maxTokens,
       applyExtras: (rendered) {
-        if (lectureText != null) {
-          return _appendLecture(rendered, lectureText!);
+        if (!useLegacyPrompt) {
+          return rendered;
         }
-        if (questionsText != null && questionLevel != null) {
+        final resolvedLecture = lectureText;
+        if (resolvedLecture != null) {
+          return _appendLecture(rendered, resolvedLecture);
+        }
+        final resolvedQuestions = questionsText;
+        final resolvedLevel = questionLevel;
+        if (resolvedQuestions != null && resolvedLevel != null) {
           return _appendQuestionBank(
             rendered,
-            questionsText!,
-            questionLevel!,
+            resolvedQuestions,
+            resolvedLevel,
           );
         }
         return rendered;
@@ -238,7 +314,7 @@ class SessionService {
 
     if (!stream) {
       final handle = _llmService.startCall(
-        promptName: mode,
+        promptName: promptName,
         renderedPrompt: rendered,
         modelOverride: modelOverride,
         context: LlmCallContext(
@@ -247,7 +323,7 @@ class SessionService {
           courseVersionId: courseVersion.id,
           sessionId: sessionId,
           kpKey: node.kpKey,
-          action: mode,
+          action: actionMode,
         ),
       );
       final future = handle.future.then((result) async {
@@ -259,7 +335,7 @@ class SessionService {
                 sessionId: sessionId,
                 role: 'assistant',
                 content: result.responseText,
-                action: Value(mode),
+                action: Value(actionMode),
               ),
             );
         return result;
@@ -272,7 +348,7 @@ class SessionService {
             sessionId: sessionId,
             role: 'assistant',
             content: '',
-            action: Value(mode),
+            action: Value(actionMode),
           ),
         );
     if (onAssistantMessageCreated != null) {
@@ -312,7 +388,7 @@ class SessionService {
     }
 
     final handle = _llmService.startStreamingCall(
-      promptName: mode,
+      promptName: promptName,
       renderedPrompt: rendered,
       modelOverride: modelOverride,
       onChunk: handleChunk,
@@ -322,13 +398,14 @@ class SessionService {
         courseVersionId: courseVersion.id,
         sessionId: sessionId,
         kpKey: node.kpKey,
-        action: mode,
+        action: actionMode,
       ),
     );
     final future = handle.future.then((result) async {
       flushTimer?.cancel();
-      final finalText =
-          result.responseText.trim().isNotEmpty ? result.responseText : buffer.toString();
+      final finalText = result.responseText.trim().isNotEmpty
+          ? result.responseText
+          : buffer.toString();
       if (finalText.trim().isEmpty) {
         throw StateError('LLM returned an empty response.');
       }
@@ -360,6 +437,7 @@ class SessionService {
           );
     final messages = await _db.getMessagesForSession(sessionId);
     final history = _buildHistory(messages);
+    final lastEvidence = _extractLatestEvidence(messages);
     final courseKey = _normalizeCourseKey(courseVersion.sourcePath);
     if (session != null) {
       await _promptRepository.ensureAssignmentPrompts(
@@ -369,7 +447,7 @@ class SessionService {
       );
     }
     final template = await _promptRepository.loadPrompt(
-      'summarize',
+      'summary',
       teacherId: courseVersion.teacherId,
       courseKey: courseKey,
       studentId: session?.studentId,
@@ -385,6 +463,20 @@ class SessionService {
       'conversation_history': history,
       'session_history': history,
       'student_summary': progress?.summaryText ?? session?.summaryText ?? '',
+      'practice_history_summary': _buildPracticeHistorySummary(messages),
+      'error_book_summary': _buildErrorBookSummary(progress: progress),
+      'last_evidence': jsonEncode(
+        lastEvidence ??
+            {
+              'a': 0,
+              'c': 0,
+              'h': 0,
+              't': '',
+              'mt': <String>[],
+            },
+      ),
+      'current_mastery_level':
+          _questionLevelToMasteryLevel(progress?.questionLevel) ?? 'NOT_PASS',
     };
     final renderResult = _renderWithHistoryLimit(
       template: template,
@@ -398,7 +490,7 @@ class SessionService {
     final rendered = renderResult.rendered;
 
     final handle = _llmService.startCall(
-      promptName: 'summarize',
+      promptName: 'summary',
       renderedPrompt: rendered,
       schemaMap: schema,
       modelOverride: modelOverride,
@@ -408,7 +500,7 @@ class SessionService {
         courseVersionId: courseVersion.id,
         sessionId: sessionId,
         kpKey: node.kpKey,
-        action: 'summarize',
+        action: 'summary',
       ),
     );
     final future = handle.future.then((result) async {
@@ -416,38 +508,58 @@ class SessionService {
         throw StateError('LLM returned an empty response.');
       }
 
-    final parsed = _tryDecodeJsonObject(result.responseText);
-    final summaryText = parsed?['summary_text'];
-    final lit = parsed?['lit'];
-    final masterLevel = _normalizeLevel(parsed?['master_level']);
-    final summary = summaryText is String && summaryText.trim().isNotEmpty
-        ? summaryText
-        : result.responseText;
-    final summaryValid =
-        summaryText is String && lit is bool && masterLevel != null;
-    final rawResponse = summaryValid ? null : result.responseText;
+      final parsed = _tryDecodeJsonObject(result.responseText);
+      final summaryText = parsed?['summary_text'];
+      final teacherMessage = parsed?['teacher_message'];
+      final lit = parsed?['lit'];
+      final masteryLevel = _normalizeMasteryLevel(parsed?['mastery_level']);
+      final masterLevel = _normalizeLevel(parsed?['master_level']);
+      final nextStep = _normalizeNextStep(parsed?['next_step']);
+      final litPercent = _masteryLevelToPercent(masteryLevel) ??
+          _masterLevelToPercent(masterLevel);
+      final resolvedLit =
+          lit is bool ? lit : (litPercent == null ? null : litPercent >= 100);
+      final summaryValue =
+          summaryText is String && summaryText.trim().isNotEmpty
+              ? summaryText
+              : (teacherMessage is String && teacherMessage.trim().isNotEmpty
+                  ? teacherMessage
+                  : null);
+      final summary = summaryValue ?? result.responseText;
+      final summaryValid = (summaryText is String &&
+              summaryText.trim().isNotEmpty &&
+              lit is bool &&
+              masterLevel != null) ||
+          (teacherMessage is String &&
+              teacherMessage.trim().isNotEmpty &&
+              masteryLevel != null);
+      final rawResponse = summaryValid ? null : result.responseText;
+      final questionLevel =
+          masterLevel ?? _masteryLevelToQuestionLevel(masteryLevel);
 
-    await _db.transaction(() async {
-      final studentId = session?.studentId;
-      if (studentId != null) {
-        await _db.upsertProgressSummary(
-          studentId: studentId,
-          courseVersionId: courseVersion.id,
-          kpKey: node.kpKey,
-          summaryText: summary,
-          summaryRawResponse: rawResponse,
-          summaryValid: summaryValid,
-          summaryLit: lit is bool ? lit : null,
-          questionLevel: masterLevel,
-        );
-      }
+      await _db.transaction(() async {
+        final studentId = session?.studentId;
+        if (studentId != null) {
+          await _db.upsertProgressSummary(
+            studentId: studentId,
+            courseVersionId: courseVersion.id,
+            kpKey: node.kpKey,
+            summaryText: summary,
+            summaryRawResponse: rawResponse,
+            summaryValid: summaryValid,
+            summaryLit: resolvedLit,
+            litPercent: litPercent,
+            questionLevel: questionLevel,
+          );
+        }
 
         await (_db.update(_db.chatSessions)
               ..where((tbl) => tbl.id.equals(sessionId)))
             .write(
           ChatSessionsCompanion(
             summaryText: Value(summary),
-            summaryLit: Value(lit is bool ? lit : null),
+            summaryLit: Value(resolvedLit),
+            summaryLitPercent: Value(litPercent),
             summaryRawResponse: Value(rawResponse),
             summaryValid: Value(summaryValid),
             status: const Value('active'),
@@ -467,9 +579,12 @@ class SessionService {
       return SummarizeResult(
         success: true,
         message: summaryValid ? 'Summary stored.' : 'Summary saved (unparsed).',
-        lit: lit is bool ? lit : null,
+        lit: resolvedLit,
+        litPercent: litPercent,
         summaryText: summary,
-        masterLevel: masterLevel,
+        masterLevel: masterLevel ?? questionLevel,
+        masteryLevel: masteryLevel,
+        nextStep: nextStep,
       );
     });
 
@@ -579,10 +694,84 @@ class SessionService {
       return null;
     }
     final normalized = value.trim().toLowerCase();
-    if (normalized == 'easy' || normalized == 'medium' || normalized == 'hard') {
+    if (normalized == 'easy' ||
+        normalized == 'medium' ||
+        normalized == 'hard') {
       return normalized;
     }
     return null;
+  }
+
+  String? _normalizeMasteryLevel(Object? value) {
+    if (value is! String) {
+      return null;
+    }
+    final normalized = value.trim().toUpperCase().replaceAll('-', '_');
+    switch (normalized) {
+      case 'NOT_PASS':
+      case 'PASS_EASY':
+      case 'PASS_MEDIUM':
+      case 'PASS_HARD':
+        return normalized;
+      default:
+        return null;
+    }
+  }
+
+  String? _normalizeNextStep(Object? value) {
+    if (value is! String) {
+      return null;
+    }
+    final normalized = value.trim().toUpperCase().replaceAll('-', '_');
+    switch (normalized) {
+      case 'RELEARN':
+      case 'CONTINUE_REVIEW':
+      case 'MOVE_ON':
+        return normalized;
+      default:
+        return null;
+    }
+  }
+
+  int? _masteryLevelToPercent(String? masteryLevel) {
+    switch (masteryLevel) {
+      case 'NOT_PASS':
+        return 0;
+      case 'PASS_EASY':
+        return 33;
+      case 'PASS_MEDIUM':
+        return 66;
+      case 'PASS_HARD':
+        return 100;
+      default:
+        return null;
+    }
+  }
+
+  int? _masterLevelToPercent(String? masterLevel) {
+    switch (masterLevel) {
+      case 'easy':
+        return 33;
+      case 'medium':
+        return 66;
+      case 'hard':
+        return 100;
+      default:
+        return null;
+    }
+  }
+
+  String? _masteryLevelToQuestionLevel(String? masteryLevel) {
+    switch (masteryLevel) {
+      case 'PASS_EASY':
+        return 'easy';
+      case 'PASS_MEDIUM':
+        return 'medium';
+      case 'PASS_HARD':
+        return 'hard';
+      default:
+        return null;
+    }
   }
 
   Future<String> _loadLectureText({
@@ -641,4 +830,190 @@ class SessionService {
     }
     return '$rendered\n\nQuestion bank ($level):\n$trimmed';
   }
+
+  String _resolveActionMode(String mode) {
+    final normalized = mode.trim().toLowerCase();
+    if (normalized == 'learn' ||
+        normalized == 'learn_init' ||
+        normalized == 'learn_cont') {
+      return 'learn';
+    }
+    if (normalized == 'review' ||
+        normalized == 'review_init' ||
+        normalized == 'review_cont') {
+      return 'review';
+    }
+    if (normalized == 'summary' || normalized == 'summarize') {
+      return 'summary';
+    }
+    return normalized;
+  }
+
+  _TutorPromptResolution _resolveTutorPrompt({
+    required String mode,
+    required List<ChatMessage> messages,
+  }) {
+    final normalized = mode.trim().toLowerCase();
+    if (normalized == 'learn_init' ||
+        normalized == 'learn_cont' ||
+        normalized == 'review_init' ||
+        normalized == 'review_cont') {
+      final actionMode = _resolveActionMode(normalized);
+      final previous = _findLastAssistantForActionMode(
+        messages: messages,
+        actionMode: actionMode,
+      );
+      return _TutorPromptResolution(
+        promptName: normalized,
+        lastAssistantIndex: previous?.index,
+        prevJson: previous?.json,
+      );
+    }
+
+    final actionMode = _resolveActionMode(normalized);
+    if (actionMode == 'learn' || actionMode == 'review') {
+      final previous = _findLastAssistantForActionMode(
+        messages: messages,
+        actionMode: actionMode,
+      );
+      final previousTurnState =
+          _normalizeTurnState(previous?.json?['turn_state']);
+      final promptName = actionMode == 'learn'
+          ? (previousTurnState == 'UNFINISHED' ? 'learn_cont' : 'learn_init')
+          : (previousTurnState == 'UNFINISHED' ? 'review_cont' : 'review_init');
+      return _TutorPromptResolution(
+        promptName: promptName,
+        lastAssistantIndex: previous?.index,
+        prevJson: previous?.json,
+      );
+    }
+
+    return _TutorPromptResolution(
+      promptName: normalized,
+      lastAssistantIndex: null,
+      prevJson: null,
+    );
+  }
+
+  _AssistantJsonRef? _findLastAssistantForActionMode({
+    required List<ChatMessage> messages,
+    required String actionMode,
+  }) {
+    for (var i = messages.length - 1; i >= 0; i--) {
+      final message = messages[i];
+      if (message.role != 'assistant') {
+        continue;
+      }
+      final messageAction = _resolveActionMode(message.action ?? '');
+      if (messageAction != actionMode) {
+        continue;
+      }
+      return _AssistantJsonRef(
+        index: i,
+        json: _tryDecodeJsonObject(message.content),
+      );
+    }
+    return null;
+  }
+
+  String _buildRecentDialogue(
+    List<ChatMessage> messages, {
+    required int? lastAssistantIndex,
+  }) {
+    if (lastAssistantIndex == null) {
+      return '';
+    }
+    final from = lastAssistantIndex + 1;
+    if (from >= messages.length) {
+      return '';
+    }
+    return _buildHistory(messages.sublist(from));
+  }
+
+  String _buildPracticeHistorySummary(List<ChatMessage> messages) {
+    final tail =
+        messages.length > 6 ? messages.sublist(messages.length - 6) : messages;
+    if (tail.isEmpty) {
+      return 'No practice history yet.';
+    }
+    return _buildHistory(tail);
+  }
+
+  String _buildErrorBookSummary({
+    ProgressEntry? progress,
+    Map<String, dynamic>? previousJson,
+  }) {
+    final errorBookUpdate = previousJson?['error_book_update'];
+    if (errorBookUpdate is Map<String, dynamic> && errorBookUpdate.isNotEmpty) {
+      return jsonEncode(errorBookUpdate);
+    }
+    if ((progress?.summaryText ?? '').trim().isNotEmpty) {
+      return progress!.summaryText!.trim();
+    }
+    return 'No error book records yet.';
+  }
+
+  Map<String, dynamic>? _extractLatestEvidence(List<ChatMessage> messages) {
+    for (var i = messages.length - 1; i >= 0; i--) {
+      final message = messages[i];
+      if (message.role != 'assistant') {
+        continue;
+      }
+      final parsed = _tryDecodeJsonObject(message.content);
+      final evidence = parsed?['evidence'];
+      if (evidence is Map<String, dynamic>) {
+        return evidence;
+      }
+    }
+    return null;
+  }
+
+  String? _normalizeTurnState(Object? value) {
+    if (value is! String) {
+      return null;
+    }
+    final normalized = value.trim().toUpperCase();
+    if (normalized == 'UNFINISHED' || normalized == 'FINISHED') {
+      return normalized;
+    }
+    return null;
+  }
+
+  String? _questionLevelToMasteryLevel(String? questionLevel) {
+    final normalized = _normalizeLevel(questionLevel);
+    switch (normalized) {
+      case 'easy':
+        return 'PASS_EASY';
+      case 'medium':
+        return 'PASS_MEDIUM';
+      case 'hard':
+        return 'PASS_HARD';
+      default:
+        return null;
+    }
+  }
+
+  Future<String> _loadLectureTextIfPresent({
+    required CourseVersion courseVersion,
+    required String kpKey,
+  }) async {
+    try {
+      return await _loadLectureText(
+        courseVersion: courseVersion,
+        kpKey: kpKey,
+      );
+    } catch (_) {
+      return '';
+    }
+  }
+}
+
+class _AssistantJsonRef {
+  _AssistantJsonRef({
+    required this.index,
+    required this.json,
+  });
+
+  final int index;
+  final Map<String, dynamic>? json;
 }

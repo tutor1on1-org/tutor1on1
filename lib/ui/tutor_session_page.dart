@@ -110,7 +110,10 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     if (_ttsEnabled) {
       context.read<AppServices>().ttsService.stop(sessionId: widget.sessionId);
     }
-    context.read<AppServices>().ttsService.stopReplay(sessionId: widget.sessionId);
+    context
+        .read<AppServices>()
+        .ttsService
+        .stopReplay(sessionId: widget.sessionId);
     context
         .read<AppServices>()
         .sttService
@@ -266,127 +269,132 @@ class _ChatSessionPageState extends State<ChatSessionPage>
               children: [
                 Column(
                   children: [
-                Expanded(
-                  child: StreamBuilder<List<ChatMessage>>(
-                    stream: db.watchMessagesForSession(widget.sessionId),
-                    builder: (context, snapshot) {
-                      final messages = snapshot.data ?? [];
-                      if (messages.isEmpty) {
-                        return Center(child: Text(l10n.noMessagesYet));
-                      }
-                      final lastUserId = messages
-                          .where((message) => message.role == 'user')
-                          .map((message) => message.id)
-                          .fold<int?>(
-                            null,
-                            (current, value) => current == null
-                                ? value
-                                : (value > current ? value : current),
-                          );
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        if (!_scrollController.hasClients) {
-                          return;
-                        }
-                        _scrollController.jumpTo(
-                          _scrollController.position.maxScrollExtent,
-                        );
-                      });
-                      return LayoutBuilder(
-                        builder: (context, constraints) {
-                          final isNarrow = constraints.maxWidth < 520;
-                          return ListView.builder(
-                            controller: _scrollController,
-                            itemCount: messages.length,
-                            itemBuilder: (context, index) {
-                              final message = messages[index];
-                              final label = _messageLabel(message, l10n);
-                              final timeLabel = _formatTime(message.createdAt);
-                              final theme = Theme.of(context);
-                              final baseTextStyle =
-                                  theme.textTheme.bodyMedium ??
-                                      const TextStyle(fontSize: 14);
-                              const fontFallback = [
-                                'Microsoft YaHei UI',
-                                'Microsoft YaHei',
-                                'Noto Sans CJK SC',
-                                'Source Han Sans SC',
-                                'PingFang SC',
-                                'SimHei',
-                              ];
-                              final contentStyle = baseTextStyle.copyWith(
-                                fontSize: (baseTextStyle.fontSize ?? 14) + 2,
-                                height: 1.55,
-                                fontFamily: 'Microsoft YaHei UI',
-                                fontFamilyFallback: fontFallback,
+                    Expanded(
+                      child: StreamBuilder<List<ChatMessage>>(
+                        stream: db.watchMessagesForSession(widget.sessionId),
+                        builder: (context, snapshot) {
+                          final messages = snapshot.data ?? [];
+                          if (messages.isEmpty) {
+                            return Center(child: Text(l10n.noMessagesYet));
+                          }
+                          final lastUserId = messages
+                              .where((message) => message.role == 'user')
+                              .map((message) => message.id)
+                              .fold<int?>(
+                                null,
+                                (current, value) => current == null
+                                    ? value
+                                    : (value > current ? value : current),
                               );
-                              final labelStyle = baseTextStyle.copyWith(
-                                fontFamily: 'Microsoft YaHei UI',
-                                fontFamilyFallback: fontFallback,
-                              );
-                              final ttsService =
-                                  context.read<AppServices>().ttsService;
-                              final ttsAudioDir =
-                                  settings?.ttsAudioPath?.trim() ?? '';
-                              final logDir =
-                                  (settings?.logDirectory ?? '').trim();
-                              final sttAudioDir = logDir.isNotEmpty
-                                  ? logDir
-                                  : () {
-                                      final llmLog =
-                                          (settings?.llmLogPath ?? '').trim();
-                                      if (llmLog.isNotEmpty) {
-                                        return p.dirname(llmLog);
-                                      }
-                                      final ttsLog =
-                                          (settings?.ttsLogPath ?? '').trim();
-                                      if (ttsLog.isNotEmpty) {
-                                        return p.dirname(ttsLog);
-                                      }
-                                      return '';
-                                    }();
-                              String? audioPath;
-                              if (message.role == 'assistant' &&
-                                  ttsAudioDir.isNotEmpty) {
-                                audioPath = TtsService.buildMessageAudioPath(
-                                  baseDir: ttsAudioDir,
-                                  messageId: message.id,
-                                );
-                              } else if (message.role == 'user' &&
-                                  sttAudioDir.isNotEmpty) {
-                                audioPath = SttService.buildMessageAudioPath(
-                                  baseDir: sttAudioDir,
-                                  messageId: message.id,
-                                );
-                              }
-                              final hasAudio = audioPath != null &&
-                                  File(audioPath).existsSync() &&
-                                  File(audioPath).lengthSync() > 0;
-                              return StreamBuilder<TtsPlaybackState>(
-                                stream: ttsService.playbackStream,
-                                builder: (context, playbackSnapshot) {
-                                  final playback = playbackSnapshot.data;
-                                  final isPlaying = playback?.messageId ==
-                                          message.id &&
-                                      playback?.isPlaying == true;
-                                  final isPaused = playback?.messageId ==
-                                          message.id &&
-                                      playback?.isPaused == true;
-                                  final duration = playback?.duration;
-                                  final position = playback?.position ??
-                                      Duration.zero;
-                                  final progressValue =
-                                      (duration == null ||
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (!_scrollController.hasClients) {
+                              return;
+                            }
+                            _scrollController.jumpTo(
+                              _scrollController.position.maxScrollExtent,
+                            );
+                          });
+                          return LayoutBuilder(
+                            builder: (context, constraints) {
+                              final isNarrow = constraints.maxWidth < 520;
+                              return ListView.builder(
+                                controller: _scrollController,
+                                itemCount: messages.length,
+                                itemBuilder: (context, index) {
+                                  final message = messages[index];
+                                  final label = _messageLabel(message, l10n);
+                                  final timeLabel =
+                                      _formatTime(message.createdAt);
+                                  final theme = Theme.of(context);
+                                  final baseTextStyle =
+                                      theme.textTheme.bodyMedium ??
+                                          const TextStyle(fontSize: 14);
+                                  const fontFallback = [
+                                    'Microsoft YaHei UI',
+                                    'Microsoft YaHei',
+                                    'Noto Sans CJK SC',
+                                    'Source Han Sans SC',
+                                    'PingFang SC',
+                                    'SimHei',
+                                  ];
+                                  final contentStyle = baseTextStyle.copyWith(
+                                    fontSize:
+                                        (baseTextStyle.fontSize ?? 14) + 2,
+                                    height: 1.55,
+                                    fontFamily: 'Microsoft YaHei UI',
+                                    fontFamilyFallback: fontFallback,
+                                  );
+                                  final labelStyle = baseTextStyle.copyWith(
+                                    fontFamily: 'Microsoft YaHei UI',
+                                    fontFamilyFallback: fontFallback,
+                                  );
+                                  final ttsService =
+                                      context.read<AppServices>().ttsService;
+                                  final ttsAudioDir =
+                                      settings?.ttsAudioPath?.trim() ?? '';
+                                  final logDir =
+                                      (settings?.logDirectory ?? '').trim();
+                                  final sttAudioDir = logDir.isNotEmpty
+                                      ? logDir
+                                      : () {
+                                          final llmLog =
+                                              (settings?.llmLogPath ?? '')
+                                                  .trim();
+                                          if (llmLog.isNotEmpty) {
+                                            return p.dirname(llmLog);
+                                          }
+                                          final ttsLog =
+                                              (settings?.ttsLogPath ?? '')
+                                                  .trim();
+                                          if (ttsLog.isNotEmpty) {
+                                            return p.dirname(ttsLog);
+                                          }
+                                          return '';
+                                        }();
+                                  String? audioPath;
+                                  if (message.role == 'assistant' &&
+                                      ttsAudioDir.isNotEmpty) {
+                                    audioPath =
+                                        TtsService.buildMessageAudioPath(
+                                      baseDir: ttsAudioDir,
+                                      messageId: message.id,
+                                    );
+                                  } else if (message.role == 'user' &&
+                                      sttAudioDir.isNotEmpty) {
+                                    audioPath =
+                                        SttService.buildMessageAudioPath(
+                                      baseDir: sttAudioDir,
+                                      messageId: message.id,
+                                    );
+                                  }
+                                  final hasAudio = audioPath != null &&
+                                      File(audioPath).existsSync() &&
+                                      File(audioPath).lengthSync() > 0;
+                                  return StreamBuilder<TtsPlaybackState>(
+                                    stream: ttsService.playbackStream,
+                                    builder: (context, playbackSnapshot) {
+                                      final playback = playbackSnapshot.data;
+                                      final isPlaying =
+                                          playback?.messageId == message.id &&
+                                              playback?.isPlaying == true;
+                                      final isPaused =
+                                          playback?.messageId == message.id &&
+                                              playback?.isPaused == true;
+                                      final duration = playback?.duration;
+                                      final position =
+                                          playback?.position ?? Duration.zero;
+                                      final progressValue = (duration == null ||
                                               duration.inMilliseconds <= 0)
                                           ? null
                                           : (position.inMilliseconds /
                                                   duration.inMilliseconds)
                                               .clamp(0.0, 1.0);
-                                  final showProgress = playback?.messageId ==
-                                          message.id &&
-                                      duration != null &&
-                                      duration.inMilliseconds > 0;
-                                  final contentWidget =
-                                      message.role == 'assistant'
+                                      final showProgress =
+                                          playback?.messageId == message.id &&
+                                              duration != null &&
+                                              duration.inMilliseconds > 0;
+                                      final contentWidget = message.role ==
+                                              'assistant'
                                           ? MathMarkdownView(
                                               key:
                                                   ValueKey('msg_${message.id}'),
@@ -397,292 +405,299 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                               message.content,
                                               style: contentStyle,
                                             );
-                                  final messageBody = showProgress
-                                      ? Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            contentWidget,
-                                            Padding(
-                                              padding:
-                                                  const EdgeInsets.only(top: 6),
-                                              child: LinearProgressIndicator(
-                                                value: progressValue,
+                                      final messageBody = showProgress
+                                          ? Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                contentWidget,
+                                                Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                          top: 6),
+                                                  child:
+                                                      LinearProgressIndicator(
+                                                    value: progressValue,
+                                                  ),
+                                                ),
+                                              ],
+                                            )
+                                          : contentWidget;
+                                      final actions = _buildMessageActions(
+                                        message,
+                                        lastUserId,
+                                        l10n,
+                                        hasAudio: hasAudio,
+                                        audioPath: audioPath,
+                                        isPlaying: isPlaying,
+                                        isPaused: isPaused,
+                                      );
+                                      final actionStrip = Wrap(
+                                        spacing: 4,
+                                        runSpacing: 4,
+                                        children: actions,
+                                      );
+                                      final messageSubtitle =
+                                          isNarrow && actions.isNotEmpty
+                                              ? Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    messageBody,
+                                                    const SizedBox(height: 8),
+                                                    Align(
+                                                      alignment:
+                                                          Alignment.centerRight,
+                                                      child: actionStrip,
+                                                    ),
+                                                  ],
+                                                )
+                                              : messageBody;
+                                      return ListTile(
+                                        title: Text(
+                                          '$label - $timeLabel',
+                                          style: labelStyle,
+                                        ),
+                                        subtitle: messageSubtitle,
+                                        trailing: isNarrow || actions.isEmpty
+                                            ? null
+                                            : Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: actions,
                                               ),
-                                            ),
-                                          ],
-                                        )
-                                      : contentWidget;
-                                  final actions = _buildMessageActions(
-                                    message,
-                                    lastUserId,
-                                    l10n,
-                                    hasAudio: hasAudio,
-                                    audioPath: audioPath,
-                                    isPlaying: isPlaying,
-                                    isPaused: isPaused,
-                                  );
-                                  final actionStrip = Wrap(
-                                    spacing: 4,
-                                    runSpacing: 4,
-                                    children: actions,
-                                  );
-                                  final messageSubtitle = isNarrow &&
-                                          actions.isNotEmpty
-                                      ? Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            messageBody,
-                                            const SizedBox(height: 8),
-                                            Align(
-                                              alignment: Alignment.centerRight,
-                                              child: actionStrip,
-                                            ),
-                                          ],
-                                        )
-                                      : messageBody;
-                                  return ListTile(
-                                    title: Text(
-                                      '$label - $timeLabel',
-                                      style: labelStyle,
-                                    ),
-                                    subtitle: messageSubtitle,
-                                    trailing: isNarrow || actions.isEmpty
-                                        ? null
-                                        : Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: actions,
-                                          ),
+                                      );
+                                    },
                                   );
                                 },
                               );
                             },
                           );
                         },
-                      );
-                    },
-                  ),
-                ),
-                if (_summaryFailed)
-                  Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(l10n.summaryFailedRetry),
-                        ),
-                        TextButton(
-                          onPressed: _showSummaryErrorDialog,
-                          child: Text(l10n.detailsButton),
-                        ),
-                        ElevatedButton(
-                          onPressed: _sending ? null : _requestSummary,
-                          child: Text(l10n.retryButton),
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
-                if (_sending) const LinearProgressIndicator(minHeight: 2),
-                if (canInteract)
-                  Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            key: const Key('chat_input'),
-                            controller: _inputController,
-                            focusNode: _inputFocus,
-                            maxLines: 3,
-                            minLines: 1,
-                            enabled: !_sending && !_sttTranscribing,
-                            decoration: InputDecoration(
-                              labelText: l10n.chatInputLabel,
-                              hintText: l10n.chatInputHint,
-                              filled: true,
-                              fillColor: Theme.of(context)
-                                  .colorScheme
-                                  .surfaceContainerHighest,
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Tooltip(
-                          message: sttSupported
-                              ? (_sttTranscribing
-                                  ? l10n.sttTranscribingLabel
-                                  : (_sttRecording
-                                      ? l10n.sttStopTooltip
-                                      : l10n.sttRecordTooltip))
-                              : l10n.sttRequiresOpenAi,
-                          child: Listener(
-                            key: const Key('chat_mic_button'),
-                            behavior: HitTestBehavior.opaque,
-                            onPointerDown: (_sending ||
-                                    _sttTranscribing ||
-                                    !sttSupported)
-                                ? null
-                                : _handleSttPointerDown,
-                            onPointerMove: (_sttPressActive &&
-                                    !_sttTranscribing &&
-                                    sttSupported)
-                                ? _handleSttPointerMove
-                                : null,
-                            onPointerUp: (_sttPressActive &&
-                                    !_sttTranscribing &&
-                                    sttSupported)
-                                ? _handleSttPointerUp
-                                : null,
-                            onPointerCancel: (_sttPressActive &&
-                                    !_sttTranscribing &&
-                                    sttSupported)
-                                ? _handleSttPointerCancel
-                                : null,
-                            child: CompositedTransformTarget(
-                              link: _sttButtonLink,
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 150),
-                                padding: const EdgeInsets.all(10),
-                                decoration: BoxDecoration(
-                                  color: _sttRecording
-                                      ? Theme.of(context)
-                                          .colorScheme
-                                          .errorContainer
-                                      : Theme.of(context)
-                                          .colorScheme
-                                          .surfaceContainerHighest,
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: _sttTranscribing
-                                    ? const SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : Icon(
-                                        Icons.mic,
-                                        color: _sttRecording
-                                            ? Theme.of(context)
-                                                .colorScheme
-                                                .onErrorContainer
-                                            : Theme.of(context)
-                                                .colorScheme
-                                                .onSurfaceVariant,
-                                      ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        IconButton(
-                          key: const Key('chat_send_button'),
-                          onPressed: _sending
-                              ? _cancelRequest
-                              : (sttBusy ? null : _sendMessage),
-                          icon: Icon(_sending ? Icons.stop : Icons.send),
-                          tooltip:
-                              _sending ? l10n.stopTooltip : l10n.sendTooltip,
-                        ),
-                      ],
-                    ),
-                  ),
-                if (canInteract)
-                  Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        SizedBox(
-                          width: 260,
-                          child: _buildModelSelector(
-                            db: db,
-                            currentModel: settings?.model ?? '',
-                            provider: provider,
-                            l10n: l10n,
-                          ),
-                        ),
-                        _modeChip(TutorMode.learn, l10n),
-                        _modeChip(TutorMode.review, l10n),
-                        const SizedBox(width: 12),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
+                    if (_summaryFailed)
+                      Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: Row(
                           children: [
-                            const Text('TTS'),
-                            Tooltip(
-                              message: ttsSupported
-                                  ? ''
-                                  : l10n.ttsRequiresOpenAi,
-                              child: Switch(
-                                value: _ttsEnabled,
-                                onChanged: (_sending || !ttsSupported)
-                                    ? null
-                                    : (value) {
-                                        setState(() => _ttsEnabled = value);
-                                        if (!value) {
-                                          _stopLiveTts();
-                                        }
-                                      },
-                              ),
+                            Expanded(
+                              child: Text(l10n.summaryFailedRetry),
                             ),
-                            IconButton(
-                              tooltip: _ttsStreamPaused
-                                  ? l10n.ttsResumeTooltip
-                                  : l10n.ttsPauseTooltip,
-                              icon: Icon(
-                                _ttsStreamPaused
-                                    ? Icons.play_arrow
-                                    : Icons.pause,
-                              ),
-                              onPressed: (!_ttsEnabled ||
-                                      !(_ttsPlaybackActive || _ttsStreamPaused))
-                                  ? null
-                                  : (_ttsStreamPaused
-                                      ? _resumeLiveTts
-                                      : _pauseLiveTts),
+                            TextButton(
+                              onPressed: _showSummaryErrorDialog,
+                              child: Text(l10n.detailsButton),
                             ),
-                            IconButton(
-                              tooltip: l10n.ttsStopTooltip,
-                              icon: const Icon(Icons.stop),
-                              onPressed: (!_ttsEnabled || !livePlaybackActive)
-                                  ? null
-                                  : _stopLiveTts,
+                            ElevatedButton(
+                              onPressed: _sending ? null : _requestSummary,
+                              child: Text(l10n.retryButton),
                             ),
                           ],
                         ),
-                        if (_ttsEnabled && _ttsPreparingFirstChunk)
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    if (_sending) const LinearProgressIndicator(minHeight: 2),
+                    if (canInteract)
+                      Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                key: const Key('chat_input'),
+                                controller: _inputController,
+                                focusNode: _inputFocus,
+                                maxLines: 3,
+                                minLines: 1,
+                                enabled: !_sending && !_sttTranscribing,
+                                decoration: InputDecoration(
+                                  labelText: l10n.chatInputLabel,
+                                  hintText: l10n.chatInputHint,
+                                  filled: true,
+                                  fillColor: Theme.of(context)
+                                      .colorScheme
+                                      .surfaceContainerHighest,
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                ),
                               ),
-                              const SizedBox(width: 8),
-                              Text(l10n.ttsPreparingLabel),
-                            ],
-                          ),
-                        ElevatedButton(
-                          key: const Key('summary_button'),
-                          onPressed: _sending ? null : _requestSummary,
-                          child: Text(l10n.summaryButton),
+                            ),
+                            const SizedBox(width: 8),
+                            Tooltip(
+                              message: sttSupported
+                                  ? (_sttTranscribing
+                                      ? l10n.sttTranscribingLabel
+                                      : (_sttRecording
+                                          ? l10n.sttStopTooltip
+                                          : l10n.sttRecordTooltip))
+                                  : l10n.sttRequiresOpenAi,
+                              child: Listener(
+                                key: const Key('chat_mic_button'),
+                                behavior: HitTestBehavior.opaque,
+                                onPointerDown: (_sending ||
+                                        _sttTranscribing ||
+                                        !sttSupported)
+                                    ? null
+                                    : _handleSttPointerDown,
+                                onPointerMove: (_sttPressActive &&
+                                        !_sttTranscribing &&
+                                        sttSupported)
+                                    ? _handleSttPointerMove
+                                    : null,
+                                onPointerUp: (_sttPressActive &&
+                                        !_sttTranscribing &&
+                                        sttSupported)
+                                    ? _handleSttPointerUp
+                                    : null,
+                                onPointerCancel: (_sttPressActive &&
+                                        !_sttTranscribing &&
+                                        sttSupported)
+                                    ? _handleSttPointerCancel
+                                    : null,
+                                child: CompositedTransformTarget(
+                                  link: _sttButtonLink,
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 150),
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      color: _sttRecording
+                                          ? Theme.of(context)
+                                              .colorScheme
+                                              .errorContainer
+                                          : Theme.of(context)
+                                              .colorScheme
+                                              .surfaceContainerHighest,
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: _sttTranscribing
+                                        ? const SizedBox(
+                                            width: 20,
+                                            height: 20,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          )
+                                        : Icon(
+                                            Icons.mic,
+                                            color: _sttRecording
+                                                ? Theme.of(context)
+                                                    .colorScheme
+                                                    .onErrorContainer
+                                                : Theme.of(context)
+                                                    .colorScheme
+                                                    .onSurfaceVariant,
+                                          ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            IconButton(
+                              key: const Key('chat_send_button'),
+                              onPressed: _sending
+                                  ? _cancelRequest
+                                  : (sttBusy ? null : _sendMessage),
+                              icon: Icon(_sending ? Icons.stop : Icons.send),
+                              tooltip: _sending
+                                  ? l10n.stopTooltip
+                                  : l10n.sendTooltip,
+                            ),
+                          ],
                         ),
-                        TextButton(
-                          key: const Key('exit_button'),
-                          onPressed: _sending ? null : _exitSession,
-                          child: Text(l10n.exitButton),
+                      ),
+                    if (canInteract)
+                      Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            SizedBox(
+                              width: 260,
+                              child: _buildModelSelector(
+                                db: db,
+                                currentModel: settings?.model ?? '',
+                                provider: provider,
+                                l10n: l10n,
+                              ),
+                            ),
+                            _modeChip(TutorMode.learn, l10n),
+                            _modeChip(TutorMode.review, l10n),
+                            const SizedBox(width: 12),
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text('TTS'),
+                                Tooltip(
+                                  message: ttsSupported
+                                      ? ''
+                                      : l10n.ttsRequiresOpenAi,
+                                  child: Switch(
+                                    value: _ttsEnabled,
+                                    onChanged: (_sending || !ttsSupported)
+                                        ? null
+                                        : (value) {
+                                            setState(() => _ttsEnabled = value);
+                                            if (!value) {
+                                              _stopLiveTts();
+                                            }
+                                          },
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: _ttsStreamPaused
+                                      ? l10n.ttsResumeTooltip
+                                      : l10n.ttsPauseTooltip,
+                                  icon: Icon(
+                                    _ttsStreamPaused
+                                        ? Icons.play_arrow
+                                        : Icons.pause,
+                                  ),
+                                  onPressed: (!_ttsEnabled ||
+                                          !(_ttsPlaybackActive ||
+                                              _ttsStreamPaused))
+                                      ? null
+                                      : (_ttsStreamPaused
+                                          ? _resumeLiveTts
+                                          : _pauseLiveTts),
+                                ),
+                                IconButton(
+                                  tooltip: l10n.ttsStopTooltip,
+                                  icon: const Icon(Icons.stop),
+                                  onPressed:
+                                      (!_ttsEnabled || !livePlaybackActive)
+                                          ? null
+                                          : _stopLiveTts,
+                                ),
+                              ],
+                            ),
+                            if (_ttsEnabled && _ttsPreparingFirstChunk)
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(l10n.ttsPreparingLabel),
+                                ],
+                              ),
+                            ElevatedButton(
+                              key: const Key('summary_button'),
+                              onPressed: _sending ? null : _requestSummary,
+                              child: Text(l10n.summaryButton),
+                            ),
+                            TextButton(
+                              key: const Key('exit_button'),
+                              onPressed: _sending ? null : _exitSession,
+                              child: Text(l10n.exitButton),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                  ),
+                      ),
                   ],
                 ),
                 if (_sttPressActive || _sttRecording)
@@ -696,14 +711,11 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   }
 
   List<Widget> _buildMessageActions(
-    ChatMessage message,
-    int? lastUserId,
-    AppLocalizations l10n,
-    {required bool hasAudio,
-    String? audioPath,
-    required bool isPlaying,
-    required bool isPaused}
-  ) {
+      ChatMessage message, int? lastUserId, AppLocalizations l10n,
+      {required bool hasAudio,
+      String? audioPath,
+      required bool isPlaying,
+      required bool isPaused}) {
     final actions = <Widget>[];
 
     if (hasAudio && audioPath != null) {
@@ -741,27 +753,27 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       ),
     ]);
 
-      if (!widget.readOnly) {
-        if (message.role == 'user' &&
-            lastUserId != null &&
-            message.id == lastUserId) {
-          actions.add(
-            IconButton(
-              tooltip: l10n.editTooltip,
-              icon: const Icon(Icons.edit),
-              onPressed: _sending ? null : () => _editMessage(message, l10n),
-            ),
-          );
-        } else if (_isRefreshableMessage(message)) {
-          actions.add(
-            IconButton(
-              tooltip: l10n.refreshTooltip,
-              icon: const Icon(Icons.refresh),
-              onPressed: _sending ? null : () => _refreshAnswer(message, l10n),
-            ),
-          );
-        }
+    if (!widget.readOnly) {
+      if (message.role == 'user' &&
+          lastUserId != null &&
+          message.id == lastUserId) {
+        actions.add(
+          IconButton(
+            tooltip: l10n.editTooltip,
+            icon: const Icon(Icons.edit),
+            onPressed: _sending ? null : () => _editMessage(message, l10n),
+          ),
+        );
+      } else if (_isRefreshableMessage(message)) {
+        actions.add(
+          IconButton(
+            tooltip: l10n.refreshTooltip,
+            icon: const Icon(Icons.refresh),
+            onPressed: _sending ? null : () => _refreshAnswer(message, l10n),
+          ),
+        );
       }
+    }
 
     return actions;
   }
@@ -1037,10 +1049,10 @@ class _ChatSessionPageState extends State<ChatSessionPage>
             }
             sttService
                 .saveMessageAudio(
-                  messageId: messageId,
-                  sourcePath: resolvedPath,
-                  sessionId: widget.sessionId,
-                )
+              messageId: messageId,
+              sourcePath: resolvedPath,
+              sessionId: widget.sessionId,
+            )
                 .then((result) {
               if (mounted) {
                 if (!result.success) {
@@ -1174,10 +1186,8 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     _ttsStreamPaused = false;
     _ttsStreamPausedAt = null;
     if (_ttsStreamingActive && _ttsStreamStart != null && pausedAt != null) {
-      final pausedMs =
-          DateTime.now().difference(pausedAt).inMilliseconds;
-      _ttsStreamStart =
-          _ttsStreamStart!.add(Duration(milliseconds: pausedMs));
+      final pausedMs = DateTime.now().difference(pausedAt).inMilliseconds;
+      _ttsStreamStart = _ttsStreamStart!.add(Duration(milliseconds: pausedMs));
       _startWordTimer();
     }
     await context.read<AppServices>().ttsService.resume(
@@ -1263,9 +1273,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     if (action == null) {
       return false;
     }
-    return action == 'learn' ||
-        action == 'review' ||
-        action == 'summary';
+    return action == 'learn' || action == 'review' || action == 'summary';
   }
 
   Future<void> _refreshAnswer(
@@ -1448,7 +1456,11 @@ class _ChatSessionPageState extends State<ChatSessionPage>
             kpKey: widget.node.kpKey,
           );
     final progressRaw = progress?.summaryRawResponse ?? '';
-    final llmCall = await db.getLatestLlmCallForSession(
+    var llmCall = await db.getLatestLlmCallForSession(
+      sessionId: widget.sessionId,
+      promptName: 'summary',
+    );
+    llmCall ??= await db.getLatestLlmCallForSession(
       sessionId: widget.sessionId,
       promptName: 'summarize',
     );
@@ -1712,9 +1724,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       _appendDisplayChunk(chunk);
       return;
     }
-    if (!_ttsPreparingFirstChunk &&
-        !_ttsPlaybackActive &&
-        !_ttsChunkInFlight) {
+    if (!_ttsPreparingFirstChunk && !_ttsPlaybackActive && !_ttsChunkInFlight) {
       _ttsPreparingFirstChunk = true;
       if (mounted) {
         setState(() {});
@@ -2060,8 +2070,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         _appendStreamingTokens(leadCount);
       }
     }
-    _ttsStreamStart =
-        DateTime.now().subtract(Duration(milliseconds: leadMs));
+    _ttsStreamStart = DateTime.now().subtract(Duration(milliseconds: leadMs));
     _startWordTimer();
   }
 
@@ -2086,8 +2095,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     }
     final elapsedMs =
         DateTime.now().difference(_ttsStreamStart!).inMilliseconds;
-    final durationMs =
-        _ttsStreamDurationMs <= 0 ? 1 : _ttsStreamDurationMs;
+    final durationMs = _ttsStreamDurationMs <= 0 ? 1 : _ttsStreamDurationMs;
     final ratio = elapsedMs / durationMs;
     final calculated = (ratio * _ttsStreamTokens.length).floor();
     final target = calculated < 0
@@ -2133,8 +2141,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     if (end <= _ttsStreamIndex) {
       return;
     }
-    final chunk =
-        _ttsStreamTokens.sublist(_ttsStreamIndex, end).join();
+    final chunk = _ttsStreamTokens.sublist(_ttsStreamIndex, end).join();
     _ttsStreamIndex = end;
     if (chunk.isNotEmpty) {
       _appendDisplayChunk(chunk);

@@ -33,5 +33,5 @@ Derived from `assets/prompts/codex_architecture.md` and compared against current
 - Log prompt version plus input hash for deterministic replay and auditability.
 
 ## Manual TODOs
-- Check if any other data models / logical flows need to change. 
-- Use the new prompts. 
+- Done (2026-02-06): Checked for additional data-model/logical-flow gaps; all newly identified gaps are already covered by the existing TODO sections above (no extra manual-only items to add).
+- Done (2026-02-06): Runtime now uses the new prompts (`learn_init`/`learn_cont`, `review_init`/`review_cont`, `summary`) while keeping backward compatibility for legacy logs/diagnostics.
