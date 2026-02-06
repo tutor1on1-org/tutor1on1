@@ -46,6 +46,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   bool _summaryFailed = false;
   bool _closed = false;
   bool _loadingSession = true;
+  bool _autoStartAttempted = false;
   TutorMode _mode = TutorMode.learn;
   String? _sessionModel;
   String? _sessionTitle;
@@ -170,6 +171,19 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       _sessionTitle = session.title;
     }
     setState(() => _loadingSession = false);
+    await _maybeAutoStart(db);
+  }
+
+  Future<void> _maybeAutoStart(AppDatabase db) async {
+    if (_autoStartAttempted || _sending || _closed || widget.readOnly) {
+      return;
+    }
+    final messages = await db.getMessagesForSession(widget.sessionId);
+    if (!mounted || messages.isNotEmpty) {
+      return;
+    }
+    _autoStartAttempted = true;
+    await _sendMessage(allowEmpty: true);
   }
 
   @override
@@ -194,10 +208,12 @@ class _ChatSessionPageState extends State<ChatSessionPage>
             provider.id == 'siliconflow' ||
             baseUrlLower.contains('openai.com') ||
             baseUrlLower.contains('siliconflow'));
-    final ttsSupported = isAudioProvider &&
-        (settings?.ttsModel?.trim().isNotEmpty ?? false);
-    final sttSupported = isAudioProvider &&
-        (settings?.sttModel?.trim().isNotEmpty ?? false);
+    final ttsModel = settings?.ttsModel;
+    final sttModel = settings?.sttModel;
+    final ttsSupported =
+        isAudioProvider && ttsModel != null && ttsModel.trim().isNotEmpty;
+    final sttSupported =
+        isAudioProvider && sttModel != null && sttModel.trim().isNotEmpty;
     final livePlaybackActive =
         _ttsPlaybackActive || _ttsStreamPaused || _ttsChunkInFlight;
     final canInteract = !_closed && !widget.readOnly;
@@ -978,12 +994,27 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     );
   }
 
-  Future<void> _sendMessage() async {
+  Future<void> _sendMessage({bool allowEmpty = false}) async {
     final l10n = AppLocalizations.of(context)!;
     if (widget.readOnly) {
       return;
     }
-    if (_inputController.text.trim().isEmpty) {
+    final trimmedInput = _inputController.text.trim();
+    var allowEmptyNow = allowEmpty;
+    if (trimmedInput.isEmpty && !allowEmptyNow) {
+      final db = context.read<AppDatabase>();
+      final messages = await db.getMessagesForSession(widget.sessionId);
+      if (messages.isEmpty) {
+        allowEmptyNow = true;
+      } else {
+        await _showErrorDialog(
+          title: l10n.messageRequiredTitle,
+          message: l10n.messageRequiredBody,
+        );
+        return;
+      }
+    }
+    if (trimmedInput.isEmpty && !allowEmptyNow) {
       await _showErrorDialog(
         title: l10n.messageRequiredTitle,
         message: l10n.messageRequiredBody,
@@ -997,35 +1028,41 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     _prepareTts();
     final pendingAudioPath = _pendingSttAudioPath;
     final shouldSaveSttAudio = pendingAudioPath != null;
+    final onStudentMessageCreated = pendingAudioPath == null
+        ? null
+        : (int messageId) {
+            final resolvedPath = pendingAudioPath;
+            if (resolvedPath == null) {
+              return;
+            }
+            sttService
+                .saveMessageAudio(
+                  messageId: messageId,
+                  sourcePath: resolvedPath,
+                  sessionId: widget.sessionId,
+                )
+                .then((result) {
+              if (mounted) {
+                if (!result.success) {
+                  _showMessage(l10n.sttAudioConvertFailedMessage);
+                }
+                setState(() {});
+              }
+            });
+          };
     _pendingSttAudioPath = null;
     try {
       final llmHandle = await sessionService.startTutorAction(
         sessionId: widget.sessionId,
         mode: _mode.promptName,
-        studentInput: _inputController.text,
+        studentInput: trimmedInput,
         courseVersion: widget.courseVersion,
         node: widget.node,
         modelOverride: modelOverride,
         stream: true,
         streamToDatabase: !_ttsEnabled,
-        onStudentMessageCreated: shouldSaveSttAudio
-            ? (messageId) {
-                sttService
-                    .saveMessageAudio(
-                      messageId: messageId,
-                      sourcePath: pendingAudioPath!,
-                      sessionId: widget.sessionId,
-                    )
-                    .then((result) {
-                  if (mounted) {
-                    if (!result.success) {
-                      _showMessage(l10n.sttAudioConvertFailedMessage);
-                    }
-                    setState(() {});
-                  }
-                });
-              }
-            : null,
+        onStudentMessageCreated:
+            shouldSaveSttAudio ? onStudentMessageCreated : null,
         onAssistantMessageCreated:
             _ttsEnabled ? _handleAssistantMessageCreated : null,
         onChunk: _ttsEnabled ? _handleTtsChunk : null,
@@ -1071,12 +1108,13 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       final result = await summarizeHandle.future;
       _summaryFailed = !result.success;
       if (result.success) {
-        if (result.lit != null && result.masterLevel != null) {
+        final litPercent = result.litPercent;
+        if (litPercent != null && result.masterLevel != null) {
           _showMessage(
-            l10n.summaryUpdatedStatus('${result.lit}', result.masterLevel!),
+            l10n.summaryUpdatedStatus('$litPercent', result.masterLevel!),
           );
-        } else if (result.lit != null) {
-          _showMessage(l10n.summaryUpdatedLit('${result.lit}'));
+        } else if (litPercent != null) {
+          _showMessage(l10n.summaryUpdatedLit('$litPercent'));
         } else {
           _showMessage(l10n.summarySavedUnparsed);
         }
