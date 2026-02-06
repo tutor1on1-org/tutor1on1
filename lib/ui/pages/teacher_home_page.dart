@@ -604,12 +604,9 @@ class _CourseAssignmentTileState extends State<_CourseAssignmentTile> {
                 ),
           builder: (context, progressSnapshot) {
             final progress = progressSnapshot.data ?? [];
-            final litCount = assignedStudentId == null
+            final progressPercent = assignedStudentId == null
                 ? 0
-                : progress
-                    .where((entry) => entry.lit)
-                    .where((entry) => _leafIds.contains(entry.kpKey))
-                    .length;
+                : _calculateProgressPercent(progress, _leafIds);
             return FutureBuilder<User?>(
               future: assignedStudentId == null
                   ? Future<User?>.value(null)
@@ -618,7 +615,7 @@ class _CourseAssignmentTileState extends State<_CourseAssignmentTile> {
                 final studentName = studentSnapshot.data?.username;
                 final titleText = studentName == null
                     ? widget.course.subject
-                    : '${widget.course.subject} • $studentName ($litCount/$_totalLeaves)';
+                    : '${widget.course.subject} • $studentName ($progressPercent%)';
                 return Card(
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
@@ -676,5 +673,27 @@ class _CourseAssignmentTileState extends State<_CourseAssignmentTile> {
         );
       },
     );
+  }
+
+  int _calculateProgressPercent(
+    List<ProgressEntry> progress,
+    Set<String> leafIds,
+  ) {
+    if (leafIds.isEmpty) {
+      return 0;
+    }
+    var sum = 0;
+    for (final entry in progress) {
+      if (!leafIds.contains(entry.kpKey)) {
+        continue;
+      }
+      final percent = entry.litPercent == 0 && entry.lit
+          ? 100
+          : entry.litPercent;
+      final clamped = percent.clamp(0, 100);
+      sum += clamped;
+    }
+    final ratio = sum / (leafIds.length * 100);
+    return (ratio * 100).round();
   }
 }

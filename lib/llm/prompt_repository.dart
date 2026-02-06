@@ -117,9 +117,23 @@ class PromptRepository {
     if (_systemPromptCache.containsKey(name)) {
       return _systemPromptCache[name]!;
     }
-    final content = await rootBundle.loadString('assets/prompts/$name.txt');
-    _systemPromptCache[name] = content;
-    return content;
+    final candidates = [
+      'assets/prompts/$name.prompt.txt',
+      'assets/prompts/$name.txt',
+    ];
+    Object? lastError;
+    for (final path in candidates) {
+      try {
+        final content = await rootBundle.loadString(path);
+        _systemPromptCache[name] = content;
+        return content;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw StateError(
+      'Prompt not found for "$name". Last error: $lastError',
+    );
   }
 
   String? _normalizeCourseKey(String? value) {

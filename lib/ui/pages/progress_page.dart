@@ -31,7 +31,7 @@ class ProgressPage extends StatelessWidget {
               return ListTile(
                 title: Text(row.username),
                 subtitle: Text(
-                  l10n.litCountLabel(row.litCount, row.totalNodes),
+                  l10n.litCountLabel(row.progressPercent, row.totalNodes),
                 ),
               );
             },
@@ -45,36 +45,60 @@ class ProgressPage extends StatelessWidget {
     final assignments = await db.getAssignmentsForCourse(courseVersion.id);
     final nodes = await db.getCourseNodes(courseVersion.id);
     final total = nodes.length;
+    final nodeIds = nodes.map((node) => node.kpKey).toSet();
     final results = <_StudentProgress>[];
     for (final assignment in assignments) {
       final student = await db.getUserById(assignment.studentId);
       if (student == null) {
         continue;
       }
-      final litCount = await db.countLitNodes(
+      final progress = await db.getProgressForCourse(
         studentId: student.id,
         courseVersionId: courseVersion.id,
       );
+      final percent = _calculateProgressPercent(progress, nodeIds);
       results.add(
         _StudentProgress(
           username: student.username,
-          litCount: litCount,
+          progressPercent: percent,
           totalNodes: total,
         ),
       );
     }
     return results;
   }
+
+  int _calculateProgressPercent(
+    List<ProgressEntry> progress,
+    Set<String> nodeIds,
+  ) {
+    if (nodeIds.isEmpty) {
+      return 0;
+    }
+    var sum = 0;
+    for (final entry in progress) {
+      if (!nodeIds.contains(entry.kpKey)) {
+        continue;
+      }
+      final percent = entry.litPercent == 0 && entry.lit
+          ? 100
+          : entry.litPercent;
+      final clamped = percent.clamp(0, 100);
+      sum += clamped;
+    }
+    final ratio = sum / (nodeIds.length * 100);
+    return (ratio * 100).round();
+  }
 }
 
 class _StudentProgress {
   _StudentProgress({
     required this.username,
-    required this.litCount,
+    required this.progressPercent,
     required this.totalNodes,
   });
 
   final String username;
-  final int litCount;
+  final int progressPercent;
   final int totalNodes;
 }

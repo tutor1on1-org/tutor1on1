@@ -86,16 +86,36 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
 
     final items = [
       _PromptItem(
+        name: 'learn_init',
+        title: '${l10n.promptLearn} (Init)',
+      ),
+      _PromptItem(
+        name: 'learn_cont',
+        title: '${l10n.promptLearn} (Cont)',
+      ),
+      _PromptItem(
+        name: 'review_init',
+        title: '${l10n.promptReview} (Init)',
+      ),
+      _PromptItem(
+        name: 'review_cont',
+        title: '${l10n.promptReview} (Cont)',
+      ),
+      _PromptItem(
+        name: 'summary',
+        title: 'Summary (Final)',
+      ),
+      _PromptItem(
         name: 'learn',
-        title: l10n.promptLearn,
+        title: '${l10n.promptLearn} (Legacy)',
       ),
       _PromptItem(
         name: 'review',
-        title: l10n.promptReview,
+        title: '${l10n.promptReview} (Legacy)',
       ),
       _PromptItem(
         name: 'summarize',
-        title: l10n.promptSummarize,
+        title: '${l10n.promptSummarize} (Legacy)',
       ),
     ];
 
@@ -617,6 +637,21 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
       'student_input': 'Latest student input text in this session.',
       'student_summary':
           'Saved summary for this student/course/kp (falls back to the session summary).',
+      'lesson_content': 'Lesson content for the current knowledge point.',
+      'types':
+          'List of practice types for this knowledge point (includes OTHER).',
+      'error_book_summary':
+          'Aggregated mistake counts and tags for this knowledge point.',
+      'practice_history_summary':
+          'Compressed summary of recent practice outcomes.',
+      'presented_questions':
+          'Candidate question pool provided for REVIEW_INIT selection.',
+      'recent_dialogue':
+          'Dialogue since the last INIT turn (may be truncated).',
+      'prev_json': 'Previous model JSON output for the current segment.',
+      'last_evidence': 'Last evidence object from REVIEW.',
+      'current_mastery_level':
+          'Current mastery level before SUMMARY decision.',
     };
   }
 }

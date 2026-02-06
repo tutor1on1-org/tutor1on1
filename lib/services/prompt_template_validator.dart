@@ -53,6 +53,34 @@ class PromptTemplateValidator {
           'conversation_history',
           'student_summary',
         };
+      case 'learn_init':
+        return {
+          'lesson_content',
+          'types',
+          'error_book_summary',
+          'practice_history_summary',
+        };
+      case 'review_init':
+        return {
+          'lesson_content',
+          'types',
+          'error_book_summary',
+          'practice_history_summary',
+          'presented_questions',
+        };
+      case 'learn_cont':
+      case 'review_cont':
+        return {
+          'recent_dialogue',
+          'prev_json',
+        };
+      case 'summary':
+        return {
+          'practice_history_summary',
+          'error_book_summary',
+          'last_evidence',
+          'current_mastery_level',
+        };
       default:
         return {};
     }
@@ -60,12 +88,58 @@ class PromptTemplateValidator {
 
   Set<String> allowedVariables(String promptName) {
     final required = requiredVariables(promptName);
-    return {
-      ...required,
+    const baseContext = {
+      'subject',
       'course_version_id',
       'kp_key',
-      'session_history',
+      'kp_title',
+      'kp_description',
+      'student_summary',
     };
+    const historyContext = {
+      'conversation_history',
+      'session_history',
+      'student_input',
+    };
+    const nextGenContext = {
+      'lesson_content',
+      'types',
+      'error_book_summary',
+      'practice_history_summary',
+      'presented_questions',
+      'recent_dialogue',
+      'prev_json',
+      'last_evidence',
+      'current_mastery_level',
+    };
+    switch (promptName) {
+      case 'learn':
+      case 'review':
+      case 'summarize':
+        return {
+          ...required,
+          ...baseContext,
+          ...historyContext,
+        };
+      case 'learn_init':
+      case 'learn_cont':
+      case 'review_init':
+      case 'review_cont':
+      case 'summary':
+        return {
+          ...required,
+          ...baseContext,
+          ...nextGenContext,
+          ...historyContext,
+        };
+      default:
+        return {
+          ...required,
+          ...baseContext,
+          ...historyContext,
+          ...nextGenContext,
+        };
+    }
   }
 
   bool _requiresHistory(String promptName) {

@@ -37,7 +37,7 @@
       "status": {}
     }
   },
-  "courseProgressStatus": "进度 {completed}/{total}",
+  "courseProgressStatus": "进度 {completed}%",
   "@courseProgressStatus": {
     "placeholders": {
       "completed": {},
@@ -175,13 +175,13 @@
   "requestFailedTitle": "请求失败",
   "refreshFailedTitle": "刷新失败",
   "editFailedTitle": "编辑失败",
-  "summaryUpdatedLit": "总结已更新。点亮：{lit}",
+  "summaryUpdatedLit": "总结已更新。进度：{lit}%",
   "@summaryUpdatedLit": {
     "placeholders": {
       "lit": {}
     }
   },
-  "summaryUpdatedStatus": "总结已更新。点亮：{lit}。掌握等级：{level}",
+  "summaryUpdatedStatus": "总结已更新。进度：{lit}%。掌握等级：{level}",
   "@summaryUpdatedStatus": {
     "placeholders": {
       "lit": {},
@@ -384,7 +384,7 @@
     }
   },
   "noAssignedStudents": "暂无分配的学生。",
-  "litCountLabel": "点亮 {litCount}/{total}",
+  "litCountLabel": "进度 {litCount}%",
   "@litCountLabel": {
     "placeholders": {
       "litCount": {},

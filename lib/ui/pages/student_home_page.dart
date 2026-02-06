@@ -143,20 +143,39 @@ class _CourseProgressTileState extends State<_CourseProgressTile> {
           db.watchProgressForCourse(widget.studentId, widget.course.id),
       builder: (context, snapshot) {
         final progress = snapshot.data ?? [];
-        final litCount = progress
-            .where((entry) => entry.lit)
-            .where((entry) => _leafIds.contains(entry.kpKey))
-            .length;
+        final progressPercent = _calculateProgressPercent(progress, _leafIds);
         return ListTile(
           key: Key('course_item_${widget.course.id}'),
           title: Text(widget.course.subject),
           subtitle: Text(
-            l10n.courseProgressStatus(litCount, _totalLeaves),
+            l10n.courseProgressStatus(progressPercent, _totalLeaves),
           ),
           enabled: widget.enabled,
           onTap: widget.onTap,
         );
       },
     );
+  }
+
+  int _calculateProgressPercent(
+    List<ProgressEntry> progress,
+    Set<String> leafIds,
+  ) {
+    if (leafIds.isEmpty) {
+      return 0;
+    }
+    var sum = 0;
+    for (final entry in progress) {
+      if (!leafIds.contains(entry.kpKey)) {
+        continue;
+      }
+      final percent = entry.litPercent == 0 && entry.lit
+          ? 100
+          : entry.litPercent;
+      final clamped = percent.clamp(0, 100);
+      sum += clamped;
+    }
+    final ratio = sum / (leafIds.length * 100);
+    return (ratio * 100).round();
   }
 }

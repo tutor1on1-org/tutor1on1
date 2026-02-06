@@ -37,7 +37,7 @@
       "status": {}
     }
   },
-  "courseProgressStatus": "Progress {completed}/{total}",
+  "courseProgressStatus": "Progress {completed}%",
   "@courseProgressStatus": {
     "placeholders": {
       "completed": {},
@@ -175,13 +175,13 @@
   "requestFailedTitle": "Request failed",
   "refreshFailedTitle": "Refresh failed",
   "editFailedTitle": "Edit failed",
-  "summaryUpdatedLit": "Summary updated. Lit: {lit}",
+  "summaryUpdatedLit": "Summary updated. Progress: {lit}%",
   "@summaryUpdatedLit": {
     "placeholders": {
       "lit": {}
     }
   },
-  "summaryUpdatedStatus": "Summary updated. Lit: {lit}. Level: {level}",
+  "summaryUpdatedStatus": "Summary updated. Progress: {lit}%. Level: {level}",
   "@summaryUpdatedStatus": {
     "placeholders": {
       "lit": {},
@@ -384,7 +384,7 @@
     }
   },
   "noAssignedStudents": "No assigned students.",
-  "litCountLabel": "{litCount}/{total} lit",
+  "litCountLabel": "Progress {litCount}%",
   "@litCountLabel": {
     "placeholders": {
       "litCount": {},

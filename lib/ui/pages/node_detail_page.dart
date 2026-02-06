@@ -77,8 +77,13 @@ class _NodeDetailPageState extends State<NodeDetailPage> {
                 kpKey: _node!.kpKey,
               ),
               builder: (context, snapshot) {
-                final lit = snapshot.data?.lit == true;
-                return Text(lit ? l10n.statusLit : l10n.statusNotLit);
+                final entry = snapshot.data;
+                final percent = entry == null
+                    ? 0
+                    : (entry.litPercent == 0 && entry.lit
+                        ? 100
+                        : entry.litPercent);
+                return Text(l10n.courseProgressStatus(percent, 100));
               },
             ),
             const SizedBox(height: 12),

@@ -300,12 +300,12 @@ class _SkillTreePageState extends State<SkillTreePage> {
             : db.watchProgressForCourse(targetStudentId, widget.courseVersionId),
         builder: (context, snapshot) {
           final progress = snapshot.data ?? [];
-          final litMap = {
-            for (final entry in progress) entry.kpKey: entry.lit,
+          final litPercentMap = {
+            for (final entry in progress) entry.kpKey: _resolveLitPercent(entry),
           };
           _nodeProgress
             ..clear()
-            ..addAll(_calculateNodeProgress(_parseResult!.root, litMap));
+            ..addAll(_calculateNodeProgress(_parseResult!.root, litPercentMap));
           final graph = _graph ?? (Graph()..isTree = true);
 
           return LayoutBuilder(
@@ -370,10 +370,11 @@ class _SkillTreePageState extends State<SkillTreePage> {
                         final text = _nodeDisplayText(node);
                         final isActive = node.id == _selectedId;
                         final background = _branchColor(node.id);
+                        final studentId = targetStudentId;
                         final showTeacherControls = widget.isTeacherView &&
                             isActive &&
-                            targetStudentId != null;
-                        final isLit = _isNodeFullyLit(node, litMap);
+                            studentId != null;
+                        final isLit = _isNodeFullyLit(node, litPercentMap);
                         final idLabel =
                             node.id == _parseResult!.root.id ? '' : node.id;
                         return InkWell(
@@ -417,7 +418,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
                                   Expanded(
                                     child: Text(text),
                                   ),
-                                  if (showTeacherControls)
+                                  if (showTeacherControls && studentId != null)
                                     Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
@@ -435,9 +436,9 @@ class _SkillTreePageState extends State<SkillTreePage> {
                                           ),
                                           onPressed: () => _toggleNodeLit(
                                             node: node,
-                                            litMap: litMap,
+                                            litPercentMap: litPercentMap,
                                             db: db,
-                                            studentId: targetStudentId!,
+                                            studentId: studentId,
                                             includeAll: !_isLeafNode(node),
                                           ),
                                           child: const Text('lit'),
@@ -453,9 +454,9 @@ class _SkillTreePageState extends State<SkillTreePage> {
                                           ),
                                           onPressed: () => _toggleNodeLit(
                                             node: node,
-                                            litMap: litMap,
+                                            litPercentMap: litPercentMap,
                                             db: db,
-                                            studentId: targetStudentId!,
+                                            studentId: studentId,
                                             includeAll: true,
                                           ),
                                           child: const Text('all'),
@@ -606,9 +607,10 @@ class _SkillTreePageState extends State<SkillTreePage> {
                           if (data == null) {
                             return const SizedBox.shrink();
                           }
+                          final percent = litPercentMap[data.id] ?? 0;
                           return _buildNodeWidget(
                             data,
-                            litMap[data.id] == true,
+                            percent >= 100,
                             isStudent,
                             db,
                             currentUser?.id,
@@ -1100,15 +1102,15 @@ class _SkillTreePageState extends State<SkillTreePage> {
     return node.children.isEmpty;
   }
 
-  bool _isNodeFullyLit(SkillNode node, Map<String, bool?> litMap) {
+  bool _isNodeFullyLit(SkillNode node, Map<String, int> litPercentMap) {
     if (_isLeafNode(node)) {
-      return litMap[node.id] == true;
+      return (litPercentMap[node.id] ?? 0) >= 100;
     }
     final leaves = _collectLeafNodes(node);
     if (leaves.isEmpty) {
       return false;
     }
-    return leaves.every((leaf) => litMap[leaf.id] == true);
+    return leaves.every((leaf) => (litPercentMap[leaf.id] ?? 0) >= 100);
   }
 
   List<SkillNode> _collectLeafNodes(SkillNode node) {
@@ -1129,7 +1131,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
 
   Future<void> _toggleNodeLit({
     required SkillNode node,
-    required Map<String, bool?> litMap,
+    required Map<String, int> litPercentMap,
     required AppDatabase db,
     required int studentId,
     required bool includeAll,
@@ -1140,7 +1142,8 @@ class _SkillTreePageState extends State<SkillTreePage> {
     if (leaves.isEmpty) {
       return;
     }
-    final allLit = leaves.every((leaf) => litMap[leaf.id] == true);
+    final allLit =
+        leaves.every((leaf) => (litPercentMap[leaf.id] ?? 0) >= 100);
     final nextLit = !allLit;
     await db.transaction(() async {
       for (final leaf in leaves) {
@@ -1149,6 +1152,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
           courseVersionId: widget.courseVersionId,
           kpKey: leaf.id,
           lit: nextLit,
+          litPercent: nextLit ? 100 : 0,
         );
       }
     });
@@ -1176,29 +1180,36 @@ class _SkillTreePageState extends State<SkillTreePage> {
 
   Map<String, double> _calculateNodeProgress(
     SkillNode root,
-    Map<String, bool?> litMap,
+    Map<String, int> litPercentMap,
   ) {
     final progress = <String, double>{};
     (int, int) walk(SkillNode node) {
       if (_isLeafNode(node)) {
-        final lit = litMap[node.id] == true;
-        progress[node.id] = lit ? 1.0 : 0.0;
-        return (lit ? 1 : 0, 1);
+        final percent = (litPercentMap[node.id] ?? 0).clamp(0, 100);
+        progress[node.id] = percent / 100;
+        return (percent, 1);
       }
-      var litCount = 0;
+      var sumPercent = 0;
       var total = 0;
       for (final child in node.children) {
-        final (childLit, childTotal) = walk(child);
-        litCount += childLit;
+        final (childSum, childTotal) = walk(child);
+        sumPercent += childSum;
         total += childTotal;
       }
-      final ratio = total == 0 ? 0.0 : litCount / total;
+      final ratio = total == 0 ? 0.0 : sumPercent / (total * 100);
       progress[node.id] = ratio;
-      return (litCount, total);
+      return (sumPercent, total);
     }
 
     walk(root);
     return progress;
+  }
+
+  int _resolveLitPercent(ProgressEntry entry) {
+    if (entry.litPercent == 0 && entry.lit) {
+      return 100;
+    }
+    return entry.litPercent;
   }
 
   Color _branchColor(String nodeId) {
@@ -1329,12 +1340,6 @@ class _SkillTreePageState extends State<SkillTreePage> {
       }
     }
     return expanded;
-  }
-
-  void _resetExpandedForLevel(int level) {
-    _expanded
-      ..clear()
-      ..addAll(_expandedForLevel(level));
   }
 
   List<int> _yearOptions() {

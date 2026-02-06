@@ -25,7 +25,6 @@ class TtsService {
   static const _ttsModel = 'gpt-4o-mini-tts';
   static const _ttsVoice = 'alloy';
   static const _ttsFormat = 'mp3';
-  static const _siliconModel = 'FunAudioLLM/CosyVoice2-0.5B';
   static const _siliconVoice = 'FunAudioLLM/CosyVoice2-0.5B:alex';
 
   final SecureStorageService _secureStorage;
@@ -39,7 +38,6 @@ class TtsService {
   int _queueToken = 0;
   int _stopToken = 0;
   bool _playerListenersAttached = false;
-  String? _lastPlayerState;
   int? _replayMessageId;
   Duration _replayPosition = Duration.zero;
   Duration? _replayDuration;
@@ -877,11 +875,6 @@ class TtsService {
     }
     player.playerStateStream.listen(
       (state) {
-        final stateLabel =
-            '${state.processingState}/${state.playing}/$tag';
-        if (player == _player) {
-          _lastPlayerState = stateLabel;
-        }
         _logEvent(
           event: 'player_state',
           message:

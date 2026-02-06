@@ -26,7 +26,6 @@ class SttService {
   static const _openAiBaseUrl = 'https://api.openai.com/v1';
   static const _openAiModel = 'gpt-4o-mini-transcribe';
   static const _siliconBaseUrl = 'https://api.siliconflow.cn/v1';
-  static const _siliconModel = 'FunAudioLLM/SenseVoiceSmall';
 
   final SecureStorageService _secureStorage;
   final SettingsRepository _settingsRepository;

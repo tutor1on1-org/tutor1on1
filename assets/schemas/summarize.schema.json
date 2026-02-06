@@ -2,20 +2,41 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "SessionSummaryOutput",
   "type": "object",
-  "required": ["summary_text", "master_level", "lit"],
-  "properties": {
-    "summary_text": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 800
+  "anyOf": [
+    {
+      "required": ["summary_text", "master_level", "lit"],
+      "properties": {
+        "summary_text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 800
+        },
+        "master_level": {
+          "type": "string",
+          "enum": ["easy", "medium", "hard"]
+        },
+        "lit": {
+          "type": "boolean"
+        }
+      }
     },
-    "master_level": {
-      "type": "string",
-      "enum": ["easy", "medium", "hard"]
-    },
-    "lit": {
-      "type": "boolean"
+    {
+      "required": ["teacher_message", "mastery_level", "next_step"],
+      "properties": {
+        "teacher_message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mastery_level": {
+          "type": "string",
+          "enum": ["NOT_PASS", "PASS_EASY", "PASS_MEDIUM", "PASS_HARD"]
+        },
+        "next_step": {
+          "type": "string",
+          "enum": ["RELEARN", "CONTINUE_REVIEW", "MOVE_ON"]
+        }
+      }
     }
-  },
+  ],
   "additionalProperties": true
 }
