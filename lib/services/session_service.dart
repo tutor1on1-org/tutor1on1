@@ -56,6 +56,18 @@ class _TutorPromptResolution {
   final Map<String, dynamic>? prevJson;
 }
 
+class _AssistantPayload {
+  _AssistantPayload({
+    required this.displayText,
+    required this.rawText,
+    required this.parsedJson,
+  });
+
+  final String displayText;
+  final String rawText;
+  final String? parsedJson;
+}
+
 class SessionService {
   SessionService(
     this._db,
@@ -330,11 +342,17 @@ class SessionService {
         if (result.responseText.trim().isEmpty) {
           throw StateError('LLM returned an empty response.');
         }
+        final payload = _buildAssistantPayload(
+          promptName: promptName,
+          responseText: result.responseText,
+        );
         await _db.into(_db.chatMessages).insert(
               ChatMessagesCompanion.insert(
                 sessionId: sessionId,
                 role: 'assistant',
-                content: result.responseText,
+                content: payload.displayText,
+                rawContent: Value(payload.rawText),
+                parsedJson: Value(payload.parsedJson),
                 action: Value(actionMode),
               ),
             );
@@ -381,6 +399,9 @@ class SessionService {
 
     void handleChunk(String chunk) {
       buffer.write(chunk);
+      if (_isStructuredPrompt(promptName)) {
+        return;
+      }
       scheduleFlush();
       if (onChunk != null) {
         onChunk(chunk);
@@ -409,10 +430,22 @@ class SessionService {
       if (finalText.trim().isEmpty) {
         throw StateError('LLM returned an empty response.');
       }
-      if (streamToDatabase || onAssistantMessageCreated == null) {
-        await _db.updateChatMessageContent(
+      final payload = _buildAssistantPayload(
+        promptName: promptName,
+        responseText: finalText,
+      );
+      if (_isStructuredPrompt(promptName) && onChunk != null) {
+        onChunk(payload.displayText);
+      }
+      final writeDirectly = streamToDatabase ||
+          onAssistantMessageCreated == null ||
+          _isStructuredPrompt(promptName);
+      if (writeDirectly) {
+        await _db.updateChatMessageAssistantPayload(
           messageId: assistantId,
-          content: finalText,
+          content: payload.displayText,
+          rawContent: payload.rawText,
+          parsedJson: payload.parsedJson,
         );
       }
       return result;
@@ -526,6 +559,7 @@ class SessionService {
                   ? teacherMessage
                   : null);
       final summary = summaryValue ?? result.responseText;
+      final parsedJson = parsed == null ? null : jsonEncode(parsed);
       final summaryValid = (summaryText is String &&
               summaryText.trim().isNotEmpty &&
               lit is bool &&
@@ -571,6 +605,8 @@ class SessionService {
                 sessionId: sessionId,
                 role: 'assistant',
                 content: summary,
+                rawContent: Value(result.responseText),
+                parsedJson: Value(parsedJson),
                 action: const Value('summary'),
               ),
             );
@@ -910,7 +946,7 @@ class SessionService {
       }
       return _AssistantJsonRef(
         index: i,
-        json: _tryDecodeJsonObject(message.content),
+        json: _extractMessageJson(message),
       );
     }
     return null;
@@ -959,7 +995,7 @@ class SessionService {
       if (message.role != 'assistant') {
         continue;
       }
-      final parsed = _tryDecodeJsonObject(message.content);
+      final parsed = _extractMessageJson(message);
       final evidence = parsed?['evidence'];
       if (evidence is Map<String, dynamic>) {
         return evidence;
@@ -1005,6 +1041,75 @@ class SessionService {
     } catch (_) {
       return '';
     }
+  }
+
+  Map<String, dynamic>? _extractMessageJson(ChatMessage message) {
+    final stored = message.parsedJson;
+    if (stored != null && stored.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(stored);
+        if (decoded is Map<String, dynamic>) {
+          return decoded;
+        }
+      } catch (_) {
+        // Fall through to raw/content parsing.
+      }
+    }
+    final raw = message.rawContent;
+    if (raw != null && raw.trim().isNotEmpty) {
+      final parsed = _tryDecodeJsonObject(raw);
+      if (parsed != null) {
+        return parsed;
+      }
+    }
+    return _tryDecodeJsonObject(message.content);
+  }
+
+  _AssistantPayload _buildAssistantPayload({
+    required String promptName,
+    required String responseText,
+  }) {
+    final parsed = _tryDecodeJsonObject(responseText);
+    final parsedJson = parsed == null ? null : jsonEncode(parsed);
+    final display = _resolveTeacherDisplayText(
+      promptName: promptName,
+      parsed: parsed,
+      fallback: responseText,
+    );
+    return _AssistantPayload(
+      displayText: display,
+      rawText: responseText,
+      parsedJson: parsedJson,
+    );
+  }
+
+  String _resolveTeacherDisplayText({
+    required String promptName,
+    required Map<String, dynamic>? parsed,
+    required String fallback,
+  }) {
+    if (parsed == null) {
+      return fallback;
+    }
+    final teacherMessage = parsed['teacher_message'];
+    if (teacherMessage is String && teacherMessage.trim().isNotEmpty) {
+      return teacherMessage.trim();
+    }
+    if (promptName == 'summary') {
+      final summaryText = parsed['summary_text'];
+      if (summaryText is String && summaryText.trim().isNotEmpty) {
+        return summaryText.trim();
+      }
+    }
+    return fallback;
+  }
+
+  bool _isStructuredPrompt(String promptName) {
+    return promptName == 'learn_init' ||
+        promptName == 'learn_cont' ||
+        promptName == 'review_init' ||
+        promptName == 'review_cont' ||
+        promptName == 'summary';
   }
 }
 

@@ -1895,6 +1895,14 @@ class $ProgressEntriesTable extends ProgressEntries
       defaultConstraints:
           GeneratedColumn.constraintIsAlways('CHECK ("lit" IN (0, 1))'),
       defaultValue: const Constant(false));
+  static const VerificationMeta _litPercentMeta =
+      const VerificationMeta('litPercent');
+  @override
+  late final GeneratedColumn<int> litPercent = GeneratedColumn<int>(
+      'lit_percent', aliasedName, false,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(0));
   static const VerificationMeta _questionLevelMeta =
       const VerificationMeta('questionLevel');
   @override
@@ -1937,6 +1945,7 @@ class $ProgressEntriesTable extends ProgressEntries
         courseVersionId,
         kpKey,
         lit,
+        litPercent,
         questionLevel,
         summaryText,
         summaryRawResponse,
@@ -1979,6 +1988,12 @@ class $ProgressEntriesTable extends ProgressEntries
     if (data.containsKey('lit')) {
       context.handle(
           _litMeta, lit.isAcceptableOrUnknown(data['lit']!, _litMeta));
+    }
+    if (data.containsKey('lit_percent')) {
+      context.handle(
+          _litPercentMeta,
+          litPercent.isAcceptableOrUnknown(
+              data['lit_percent']!, _litPercentMeta));
     }
     if (data.containsKey('question_level')) {
       context.handle(
@@ -2031,6 +2046,8 @@ class $ProgressEntriesTable extends ProgressEntries
           .read(DriftSqlType.string, data['${effectivePrefix}kp_key'])!,
       lit: attachedDatabase.typeMapping
           .read(DriftSqlType.bool, data['${effectivePrefix}lit'])!,
+      litPercent: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}lit_percent'])!,
       questionLevel: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}question_level']),
       summaryText: attachedDatabase.typeMapping
@@ -2056,6 +2073,7 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
   final int courseVersionId;
   final String kpKey;
   final bool lit;
+  final int litPercent;
   final String? questionLevel;
   final String? summaryText;
   final String? summaryRawResponse;
@@ -2067,6 +2085,7 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
       required this.courseVersionId,
       required this.kpKey,
       required this.lit,
+      required this.litPercent,
       this.questionLevel,
       this.summaryText,
       this.summaryRawResponse,
@@ -2080,6 +2099,7 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
     map['course_version_id'] = Variable<int>(courseVersionId);
     map['kp_key'] = Variable<String>(kpKey);
     map['lit'] = Variable<bool>(lit);
+    map['lit_percent'] = Variable<int>(litPercent);
     if (!nullToAbsent || questionLevel != null) {
       map['question_level'] = Variable<String>(questionLevel);
     }
@@ -2103,6 +2123,7 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
       courseVersionId: Value(courseVersionId),
       kpKey: Value(kpKey),
       lit: Value(lit),
+      litPercent: Value(litPercent),
       questionLevel: questionLevel == null && nullToAbsent
           ? const Value.absent()
           : Value(questionLevel),
@@ -2128,6 +2149,7 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
       courseVersionId: serializer.fromJson<int>(json['courseVersionId']),
       kpKey: serializer.fromJson<String>(json['kpKey']),
       lit: serializer.fromJson<bool>(json['lit']),
+      litPercent: serializer.fromJson<int>(json['litPercent']),
       questionLevel: serializer.fromJson<String?>(json['questionLevel']),
       summaryText: serializer.fromJson<String?>(json['summaryText']),
       summaryRawResponse:
@@ -2145,6 +2167,7 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
       'courseVersionId': serializer.toJson<int>(courseVersionId),
       'kpKey': serializer.toJson<String>(kpKey),
       'lit': serializer.toJson<bool>(lit),
+      'litPercent': serializer.toJson<int>(litPercent),
       'questionLevel': serializer.toJson<String?>(questionLevel),
       'summaryText': serializer.toJson<String?>(summaryText),
       'summaryRawResponse': serializer.toJson<String?>(summaryRawResponse),
@@ -2159,6 +2182,7 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
           int? courseVersionId,
           String? kpKey,
           bool? lit,
+          int? litPercent,
           Value<String?> questionLevel = const Value.absent(),
           Value<String?> summaryText = const Value.absent(),
           Value<String?> summaryRawResponse = const Value.absent(),
@@ -2170,6 +2194,7 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
         courseVersionId: courseVersionId ?? this.courseVersionId,
         kpKey: kpKey ?? this.kpKey,
         lit: lit ?? this.lit,
+        litPercent: litPercent ?? this.litPercent,
         questionLevel:
             questionLevel.present ? questionLevel.value : this.questionLevel,
         summaryText: summaryText.present ? summaryText.value : this.summaryText,
@@ -2189,6 +2214,8 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
           : this.courseVersionId,
       kpKey: data.kpKey.present ? data.kpKey.value : this.kpKey,
       lit: data.lit.present ? data.lit.value : this.lit,
+      litPercent:
+          data.litPercent.present ? data.litPercent.value : this.litPercent,
       questionLevel: data.questionLevel.present
           ? data.questionLevel.value
           : this.questionLevel,
@@ -2212,6 +2239,7 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
           ..write('courseVersionId: $courseVersionId, ')
           ..write('kpKey: $kpKey, ')
           ..write('lit: $lit, ')
+          ..write('litPercent: $litPercent, ')
           ..write('questionLevel: $questionLevel, ')
           ..write('summaryText: $summaryText, ')
           ..write('summaryRawResponse: $summaryRawResponse, ')
@@ -2222,8 +2250,18 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
   }
 
   @override
-  int get hashCode => Object.hash(id, studentId, courseVersionId, kpKey, lit,
-      questionLevel, summaryText, summaryRawResponse, summaryValid, updatedAt);
+  int get hashCode => Object.hash(
+      id,
+      studentId,
+      courseVersionId,
+      kpKey,
+      lit,
+      litPercent,
+      questionLevel,
+      summaryText,
+      summaryRawResponse,
+      summaryValid,
+      updatedAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -2233,6 +2271,7 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
           other.courseVersionId == this.courseVersionId &&
           other.kpKey == this.kpKey &&
           other.lit == this.lit &&
+          other.litPercent == this.litPercent &&
           other.questionLevel == this.questionLevel &&
           other.summaryText == this.summaryText &&
           other.summaryRawResponse == this.summaryRawResponse &&
@@ -2246,6 +2285,7 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
   final Value<int> courseVersionId;
   final Value<String> kpKey;
   final Value<bool> lit;
+  final Value<int> litPercent;
   final Value<String?> questionLevel;
   final Value<String?> summaryText;
   final Value<String?> summaryRawResponse;
@@ -2257,6 +2297,7 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
     this.courseVersionId = const Value.absent(),
     this.kpKey = const Value.absent(),
     this.lit = const Value.absent(),
+    this.litPercent = const Value.absent(),
     this.questionLevel = const Value.absent(),
     this.summaryText = const Value.absent(),
     this.summaryRawResponse = const Value.absent(),
@@ -2269,6 +2310,7 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
     required int courseVersionId,
     required String kpKey,
     this.lit = const Value.absent(),
+    this.litPercent = const Value.absent(),
     this.questionLevel = const Value.absent(),
     this.summaryText = const Value.absent(),
     this.summaryRawResponse = const Value.absent(),
@@ -2283,6 +2325,7 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
     Expression<int>? courseVersionId,
     Expression<String>? kpKey,
     Expression<bool>? lit,
+    Expression<int>? litPercent,
     Expression<String>? questionLevel,
     Expression<String>? summaryText,
     Expression<String>? summaryRawResponse,
@@ -2295,6 +2338,7 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
       if (courseVersionId != null) 'course_version_id': courseVersionId,
       if (kpKey != null) 'kp_key': kpKey,
       if (lit != null) 'lit': lit,
+      if (litPercent != null) 'lit_percent': litPercent,
       if (questionLevel != null) 'question_level': questionLevel,
       if (summaryText != null) 'summary_text': summaryText,
       if (summaryRawResponse != null)
@@ -2310,6 +2354,7 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
       Value<int>? courseVersionId,
       Value<String>? kpKey,
       Value<bool>? lit,
+      Value<int>? litPercent,
       Value<String?>? questionLevel,
       Value<String?>? summaryText,
       Value<String?>? summaryRawResponse,
@@ -2321,6 +2366,7 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
       courseVersionId: courseVersionId ?? this.courseVersionId,
       kpKey: kpKey ?? this.kpKey,
       lit: lit ?? this.lit,
+      litPercent: litPercent ?? this.litPercent,
       questionLevel: questionLevel ?? this.questionLevel,
       summaryText: summaryText ?? this.summaryText,
       summaryRawResponse: summaryRawResponse ?? this.summaryRawResponse,
@@ -2346,6 +2392,9 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
     }
     if (lit.present) {
       map['lit'] = Variable<bool>(lit.value);
+    }
+    if (litPercent.present) {
+      map['lit_percent'] = Variable<int>(litPercent.value);
     }
     if (questionLevel.present) {
       map['question_level'] = Variable<String>(questionLevel.value);
@@ -2373,6 +2422,7 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
           ..write('courseVersionId: $courseVersionId, ')
           ..write('kpKey: $kpKey, ')
           ..write('lit: $lit, ')
+          ..write('litPercent: $litPercent, ')
           ..write('questionLevel: $questionLevel, ')
           ..write('summaryText: $summaryText, ')
           ..write('summaryRawResponse: $summaryRawResponse, ')
@@ -2456,6 +2506,12 @@ class $ChatSessionsTable extends ChatSessions
       requiredDuringInsert: false,
       defaultConstraints: GeneratedColumn.constraintIsAlways(
           'CHECK ("summary_lit" IN (0, 1))'));
+  static const VerificationMeta _summaryLitPercentMeta =
+      const VerificationMeta('summaryLitPercent');
+  @override
+  late final GeneratedColumn<int> summaryLitPercent = GeneratedColumn<int>(
+      'summary_lit_percent', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
   static const VerificationMeta _summaryRawResponseMeta =
       const VerificationMeta('summaryRawResponse');
   @override
@@ -2489,6 +2545,7 @@ class $ChatSessionsTable extends ChatSessions
         status,
         summaryText,
         summaryLit,
+        summaryLitPercent,
         summaryRawResponse,
         summaryValid,
         summarizeCallId
@@ -2554,6 +2611,12 @@ class $ChatSessionsTable extends ChatSessions
           summaryLit.isAcceptableOrUnknown(
               data['summary_lit']!, _summaryLitMeta));
     }
+    if (data.containsKey('summary_lit_percent')) {
+      context.handle(
+          _summaryLitPercentMeta,
+          summaryLitPercent.isAcceptableOrUnknown(
+              data['summary_lit_percent']!, _summaryLitPercentMeta));
+    }
     if (data.containsKey('summary_raw_response')) {
       context.handle(
           _summaryRawResponseMeta,
@@ -2601,6 +2664,8 @@ class $ChatSessionsTable extends ChatSessions
           .read(DriftSqlType.string, data['${effectivePrefix}summary_text']),
       summaryLit: attachedDatabase.typeMapping
           .read(DriftSqlType.bool, data['${effectivePrefix}summary_lit']),
+      summaryLitPercent: attachedDatabase.typeMapping.read(
+          DriftSqlType.int, data['${effectivePrefix}summary_lit_percent']),
       summaryRawResponse: attachedDatabase.typeMapping.read(
           DriftSqlType.string, data['${effectivePrefix}summary_raw_response']),
       summaryValid: attachedDatabase.typeMapping
@@ -2627,6 +2692,7 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
   final String status;
   final String? summaryText;
   final bool? summaryLit;
+  final int? summaryLitPercent;
   final String? summaryRawResponse;
   final bool? summaryValid;
   final int? summarizeCallId;
@@ -2641,6 +2707,7 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
       required this.status,
       this.summaryText,
       this.summaryLit,
+      this.summaryLitPercent,
       this.summaryRawResponse,
       this.summaryValid,
       this.summarizeCallId});
@@ -2664,6 +2731,9 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
     }
     if (!nullToAbsent || summaryLit != null) {
       map['summary_lit'] = Variable<bool>(summaryLit);
+    }
+    if (!nullToAbsent || summaryLitPercent != null) {
+      map['summary_lit_percent'] = Variable<int>(summaryLitPercent);
     }
     if (!nullToAbsent || summaryRawResponse != null) {
       map['summary_raw_response'] = Variable<String>(summaryRawResponse);
@@ -2696,6 +2766,9 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
       summaryLit: summaryLit == null && nullToAbsent
           ? const Value.absent()
           : Value(summaryLit),
+      summaryLitPercent: summaryLitPercent == null && nullToAbsent
+          ? const Value.absent()
+          : Value(summaryLitPercent),
       summaryRawResponse: summaryRawResponse == null && nullToAbsent
           ? const Value.absent()
           : Value(summaryRawResponse),
@@ -2722,6 +2795,7 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
       status: serializer.fromJson<String>(json['status']),
       summaryText: serializer.fromJson<String?>(json['summaryText']),
       summaryLit: serializer.fromJson<bool?>(json['summaryLit']),
+      summaryLitPercent: serializer.fromJson<int?>(json['summaryLitPercent']),
       summaryRawResponse:
           serializer.fromJson<String?>(json['summaryRawResponse']),
       summaryValid: serializer.fromJson<bool?>(json['summaryValid']),
@@ -2742,6 +2816,7 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
       'status': serializer.toJson<String>(status),
       'summaryText': serializer.toJson<String?>(summaryText),
       'summaryLit': serializer.toJson<bool?>(summaryLit),
+      'summaryLitPercent': serializer.toJson<int?>(summaryLitPercent),
       'summaryRawResponse': serializer.toJson<String?>(summaryRawResponse),
       'summaryValid': serializer.toJson<bool?>(summaryValid),
       'summarizeCallId': serializer.toJson<int?>(summarizeCallId),
@@ -2759,6 +2834,7 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
           String? status,
           Value<String?> summaryText = const Value.absent(),
           Value<bool?> summaryLit = const Value.absent(),
+          Value<int?> summaryLitPercent = const Value.absent(),
           Value<String?> summaryRawResponse = const Value.absent(),
           Value<bool?> summaryValid = const Value.absent(),
           Value<int?> summarizeCallId = const Value.absent()}) =>
@@ -2773,6 +2849,9 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
         status: status ?? this.status,
         summaryText: summaryText.present ? summaryText.value : this.summaryText,
         summaryLit: summaryLit.present ? summaryLit.value : this.summaryLit,
+        summaryLitPercent: summaryLitPercent.present
+            ? summaryLitPercent.value
+            : this.summaryLitPercent,
         summaryRawResponse: summaryRawResponse.present
             ? summaryRawResponse.value
             : this.summaryRawResponse,
@@ -2798,6 +2877,9 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
           data.summaryText.present ? data.summaryText.value : this.summaryText,
       summaryLit:
           data.summaryLit.present ? data.summaryLit.value : this.summaryLit,
+      summaryLitPercent: data.summaryLitPercent.present
+          ? data.summaryLitPercent.value
+          : this.summaryLitPercent,
       summaryRawResponse: data.summaryRawResponse.present
           ? data.summaryRawResponse.value
           : this.summaryRawResponse,
@@ -2823,6 +2905,7 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
           ..write('status: $status, ')
           ..write('summaryText: $summaryText, ')
           ..write('summaryLit: $summaryLit, ')
+          ..write('summaryLitPercent: $summaryLitPercent, ')
           ..write('summaryRawResponse: $summaryRawResponse, ')
           ..write('summaryValid: $summaryValid, ')
           ..write('summarizeCallId: $summarizeCallId')
@@ -2842,6 +2925,7 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
       status,
       summaryText,
       summaryLit,
+      summaryLitPercent,
       summaryRawResponse,
       summaryValid,
       summarizeCallId);
@@ -2859,6 +2943,7 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
           other.status == this.status &&
           other.summaryText == this.summaryText &&
           other.summaryLit == this.summaryLit &&
+          other.summaryLitPercent == this.summaryLitPercent &&
           other.summaryRawResponse == this.summaryRawResponse &&
           other.summaryValid == this.summaryValid &&
           other.summarizeCallId == this.summarizeCallId);
@@ -2875,6 +2960,7 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
   final Value<String> status;
   final Value<String?> summaryText;
   final Value<bool?> summaryLit;
+  final Value<int?> summaryLitPercent;
   final Value<String?> summaryRawResponse;
   final Value<bool?> summaryValid;
   final Value<int?> summarizeCallId;
@@ -2889,6 +2975,7 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
     this.status = const Value.absent(),
     this.summaryText = const Value.absent(),
     this.summaryLit = const Value.absent(),
+    this.summaryLitPercent = const Value.absent(),
     this.summaryRawResponse = const Value.absent(),
     this.summaryValid = const Value.absent(),
     this.summarizeCallId = const Value.absent(),
@@ -2904,6 +2991,7 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
     this.status = const Value.absent(),
     this.summaryText = const Value.absent(),
     this.summaryLit = const Value.absent(),
+    this.summaryLitPercent = const Value.absent(),
     this.summaryRawResponse = const Value.absent(),
     this.summaryValid = const Value.absent(),
     this.summarizeCallId = const Value.absent(),
@@ -2921,6 +3009,7 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
     Expression<String>? status,
     Expression<String>? summaryText,
     Expression<bool>? summaryLit,
+    Expression<int>? summaryLitPercent,
     Expression<String>? summaryRawResponse,
     Expression<bool>? summaryValid,
     Expression<int>? summarizeCallId,
@@ -2936,6 +3025,7 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
       if (status != null) 'status': status,
       if (summaryText != null) 'summary_text': summaryText,
       if (summaryLit != null) 'summary_lit': summaryLit,
+      if (summaryLitPercent != null) 'summary_lit_percent': summaryLitPercent,
       if (summaryRawResponse != null)
         'summary_raw_response': summaryRawResponse,
       if (summaryValid != null) 'summary_valid': summaryValid,
@@ -2954,6 +3044,7 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
       Value<String>? status,
       Value<String?>? summaryText,
       Value<bool?>? summaryLit,
+      Value<int?>? summaryLitPercent,
       Value<String?>? summaryRawResponse,
       Value<bool?>? summaryValid,
       Value<int?>? summarizeCallId}) {
@@ -2968,6 +3059,7 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
       status: status ?? this.status,
       summaryText: summaryText ?? this.summaryText,
       summaryLit: summaryLit ?? this.summaryLit,
+      summaryLitPercent: summaryLitPercent ?? this.summaryLitPercent,
       summaryRawResponse: summaryRawResponse ?? this.summaryRawResponse,
       summaryValid: summaryValid ?? this.summaryValid,
       summarizeCallId: summarizeCallId ?? this.summarizeCallId,
@@ -3007,6 +3099,9 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
     if (summaryLit.present) {
       map['summary_lit'] = Variable<bool>(summaryLit.value);
     }
+    if (summaryLitPercent.present) {
+      map['summary_lit_percent'] = Variable<int>(summaryLitPercent.value);
+    }
     if (summaryRawResponse.present) {
       map['summary_raw_response'] = Variable<String>(summaryRawResponse.value);
     }
@@ -3032,6 +3127,7 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
           ..write('status: $status, ')
           ..write('summaryText: $summaryText, ')
           ..write('summaryLit: $summaryLit, ')
+          ..write('summaryLitPercent: $summaryLitPercent, ')
           ..write('summaryRawResponse: $summaryRawResponse, ')
           ..write('summaryValid: $summaryValid, ')
           ..write('summarizeCallId: $summarizeCallId')
@@ -3072,6 +3168,18 @@ class $ChatMessagesTable extends ChatMessages
   late final GeneratedColumn<String> content = GeneratedColumn<String>(
       'content', aliasedName, false,
       type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _rawContentMeta =
+      const VerificationMeta('rawContent');
+  @override
+  late final GeneratedColumn<String> rawContent = GeneratedColumn<String>(
+      'raw_content', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _parsedJsonMeta =
+      const VerificationMeta('parsedJson');
+  @override
+  late final GeneratedColumn<String> parsedJson = GeneratedColumn<String>(
+      'parsed_json', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _actionMeta = const VerificationMeta('action');
   @override
   late final GeneratedColumn<String> action = GeneratedColumn<String>(
@@ -3087,7 +3195,7 @@ class $ChatMessagesTable extends ChatMessages
       defaultValue: currentDateAndTime);
   @override
   List<GeneratedColumn> get $columns =>
-      [id, sessionId, role, content, action, createdAt];
+      [id, sessionId, role, content, rawContent, parsedJson, action, createdAt];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -3119,6 +3227,18 @@ class $ChatMessagesTable extends ChatMessages
     } else if (isInserting) {
       context.missing(_contentMeta);
     }
+    if (data.containsKey('raw_content')) {
+      context.handle(
+          _rawContentMeta,
+          rawContent.isAcceptableOrUnknown(
+              data['raw_content']!, _rawContentMeta));
+    }
+    if (data.containsKey('parsed_json')) {
+      context.handle(
+          _parsedJsonMeta,
+          parsedJson.isAcceptableOrUnknown(
+              data['parsed_json']!, _parsedJsonMeta));
+    }
     if (data.containsKey('action')) {
       context.handle(_actionMeta,
           action.isAcceptableOrUnknown(data['action']!, _actionMeta));
@@ -3144,6 +3264,10 @@ class $ChatMessagesTable extends ChatMessages
           .read(DriftSqlType.string, data['${effectivePrefix}role'])!,
       content: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}content'])!,
+      rawContent: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}raw_content']),
+      parsedJson: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}parsed_json']),
       action: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}action']),
       createdAt: attachedDatabase.typeMapping
@@ -3162,6 +3286,8 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
   final int sessionId;
   final String role;
   final String content;
+  final String? rawContent;
+  final String? parsedJson;
   final String? action;
   final DateTime createdAt;
   const ChatMessage(
@@ -3169,6 +3295,8 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
       required this.sessionId,
       required this.role,
       required this.content,
+      this.rawContent,
+      this.parsedJson,
       this.action,
       required this.createdAt});
   @override
@@ -3178,6 +3306,12 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
     map['session_id'] = Variable<int>(sessionId);
     map['role'] = Variable<String>(role);
     map['content'] = Variable<String>(content);
+    if (!nullToAbsent || rawContent != null) {
+      map['raw_content'] = Variable<String>(rawContent);
+    }
+    if (!nullToAbsent || parsedJson != null) {
+      map['parsed_json'] = Variable<String>(parsedJson);
+    }
     if (!nullToAbsent || action != null) {
       map['action'] = Variable<String>(action);
     }
@@ -3191,6 +3325,12 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
       sessionId: Value(sessionId),
       role: Value(role),
       content: Value(content),
+      rawContent: rawContent == null && nullToAbsent
+          ? const Value.absent()
+          : Value(rawContent),
+      parsedJson: parsedJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(parsedJson),
       action:
           action == null && nullToAbsent ? const Value.absent() : Value(action),
       createdAt: Value(createdAt),
@@ -3205,6 +3345,8 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
       sessionId: serializer.fromJson<int>(json['sessionId']),
       role: serializer.fromJson<String>(json['role']),
       content: serializer.fromJson<String>(json['content']),
+      rawContent: serializer.fromJson<String?>(json['rawContent']),
+      parsedJson: serializer.fromJson<String?>(json['parsedJson']),
       action: serializer.fromJson<String?>(json['action']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
     );
@@ -3217,6 +3359,8 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
       'sessionId': serializer.toJson<int>(sessionId),
       'role': serializer.toJson<String>(role),
       'content': serializer.toJson<String>(content),
+      'rawContent': serializer.toJson<String?>(rawContent),
+      'parsedJson': serializer.toJson<String?>(parsedJson),
       'action': serializer.toJson<String?>(action),
       'createdAt': serializer.toJson<DateTime>(createdAt),
     };
@@ -3227,6 +3371,8 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
           int? sessionId,
           String? role,
           String? content,
+          Value<String?> rawContent = const Value.absent(),
+          Value<String?> parsedJson = const Value.absent(),
           Value<String?> action = const Value.absent(),
           DateTime? createdAt}) =>
       ChatMessage(
@@ -3234,6 +3380,8 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
         sessionId: sessionId ?? this.sessionId,
         role: role ?? this.role,
         content: content ?? this.content,
+        rawContent: rawContent.present ? rawContent.value : this.rawContent,
+        parsedJson: parsedJson.present ? parsedJson.value : this.parsedJson,
         action: action.present ? action.value : this.action,
         createdAt: createdAt ?? this.createdAt,
       );
@@ -3243,6 +3391,10 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
       sessionId: data.sessionId.present ? data.sessionId.value : this.sessionId,
       role: data.role.present ? data.role.value : this.role,
       content: data.content.present ? data.content.value : this.content,
+      rawContent:
+          data.rawContent.present ? data.rawContent.value : this.rawContent,
+      parsedJson:
+          data.parsedJson.present ? data.parsedJson.value : this.parsedJson,
       action: data.action.present ? data.action.value : this.action,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
     );
@@ -3255,6 +3407,8 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
           ..write('sessionId: $sessionId, ')
           ..write('role: $role, ')
           ..write('content: $content, ')
+          ..write('rawContent: $rawContent, ')
+          ..write('parsedJson: $parsedJson, ')
           ..write('action: $action, ')
           ..write('createdAt: $createdAt')
           ..write(')'))
@@ -3262,8 +3416,8 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
   }
 
   @override
-  int get hashCode =>
-      Object.hash(id, sessionId, role, content, action, createdAt);
+  int get hashCode => Object.hash(
+      id, sessionId, role, content, rawContent, parsedJson, action, createdAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -3272,6 +3426,8 @@ class ChatMessage extends DataClass implements Insertable<ChatMessage> {
           other.sessionId == this.sessionId &&
           other.role == this.role &&
           other.content == this.content &&
+          other.rawContent == this.rawContent &&
+          other.parsedJson == this.parsedJson &&
           other.action == this.action &&
           other.createdAt == this.createdAt);
 }
@@ -3281,6 +3437,8 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
   final Value<int> sessionId;
   final Value<String> role;
   final Value<String> content;
+  final Value<String?> rawContent;
+  final Value<String?> parsedJson;
   final Value<String?> action;
   final Value<DateTime> createdAt;
   const ChatMessagesCompanion({
@@ -3288,6 +3446,8 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
     this.sessionId = const Value.absent(),
     this.role = const Value.absent(),
     this.content = const Value.absent(),
+    this.rawContent = const Value.absent(),
+    this.parsedJson = const Value.absent(),
     this.action = const Value.absent(),
     this.createdAt = const Value.absent(),
   });
@@ -3296,6 +3456,8 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
     required int sessionId,
     required String role,
     required String content,
+    this.rawContent = const Value.absent(),
+    this.parsedJson = const Value.absent(),
     this.action = const Value.absent(),
     this.createdAt = const Value.absent(),
   })  : sessionId = Value(sessionId),
@@ -3306,6 +3468,8 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
     Expression<int>? sessionId,
     Expression<String>? role,
     Expression<String>? content,
+    Expression<String>? rawContent,
+    Expression<String>? parsedJson,
     Expression<String>? action,
     Expression<DateTime>? createdAt,
   }) {
@@ -3314,6 +3478,8 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
       if (sessionId != null) 'session_id': sessionId,
       if (role != null) 'role': role,
       if (content != null) 'content': content,
+      if (rawContent != null) 'raw_content': rawContent,
+      if (parsedJson != null) 'parsed_json': parsedJson,
       if (action != null) 'action': action,
       if (createdAt != null) 'created_at': createdAt,
     });
@@ -3324,6 +3490,8 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
       Value<int>? sessionId,
       Value<String>? role,
       Value<String>? content,
+      Value<String?>? rawContent,
+      Value<String?>? parsedJson,
       Value<String?>? action,
       Value<DateTime>? createdAt}) {
     return ChatMessagesCompanion(
@@ -3331,6 +3499,8 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
       sessionId: sessionId ?? this.sessionId,
       role: role ?? this.role,
       content: content ?? this.content,
+      rawContent: rawContent ?? this.rawContent,
+      parsedJson: parsedJson ?? this.parsedJson,
       action: action ?? this.action,
       createdAt: createdAt ?? this.createdAt,
     );
@@ -3351,6 +3521,12 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
     if (content.present) {
       map['content'] = Variable<String>(content.value);
     }
+    if (rawContent.present) {
+      map['raw_content'] = Variable<String>(rawContent.value);
+    }
+    if (parsedJson.present) {
+      map['parsed_json'] = Variable<String>(parsedJson.value);
+    }
     if (action.present) {
       map['action'] = Variable<String>(action.value);
     }
@@ -3367,6 +3543,8 @@ class ChatMessagesCompanion extends UpdateCompanion<ChatMessage> {
           ..write('sessionId: $sessionId, ')
           ..write('role: $role, ')
           ..write('content: $content, ')
+          ..write('rawContent: $rawContent, ')
+          ..write('parsedJson: $parsedJson, ')
           ..write('action: $action, ')
           ..write('createdAt: $createdAt')
           ..write(')'))
@@ -4777,11 +4955,11 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
           int? timeoutSeconds,
           int? maxTokens,
           int? ttsInitialDelayMs,
-      int? ttsTextLeadMs,
-      Value<String?> ttsAudioPath = const Value.absent(),
-      bool? sttAutoSend,
-      bool? studyModeEnabled,
-      Value<String?> logDirectory = const Value.absent(),
+          int? ttsTextLeadMs,
+          Value<String?> ttsAudioPath = const Value.absent(),
+          bool? sttAutoSend,
+          bool? studyModeEnabled,
+          Value<String?> logDirectory = const Value.absent(),
           Value<String?> llmLogPath = const Value.absent(),
           Value<String?> ttsLogPath = const Value.absent(),
           String? llmMode,
@@ -6955,6 +7133,7 @@ typedef $$ProgressEntriesTableCreateCompanionBuilder = ProgressEntriesCompanion
   required int courseVersionId,
   required String kpKey,
   Value<bool> lit,
+  Value<int> litPercent,
   Value<String?> questionLevel,
   Value<String?> summaryText,
   Value<String?> summaryRawResponse,
@@ -6968,6 +7147,7 @@ typedef $$ProgressEntriesTableUpdateCompanionBuilder = ProgressEntriesCompanion
   Value<int> courseVersionId,
   Value<String> kpKey,
   Value<bool> lit,
+  Value<int> litPercent,
   Value<String?> questionLevel,
   Value<String?> summaryText,
   Value<String?> summaryRawResponse,
@@ -6999,6 +7179,9 @@ class $$ProgressEntriesTableFilterComposer
 
   ColumnFilters<bool> get lit => $composableBuilder(
       column: $table.lit, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get litPercent => $composableBuilder(
+      column: $table.litPercent, builder: (column) => ColumnFilters(column));
 
   ColumnFilters<String> get questionLevel => $composableBuilder(
       column: $table.questionLevel, builder: (column) => ColumnFilters(column));
@@ -7042,6 +7225,9 @@ class $$ProgressEntriesTableOrderingComposer
   ColumnOrderings<bool> get lit => $composableBuilder(
       column: $table.lit, builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<int> get litPercent => $composableBuilder(
+      column: $table.litPercent, builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<String> get questionLevel => $composableBuilder(
       column: $table.questionLevel,
       builder: (column) => ColumnOrderings(column));
@@ -7084,6 +7270,9 @@ class $$ProgressEntriesTableAnnotationComposer
 
   GeneratedColumn<bool> get lit =>
       $composableBuilder(column: $table.lit, builder: (column) => column);
+
+  GeneratedColumn<int> get litPercent => $composableBuilder(
+      column: $table.litPercent, builder: (column) => column);
 
   GeneratedColumn<String> get questionLevel => $composableBuilder(
       column: $table.questionLevel, builder: (column) => column);
@@ -7133,6 +7322,7 @@ class $$ProgressEntriesTableTableManager extends RootTableManager<
             Value<int> courseVersionId = const Value.absent(),
             Value<String> kpKey = const Value.absent(),
             Value<bool> lit = const Value.absent(),
+            Value<int> litPercent = const Value.absent(),
             Value<String?> questionLevel = const Value.absent(),
             Value<String?> summaryText = const Value.absent(),
             Value<String?> summaryRawResponse = const Value.absent(),
@@ -7145,6 +7335,7 @@ class $$ProgressEntriesTableTableManager extends RootTableManager<
             courseVersionId: courseVersionId,
             kpKey: kpKey,
             lit: lit,
+            litPercent: litPercent,
             questionLevel: questionLevel,
             summaryText: summaryText,
             summaryRawResponse: summaryRawResponse,
@@ -7157,6 +7348,7 @@ class $$ProgressEntriesTableTableManager extends RootTableManager<
             required int courseVersionId,
             required String kpKey,
             Value<bool> lit = const Value.absent(),
+            Value<int> litPercent = const Value.absent(),
             Value<String?> questionLevel = const Value.absent(),
             Value<String?> summaryText = const Value.absent(),
             Value<String?> summaryRawResponse = const Value.absent(),
@@ -7169,6 +7361,7 @@ class $$ProgressEntriesTableTableManager extends RootTableManager<
             courseVersionId: courseVersionId,
             kpKey: kpKey,
             lit: lit,
+            litPercent: litPercent,
             questionLevel: questionLevel,
             summaryText: summaryText,
             summaryRawResponse: summaryRawResponse,
@@ -7209,6 +7402,7 @@ typedef $$ChatSessionsTableCreateCompanionBuilder = ChatSessionsCompanion
   Value<String> status,
   Value<String?> summaryText,
   Value<bool?> summaryLit,
+  Value<int?> summaryLitPercent,
   Value<String?> summaryRawResponse,
   Value<bool?> summaryValid,
   Value<int?> summarizeCallId,
@@ -7225,6 +7419,7 @@ typedef $$ChatSessionsTableUpdateCompanionBuilder = ChatSessionsCompanion
   Value<String> status,
   Value<String?> summaryText,
   Value<bool?> summaryLit,
+  Value<int?> summaryLitPercent,
   Value<String?> summaryRawResponse,
   Value<bool?> summaryValid,
   Value<int?> summarizeCallId,
@@ -7269,6 +7464,10 @@ class $$ChatSessionsTableFilterComposer
 
   ColumnFilters<bool> get summaryLit => $composableBuilder(
       column: $table.summaryLit, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get summaryLitPercent => $composableBuilder(
+      column: $table.summaryLitPercent,
+      builder: (column) => ColumnFilters(column));
 
   ColumnFilters<String> get summaryRawResponse => $composableBuilder(
       column: $table.summaryRawResponse,
@@ -7322,6 +7521,10 @@ class $$ChatSessionsTableOrderingComposer
   ColumnOrderings<bool> get summaryLit => $composableBuilder(
       column: $table.summaryLit, builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<int> get summaryLitPercent => $composableBuilder(
+      column: $table.summaryLitPercent,
+      builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<String> get summaryRawResponse => $composableBuilder(
       column: $table.summaryRawResponse,
       builder: (column) => ColumnOrderings(column));
@@ -7374,6 +7577,9 @@ class $$ChatSessionsTableAnnotationComposer
   GeneratedColumn<bool> get summaryLit => $composableBuilder(
       column: $table.summaryLit, builder: (column) => column);
 
+  GeneratedColumn<int> get summaryLitPercent => $composableBuilder(
+      column: $table.summaryLitPercent, builder: (column) => column);
+
   GeneratedColumn<String> get summaryRawResponse => $composableBuilder(
       column: $table.summaryRawResponse, builder: (column) => column);
 
@@ -7420,6 +7626,7 @@ class $$ChatSessionsTableTableManager extends RootTableManager<
             Value<String> status = const Value.absent(),
             Value<String?> summaryText = const Value.absent(),
             Value<bool?> summaryLit = const Value.absent(),
+            Value<int?> summaryLitPercent = const Value.absent(),
             Value<String?> summaryRawResponse = const Value.absent(),
             Value<bool?> summaryValid = const Value.absent(),
             Value<int?> summarizeCallId = const Value.absent(),
@@ -7435,6 +7642,7 @@ class $$ChatSessionsTableTableManager extends RootTableManager<
             status: status,
             summaryText: summaryText,
             summaryLit: summaryLit,
+            summaryLitPercent: summaryLitPercent,
             summaryRawResponse: summaryRawResponse,
             summaryValid: summaryValid,
             summarizeCallId: summarizeCallId,
@@ -7450,6 +7658,7 @@ class $$ChatSessionsTableTableManager extends RootTableManager<
             Value<String> status = const Value.absent(),
             Value<String?> summaryText = const Value.absent(),
             Value<bool?> summaryLit = const Value.absent(),
+            Value<int?> summaryLitPercent = const Value.absent(),
             Value<String?> summaryRawResponse = const Value.absent(),
             Value<bool?> summaryValid = const Value.absent(),
             Value<int?> summarizeCallId = const Value.absent(),
@@ -7465,6 +7674,7 @@ class $$ChatSessionsTableTableManager extends RootTableManager<
             status: status,
             summaryText: summaryText,
             summaryLit: summaryLit,
+            summaryLitPercent: summaryLitPercent,
             summaryRawResponse: summaryRawResponse,
             summaryValid: summaryValid,
             summarizeCallId: summarizeCallId,
@@ -7497,6 +7707,8 @@ typedef $$ChatMessagesTableCreateCompanionBuilder = ChatMessagesCompanion
   required int sessionId,
   required String role,
   required String content,
+  Value<String?> rawContent,
+  Value<String?> parsedJson,
   Value<String?> action,
   Value<DateTime> createdAt,
 });
@@ -7506,6 +7718,8 @@ typedef $$ChatMessagesTableUpdateCompanionBuilder = ChatMessagesCompanion
   Value<int> sessionId,
   Value<String> role,
   Value<String> content,
+  Value<String?> rawContent,
+  Value<String?> parsedJson,
   Value<String?> action,
   Value<DateTime> createdAt,
 });
@@ -7530,6 +7744,12 @@ class $$ChatMessagesTableFilterComposer
 
   ColumnFilters<String> get content => $composableBuilder(
       column: $table.content, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get rawContent => $composableBuilder(
+      column: $table.rawContent, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get parsedJson => $composableBuilder(
+      column: $table.parsedJson, builder: (column) => ColumnFilters(column));
 
   ColumnFilters<String> get action => $composableBuilder(
       column: $table.action, builder: (column) => ColumnFilters(column));
@@ -7559,6 +7779,12 @@ class $$ChatMessagesTableOrderingComposer
   ColumnOrderings<String> get content => $composableBuilder(
       column: $table.content, builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<String> get rawContent => $composableBuilder(
+      column: $table.rawContent, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get parsedJson => $composableBuilder(
+      column: $table.parsedJson, builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<String> get action => $composableBuilder(
       column: $table.action, builder: (column) => ColumnOrderings(column));
 
@@ -7586,6 +7812,12 @@ class $$ChatMessagesTableAnnotationComposer
 
   GeneratedColumn<String> get content =>
       $composableBuilder(column: $table.content, builder: (column) => column);
+
+  GeneratedColumn<String> get rawContent => $composableBuilder(
+      column: $table.rawContent, builder: (column) => column);
+
+  GeneratedColumn<String> get parsedJson => $composableBuilder(
+      column: $table.parsedJson, builder: (column) => column);
 
   GeneratedColumn<String> get action =>
       $composableBuilder(column: $table.action, builder: (column) => column);
@@ -7624,6 +7856,8 @@ class $$ChatMessagesTableTableManager extends RootTableManager<
             Value<int> sessionId = const Value.absent(),
             Value<String> role = const Value.absent(),
             Value<String> content = const Value.absent(),
+            Value<String?> rawContent = const Value.absent(),
+            Value<String?> parsedJson = const Value.absent(),
             Value<String?> action = const Value.absent(),
             Value<DateTime> createdAt = const Value.absent(),
           }) =>
@@ -7632,6 +7866,8 @@ class $$ChatMessagesTableTableManager extends RootTableManager<
             sessionId: sessionId,
             role: role,
             content: content,
+            rawContent: rawContent,
+            parsedJson: parsedJson,
             action: action,
             createdAt: createdAt,
           ),
@@ -7640,6 +7876,8 @@ class $$ChatMessagesTableTableManager extends RootTableManager<
             required int sessionId,
             required String role,
             required String content,
+            Value<String?> rawContent = const Value.absent(),
+            Value<String?> parsedJson = const Value.absent(),
             Value<String?> action = const Value.absent(),
             Value<DateTime> createdAt = const Value.absent(),
           }) =>
@@ -7648,6 +7886,8 @@ class $$ChatMessagesTableTableManager extends RootTableManager<
             sessionId: sessionId,
             role: role,
             content: content,
+            rawContent: rawContent,
+            parsedJson: parsedJson,
             action: action,
             createdAt: createdAt,
           ),
@@ -8062,6 +8302,7 @@ typedef $$AppSettingsTableCreateCompanionBuilder = AppSettingsCompanion
   Value<int> ttsTextLeadMs,
   Value<String?> ttsAudioPath,
   Value<bool> sttAutoSend,
+  Value<bool> studyModeEnabled,
   Value<String?> logDirectory,
   Value<String?> llmLogPath,
   Value<String?> ttsLogPath,
@@ -8083,6 +8324,7 @@ typedef $$AppSettingsTableUpdateCompanionBuilder = AppSettingsCompanion
   Value<int> ttsTextLeadMs,
   Value<String?> ttsAudioPath,
   Value<bool> sttAutoSend,
+  Value<bool> studyModeEnabled,
   Value<String?> logDirectory,
   Value<String?> llmLogPath,
   Value<String?> ttsLogPath,
@@ -8137,6 +8379,10 @@ class $$AppSettingsTableFilterComposer
 
   ColumnFilters<bool> get sttAutoSend => $composableBuilder(
       column: $table.sttAutoSend, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get studyModeEnabled => $composableBuilder(
+      column: $table.studyModeEnabled,
+      builder: (column) => ColumnFilters(column));
 
   ColumnFilters<String> get logDirectory => $composableBuilder(
       column: $table.logDirectory, builder: (column) => ColumnFilters(column));
@@ -8206,6 +8452,10 @@ class $$AppSettingsTableOrderingComposer
   ColumnOrderings<bool> get sttAutoSend => $composableBuilder(
       column: $table.sttAutoSend, builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<bool> get studyModeEnabled => $composableBuilder(
+      column: $table.studyModeEnabled,
+      builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<String> get logDirectory => $composableBuilder(
       column: $table.logDirectory,
       builder: (column) => ColumnOrderings(column));
@@ -8271,6 +8521,9 @@ class $$AppSettingsTableAnnotationComposer
   GeneratedColumn<bool> get sttAutoSend => $composableBuilder(
       column: $table.sttAutoSend, builder: (column) => column);
 
+  GeneratedColumn<bool> get studyModeEnabled => $composableBuilder(
+      column: $table.studyModeEnabled, builder: (column) => column);
+
   GeneratedColumn<String> get logDirectory => $composableBuilder(
       column: $table.logDirectory, builder: (column) => column);
 
@@ -8325,6 +8578,7 @@ class $$AppSettingsTableTableManager extends RootTableManager<
             Value<int> ttsTextLeadMs = const Value.absent(),
             Value<String?> ttsAudioPath = const Value.absent(),
             Value<bool> sttAutoSend = const Value.absent(),
+            Value<bool> studyModeEnabled = const Value.absent(),
             Value<String?> logDirectory = const Value.absent(),
             Value<String?> llmLogPath = const Value.absent(),
             Value<String?> ttsLogPath = const Value.absent(),
@@ -8345,6 +8599,7 @@ class $$AppSettingsTableTableManager extends RootTableManager<
             ttsTextLeadMs: ttsTextLeadMs,
             ttsAudioPath: ttsAudioPath,
             sttAutoSend: sttAutoSend,
+            studyModeEnabled: studyModeEnabled,
             logDirectory: logDirectory,
             llmLogPath: llmLogPath,
             ttsLogPath: ttsLogPath,
@@ -8365,6 +8620,7 @@ class $$AppSettingsTableTableManager extends RootTableManager<
             Value<int> ttsTextLeadMs = const Value.absent(),
             Value<String?> ttsAudioPath = const Value.absent(),
             Value<bool> sttAutoSend = const Value.absent(),
+            Value<bool> studyModeEnabled = const Value.absent(),
             Value<String?> logDirectory = const Value.absent(),
             Value<String?> llmLogPath = const Value.absent(),
             Value<String?> ttsLogPath = const Value.absent(),
@@ -8385,6 +8641,7 @@ class $$AppSettingsTableTableManager extends RootTableManager<
             ttsTextLeadMs: ttsTextLeadMs,
             ttsAudioPath: ttsAudioPath,
             sttAutoSend: sttAutoSend,
+            studyModeEnabled: studyModeEnabled,
             logDirectory: logDirectory,
             llmLogPath: llmLogPath,
             ttsLogPath: ttsLogPath,

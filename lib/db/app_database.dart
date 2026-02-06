@@ -78,6 +78,7 @@ class ProgressEntries extends Table {
   IntColumn get courseVersionId => integer()();
   TextColumn get kpKey => text()();
   BoolColumn get lit => boolean().withDefault(const Constant(false))();
+  IntColumn get litPercent => integer().withDefault(const Constant(0))();
   TextColumn get questionLevel => text().nullable()();
   TextColumn get summaryText => text().nullable()();
   TextColumn get summaryRawResponse => text().nullable()();
@@ -101,6 +102,7 @@ class ChatSessions extends Table {
   TextColumn get status => text().withDefault(const Constant('active'))();
   TextColumn get summaryText => text().nullable()();
   BoolColumn get summaryLit => boolean().nullable()();
+  IntColumn get summaryLitPercent => integer().nullable()();
   TextColumn get summaryRawResponse => text().nullable()();
   BoolColumn get summaryValid => boolean().nullable()();
   IntColumn get summarizeCallId => integer().nullable()();
@@ -111,6 +113,8 @@ class ChatMessages extends Table {
   IntColumn get sessionId => integer()();
   TextColumn get role => text()();
   TextColumn get content => text()();
+  TextColumn get rawContent => text().nullable()();
+  TextColumn get parsedJson => text().nullable()();
   TextColumn get action => text().nullable()();
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
 }
@@ -153,8 +157,7 @@ class AppSettings extends Table {
   IntColumn get maxTokens => integer()();
   IntColumn get ttsInitialDelayMs =>
       integer().withDefault(const Constant(60000))();
-  IntColumn get ttsTextLeadMs =>
-      integer().withDefault(const Constant(1000))();
+  IntColumn get ttsTextLeadMs => integer().withDefault(const Constant(1000))();
   TextColumn get ttsAudioPath => text().nullable()();
   BoolColumn get sttAutoSend => boolean().withDefault(const Constant(false))();
   BoolColumn get studyModeEnabled =>
@@ -221,7 +224,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 18;
+  int get schemaVersion => 20;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -301,6 +304,14 @@ class AppDatabase extends _$AppDatabase {
           }
           if (from < 18) {
             await m.addColumn(appSettings, appSettings.studyModeEnabled);
+          }
+          if (from < 19) {
+            await m.addColumn(progressEntries, progressEntries.litPercent);
+            await m.addColumn(chatSessions, chatSessions.summaryLitPercent);
+          }
+          if (from < 20) {
+            await m.addColumn(chatMessages, chatMessages.rawContent);
+            await m.addColumn(chatMessages, chatMessages.parsedJson);
           }
         },
       );
@@ -486,6 +497,17 @@ class AppDatabase extends _$AppDatabase {
         .watch();
   }
 
+  Future<List<ProgressEntry>> getProgressForCourse({
+    required int studentId,
+    required int courseVersionId,
+  }) {
+    return (select(progressEntries)
+          ..where((tbl) =>
+              tbl.studentId.equals(studentId) &
+              tbl.courseVersionId.equals(courseVersionId)))
+        .get();
+  }
+
   Future<List<ChatMessage>> getMessagesForSession(int sessionId) {
     return (select(chatMessages)
           ..where((tbl) => tbl.sessionId.equals(sessionId))
@@ -500,6 +522,22 @@ class AppDatabase extends _$AppDatabase {
     return (update(chatMessages)..where((tbl) => tbl.id.equals(messageId)))
         .write(
       ChatMessagesCompanion(content: Value(content)),
+    );
+  }
+
+  Future<void> updateChatMessageAssistantPayload({
+    required int messageId,
+    required String content,
+    String? rawContent,
+    String? parsedJson,
+  }) {
+    return (update(chatMessages)..where((tbl) => tbl.id.equals(messageId)))
+        .write(
+      ChatMessagesCompanion(
+        content: Value(content),
+        rawContent: Value(rawContent),
+        parsedJson: Value(parsedJson),
+      ),
     );
   }
 
@@ -653,12 +691,14 @@ ORDER BY s.started_at DESC
     required int courseVersionId,
     required String kpKey,
     required bool lit,
+    int? litPercent,
   }) async {
     final existing = await getProgress(
       studentId: studentId,
       courseVersionId: courseVersionId,
       kpKey: kpKey,
     );
+    final resolvedPercent = litPercent ?? (lit ? 100 : 0);
     if (existing == null) {
       await into(progressEntries).insert(
         ProgressEntriesCompanion.insert(
@@ -666,6 +706,7 @@ ORDER BY s.started_at DESC
           courseVersionId: courseVersionId,
           kpKey: kpKey,
           lit: Value(lit),
+          litPercent: Value(resolvedPercent),
           updatedAt: Value(DateTime.now()),
         ),
       );
@@ -675,6 +716,7 @@ ORDER BY s.started_at DESC
         .write(
       ProgressEntriesCompanion(
         lit: Value(lit),
+        litPercent: Value(resolvedPercent),
         updatedAt: Value(DateTime.now()),
       ),
     );
@@ -688,6 +730,7 @@ ORDER BY s.started_at DESC
     required String? summaryRawResponse,
     required bool? summaryValid,
     bool? summaryLit,
+    int? litPercent,
     String? questionLevel,
   }) async {
     final existing = await getProgress(
@@ -696,6 +739,7 @@ ORDER BY s.started_at DESC
       kpKey: kpKey,
     );
     final shouldLit = summaryLit == true;
+    final resolvedPercent = litPercent ?? (shouldLit ? 100 : 0);
     if (existing == null) {
       await into(progressEntries).insert(
         ProgressEntriesCompanion.insert(
@@ -703,6 +747,7 @@ ORDER BY s.started_at DESC
           courseVersionId: courseVersionId,
           kpKey: kpKey,
           lit: Value(shouldLit),
+          litPercent: Value(resolvedPercent),
           questionLevel: Value(questionLevel),
           summaryText: Value(summaryText),
           summaryRawResponse: Value(summaryRawResponse),
@@ -713,10 +758,14 @@ ORDER BY s.started_at DESC
       return;
     }
     final newLit = existing.lit || shouldLit;
+    final nextPercent = resolvedPercent < existing.litPercent
+        ? existing.litPercent
+        : resolvedPercent;
     await (update(progressEntries)..where((tbl) => tbl.id.equals(existing.id)))
         .write(
       ProgressEntriesCompanion(
         lit: Value(newLit),
+        litPercent: Value(nextPercent),
         questionLevel: Value(questionLevel ?? existing.questionLevel),
         summaryText: Value(summaryText),
         summaryRawResponse: Value(summaryRawResponse),
@@ -737,6 +786,7 @@ ORDER BY s.started_at DESC
         courseVersionId: courseVersionId,
         kpKey: kTreeViewStateKpKey,
         lit: const Value(false),
+        litPercent: const Value(0),
         summaryText: Value(viewStateJson),
         updatedAt: Value(DateTime.now()),
       ),
@@ -842,12 +892,10 @@ ORDER BY l.created_at DESC
       final normalized = _normalizeBaseUrl(config.baseUrl).toLowerCase();
       final isOpenAi = normalized.contains('openai.com');
       final isSilicon = normalized.contains('siliconflow');
-      final desiredTts = isSilicon
-          ? siliconTtsModel
-          : (isOpenAi ? openAiTtsModel : '');
-      final desiredStt = isSilicon
-          ? siliconSttModel
-          : (isOpenAi ? openAiSttModel : '');
+      final desiredTts =
+          isSilicon ? siliconTtsModel : (isOpenAi ? openAiTtsModel : '');
+      final desiredStt =
+          isSilicon ? siliconSttModel : (isOpenAi ? openAiSttModel : '');
       final currentTts = (config.ttsModel ?? '').trim();
       final currentStt = (config.sttModel ?? '').trim();
       final shouldUpdateTts =
@@ -860,8 +908,10 @@ ORDER BY l.created_at DESC
       await (update(apiConfigs)..where((tbl) => tbl.id.equals(config.id)))
           .write(
         ApiConfigsCompanion(
-          ttsModel: shouldUpdateTts ? Value(desiredTts.trim()) : const Value.absent(),
-          sttModel: shouldUpdateStt ? Value(desiredStt.trim()) : const Value.absent(),
+          ttsModel:
+              shouldUpdateTts ? Value(desiredTts.trim()) : const Value.absent(),
+          sttModel:
+              shouldUpdateStt ? Value(desiredStt.trim()) : const Value.absent(),
         ),
       );
     }
@@ -941,8 +991,7 @@ ORDER BY l.created_at DESC
             .go();
         await (delete(llmCalls)..where((tbl) => tbl.sessionId.isIn(sessionIds)))
             .go();
-        await (delete(chatSessions)
-              ..where((tbl) => tbl.id.isIn(sessionIds)))
+        await (delete(chatSessions)..where((tbl) => tbl.id.isIn(sessionIds)))
             .go();
       }
       await (delete(progressEntries)
@@ -1172,8 +1221,9 @@ ORDER BY l.created_at DESC
     required int? studentId,
   }) {
     return (tbl) {
-      final courseMatch =
-          courseKey == null ? tbl.courseKey.isNull() : tbl.courseKey.equals(courseKey);
+      final courseMatch = courseKey == null
+          ? tbl.courseKey.isNull()
+          : tbl.courseKey.equals(courseKey);
       final studentMatch = studentId == null
           ? tbl.studentId.isNull()
           : tbl.studentId.equals(studentId);
