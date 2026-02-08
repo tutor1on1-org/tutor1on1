@@ -55,10 +55,8 @@ class SettingsRepository {
                     ? p.dirname(ttsLogPath)
                     : await _defaultLogDirectory()));
         final paths = _buildLogPaths(resolvedDir);
-        final resolvedLlmPath =
-            llmLogPath.isEmpty ? paths['llm']! : llmLogPath;
-        final resolvedTtsPath =
-            ttsLogPath.isEmpty ? paths['tts']! : ttsLogPath;
+        final resolvedLlmPath = llmLogPath.isEmpty ? paths['llm']! : llmLogPath;
+        final resolvedTtsPath = ttsLogPath.isEmpty ? paths['tts']! : ttsLogPath;
         companion = companion.copyWith(
           logDirectory: Value(resolvedDir),
           llmLogPath: Value(resolvedLlmPath),
@@ -85,8 +83,7 @@ class SettingsRepository {
     final hasEnvBaseUrl = envBaseUrl.isNotEmpty;
     final baseUrl =
         hasEnvBaseUrl ? envBaseUrl : 'https://api.siliconflow.cn/v1';
-    final model =
-        envModel.isNotEmpty ? envModel : 'deepseek-ai/DeepSeek-V3.2';
+    final model = envModel.isNotEmpty ? envModel : 'deepseek-ai/DeepSeek-V3.2';
     final providerId = hasEnvBaseUrl ? 'env' : 'siliconflow';
     final ttsAudioPath = await _defaultTtsAudioPath();
     final logDirectory = await _defaultLogDirectory();
@@ -102,6 +99,7 @@ class SettingsRepository {
             ttsTextLeadMs: const Value(1000),
             ttsAudioPath: Value(ttsAudioPath),
             sttAutoSend: const Value(false),
+            enterToSend: const Value(true),
             studyModeEnabled: const Value(false),
             logDirectory: Value(logDirectory),
             llmLogPath: Value(logPaths['llm']!),
@@ -127,6 +125,7 @@ class SettingsRepository {
     required String logDirectory,
     required String llmMode,
     required bool sttAutoSend,
+    required bool enterToSend,
     required bool studyModeEnabled,
     String? locale,
   }) async {
@@ -150,6 +149,7 @@ class SettingsRepository {
       ttsTextLeadMs: Value(ttsTextLeadMs),
       ttsAudioPath: Value(resolvedPath),
       sttAutoSend: Value(sttAutoSend),
+      enterToSend: Value(enterToSend),
       studyModeEnabled: Value(studyModeEnabled),
       logDirectory: Value(resolvedLogDir),
       llmLogPath: Value(logPaths['llm']!),
@@ -158,7 +158,8 @@ class SettingsRepository {
       locale: Value(locale ?? current.locale),
       updatedAt: Value(DateTime.now()),
     );
-    await (_db.update(_db.appSettings)..where((tbl) => tbl.id.equals(current.id)))
+    await (_db.update(_db.appSettings)
+          ..where((tbl) => tbl.id.equals(current.id)))
         .write(companion);
     return (await _db.select(_db.appSettings).getSingle());
   }
@@ -169,7 +170,8 @@ class SettingsRepository {
       studyModeEnabled: Value(enabled),
       updatedAt: Value(DateTime.now()),
     );
-    await (_db.update(_db.appSettings)..where((tbl) => tbl.id.equals(current.id)))
+    await (_db.update(_db.appSettings)
+          ..where((tbl) => tbl.id.equals(current.id)))
         .write(companion);
     return (await _db.select(_db.appSettings).getSingle());
   }
@@ -180,7 +182,8 @@ class SettingsRepository {
       locale: Value(locale),
       updatedAt: Value(DateTime.now()),
     );
-    await (_db.update(_db.appSettings)..where((tbl) => tbl.id.equals(current.id)))
+    await (_db.update(_db.appSettings)
+          ..where((tbl) => tbl.id.equals(current.id)))
         .write(companion);
     return (await _db.select(_db.appSettings).getSingle());
   }

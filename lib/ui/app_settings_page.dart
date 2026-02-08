@@ -44,6 +44,7 @@ class _SettingsPageState extends State<SettingsPage> {
   String? _ttsModelSelection;
   String? _sttModelSelection;
   bool _sttAutoSend = false;
+  bool _enterToSend = true;
   bool _studyModeEnabled = false;
   bool _ttsModelOverride = false;
   bool _sttModelOverride = false;
@@ -109,6 +110,7 @@ class _SettingsPageState extends State<SettingsPage> {
       _logDirectoryController.text = settings.logDirectory ?? '';
       _mode = settings.llmMode;
       _sttAutoSend = settings.sttAutoSend;
+      _enterToSend = settings.enterToSend;
       _studyModeEnabled = settings.studyModeEnabled;
       _initialized = true;
     }
@@ -222,6 +224,11 @@ class _SettingsPageState extends State<SettingsPage> {
           title: Text(l10n.sttAutoSendLabel),
           value: _sttAutoSend,
           onChanged: (value) => setState(() => _sttAutoSend = value),
+        ),
+        SwitchListTile(
+          title: Text(l10n.enterToSendLabel),
+          value: _enterToSend,
+          onChanged: (value) => setState(() => _enterToSend = value),
         ),
         const SizedBox(height: 8),
         Row(
@@ -346,6 +353,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   logDirectory: resolvedLogDir,
                   llmMode: _mode,
                   sttAutoSend: _sttAutoSend,
+                  enterToSend: _enterToSend,
                   studyModeEnabled: _studyModeEnabled,
                 );
             if (context.mounted) {
@@ -687,6 +695,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   logDirectory: resolvedLogDir,
                   llmMode: _mode,
                   sttAutoSend: _sttAutoSend,
+                  enterToSend: _enterToSend,
                   studyModeEnabled: _studyModeEnabled,
                 );
                 await services.secureStorage

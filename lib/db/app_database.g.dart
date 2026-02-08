@@ -4534,6 +4534,16 @@ class $AppSettingsTable extends AppSettings
       defaultConstraints: GeneratedColumn.constraintIsAlways(
           'CHECK ("stt_auto_send" IN (0, 1))'),
       defaultValue: const Constant(false));
+  static const VerificationMeta _enterToSendMeta =
+      const VerificationMeta('enterToSend');
+  @override
+  late final GeneratedColumn<bool> enterToSend = GeneratedColumn<bool>(
+      'enter_to_send', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'CHECK ("enter_to_send" IN (0, 1))'),
+      defaultValue: const Constant(true));
   static const VerificationMeta _studyModeEnabledMeta =
       const VerificationMeta('studyModeEnabled');
   @override
@@ -4595,6 +4605,7 @@ class $AppSettingsTable extends AppSettings
         ttsTextLeadMs,
         ttsAudioPath,
         sttAutoSend,
+        enterToSend,
         studyModeEnabled,
         logDirectory,
         llmLogPath,
@@ -4680,6 +4691,12 @@ class $AppSettingsTable extends AppSettings
           sttAutoSend.isAcceptableOrUnknown(
               data['stt_auto_send']!, _sttAutoSendMeta));
     }
+    if (data.containsKey('enter_to_send')) {
+      context.handle(
+          _enterToSendMeta,
+          enterToSend.isAcceptableOrUnknown(
+              data['enter_to_send']!, _enterToSendMeta));
+    }
     if (data.containsKey('study_mode_enabled')) {
       context.handle(
           _studyModeEnabledMeta,
@@ -4751,6 +4768,8 @@ class $AppSettingsTable extends AppSettings
           .read(DriftSqlType.string, data['${effectivePrefix}tts_audio_path']),
       sttAutoSend: attachedDatabase.typeMapping
           .read(DriftSqlType.bool, data['${effectivePrefix}stt_auto_send'])!,
+      enterToSend: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}enter_to_send'])!,
       studyModeEnabled: attachedDatabase.typeMapping.read(
           DriftSqlType.bool, data['${effectivePrefix}study_mode_enabled'])!,
       logDirectory: attachedDatabase.typeMapping
@@ -4787,6 +4806,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
   final int ttsTextLeadMs;
   final String? ttsAudioPath;
   final bool sttAutoSend;
+  final bool enterToSend;
   final bool studyModeEnabled;
   final String? logDirectory;
   final String? llmLogPath;
@@ -4807,6 +4827,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       required this.ttsTextLeadMs,
       this.ttsAudioPath,
       required this.sttAutoSend,
+      required this.enterToSend,
       required this.studyModeEnabled,
       this.logDirectory,
       this.llmLogPath,
@@ -4837,6 +4858,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       map['tts_audio_path'] = Variable<String>(ttsAudioPath);
     }
     map['stt_auto_send'] = Variable<bool>(sttAutoSend);
+    map['enter_to_send'] = Variable<bool>(enterToSend);
     map['study_mode_enabled'] = Variable<bool>(studyModeEnabled);
     if (!nullToAbsent || logDirectory != null) {
       map['log_directory'] = Variable<String>(logDirectory);
@@ -4877,6 +4899,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
           ? const Value.absent()
           : Value(ttsAudioPath),
       sttAutoSend: Value(sttAutoSend),
+      enterToSend: Value(enterToSend),
       studyModeEnabled: Value(studyModeEnabled),
       logDirectory: logDirectory == null && nullToAbsent
           ? const Value.absent()
@@ -4910,6 +4933,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       ttsTextLeadMs: serializer.fromJson<int>(json['ttsTextLeadMs']),
       ttsAudioPath: serializer.fromJson<String?>(json['ttsAudioPath']),
       sttAutoSend: serializer.fromJson<bool>(json['sttAutoSend']),
+      enterToSend: serializer.fromJson<bool>(json['enterToSend']),
       studyModeEnabled: serializer.fromJson<bool>(json['studyModeEnabled']),
       logDirectory: serializer.fromJson<String?>(json['logDirectory']),
       llmLogPath: serializer.fromJson<String?>(json['llmLogPath']),
@@ -4935,6 +4959,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       'ttsTextLeadMs': serializer.toJson<int>(ttsTextLeadMs),
       'ttsAudioPath': serializer.toJson<String?>(ttsAudioPath),
       'sttAutoSend': serializer.toJson<bool>(sttAutoSend),
+      'enterToSend': serializer.toJson<bool>(enterToSend),
       'studyModeEnabled': serializer.toJson<bool>(studyModeEnabled),
       'logDirectory': serializer.toJson<String?>(logDirectory),
       'llmLogPath': serializer.toJson<String?>(llmLogPath),
@@ -4958,6 +4983,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
           int? ttsTextLeadMs,
           Value<String?> ttsAudioPath = const Value.absent(),
           bool? sttAutoSend,
+          bool? enterToSend,
           bool? studyModeEnabled,
           Value<String?> logDirectory = const Value.absent(),
           Value<String?> llmLogPath = const Value.absent(),
@@ -4979,6 +5005,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
         ttsAudioPath:
             ttsAudioPath.present ? ttsAudioPath.value : this.ttsAudioPath,
         sttAutoSend: sttAutoSend ?? this.sttAutoSend,
+        enterToSend: enterToSend ?? this.enterToSend,
         studyModeEnabled: studyModeEnabled ?? this.studyModeEnabled,
         logDirectory:
             logDirectory.present ? logDirectory.value : this.logDirectory,
@@ -5012,6 +5039,8 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
           : this.ttsAudioPath,
       sttAutoSend:
           data.sttAutoSend.present ? data.sttAutoSend.value : this.sttAutoSend,
+      enterToSend:
+          data.enterToSend.present ? data.enterToSend.value : this.enterToSend,
       studyModeEnabled: data.studyModeEnabled.present
           ? data.studyModeEnabled.value
           : this.studyModeEnabled,
@@ -5043,6 +5072,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
           ..write('ttsTextLeadMs: $ttsTextLeadMs, ')
           ..write('ttsAudioPath: $ttsAudioPath, ')
           ..write('sttAutoSend: $sttAutoSend, ')
+          ..write('enterToSend: $enterToSend, ')
           ..write('studyModeEnabled: $studyModeEnabled, ')
           ..write('logDirectory: $logDirectory, ')
           ..write('llmLogPath: $llmLogPath, ')
@@ -5068,6 +5098,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       ttsTextLeadMs,
       ttsAudioPath,
       sttAutoSend,
+      enterToSend,
       studyModeEnabled,
       logDirectory,
       llmLogPath,
@@ -5091,6 +5122,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
           other.ttsTextLeadMs == this.ttsTextLeadMs &&
           other.ttsAudioPath == this.ttsAudioPath &&
           other.sttAutoSend == this.sttAutoSend &&
+          other.enterToSend == this.enterToSend &&
           other.studyModeEnabled == this.studyModeEnabled &&
           other.logDirectory == this.logDirectory &&
           other.llmLogPath == this.llmLogPath &&
@@ -5113,6 +5145,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
   final Value<int> ttsTextLeadMs;
   final Value<String?> ttsAudioPath;
   final Value<bool> sttAutoSend;
+  final Value<bool> enterToSend;
   final Value<bool> studyModeEnabled;
   final Value<String?> logDirectory;
   final Value<String?> llmLogPath;
@@ -5133,6 +5166,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     this.ttsTextLeadMs = const Value.absent(),
     this.ttsAudioPath = const Value.absent(),
     this.sttAutoSend = const Value.absent(),
+    this.enterToSend = const Value.absent(),
     this.studyModeEnabled = const Value.absent(),
     this.logDirectory = const Value.absent(),
     this.llmLogPath = const Value.absent(),
@@ -5154,6 +5188,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     this.ttsTextLeadMs = const Value.absent(),
     this.ttsAudioPath = const Value.absent(),
     this.sttAutoSend = const Value.absent(),
+    this.enterToSend = const Value.absent(),
     this.studyModeEnabled = const Value.absent(),
     this.logDirectory = const Value.absent(),
     this.llmLogPath = const Value.absent(),
@@ -5179,6 +5214,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     Expression<int>? ttsTextLeadMs,
     Expression<String>? ttsAudioPath,
     Expression<bool>? sttAutoSend,
+    Expression<bool>? enterToSend,
     Expression<bool>? studyModeEnabled,
     Expression<String>? logDirectory,
     Expression<String>? llmLogPath,
@@ -5200,6 +5236,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
       if (ttsTextLeadMs != null) 'tts_text_lead_ms': ttsTextLeadMs,
       if (ttsAudioPath != null) 'tts_audio_path': ttsAudioPath,
       if (sttAutoSend != null) 'stt_auto_send': sttAutoSend,
+      if (enterToSend != null) 'enter_to_send': enterToSend,
       if (studyModeEnabled != null) 'study_mode_enabled': studyModeEnabled,
       if (logDirectory != null) 'log_directory': logDirectory,
       if (llmLogPath != null) 'llm_log_path': llmLogPath,
@@ -5223,6 +5260,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
       Value<int>? ttsTextLeadMs,
       Value<String?>? ttsAudioPath,
       Value<bool>? sttAutoSend,
+      Value<bool>? enterToSend,
       Value<bool>? studyModeEnabled,
       Value<String?>? logDirectory,
       Value<String?>? llmLogPath,
@@ -5243,6 +5281,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
       ttsTextLeadMs: ttsTextLeadMs ?? this.ttsTextLeadMs,
       ttsAudioPath: ttsAudioPath ?? this.ttsAudioPath,
       sttAutoSend: sttAutoSend ?? this.sttAutoSend,
+      enterToSend: enterToSend ?? this.enterToSend,
       studyModeEnabled: studyModeEnabled ?? this.studyModeEnabled,
       logDirectory: logDirectory ?? this.logDirectory,
       llmLogPath: llmLogPath ?? this.llmLogPath,
@@ -5292,6 +5331,9 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     if (sttAutoSend.present) {
       map['stt_auto_send'] = Variable<bool>(sttAutoSend.value);
     }
+    if (enterToSend.present) {
+      map['enter_to_send'] = Variable<bool>(enterToSend.value);
+    }
     if (studyModeEnabled.present) {
       map['study_mode_enabled'] = Variable<bool>(studyModeEnabled.value);
     }
@@ -5331,6 +5373,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
           ..write('ttsTextLeadMs: $ttsTextLeadMs, ')
           ..write('ttsAudioPath: $ttsAudioPath, ')
           ..write('sttAutoSend: $sttAutoSend, ')
+          ..write('enterToSend: $enterToSend, ')
           ..write('studyModeEnabled: $studyModeEnabled, ')
           ..write('logDirectory: $logDirectory, ')
           ..write('llmLogPath: $llmLogPath, ')
@@ -8302,6 +8345,7 @@ typedef $$AppSettingsTableCreateCompanionBuilder = AppSettingsCompanion
   Value<int> ttsTextLeadMs,
   Value<String?> ttsAudioPath,
   Value<bool> sttAutoSend,
+  Value<bool> enterToSend,
   Value<bool> studyModeEnabled,
   Value<String?> logDirectory,
   Value<String?> llmLogPath,
@@ -8324,6 +8368,7 @@ typedef $$AppSettingsTableUpdateCompanionBuilder = AppSettingsCompanion
   Value<int> ttsTextLeadMs,
   Value<String?> ttsAudioPath,
   Value<bool> sttAutoSend,
+  Value<bool> enterToSend,
   Value<bool> studyModeEnabled,
   Value<String?> logDirectory,
   Value<String?> llmLogPath,
@@ -8379,6 +8424,9 @@ class $$AppSettingsTableFilterComposer
 
   ColumnFilters<bool> get sttAutoSend => $composableBuilder(
       column: $table.sttAutoSend, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get enterToSend => $composableBuilder(
+      column: $table.enterToSend, builder: (column) => ColumnFilters(column));
 
   ColumnFilters<bool> get studyModeEnabled => $composableBuilder(
       column: $table.studyModeEnabled,
@@ -8452,6 +8500,9 @@ class $$AppSettingsTableOrderingComposer
   ColumnOrderings<bool> get sttAutoSend => $composableBuilder(
       column: $table.sttAutoSend, builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<bool> get enterToSend => $composableBuilder(
+      column: $table.enterToSend, builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<bool> get studyModeEnabled => $composableBuilder(
       column: $table.studyModeEnabled,
       builder: (column) => ColumnOrderings(column));
@@ -8521,6 +8572,9 @@ class $$AppSettingsTableAnnotationComposer
   GeneratedColumn<bool> get sttAutoSend => $composableBuilder(
       column: $table.sttAutoSend, builder: (column) => column);
 
+  GeneratedColumn<bool> get enterToSend => $composableBuilder(
+      column: $table.enterToSend, builder: (column) => column);
+
   GeneratedColumn<bool> get studyModeEnabled => $composableBuilder(
       column: $table.studyModeEnabled, builder: (column) => column);
 
@@ -8578,6 +8632,7 @@ class $$AppSettingsTableTableManager extends RootTableManager<
             Value<int> ttsTextLeadMs = const Value.absent(),
             Value<String?> ttsAudioPath = const Value.absent(),
             Value<bool> sttAutoSend = const Value.absent(),
+            Value<bool> enterToSend = const Value.absent(),
             Value<bool> studyModeEnabled = const Value.absent(),
             Value<String?> logDirectory = const Value.absent(),
             Value<String?> llmLogPath = const Value.absent(),
@@ -8599,6 +8654,7 @@ class $$AppSettingsTableTableManager extends RootTableManager<
             ttsTextLeadMs: ttsTextLeadMs,
             ttsAudioPath: ttsAudioPath,
             sttAutoSend: sttAutoSend,
+            enterToSend: enterToSend,
             studyModeEnabled: studyModeEnabled,
             logDirectory: logDirectory,
             llmLogPath: llmLogPath,
@@ -8620,6 +8676,7 @@ class $$AppSettingsTableTableManager extends RootTableManager<
             Value<int> ttsTextLeadMs = const Value.absent(),
             Value<String?> ttsAudioPath = const Value.absent(),
             Value<bool> sttAutoSend = const Value.absent(),
+            Value<bool> enterToSend = const Value.absent(),
             Value<bool> studyModeEnabled = const Value.absent(),
             Value<String?> logDirectory = const Value.absent(),
             Value<String?> llmLogPath = const Value.absent(),
@@ -8641,6 +8698,7 @@ class $$AppSettingsTableTableManager extends RootTableManager<
             ttsTextLeadMs: ttsTextLeadMs,
             ttsAudioPath: ttsAudioPath,
             sttAutoSend: sttAutoSend,
+            enterToSend: enterToSend,
             studyModeEnabled: studyModeEnabled,
             logDirectory: logDirectory,
             llmLogPath: llmLogPath,

@@ -160,6 +160,7 @@ class AppSettings extends Table {
   IntColumn get ttsTextLeadMs => integer().withDefault(const Constant(1000))();
   TextColumn get ttsAudioPath => text().nullable()();
   BoolColumn get sttAutoSend => boolean().withDefault(const Constant(false))();
+  BoolColumn get enterToSend => boolean().withDefault(const Constant(true))();
   BoolColumn get studyModeEnabled =>
       boolean().withDefault(const Constant(false))();
   TextColumn get logDirectory => text().nullable()();
@@ -224,7 +225,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 20;
+  int get schemaVersion => 21;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -312,6 +313,9 @@ class AppDatabase extends _$AppDatabase {
           if (from < 20) {
             await m.addColumn(chatMessages, chatMessages.rawContent);
             await m.addColumn(chatMessages, chatMessages.parsedJson);
+          }
+          if (from < 21) {
+            await m.addColumn(appSettings, appSettings.enterToSend);
           }
         },
       );

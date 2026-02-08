@@ -43,6 +43,7 @@ class SettingsController extends ChangeNotifier {
     required String logDirectory,
     required String llmMode,
     required bool sttAutoSend,
+    required bool enterToSend,
     required bool studyModeEnabled,
     String? locale,
   }) async {
@@ -60,6 +61,7 @@ class SettingsController extends ChangeNotifier {
       logDirectory: logDirectory,
       llmMode: llmMode,
       sttAutoSend: sttAutoSend,
+      enterToSend: enterToSend,
       studyModeEnabled: studyModeEnabled,
       locale: locale,
     );

@@ -221,6 +221,21 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         _ttsPlaybackActive || _ttsStreamPaused || _ttsChunkInFlight;
     final canInteract = !_closed && !widget.readOnly;
     final sttBusy = _sttPressActive || _sttRecording || _sttTranscribing;
+    final enterToSend = settings?.enterToSend ?? true;
+    final shortcutMap = <ShortcutActivator, Intent>{
+      const SingleActivator(
+        LogicalKeyboardKey.enter,
+        control: true,
+      ): const _SendIntent(),
+      const SingleActivator(
+        LogicalKeyboardKey.enter,
+        meta: true,
+      ): const _SendIntent(),
+    };
+    if (enterToSend) {
+      shortcutMap[const SingleActivator(LogicalKeyboardKey.enter)] =
+          const _SendIntent();
+    }
     if (!ttsSupported && _ttsEnabled) {
       _ttsEnabled = false;
     }
@@ -232,15 +247,12 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     }
 
     return Shortcuts(
-      shortcuts: {
-        LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.enter):
-            const _SendIntent(),
-      },
+      shortcuts: shortcutMap,
       child: Actions(
         actions: {
           _SendIntent: CallbackAction<_SendIntent>(
             onInvoke: (_) {
-              if (!_sending && canInteract) {
+              if (!_sending && canInteract && !sttBusy) {
                 _sendMessage();
               }
               return null;
@@ -510,7 +522,9 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                 enabled: !_sending && !_sttTranscribing,
                                 decoration: InputDecoration(
                                   labelText: l10n.chatInputLabel,
-                                  hintText: l10n.chatInputHint,
+                                  hintText: enterToSend
+                                      ? l10n.chatInputHintEnterToSend
+                                      : l10n.chatInputHintCtrlEnterToSend,
                                   filled: true,
                                   fillColor: Theme.of(context)
                                       .colorScheme
