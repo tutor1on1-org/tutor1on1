@@ -26,3 +26,6 @@
 - `BUGS.md` for known issues and build failures.
 - `TODOS.md` for prompt-architecture TODOs.
 - `DONES.md` for job in progress and finished. After a job is finished, remove from TODOS.
+
+## Experience Learned (2026-02-16)
+- Prompt scope behavior is now explicit: teacher default scope edits the base system prompt override (per prompt), while course/student scopes remain additive append templates.

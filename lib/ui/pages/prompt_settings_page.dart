@@ -39,9 +39,12 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
   }
 
   Future<void> _loadScopes() async {
+    final l10n = AppLocalizations.of(context)!;
     final db = context.read<AppDatabase>();
     final courses = await db.watchCourseVersions(widget.teacherId).first;
-    final scopes = <_PromptScope>[];
+    final scopes = <_PromptScope>[
+      _PromptScope.systemScope(label: l10n.promptScopeDefault),
+    ];
     for (final course in courses) {
       final courseKey = (course.sourcePath ?? '').trim();
       if (courseKey.isEmpty) {
@@ -62,6 +65,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
         scopes.add(
           _PromptScope(
             label: label,
+            isSystem: false,
             courseKey: courseKey,
             studentId: studentId,
           ),
@@ -190,6 +194,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
                               promptRepo,
                               item,
                               active?.content,
+                              isSystemScope: scope?.isSystem ?? false,
                               courseKey: courseKey,
                               studentId: studentId,
                             ),
@@ -200,6 +205,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
                               context,
                               promptRepo,
                               item.name,
+                              isSystemScope: scope?.isSystem ?? false,
                               courseKey: courseKey,
                               studentId: studentId,
                             ),
@@ -215,6 +221,9 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
                                 promptName: item.name,
                                 courseKey: courseKey,
                                 studentId: studentId,
+                              );
+                              promptRepo.invalidatePromptCache(
+                                promptName: item.name,
                               );
                               if (context.mounted) {
                                 _showMessage(context, l10n.promptReverted);
@@ -243,8 +252,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
                           final history = historySnapshot.data ?? [];
                           if (history.isEmpty) {
                             return Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 8),
+                              padding: const EdgeInsets.symmetric(vertical: 8),
                               child: Text(l10n.promptHistoryEmpty),
                             );
                           }
@@ -263,6 +271,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
                                         promptRepo,
                                         item.name,
                                         entry,
+                                        isSystemScope: scope?.isSystem ?? false,
                                         courseKey: courseKey,
                                         studentId: studentId,
                                       ),
@@ -276,6 +285,9 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
                                           templateId: entry.id,
                                           courseKey: courseKey,
                                           studentId: studentId,
+                                        );
+                                        promptRepo.invalidatePromptCache(
+                                          promptName: item.name,
                                         );
                                         if (context.mounted) {
                                           _showMessage(
@@ -303,21 +315,18 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
     );
   }
 
-  Future<void> _openEditor(
-    BuildContext context,
-    PromptRepository promptRepo,
-    _PromptItem item,
-    String? currentContent,
-    {String? courseKey,
-    int? studentId}
-  ) async {
+  Future<void> _openEditor(BuildContext context, PromptRepository promptRepo,
+      _PromptItem item, String? currentContent,
+      {required bool isSystemScope, String? courseKey, int? studentId}) async {
     final l10n = AppLocalizations.of(context)!;
-    final defaultContent = await promptRepo.loadAppendPrompt(
-      item.name,
-      teacherId: widget.teacherId,
-      courseKey: courseKey,
-      studentId: studentId,
-    );
+    final defaultContent = isSystemScope
+        ? await promptRepo.loadBundledSystemPrompt(item.name)
+        : await promptRepo.loadAppendPrompt(
+            item.name,
+            teacherId: widget.teacherId,
+            courseKey: courseKey,
+            studentId: studentId,
+          );
     final controller =
         TextEditingController(text: currentContent ?? defaultContent);
 
@@ -361,6 +370,18 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
                 ),
                 const SizedBox(height: 6),
                 ..._buildVariableRows(item.name),
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'All supported variables',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                ..._buildVariableRowsForVariables(
+                  _validator.allSupportedVariables().toList()..sort(),
+                ),
               ],
             ),
           ),
@@ -400,6 +421,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
       courseKey: courseKey,
       studentId: studentId,
     );
+    promptRepo.invalidatePromptCache(promptName: item.name);
     if (context.mounted) {
       _showMessage(context, l10n.promptSaved);
     }
@@ -409,17 +431,23 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
     BuildContext context,
     PromptRepository promptRepo,
     String promptName, {
+    required bool isSystemScope,
     String? courseKey,
     int? studentId,
   }) async {
     final l10n = AppLocalizations.of(context)!;
-    final preview = await promptRepo.buildPromptPreview(
-      name: promptName,
-      teacherId: widget.teacherId,
-      courseKey: courseKey,
-      studentId: studentId,
-      includeSystem: false,
-    );
+    final preview = isSystemScope
+        ? await promptRepo.loadResolvedSystemPrompt(
+            promptName,
+            teacherId: widget.teacherId,
+          )
+        : await promptRepo.buildPromptPreview(
+            name: promptName,
+            teacherId: widget.teacherId,
+            courseKey: courseKey,
+            studentId: studentId,
+            includeSystem: false,
+          );
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
@@ -445,26 +473,34 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
     PromptRepository promptRepo,
     String promptName,
     PromptTemplate entry, {
+    required bool isSystemScope,
     String? courseKey,
     int? studentId,
   }) async {
     final l10n = AppLocalizations.of(context)!;
-    final current = await promptRepo.buildPromptPreview(
-      name: promptName,
-      teacherId: widget.teacherId,
-      courseKey: courseKey,
-      studentId: studentId,
-      includeSystem: false,
-    );
-    final historical = await promptRepo.buildPromptPreview(
-      name: promptName,
-      teacherId: widget.teacherId,
-      courseKey: courseKey,
-      studentId: studentId,
-      courseAppendOverride: studentId == null ? entry.content : null,
-      studentAppendOverride: studentId == null ? null : entry.content,
-      includeSystem: false,
-    );
+    final current = isSystemScope
+        ? await promptRepo.loadResolvedSystemPrompt(
+            promptName,
+            teacherId: widget.teacherId,
+          )
+        : await promptRepo.buildPromptPreview(
+            name: promptName,
+            teacherId: widget.teacherId,
+            courseKey: courseKey,
+            studentId: studentId,
+            includeSystem: false,
+          );
+    final historical = isSystemScope
+        ? entry.content
+        : await promptRepo.buildPromptPreview(
+            name: promptName,
+            teacherId: widget.teacherId,
+            courseKey: courseKey,
+            studentId: studentId,
+            courseAppendOverride: studentId == null ? entry.content : null,
+            studentAppendOverride: studentId == null ? null : entry.content,
+            includeSystem: false,
+          );
     final diff = _buildUnifiedDiff(
       current,
       historical,
@@ -600,9 +636,13 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
   }
 
   List<Widget> _buildVariableRows(String promptName) {
-    final info = _variableDescriptions();
     final allowed = _validator.allowedVariables(promptName).toList()..sort();
-    return allowed.map((variable) {
+    return _buildVariableRowsForVariables(allowed);
+  }
+
+  List<Widget> _buildVariableRowsForVariables(List<String> variables) {
+    final info = _variableDescriptions();
+    return variables.map((variable) {
       final description =
           info[variable] ?? 'Value provided by the session context.';
       return Padding(
@@ -650,8 +690,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
           'Dialogue since the last INIT turn (may be truncated).',
       'prev_json': 'Previous model JSON output for the current segment.',
       'last_evidence': 'Last evidence object from REVIEW.',
-      'current_mastery_level':
-          'Current mastery level before SUMMARY decision.',
+      'current_mastery_level': 'Current mastery level before SUMMARY decision.',
     };
   }
 }
@@ -666,18 +705,28 @@ class _PromptItem {
 class _PromptScope {
   _PromptScope({
     required this.label,
+    required this.isSystem,
     this.courseKey,
     this.studentId,
   });
+
+  _PromptScope.systemScope({
+    required String label,
+  })  : label = label,
+        isSystem = true,
+        courseKey = null,
+        studentId = null;
 
   _PromptScope.courseScope({
     required String label,
     required String courseKey,
   })  : label = label,
+        isSystem = false,
         courseKey = courseKey,
         studentId = null;
 
   final String label;
+  final bool isSystem;
   final String? courseKey;
   final int? studentId;
 }

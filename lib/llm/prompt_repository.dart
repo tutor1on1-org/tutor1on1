@@ -31,7 +31,10 @@ class PromptRepository {
       return _promptCache[cacheKey]!;
     }
 
-    final systemPrompt = await _loadSystemPrompt(name);
+    final systemPrompt = await loadResolvedSystemPrompt(
+      name,
+      teacherId: teacherId,
+    );
     final courseAppend = await _loadAppendPrompt(
       name,
       teacherId: teacherId,
@@ -79,7 +82,9 @@ class PromptRepository {
     bool includeSystem = true,
   }) async {
     final normalizedCourseKey = _normalizeCourseKey(courseKey);
-    final systemPrompt = includeSystem ? await _loadSystemPrompt(name) : '';
+    final systemPrompt = includeSystem
+        ? await loadResolvedSystemPrompt(name, teacherId: teacherId)
+        : '';
     final courseAppend = courseAppendOverride ??
         await _loadAppendPrompt(
           name,
@@ -113,7 +118,33 @@ class PromptRepository {
     return;
   }
 
-  Future<String> _loadSystemPrompt(String name) async {
+  Future<String> loadBundledSystemPrompt(String name) async {
+    return _loadBundledSystemPrompt(name);
+  }
+
+  Future<String> loadResolvedSystemPrompt(
+    String name, {
+    required int? teacherId,
+  }) async {
+    final override = await _loadSystemPromptOverride(
+      name,
+      teacherId: teacherId,
+    );
+    if (override != null) {
+      return override;
+    }
+    return _loadBundledSystemPrompt(name);
+  }
+
+  void invalidatePromptCache({String? promptName}) {
+    if (promptName == null) {
+      _promptCache.clear();
+      return;
+    }
+    _promptCache.removeWhere((key, _) => key.endsWith('::$promptName'));
+  }
+
+  Future<String> _loadBundledSystemPrompt(String name) async {
     if (_systemPromptCache.containsKey(name)) {
       return _systemPromptCache[name]!;
     }
@@ -134,6 +165,23 @@ class PromptRepository {
     throw StateError(
       'Prompt not found for "$name". Last error: $lastError',
     );
+  }
+
+  Future<String?> _loadSystemPromptOverride(
+    String name, {
+    required int? teacherId,
+  }) async {
+    final db = _db;
+    if (db == null || teacherId == null) {
+      return null;
+    }
+    final override = await db.getActivePromptTemplate(
+      teacherId: teacherId,
+      promptName: name,
+      courseKey: null,
+      studentId: null,
+    );
+    return override?.content;
   }
 
   String? _normalizeCourseKey(String? value) {

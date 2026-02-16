@@ -7,11 +7,14 @@ class PromptValidationResult {
   final Set<String> missingVariables;
   final Set<String> unknownVariables;
 
-  bool get isValid =>
-      missingVariables.isEmpty && unknownVariables.isEmpty;
+  bool get isValid => missingVariables.isEmpty && unknownVariables.isEmpty;
 }
 
 class PromptTemplateValidator {
+  Set<String> allSupportedVariables() {
+    return allowedVariables('__all__');
+  }
+
   PromptValidationResult validate({
     required String promptName,
     required String content,
@@ -20,7 +23,8 @@ class PromptTemplateValidator {
     final required = requiredVariables(promptName);
     final allowed = allowedVariables(promptName);
     final used = _extractVariables(content);
-    final missing = allowMissingRequired ? <String>{} : required.difference(used);
+    final missing =
+        allowMissingRequired ? <String>{} : required.difference(used);
     if (_requiresHistory(promptName) &&
         missing.contains('conversation_history') &&
         used.contains('session_history')) {
@@ -149,8 +153,7 @@ class PromptTemplateValidator {
   }
 
   Set<String> _extractVariables(String content) {
-    final matches = RegExp(r'{{\s*([a-zA-Z0-9_]+)\s*}}')
-        .allMatches(content);
+    final matches = RegExp(r'{{\s*([a-zA-Z0-9_]+)\s*}}').allMatches(content);
     return matches
         .map((match) => match.group(1))
         .whereType<String>()
