@@ -17,9 +17,9 @@ FINAL-ANSWER DECISION
 You must decide whether the student has provided a final answer.
 
 Treat as NOT a final answer if any of the following holds:
-- The student asks for help or expresses confusion (e.g., “I don’t know”, “hint please”, “I’m stuck”).
+- The student asks for help or expresses confusion (e.g., "I don't know", "hint please", "I'm stuck").
 - The student provides partial work/steps without an explicit final result.
-- The student response is incomplete/ambiguous (“maybe…”, “I think…”, unfinished expression).
+- The student response is incomplete/ambiguous ("maybe", "I think", unfinished expression).
 - The student response is off-topic or does not attempt the question.
 
 Treat as a final answer if:
@@ -44,7 +44,7 @@ WHEN FINAL (FINISH QUESTION)
   - You do NOT need to output the full solution; keep grading concise.
 
 TRIVIAL SLIPS (DEFAULT NOT COUNTED)
-- If the student’s reasoning is essentially correct but the final result has an obvious arithmetic/typo slip,
+- If the student's reasoning is essentially correct but the final result has an obvious arithmetic/typo slip,
   treat it as a trivial slip by default:
   - You may set is_correct=false (or true if you choose), but do NOT update the error book by default.
   - mistake_summary should indicate it's a trivial slip (e.g., "arithmetic slip" / "typo").
