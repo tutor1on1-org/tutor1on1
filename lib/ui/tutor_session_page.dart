@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -174,6 +175,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       _sessionTitle = session.title;
     }
     setState(() => _loadingSession = false);
+    await _applySuggestedModeFromSession(db);
     await _maybeAutoStart(db);
   }
 
@@ -1048,6 +1050,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       return;
     }
     setState(() => _sending = true);
+    final db = context.read<AppDatabase>();
     final sessionService = context.read<AppServices>().sessionService;
     final sttService = context.read<AppServices>().sttService;
     final modelOverride = _resolveModelOverride();
@@ -1101,6 +1104,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       if (_ttsEnabled) {
         await _flushDisplay();
       }
+      await _applySuggestedModeFromSession(db);
       _inputController.clear();
       _inputFocus.requestFocus();
     } catch (e) {
@@ -1119,6 +1123,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   Future<void> _requestSummary() async {
     final l10n = AppLocalizations.of(context)!;
     setState(() => _sending = true);
+    final db = context.read<AppDatabase>();
     final sessionService = context.read<AppServices>().sessionService;
     final modelOverride = _resolveModelOverride();
     try {
@@ -1148,6 +1153,9 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         await _showSummaryErrorDialog(
           messageOverride: result.message,
         );
+      }
+      if (result.success) {
+        await _applySuggestedModeFromSession(db);
       }
     } catch (e) {
       await _showSummaryErrorDialog(
@@ -1303,6 +1311,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       return;
     }
     setState(() => _sending = true);
+    final db = context.read<AppDatabase>();
     final sessionService = context.read<AppServices>().sessionService;
     final modelOverride = _resolveModelOverride();
     _prepareTts();
@@ -1328,6 +1337,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       if (_ttsEnabled) {
         await _flushDisplay();
       }
+      await _applySuggestedModeFromSession(db);
     } catch (e) {
       await _showErrorDialog(
         title: l10n.refreshFailedTitle,
@@ -1403,6 +1413,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       if (_ttsEnabled) {
         await _flushDisplay();
       }
+      await _applySuggestedModeFromSession(db);
     } catch (e) {
       await _showErrorDialog(
         title: l10n.editFailedTitle,
@@ -1676,6 +1687,99 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     final minute = time.minute.toString().padLeft(2, '0');
     final second = time.second.toString().padLeft(2, '0');
     return '$hour:$minute:$second';
+  }
+
+  Future<void> _applySuggestedModeFromSession(AppDatabase db) async {
+    final messages = await db.getMessagesForSession(widget.sessionId);
+    if (!mounted) {
+      return;
+    }
+    final suggested = _extractSuggestedMode(messages);
+    if (suggested != null && suggested != _mode) {
+      setState(() => _mode = suggested);
+    }
+  }
+
+  TutorMode? _extractSuggestedMode(List<ChatMessage> messages) {
+    for (var i = messages.length - 1; i >= 0; i--) {
+      final message = messages[i];
+      if (message.role != 'assistant') {
+        continue;
+      }
+      final parsed = _extractMessageJson(message);
+      if (parsed == null) {
+        continue;
+      }
+      final nextMode = _normalizeNextMode(parsed['next_mode']);
+      if (nextMode != null) {
+        return nextMode;
+      }
+      final nextStep = _normalizeNextStep(parsed['next_step']);
+      if (nextStep != null) {
+        return nextStep;
+      }
+    }
+    return null;
+  }
+
+  Map<String, dynamic>? _extractMessageJson(ChatMessage message) {
+    final stored = message.parsedJson;
+    if (stored != null && stored.trim().isNotEmpty) {
+      final decoded = _tryDecodeJsonObject(stored);
+      if (decoded != null) {
+        return decoded;
+      }
+    }
+    final raw = message.rawContent;
+    if (raw != null && raw.trim().isNotEmpty) {
+      final decoded = _tryDecodeJsonObject(raw);
+      if (decoded != null) {
+        return decoded;
+      }
+    }
+    return _tryDecodeJsonObject(message.content);
+  }
+
+  Map<String, dynamic>? _tryDecodeJsonObject(String input) {
+    final start = input.indexOf('{');
+    final end = input.lastIndexOf('}');
+    if (start == -1 || end == -1 || end <= start) {
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(input.substring(start, end + 1));
+      return decoded is Map<String, dynamic> ? decoded : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  TutorMode? _normalizeNextMode(Object? value) {
+    if (value is! String) {
+      return null;
+    }
+    final normalized = value.trim().toUpperCase();
+    if (normalized == 'LEARN') {
+      return TutorMode.learn;
+    }
+    if (normalized == 'REVIEW') {
+      return TutorMode.review;
+    }
+    return null;
+  }
+
+  TutorMode? _normalizeNextStep(Object? value) {
+    if (value is! String) {
+      return null;
+    }
+    final normalized = value.trim().toUpperCase().replaceAll('-', '_');
+    if (normalized == 'RELEARN') {
+      return TutorMode.learn;
+    }
+    if (normalized == 'CONTINUE_REVIEW') {
+      return TutorMode.review;
+    }
+    return null;
   }
 
   void _handleAssistantMessageCreated(int messageId) {
