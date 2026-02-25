@@ -197,6 +197,23 @@ class PromptTemplates extends Table {
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
 }
 
+class StudentPromptProfiles extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  IntColumn get teacherId => integer()();
+  TextColumn get courseKey => text().nullable()();
+  IntColumn get studentId => integer().nullable()();
+  TextColumn get gradeLevel => text().nullable()();
+  TextColumn get readingLevel => text().nullable()();
+  TextColumn get preferredLanguage => text().nullable()();
+  TextColumn get interests => text().nullable()();
+  TextColumn get preferredTone => text().nullable()();
+  TextColumn get preferredPace => text().nullable()();
+  TextColumn get preferredFormat => text().nullable()();
+  TextColumn get supportNotes => text().nullable()();
+  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+  DateTimeColumn get updatedAt => dateTime().nullable()();
+}
+
 @DriftDatabase(
   tables: [
     Users,
@@ -211,6 +228,7 @@ class PromptTemplates extends Table {
     AppSettings,
     ApiConfigs,
     PromptTemplates,
+    StudentPromptProfiles,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -225,7 +243,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 21;
+  int get schemaVersion => 22;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -316,6 +334,9 @@ class AppDatabase extends _$AppDatabase {
           }
           if (from < 21) {
             await m.addColumn(appSettings, appSettings.enterToSend);
+          }
+          if (from < 22) {
+            await m.createTable(studentPromptProfiles);
           }
         },
       );
@@ -1212,12 +1233,145 @@ ORDER BY l.created_at DESC
     );
   }
 
+  Future<StudentPromptProfile?> getStudentPromptProfile({
+    required int teacherId,
+    String? courseKey,
+    int? studentId,
+  }) {
+    final normalizedCourseKey = _normalizeCourseKey(courseKey);
+    return (select(studentPromptProfiles)
+          ..where((tbl) =>
+              tbl.teacherId.equals(teacherId) &
+              _profileScopeMatch(
+                tbl,
+                courseKey: normalizedCourseKey,
+                studentId: studentId,
+              ))
+          ..orderBy([
+            (tbl) => OrderingTerm(
+                  expression: tbl.updatedAt,
+                  mode: OrderingMode.desc,
+                ),
+            (tbl) => OrderingTerm(
+                  expression: tbl.createdAt,
+                  mode: OrderingMode.desc,
+                ),
+          ])
+          ..limit(1))
+        .getSingleOrNull();
+  }
+
+  Future<void> upsertStudentPromptProfile({
+    required int teacherId,
+    String? courseKey,
+    int? studentId,
+    String? gradeLevel,
+    String? readingLevel,
+    String? preferredLanguage,
+    String? interests,
+    String? preferredTone,
+    String? preferredPace,
+    String? preferredFormat,
+    String? supportNotes,
+  }) async {
+    final normalizedCourseKey = _normalizeCourseKey(courseKey);
+    final normalizedGradeLevel = _normalizePromptField(gradeLevel);
+    final normalizedReadingLevel = _normalizePromptField(readingLevel);
+    final normalizedPreferredLanguage =
+        _normalizePromptField(preferredLanguage);
+    final normalizedInterests = _normalizePromptField(interests);
+    final normalizedPreferredTone = _normalizePromptField(preferredTone);
+    final normalizedPreferredPace = _normalizePromptField(preferredPace);
+    final normalizedPreferredFormat = _normalizePromptField(preferredFormat);
+    final normalizedSupportNotes = _normalizePromptField(supportNotes);
+    final now = DateTime.now();
+    final existing = await (select(studentPromptProfiles)
+          ..where((tbl) =>
+              tbl.teacherId.equals(teacherId) &
+              _profileScopeMatch(
+                tbl,
+                courseKey: normalizedCourseKey,
+                studentId: studentId,
+              ))
+          ..orderBy([
+            (tbl) => OrderingTerm(
+                  expression: tbl.updatedAt,
+                  mode: OrderingMode.desc,
+                ),
+            (tbl) => OrderingTerm(
+                  expression: tbl.createdAt,
+                  mode: OrderingMode.desc,
+                ),
+          ])
+          ..limit(1))
+        .getSingleOrNull();
+    if (existing == null) {
+      await into(studentPromptProfiles).insert(
+        StudentPromptProfilesCompanion.insert(
+          teacherId: teacherId,
+          courseKey: Value(normalizedCourseKey),
+          studentId: Value(studentId),
+          gradeLevel: Value(normalizedGradeLevel),
+          readingLevel: Value(normalizedReadingLevel),
+          preferredLanguage: Value(normalizedPreferredLanguage),
+          interests: Value(normalizedInterests),
+          preferredTone: Value(normalizedPreferredTone),
+          preferredPace: Value(normalizedPreferredPace),
+          preferredFormat: Value(normalizedPreferredFormat),
+          supportNotes: Value(normalizedSupportNotes),
+          updatedAt: Value(now),
+        ),
+      );
+      return;
+    }
+    await (update(studentPromptProfiles)
+          ..where((tbl) => tbl.id.equals(existing.id)))
+        .write(
+      StudentPromptProfilesCompanion(
+        gradeLevel: Value(normalizedGradeLevel),
+        readingLevel: Value(normalizedReadingLevel),
+        preferredLanguage: Value(normalizedPreferredLanguage),
+        interests: Value(normalizedInterests),
+        preferredTone: Value(normalizedPreferredTone),
+        preferredPace: Value(normalizedPreferredPace),
+        preferredFormat: Value(normalizedPreferredFormat),
+        supportNotes: Value(normalizedSupportNotes),
+        updatedAt: Value(now),
+      ),
+    );
+  }
+
+  Future<void> deleteStudentPromptProfile({
+    required int teacherId,
+    String? courseKey,
+    int? studentId,
+  }) {
+    final normalizedCourseKey = _normalizeCourseKey(courseKey);
+    return (delete(studentPromptProfiles)
+          ..where((tbl) =>
+              tbl.teacherId.equals(teacherId) &
+              _profileScopeMatch(
+                tbl,
+                courseKey: normalizedCourseKey,
+                studentId: studentId,
+              )))
+        .go();
+  }
+
   String? _normalizeCourseKey(String? value) {
     final trimmed = value?.trim();
     if (trimmed == null || trimmed.isEmpty) {
       return null;
     }
     return p.normalize(trimmed);
+  }
+
+  String? _normalizePromptField(String? value) {
+    final trimmed = value?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return null;
+    }
+    return trimmed;
   }
 
   Expression<bool> Function($PromptTemplatesTable) _promptScopeMatch({
@@ -1233,6 +1387,20 @@ ORDER BY l.created_at DESC
           : tbl.studentId.equals(studentId);
       return courseMatch & studentMatch;
     };
+  }
+
+  Expression<bool> _profileScopeMatch(
+    $StudentPromptProfilesTable tbl, {
+    required String? courseKey,
+    required int? studentId,
+  }) {
+    final courseMatch = courseKey == null
+        ? tbl.courseKey.isNull()
+        : tbl.courseKey.equals(courseKey);
+    final studentMatch = studentId == null
+        ? tbl.studentId.isNull()
+        : tbl.studentId.equals(studentId);
+    return courseMatch & studentMatch;
   }
 }
 

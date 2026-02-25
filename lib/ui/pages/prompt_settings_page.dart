@@ -158,6 +158,13 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
             ),
           const SizedBox(height: 16),
           if (_selectedScope != null)
+            _StudentPromptProfileSection(
+              teacherId: widget.teacherId,
+              courseKey: _selectedScope?.courseKey,
+              studentId: _selectedScope?.studentId,
+            ),
+          if (_selectedScope != null) const SizedBox(height: 24),
+          if (_selectedScope != null)
             ...items.map((item) {
               final scope = _selectedScope;
               final courseKey = scope?.courseKey;
@@ -677,6 +684,10 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
       'student_input': 'Latest student input text in this session.',
       'student_summary':
           'Saved summary for this student/course/kp (falls back to the session summary).',
+      'student_profile':
+          'Resolved student profile from teacher-defined fields (level, language, interests, support notes).',
+      'student_preferences':
+          'Resolved student preferences from teacher-defined fields (tone, pace, format).',
       'lesson_content': 'Lesson content for the current knowledge point.',
       'types':
           'List of practice types for this knowledge point (includes OTHER).',
@@ -692,6 +703,279 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
       'last_evidence': 'Last evidence object from REVIEW.',
       'current_mastery_level': 'Current mastery level before SUMMARY decision.',
     };
+  }
+}
+
+class _StudentPromptProfileSection extends StatefulWidget {
+  const _StudentPromptProfileSection({
+    required this.teacherId,
+    required this.courseKey,
+    required this.studentId,
+  });
+
+  final int teacherId;
+  final String? courseKey;
+  final int? studentId;
+
+  @override
+  State<_StudentPromptProfileSection> createState() =>
+      _StudentPromptProfileSectionState();
+}
+
+class _StudentPromptProfileSectionState
+    extends State<_StudentPromptProfileSection> {
+  final _gradeLevelController = TextEditingController();
+  final _readingLevelController = TextEditingController();
+  final _languageController = TextEditingController();
+  final _interestsController = TextEditingController();
+  final _toneController = TextEditingController();
+  final _paceController = TextEditingController();
+  final _formatController = TextEditingController();
+  final _supportNotesController = TextEditingController();
+
+  bool _loading = true;
+  DateTime? _lastSavedAt;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _StudentPromptProfileSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.courseKey != widget.courseKey ||
+        oldWidget.studentId != widget.studentId ||
+        oldWidget.teacherId != widget.teacherId) {
+      _load();
+    }
+  }
+
+  @override
+  void dispose() {
+    _gradeLevelController.dispose();
+    _readingLevelController.dispose();
+    _languageController.dispose();
+    _interestsController.dispose();
+    _toneController.dispose();
+    _paceController.dispose();
+    _formatController.dispose();
+    _supportNotesController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    final db = context.read<AppDatabase>();
+    final profile = await db.getStudentPromptProfile(
+      teacherId: widget.teacherId,
+      courseKey: widget.courseKey,
+      studentId: widget.studentId,
+    );
+    if (!mounted) {
+      return;
+    }
+    _gradeLevelController.text = profile?.gradeLevel ?? '';
+    _readingLevelController.text = profile?.readingLevel ?? '';
+    _languageController.text = profile?.preferredLanguage ?? '';
+    _interestsController.text = profile?.interests ?? '';
+    _toneController.text = profile?.preferredTone ?? '';
+    _paceController.text = profile?.preferredPace ?? '';
+    _formatController.text = profile?.preferredFormat ?? '';
+    _supportNotesController.text = profile?.supportNotes ?? '';
+    _lastSavedAt = profile?.updatedAt ?? profile?.createdAt;
+    setState(() => _loading = false);
+  }
+
+  Future<void> _save() async {
+    final db = context.read<AppDatabase>();
+    final hasAny = _hasAnyValue();
+    if (!hasAny) {
+      await db.deleteStudentPromptProfile(
+        teacherId: widget.teacherId,
+        courseKey: widget.courseKey,
+        studentId: widget.studentId,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() => _lastSavedAt = null);
+      _showMessage(AppLocalizations.of(context)!.studentPromptCleared);
+      return;
+    }
+    await db.upsertStudentPromptProfile(
+      teacherId: widget.teacherId,
+      courseKey: widget.courseKey,
+      studentId: widget.studentId,
+      gradeLevel: _gradeLevelController.text,
+      readingLevel: _readingLevelController.text,
+      preferredLanguage: _languageController.text,
+      interests: _interestsController.text,
+      preferredTone: _toneController.text,
+      preferredPace: _paceController.text,
+      preferredFormat: _formatController.text,
+      supportNotes: _supportNotesController.text,
+    );
+    final refreshed = await db.getStudentPromptProfile(
+      teacherId: widget.teacherId,
+      courseKey: widget.courseKey,
+      studentId: widget.studentId,
+    );
+    if (!mounted) {
+      return;
+    }
+    setState(() => _lastSavedAt = refreshed?.updatedAt ?? refreshed?.createdAt);
+    _showMessage(AppLocalizations.of(context)!.studentPromptSaved);
+  }
+
+  Future<void> _clear() async {
+    _gradeLevelController.clear();
+    _readingLevelController.clear();
+    _languageController.clear();
+    _interestsController.clear();
+    _toneController.clear();
+    _paceController.clear();
+    _formatController.clear();
+    _supportNotesController.clear();
+    await _save();
+  }
+
+  bool _hasAnyValue() {
+    return _gradeLevelController.text.trim().isNotEmpty ||
+        _readingLevelController.text.trim().isNotEmpty ||
+        _languageController.text.trim().isNotEmpty ||
+        _interestsController.text.trim().isNotEmpty ||
+        _toneController.text.trim().isNotEmpty ||
+        _paceController.text.trim().isNotEmpty ||
+        _formatController.text.trim().isNotEmpty ||
+        _supportNotesController.text.trim().isNotEmpty;
+  }
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  String _formatTime(DateTime time) {
+    final year = time.year.toString().padLeft(4, '0');
+    final month = time.month.toString().padLeft(2, '0');
+    final day = time.day.toString().padLeft(2, '0');
+    final hour = time.hour.toString().padLeft(2, '0');
+    final minute = time.minute.toString().padLeft(2, '0');
+    return '$year-$month-$day $hour:$minute';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final theme = Theme.of(context);
+    final helperText = _lastSavedAt == null
+        ? l10n.studentPromptNotSaved
+        : l10n.studentPromptLastSaved(_formatTime(_lastSavedAt!));
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              l10n.studentPromptSectionTitle,
+              style: theme.textTheme.titleMedium,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              l10n.studentPromptSectionHint,
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
+            if (_loading)
+              const LinearProgressIndicator()
+            else ...[
+              TextFormField(
+                controller: _gradeLevelController,
+                decoration: InputDecoration(
+                  labelText: l10n.studentPromptGradeLabel,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _readingLevelController,
+                decoration: InputDecoration(
+                  labelText: l10n.studentPromptReadingLabel,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _languageController,
+                decoration: InputDecoration(
+                  labelText: l10n.studentPromptLanguageLabel,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _interestsController,
+                decoration: InputDecoration(
+                  labelText: l10n.studentPromptInterestsLabel,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _toneController,
+                decoration: InputDecoration(
+                  labelText: l10n.studentPromptToneLabel,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _paceController,
+                decoration: InputDecoration(
+                  labelText: l10n.studentPromptPaceLabel,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _formatController,
+                decoration: InputDecoration(
+                  labelText: l10n.studentPromptFormatLabel,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _supportNotesController,
+                minLines: 2,
+                maxLines: 4,
+                decoration: InputDecoration(
+                  labelText: l10n.studentPromptSupportLabel,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  ElevatedButton(
+                    onPressed: _loading ? null : _save,
+                    child: Text(l10n.saveButton),
+                  ),
+                  const SizedBox(width: 8),
+                  TextButton(
+                    onPressed: _loading ? null : _clear,
+                    child: Text(l10n.clearButton),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      helperText,
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 }
 

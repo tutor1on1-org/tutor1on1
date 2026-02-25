@@ -6191,6 +6191,715 @@ class PromptTemplatesCompanion extends UpdateCompanion<PromptTemplate> {
   }
 }
 
+class $StudentPromptProfilesTable extends StudentPromptProfiles
+    with TableInfo<$StudentPromptProfilesTable, StudentPromptProfile> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $StudentPromptProfilesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+      'id', aliasedName, false,
+      hasAutoIncrement: true,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('PRIMARY KEY AUTOINCREMENT'));
+  static const VerificationMeta _teacherIdMeta =
+      const VerificationMeta('teacherId');
+  @override
+  late final GeneratedColumn<int> teacherId = GeneratedColumn<int>(
+      'teacher_id', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _courseKeyMeta =
+      const VerificationMeta('courseKey');
+  @override
+  late final GeneratedColumn<String> courseKey = GeneratedColumn<String>(
+      'course_key', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _studentIdMeta =
+      const VerificationMeta('studentId');
+  @override
+  late final GeneratedColumn<int> studentId = GeneratedColumn<int>(
+      'student_id', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _gradeLevelMeta =
+      const VerificationMeta('gradeLevel');
+  @override
+  late final GeneratedColumn<String> gradeLevel = GeneratedColumn<String>(
+      'grade_level', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _readingLevelMeta =
+      const VerificationMeta('readingLevel');
+  @override
+  late final GeneratedColumn<String> readingLevel = GeneratedColumn<String>(
+      'reading_level', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _preferredLanguageMeta =
+      const VerificationMeta('preferredLanguage');
+  @override
+  late final GeneratedColumn<String> preferredLanguage =
+      GeneratedColumn<String>('preferred_language', aliasedName, true,
+          type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _interestsMeta =
+      const VerificationMeta('interests');
+  @override
+  late final GeneratedColumn<String> interests = GeneratedColumn<String>(
+      'interests', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _preferredToneMeta =
+      const VerificationMeta('preferredTone');
+  @override
+  late final GeneratedColumn<String> preferredTone = GeneratedColumn<String>(
+      'preferred_tone', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _preferredPaceMeta =
+      const VerificationMeta('preferredPace');
+  @override
+  late final GeneratedColumn<String> preferredPace = GeneratedColumn<String>(
+      'preferred_pace', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _preferredFormatMeta =
+      const VerificationMeta('preferredFormat');
+  @override
+  late final GeneratedColumn<String> preferredFormat = GeneratedColumn<String>(
+      'preferred_format', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _supportNotesMeta =
+      const VerificationMeta('supportNotes');
+  @override
+  late final GeneratedColumn<String> supportNotes = GeneratedColumn<String>(
+      'support_notes', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _createdAtMeta =
+      const VerificationMeta('createdAt');
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+      'created_at', aliasedName, false,
+      type: DriftSqlType.dateTime,
+      requiredDuringInsert: false,
+      defaultValue: currentDateAndTime);
+  static const VerificationMeta _updatedAtMeta =
+      const VerificationMeta('updatedAt');
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+      'updated_at', aliasedName, true,
+      type: DriftSqlType.dateTime, requiredDuringInsert: false);
+  @override
+  List<GeneratedColumn> get $columns => [
+        id,
+        teacherId,
+        courseKey,
+        studentId,
+        gradeLevel,
+        readingLevel,
+        preferredLanguage,
+        interests,
+        preferredTone,
+        preferredPace,
+        preferredFormat,
+        supportNotes,
+        createdAt,
+        updatedAt
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'student_prompt_profiles';
+  @override
+  VerificationContext validateIntegrity(
+      Insertable<StudentPromptProfile> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('teacher_id')) {
+      context.handle(_teacherIdMeta,
+          teacherId.isAcceptableOrUnknown(data['teacher_id']!, _teacherIdMeta));
+    } else if (isInserting) {
+      context.missing(_teacherIdMeta);
+    }
+    if (data.containsKey('course_key')) {
+      context.handle(_courseKeyMeta,
+          courseKey.isAcceptableOrUnknown(data['course_key']!, _courseKeyMeta));
+    }
+    if (data.containsKey('student_id')) {
+      context.handle(_studentIdMeta,
+          studentId.isAcceptableOrUnknown(data['student_id']!, _studentIdMeta));
+    }
+    if (data.containsKey('grade_level')) {
+      context.handle(
+          _gradeLevelMeta,
+          gradeLevel.isAcceptableOrUnknown(
+              data['grade_level']!, _gradeLevelMeta));
+    }
+    if (data.containsKey('reading_level')) {
+      context.handle(
+          _readingLevelMeta,
+          readingLevel.isAcceptableOrUnknown(
+              data['reading_level']!, _readingLevelMeta));
+    }
+    if (data.containsKey('preferred_language')) {
+      context.handle(
+          _preferredLanguageMeta,
+          preferredLanguage.isAcceptableOrUnknown(
+              data['preferred_language']!, _preferredLanguageMeta));
+    }
+    if (data.containsKey('interests')) {
+      context.handle(_interestsMeta,
+          interests.isAcceptableOrUnknown(data['interests']!, _interestsMeta));
+    }
+    if (data.containsKey('preferred_tone')) {
+      context.handle(
+          _preferredToneMeta,
+          preferredTone.isAcceptableOrUnknown(
+              data['preferred_tone']!, _preferredToneMeta));
+    }
+    if (data.containsKey('preferred_pace')) {
+      context.handle(
+          _preferredPaceMeta,
+          preferredPace.isAcceptableOrUnknown(
+              data['preferred_pace']!, _preferredPaceMeta));
+    }
+    if (data.containsKey('preferred_format')) {
+      context.handle(
+          _preferredFormatMeta,
+          preferredFormat.isAcceptableOrUnknown(
+              data['preferred_format']!, _preferredFormatMeta));
+    }
+    if (data.containsKey('support_notes')) {
+      context.handle(
+          _supportNotesMeta,
+          supportNotes.isAcceptableOrUnknown(
+              data['support_notes']!, _supportNotesMeta));
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(_createdAtMeta,
+          createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(_updatedAtMeta,
+          updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  StudentPromptProfile map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return StudentPromptProfile(
+      id: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}id'])!,
+      teacherId: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}teacher_id'])!,
+      courseKey: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}course_key']),
+      studentId: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}student_id']),
+      gradeLevel: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}grade_level']),
+      readingLevel: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}reading_level']),
+      preferredLanguage: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}preferred_language']),
+      interests: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}interests']),
+      preferredTone: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}preferred_tone']),
+      preferredPace: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}preferred_pace']),
+      preferredFormat: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}preferred_format']),
+      supportNotes: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}support_notes']),
+      createdAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}created_at'])!,
+      updatedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}updated_at']),
+    );
+  }
+
+  @override
+  $StudentPromptProfilesTable createAlias(String alias) {
+    return $StudentPromptProfilesTable(attachedDatabase, alias);
+  }
+}
+
+class StudentPromptProfile extends DataClass
+    implements Insertable<StudentPromptProfile> {
+  final int id;
+  final int teacherId;
+  final String? courseKey;
+  final int? studentId;
+  final String? gradeLevel;
+  final String? readingLevel;
+  final String? preferredLanguage;
+  final String? interests;
+  final String? preferredTone;
+  final String? preferredPace;
+  final String? preferredFormat;
+  final String? supportNotes;
+  final DateTime createdAt;
+  final DateTime? updatedAt;
+  const StudentPromptProfile(
+      {required this.id,
+      required this.teacherId,
+      this.courseKey,
+      this.studentId,
+      this.gradeLevel,
+      this.readingLevel,
+      this.preferredLanguage,
+      this.interests,
+      this.preferredTone,
+      this.preferredPace,
+      this.preferredFormat,
+      this.supportNotes,
+      required this.createdAt,
+      this.updatedAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['teacher_id'] = Variable<int>(teacherId);
+    if (!nullToAbsent || courseKey != null) {
+      map['course_key'] = Variable<String>(courseKey);
+    }
+    if (!nullToAbsent || studentId != null) {
+      map['student_id'] = Variable<int>(studentId);
+    }
+    if (!nullToAbsent || gradeLevel != null) {
+      map['grade_level'] = Variable<String>(gradeLevel);
+    }
+    if (!nullToAbsent || readingLevel != null) {
+      map['reading_level'] = Variable<String>(readingLevel);
+    }
+    if (!nullToAbsent || preferredLanguage != null) {
+      map['preferred_language'] = Variable<String>(preferredLanguage);
+    }
+    if (!nullToAbsent || interests != null) {
+      map['interests'] = Variable<String>(interests);
+    }
+    if (!nullToAbsent || preferredTone != null) {
+      map['preferred_tone'] = Variable<String>(preferredTone);
+    }
+    if (!nullToAbsent || preferredPace != null) {
+      map['preferred_pace'] = Variable<String>(preferredPace);
+    }
+    if (!nullToAbsent || preferredFormat != null) {
+      map['preferred_format'] = Variable<String>(preferredFormat);
+    }
+    if (!nullToAbsent || supportNotes != null) {
+      map['support_notes'] = Variable<String>(supportNotes);
+    }
+    map['created_at'] = Variable<DateTime>(createdAt);
+    if (!nullToAbsent || updatedAt != null) {
+      map['updated_at'] = Variable<DateTime>(updatedAt);
+    }
+    return map;
+  }
+
+  StudentPromptProfilesCompanion toCompanion(bool nullToAbsent) {
+    return StudentPromptProfilesCompanion(
+      id: Value(id),
+      teacherId: Value(teacherId),
+      courseKey: courseKey == null && nullToAbsent
+          ? const Value.absent()
+          : Value(courseKey),
+      studentId: studentId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(studentId),
+      gradeLevel: gradeLevel == null && nullToAbsent
+          ? const Value.absent()
+          : Value(gradeLevel),
+      readingLevel: readingLevel == null && nullToAbsent
+          ? const Value.absent()
+          : Value(readingLevel),
+      preferredLanguage: preferredLanguage == null && nullToAbsent
+          ? const Value.absent()
+          : Value(preferredLanguage),
+      interests: interests == null && nullToAbsent
+          ? const Value.absent()
+          : Value(interests),
+      preferredTone: preferredTone == null && nullToAbsent
+          ? const Value.absent()
+          : Value(preferredTone),
+      preferredPace: preferredPace == null && nullToAbsent
+          ? const Value.absent()
+          : Value(preferredPace),
+      preferredFormat: preferredFormat == null && nullToAbsent
+          ? const Value.absent()
+          : Value(preferredFormat),
+      supportNotes: supportNotes == null && nullToAbsent
+          ? const Value.absent()
+          : Value(supportNotes),
+      createdAt: Value(createdAt),
+      updatedAt: updatedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(updatedAt),
+    );
+  }
+
+  factory StudentPromptProfile.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return StudentPromptProfile(
+      id: serializer.fromJson<int>(json['id']),
+      teacherId: serializer.fromJson<int>(json['teacherId']),
+      courseKey: serializer.fromJson<String?>(json['courseKey']),
+      studentId: serializer.fromJson<int?>(json['studentId']),
+      gradeLevel: serializer.fromJson<String?>(json['gradeLevel']),
+      readingLevel: serializer.fromJson<String?>(json['readingLevel']),
+      preferredLanguage:
+          serializer.fromJson<String?>(json['preferredLanguage']),
+      interests: serializer.fromJson<String?>(json['interests']),
+      preferredTone: serializer.fromJson<String?>(json['preferredTone']),
+      preferredPace: serializer.fromJson<String?>(json['preferredPace']),
+      preferredFormat: serializer.fromJson<String?>(json['preferredFormat']),
+      supportNotes: serializer.fromJson<String?>(json['supportNotes']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      updatedAt: serializer.fromJson<DateTime?>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'teacherId': serializer.toJson<int>(teacherId),
+      'courseKey': serializer.toJson<String?>(courseKey),
+      'studentId': serializer.toJson<int?>(studentId),
+      'gradeLevel': serializer.toJson<String?>(gradeLevel),
+      'readingLevel': serializer.toJson<String?>(readingLevel),
+      'preferredLanguage': serializer.toJson<String?>(preferredLanguage),
+      'interests': serializer.toJson<String?>(interests),
+      'preferredTone': serializer.toJson<String?>(preferredTone),
+      'preferredPace': serializer.toJson<String?>(preferredPace),
+      'preferredFormat': serializer.toJson<String?>(preferredFormat),
+      'supportNotes': serializer.toJson<String?>(supportNotes),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+      'updatedAt': serializer.toJson<DateTime?>(updatedAt),
+    };
+  }
+
+  StudentPromptProfile copyWith(
+          {int? id,
+          int? teacherId,
+          Value<String?> courseKey = const Value.absent(),
+          Value<int?> studentId = const Value.absent(),
+          Value<String?> gradeLevel = const Value.absent(),
+          Value<String?> readingLevel = const Value.absent(),
+          Value<String?> preferredLanguage = const Value.absent(),
+          Value<String?> interests = const Value.absent(),
+          Value<String?> preferredTone = const Value.absent(),
+          Value<String?> preferredPace = const Value.absent(),
+          Value<String?> preferredFormat = const Value.absent(),
+          Value<String?> supportNotes = const Value.absent(),
+          DateTime? createdAt,
+          Value<DateTime?> updatedAt = const Value.absent()}) =>
+      StudentPromptProfile(
+        id: id ?? this.id,
+        teacherId: teacherId ?? this.teacherId,
+        courseKey: courseKey.present ? courseKey.value : this.courseKey,
+        studentId: studentId.present ? studentId.value : this.studentId,
+        gradeLevel: gradeLevel.present ? gradeLevel.value : this.gradeLevel,
+        readingLevel:
+            readingLevel.present ? readingLevel.value : this.readingLevel,
+        preferredLanguage: preferredLanguage.present
+            ? preferredLanguage.value
+            : this.preferredLanguage,
+        interests: interests.present ? interests.value : this.interests,
+        preferredTone:
+            preferredTone.present ? preferredTone.value : this.preferredTone,
+        preferredPace:
+            preferredPace.present ? preferredPace.value : this.preferredPace,
+        preferredFormat: preferredFormat.present
+            ? preferredFormat.value
+            : this.preferredFormat,
+        supportNotes:
+            supportNotes.present ? supportNotes.value : this.supportNotes,
+        createdAt: createdAt ?? this.createdAt,
+        updatedAt: updatedAt.present ? updatedAt.value : this.updatedAt,
+      );
+  StudentPromptProfile copyWithCompanion(StudentPromptProfilesCompanion data) {
+    return StudentPromptProfile(
+      id: data.id.present ? data.id.value : this.id,
+      teacherId: data.teacherId.present ? data.teacherId.value : this.teacherId,
+      courseKey: data.courseKey.present ? data.courseKey.value : this.courseKey,
+      studentId: data.studentId.present ? data.studentId.value : this.studentId,
+      gradeLevel:
+          data.gradeLevel.present ? data.gradeLevel.value : this.gradeLevel,
+      readingLevel: data.readingLevel.present
+          ? data.readingLevel.value
+          : this.readingLevel,
+      preferredLanguage: data.preferredLanguage.present
+          ? data.preferredLanguage.value
+          : this.preferredLanguage,
+      interests: data.interests.present ? data.interests.value : this.interests,
+      preferredTone: data.preferredTone.present
+          ? data.preferredTone.value
+          : this.preferredTone,
+      preferredPace: data.preferredPace.present
+          ? data.preferredPace.value
+          : this.preferredPace,
+      preferredFormat: data.preferredFormat.present
+          ? data.preferredFormat.value
+          : this.preferredFormat,
+      supportNotes: data.supportNotes.present
+          ? data.supportNotes.value
+          : this.supportNotes,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('StudentPromptProfile(')
+          ..write('id: $id, ')
+          ..write('teacherId: $teacherId, ')
+          ..write('courseKey: $courseKey, ')
+          ..write('studentId: $studentId, ')
+          ..write('gradeLevel: $gradeLevel, ')
+          ..write('readingLevel: $readingLevel, ')
+          ..write('preferredLanguage: $preferredLanguage, ')
+          ..write('interests: $interests, ')
+          ..write('preferredTone: $preferredTone, ')
+          ..write('preferredPace: $preferredPace, ')
+          ..write('preferredFormat: $preferredFormat, ')
+          ..write('supportNotes: $supportNotes, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+      id,
+      teacherId,
+      courseKey,
+      studentId,
+      gradeLevel,
+      readingLevel,
+      preferredLanguage,
+      interests,
+      preferredTone,
+      preferredPace,
+      preferredFormat,
+      supportNotes,
+      createdAt,
+      updatedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is StudentPromptProfile &&
+          other.id == this.id &&
+          other.teacherId == this.teacherId &&
+          other.courseKey == this.courseKey &&
+          other.studentId == this.studentId &&
+          other.gradeLevel == this.gradeLevel &&
+          other.readingLevel == this.readingLevel &&
+          other.preferredLanguage == this.preferredLanguage &&
+          other.interests == this.interests &&
+          other.preferredTone == this.preferredTone &&
+          other.preferredPace == this.preferredPace &&
+          other.preferredFormat == this.preferredFormat &&
+          other.supportNotes == this.supportNotes &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class StudentPromptProfilesCompanion
+    extends UpdateCompanion<StudentPromptProfile> {
+  final Value<int> id;
+  final Value<int> teacherId;
+  final Value<String?> courseKey;
+  final Value<int?> studentId;
+  final Value<String?> gradeLevel;
+  final Value<String?> readingLevel;
+  final Value<String?> preferredLanguage;
+  final Value<String?> interests;
+  final Value<String?> preferredTone;
+  final Value<String?> preferredPace;
+  final Value<String?> preferredFormat;
+  final Value<String?> supportNotes;
+  final Value<DateTime> createdAt;
+  final Value<DateTime?> updatedAt;
+  const StudentPromptProfilesCompanion({
+    this.id = const Value.absent(),
+    this.teacherId = const Value.absent(),
+    this.courseKey = const Value.absent(),
+    this.studentId = const Value.absent(),
+    this.gradeLevel = const Value.absent(),
+    this.readingLevel = const Value.absent(),
+    this.preferredLanguage = const Value.absent(),
+    this.interests = const Value.absent(),
+    this.preferredTone = const Value.absent(),
+    this.preferredPace = const Value.absent(),
+    this.preferredFormat = const Value.absent(),
+    this.supportNotes = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+  });
+  StudentPromptProfilesCompanion.insert({
+    this.id = const Value.absent(),
+    required int teacherId,
+    this.courseKey = const Value.absent(),
+    this.studentId = const Value.absent(),
+    this.gradeLevel = const Value.absent(),
+    this.readingLevel = const Value.absent(),
+    this.preferredLanguage = const Value.absent(),
+    this.interests = const Value.absent(),
+    this.preferredTone = const Value.absent(),
+    this.preferredPace = const Value.absent(),
+    this.preferredFormat = const Value.absent(),
+    this.supportNotes = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+  }) : teacherId = Value(teacherId);
+  static Insertable<StudentPromptProfile> custom({
+    Expression<int>? id,
+    Expression<int>? teacherId,
+    Expression<String>? courseKey,
+    Expression<int>? studentId,
+    Expression<String>? gradeLevel,
+    Expression<String>? readingLevel,
+    Expression<String>? preferredLanguage,
+    Expression<String>? interests,
+    Expression<String>? preferredTone,
+    Expression<String>? preferredPace,
+    Expression<String>? preferredFormat,
+    Expression<String>? supportNotes,
+    Expression<DateTime>? createdAt,
+    Expression<DateTime>? updatedAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (teacherId != null) 'teacher_id': teacherId,
+      if (courseKey != null) 'course_key': courseKey,
+      if (studentId != null) 'student_id': studentId,
+      if (gradeLevel != null) 'grade_level': gradeLevel,
+      if (readingLevel != null) 'reading_level': readingLevel,
+      if (preferredLanguage != null) 'preferred_language': preferredLanguage,
+      if (interests != null) 'interests': interests,
+      if (preferredTone != null) 'preferred_tone': preferredTone,
+      if (preferredPace != null) 'preferred_pace': preferredPace,
+      if (preferredFormat != null) 'preferred_format': preferredFormat,
+      if (supportNotes != null) 'support_notes': supportNotes,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+    });
+  }
+
+  StudentPromptProfilesCompanion copyWith(
+      {Value<int>? id,
+      Value<int>? teacherId,
+      Value<String?>? courseKey,
+      Value<int?>? studentId,
+      Value<String?>? gradeLevel,
+      Value<String?>? readingLevel,
+      Value<String?>? preferredLanguage,
+      Value<String?>? interests,
+      Value<String?>? preferredTone,
+      Value<String?>? preferredPace,
+      Value<String?>? preferredFormat,
+      Value<String?>? supportNotes,
+      Value<DateTime>? createdAt,
+      Value<DateTime?>? updatedAt}) {
+    return StudentPromptProfilesCompanion(
+      id: id ?? this.id,
+      teacherId: teacherId ?? this.teacherId,
+      courseKey: courseKey ?? this.courseKey,
+      studentId: studentId ?? this.studentId,
+      gradeLevel: gradeLevel ?? this.gradeLevel,
+      readingLevel: readingLevel ?? this.readingLevel,
+      preferredLanguage: preferredLanguage ?? this.preferredLanguage,
+      interests: interests ?? this.interests,
+      preferredTone: preferredTone ?? this.preferredTone,
+      preferredPace: preferredPace ?? this.preferredPace,
+      preferredFormat: preferredFormat ?? this.preferredFormat,
+      supportNotes: supportNotes ?? this.supportNotes,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (teacherId.present) {
+      map['teacher_id'] = Variable<int>(teacherId.value);
+    }
+    if (courseKey.present) {
+      map['course_key'] = Variable<String>(courseKey.value);
+    }
+    if (studentId.present) {
+      map['student_id'] = Variable<int>(studentId.value);
+    }
+    if (gradeLevel.present) {
+      map['grade_level'] = Variable<String>(gradeLevel.value);
+    }
+    if (readingLevel.present) {
+      map['reading_level'] = Variable<String>(readingLevel.value);
+    }
+    if (preferredLanguage.present) {
+      map['preferred_language'] = Variable<String>(preferredLanguage.value);
+    }
+    if (interests.present) {
+      map['interests'] = Variable<String>(interests.value);
+    }
+    if (preferredTone.present) {
+      map['preferred_tone'] = Variable<String>(preferredTone.value);
+    }
+    if (preferredPace.present) {
+      map['preferred_pace'] = Variable<String>(preferredPace.value);
+    }
+    if (preferredFormat.present) {
+      map['preferred_format'] = Variable<String>(preferredFormat.value);
+    }
+    if (supportNotes.present) {
+      map['support_notes'] = Variable<String>(supportNotes.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('StudentPromptProfilesCompanion(')
+          ..write('id: $id, ')
+          ..write('teacherId: $teacherId, ')
+          ..write('courseKey: $courseKey, ')
+          ..write('studentId: $studentId, ')
+          ..write('gradeLevel: $gradeLevel, ')
+          ..write('readingLevel: $readingLevel, ')
+          ..write('preferredLanguage: $preferredLanguage, ')
+          ..write('interests: $interests, ')
+          ..write('preferredTone: $preferredTone, ')
+          ..write('preferredPace: $preferredPace, ')
+          ..write('preferredFormat: $preferredFormat, ')
+          ..write('supportNotes: $supportNotes, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -6209,6 +6918,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $ApiConfigsTable apiConfigs = $ApiConfigsTable(this);
   late final $PromptTemplatesTable promptTemplates =
       $PromptTemplatesTable(this);
+  late final $StudentPromptProfilesTable studentPromptProfiles =
+      $StudentPromptProfilesTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -6225,7 +6936,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         llmCalls,
         appSettings,
         apiConfigs,
-        promptTemplates
+        promptTemplates,
+        studentPromptProfiles
       ];
 }
 
@@ -9128,6 +9840,323 @@ typedef $$PromptTemplatesTableProcessedTableManager = ProcessedTableManager<
     ),
     PromptTemplate,
     PrefetchHooks Function()>;
+typedef $$StudentPromptProfilesTableCreateCompanionBuilder
+    = StudentPromptProfilesCompanion Function({
+  Value<int> id,
+  required int teacherId,
+  Value<String?> courseKey,
+  Value<int?> studentId,
+  Value<String?> gradeLevel,
+  Value<String?> readingLevel,
+  Value<String?> preferredLanguage,
+  Value<String?> interests,
+  Value<String?> preferredTone,
+  Value<String?> preferredPace,
+  Value<String?> preferredFormat,
+  Value<String?> supportNotes,
+  Value<DateTime> createdAt,
+  Value<DateTime?> updatedAt,
+});
+typedef $$StudentPromptProfilesTableUpdateCompanionBuilder
+    = StudentPromptProfilesCompanion Function({
+  Value<int> id,
+  Value<int> teacherId,
+  Value<String?> courseKey,
+  Value<int?> studentId,
+  Value<String?> gradeLevel,
+  Value<String?> readingLevel,
+  Value<String?> preferredLanguage,
+  Value<String?> interests,
+  Value<String?> preferredTone,
+  Value<String?> preferredPace,
+  Value<String?> preferredFormat,
+  Value<String?> supportNotes,
+  Value<DateTime> createdAt,
+  Value<DateTime?> updatedAt,
+});
+
+class $$StudentPromptProfilesTableFilterComposer
+    extends Composer<_$AppDatabase, $StudentPromptProfilesTable> {
+  $$StudentPromptProfilesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get teacherId => $composableBuilder(
+      column: $table.teacherId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get courseKey => $composableBuilder(
+      column: $table.courseKey, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get studentId => $composableBuilder(
+      column: $table.studentId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get gradeLevel => $composableBuilder(
+      column: $table.gradeLevel, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get readingLevel => $composableBuilder(
+      column: $table.readingLevel, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get preferredLanguage => $composableBuilder(
+      column: $table.preferredLanguage,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get interests => $composableBuilder(
+      column: $table.interests, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get preferredTone => $composableBuilder(
+      column: $table.preferredTone, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get preferredPace => $composableBuilder(
+      column: $table.preferredPace, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get preferredFormat => $composableBuilder(
+      column: $table.preferredFormat,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get supportNotes => $composableBuilder(
+      column: $table.supportNotes, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+      column: $table.createdAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+      column: $table.updatedAt, builder: (column) => ColumnFilters(column));
+}
+
+class $$StudentPromptProfilesTableOrderingComposer
+    extends Composer<_$AppDatabase, $StudentPromptProfilesTable> {
+  $$StudentPromptProfilesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get teacherId => $composableBuilder(
+      column: $table.teacherId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get courseKey => $composableBuilder(
+      column: $table.courseKey, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get studentId => $composableBuilder(
+      column: $table.studentId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get gradeLevel => $composableBuilder(
+      column: $table.gradeLevel, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get readingLevel => $composableBuilder(
+      column: $table.readingLevel,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get preferredLanguage => $composableBuilder(
+      column: $table.preferredLanguage,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get interests => $composableBuilder(
+      column: $table.interests, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get preferredTone => $composableBuilder(
+      column: $table.preferredTone,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get preferredPace => $composableBuilder(
+      column: $table.preferredPace,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get preferredFormat => $composableBuilder(
+      column: $table.preferredFormat,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get supportNotes => $composableBuilder(
+      column: $table.supportNotes,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+      column: $table.createdAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+      column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
+}
+
+class $$StudentPromptProfilesTableAnnotationComposer
+    extends Composer<_$AppDatabase, $StudentPromptProfilesTable> {
+  $$StudentPromptProfilesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get teacherId =>
+      $composableBuilder(column: $table.teacherId, builder: (column) => column);
+
+  GeneratedColumn<String> get courseKey =>
+      $composableBuilder(column: $table.courseKey, builder: (column) => column);
+
+  GeneratedColumn<int> get studentId =>
+      $composableBuilder(column: $table.studentId, builder: (column) => column);
+
+  GeneratedColumn<String> get gradeLevel => $composableBuilder(
+      column: $table.gradeLevel, builder: (column) => column);
+
+  GeneratedColumn<String> get readingLevel => $composableBuilder(
+      column: $table.readingLevel, builder: (column) => column);
+
+  GeneratedColumn<String> get preferredLanguage => $composableBuilder(
+      column: $table.preferredLanguage, builder: (column) => column);
+
+  GeneratedColumn<String> get interests =>
+      $composableBuilder(column: $table.interests, builder: (column) => column);
+
+  GeneratedColumn<String> get preferredTone => $composableBuilder(
+      column: $table.preferredTone, builder: (column) => column);
+
+  GeneratedColumn<String> get preferredPace => $composableBuilder(
+      column: $table.preferredPace, builder: (column) => column);
+
+  GeneratedColumn<String> get preferredFormat => $composableBuilder(
+      column: $table.preferredFormat, builder: (column) => column);
+
+  GeneratedColumn<String> get supportNotes => $composableBuilder(
+      column: $table.supportNotes, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$StudentPromptProfilesTableTableManager extends RootTableManager<
+    _$AppDatabase,
+    $StudentPromptProfilesTable,
+    StudentPromptProfile,
+    $$StudentPromptProfilesTableFilterComposer,
+    $$StudentPromptProfilesTableOrderingComposer,
+    $$StudentPromptProfilesTableAnnotationComposer,
+    $$StudentPromptProfilesTableCreateCompanionBuilder,
+    $$StudentPromptProfilesTableUpdateCompanionBuilder,
+    (
+      StudentPromptProfile,
+      BaseReferences<_$AppDatabase, $StudentPromptProfilesTable,
+          StudentPromptProfile>
+    ),
+    StudentPromptProfile,
+    PrefetchHooks Function()> {
+  $$StudentPromptProfilesTableTableManager(
+      _$AppDatabase db, $StudentPromptProfilesTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$StudentPromptProfilesTableFilterComposer(
+                  $db: db, $table: table),
+          createOrderingComposer: () =>
+              $$StudentPromptProfilesTableOrderingComposer(
+                  $db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$StudentPromptProfilesTableAnnotationComposer(
+                  $db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<int> id = const Value.absent(),
+            Value<int> teacherId = const Value.absent(),
+            Value<String?> courseKey = const Value.absent(),
+            Value<int?> studentId = const Value.absent(),
+            Value<String?> gradeLevel = const Value.absent(),
+            Value<String?> readingLevel = const Value.absent(),
+            Value<String?> preferredLanguage = const Value.absent(),
+            Value<String?> interests = const Value.absent(),
+            Value<String?> preferredTone = const Value.absent(),
+            Value<String?> preferredPace = const Value.absent(),
+            Value<String?> preferredFormat = const Value.absent(),
+            Value<String?> supportNotes = const Value.absent(),
+            Value<DateTime> createdAt = const Value.absent(),
+            Value<DateTime?> updatedAt = const Value.absent(),
+          }) =>
+              StudentPromptProfilesCompanion(
+            id: id,
+            teacherId: teacherId,
+            courseKey: courseKey,
+            studentId: studentId,
+            gradeLevel: gradeLevel,
+            readingLevel: readingLevel,
+            preferredLanguage: preferredLanguage,
+            interests: interests,
+            preferredTone: preferredTone,
+            preferredPace: preferredPace,
+            preferredFormat: preferredFormat,
+            supportNotes: supportNotes,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+          ),
+          createCompanionCallback: ({
+            Value<int> id = const Value.absent(),
+            required int teacherId,
+            Value<String?> courseKey = const Value.absent(),
+            Value<int?> studentId = const Value.absent(),
+            Value<String?> gradeLevel = const Value.absent(),
+            Value<String?> readingLevel = const Value.absent(),
+            Value<String?> preferredLanguage = const Value.absent(),
+            Value<String?> interests = const Value.absent(),
+            Value<String?> preferredTone = const Value.absent(),
+            Value<String?> preferredPace = const Value.absent(),
+            Value<String?> preferredFormat = const Value.absent(),
+            Value<String?> supportNotes = const Value.absent(),
+            Value<DateTime> createdAt = const Value.absent(),
+            Value<DateTime?> updatedAt = const Value.absent(),
+          }) =>
+              StudentPromptProfilesCompanion.insert(
+            id: id,
+            teacherId: teacherId,
+            courseKey: courseKey,
+            studentId: studentId,
+            gradeLevel: gradeLevel,
+            readingLevel: readingLevel,
+            preferredLanguage: preferredLanguage,
+            interests: interests,
+            preferredTone: preferredTone,
+            preferredPace: preferredPace,
+            preferredFormat: preferredFormat,
+            supportNotes: supportNotes,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$StudentPromptProfilesTableProcessedTableManager
+    = ProcessedTableManager<
+        _$AppDatabase,
+        $StudentPromptProfilesTable,
+        StudentPromptProfile,
+        $$StudentPromptProfilesTableFilterComposer,
+        $$StudentPromptProfilesTableOrderingComposer,
+        $$StudentPromptProfilesTableAnnotationComposer,
+        $$StudentPromptProfilesTableCreateCompanionBuilder,
+        $$StudentPromptProfilesTableUpdateCompanionBuilder,
+        (
+          StudentPromptProfile,
+          BaseReferences<_$AppDatabase, $StudentPromptProfilesTable,
+              StudentPromptProfile>
+        ),
+        StudentPromptProfile,
+        PrefetchHooks Function()>;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -9157,4 +10186,6 @@ class $AppDatabaseManager {
       $$ApiConfigsTableTableManager(_db, _db.apiConfigs);
   $$PromptTemplatesTableTableManager get promptTemplates =>
       $$PromptTemplatesTableTableManager(_db, _db.promptTemplates);
+  $$StudentPromptProfilesTableTableManager get studentPromptProfiles =>
+      $$StudentPromptProfilesTableTableManager(_db, _db.studentPromptProfiles);
 }

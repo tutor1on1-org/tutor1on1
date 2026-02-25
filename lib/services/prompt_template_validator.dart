@@ -99,6 +99,8 @@ class PromptTemplateValidator {
       'kp_title',
       'kp_description',
       'student_summary',
+      'student_profile',
+      'student_preferences',
     };
     const historyContext = {
       'conversation_history',

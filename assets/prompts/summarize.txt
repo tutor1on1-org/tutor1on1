@@ -17,6 +17,12 @@ KP_DESCRIPTION: {{kp_description}}
 Student summary (prior state; use if useful):
 {{student_summary}}
  
+Student profile (may be empty):
+{{student_profile}}
+
+Student preferences (may be empty):
+{{student_preferences}}
+
 Session transcript (may be truncated):
 {{conversation_history}}
  
@@ -26,6 +32,7 @@ Required JSON format:
 How to write summary_text:
 - Use the same language as the student's latest input if clear; otherwise use English.
 - Keep it concise: 2-4 short sentences, <= 800 characters.
+- Phrase feedback in a tone and level that matches the student profile and preferences.
 - Must include:
   1) Strengths (short, 1-2 items).
   2) Gaps (short, 1-2 items).

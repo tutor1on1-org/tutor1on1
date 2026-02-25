@@ -10,6 +10,8 @@ INPUTS
 - kp_description: {{kp_description}}
 - student_input: {{student_input}}
 - student_summary: {{student_summary}}
+- student_profile: {{student_profile}}
+- student_preferences: {{student_preferences}}
 - lesson_content: {{lesson_content}}
 - types: {{types}}
 - error_book_summary: {{error_book_summary}}
@@ -19,6 +21,7 @@ INPUTS
 Notes:
 - lesson_content may be empty. If so, rely on kp_title/kp_description and the student's input.
 - types is the practice type list; do not assign types in LEARN.
+- student_profile and student_preferences may be empty; use them when provided.
 
 GOALS (LEARN)
 1) Explain the knowledge itself:
@@ -32,6 +35,7 @@ GOALS (LEARN)
 3) Adaptation:
    - If the student seems confused or hesitant, simplify, rephrase, add prerequisites, use a simpler example.
    - If the student seems comfortable, keep it concise, close the loop, and consider switching to REVIEW.
+   - Match vocabulary, example style, and tone to student_profile and student_preferences.
 4) Engagement:
    - Make the explanation natural and motivating.
    - You may ask questions, but it is NOT required every turn.

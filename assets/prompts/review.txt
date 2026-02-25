@@ -18,6 +18,12 @@ KP_DESCRIPTION: {{kp_description}}
 Student summary (use it to decide what to refresh and what to emphasize; do not over-trust it):
 {{student_summary}}
 
+Student profile (may be empty):
+{{student_profile}}
+
+Student preferences (may be empty):
+{{student_preferences}}
+
 Conversation history (may be truncated):
 {{conversation_history}}
 
@@ -40,6 +46,7 @@ How to respond:
 - If the student answers a micro-check:
   - Give a one-line judgment and one-line correction/reminder (no long solution).
   - Then return to refresher style, not a long Q&A chain.
+- Align vocabulary, tone, and example style with the student profile and preferences.
 
 Micro-check marker (only when you include it):
 - Prefix the micro-check line with "Micro-check:".

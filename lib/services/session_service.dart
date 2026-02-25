@@ -237,6 +237,11 @@ class SessionService {
       previousJson: promptResolution.prevJson,
     );
     final courseKey = _normalizeCourseKey(courseVersion.sourcePath);
+    final studentPromptContext = await _buildStudentPromptContext(
+      teacherId: courseVersion.teacherId,
+      courseKey: courseKey,
+      studentId: session?.studentId,
+    );
     if (session != null) {
       await _promptRepository.ensureAssignmentPrompts(
         teacherId: courseVersion.teacherId,
@@ -262,6 +267,8 @@ class SessionService {
       'session_history': history,
       'student_input': studentInput.trim(),
       'student_summary': progress?.summaryText ?? session?.summaryText ?? '',
+      'student_profile': studentPromptContext.profileText,
+      'student_preferences': studentPromptContext.preferencesText,
       'lesson_content': '',
       'types': '[{"type_id":"OTHER","name":"General"}]',
       'error_book_summary': errorBookSummary,
@@ -472,6 +479,11 @@ class SessionService {
     final history = _buildHistory(messages);
     final lastEvidence = _extractLatestEvidence(messages);
     final courseKey = _normalizeCourseKey(courseVersion.sourcePath);
+    final studentPromptContext = await _buildStudentPromptContext(
+      teacherId: courseVersion.teacherId,
+      courseKey: courseKey,
+      studentId: session?.studentId,
+    );
     if (session != null) {
       await _promptRepository.ensureAssignmentPrompts(
         teacherId: courseVersion.teacherId,
@@ -496,6 +508,8 @@ class SessionService {
       'conversation_history': history,
       'session_history': history,
       'student_summary': progress?.summaryText ?? session?.summaryText ?? '',
+      'student_profile': studentPromptContext.profileText,
+      'student_preferences': studentPromptContext.preferencesText,
       'practice_history_summary': _buildPracticeHistorySummary(messages),
       'error_book_summary': _buildErrorBookSummary(progress: progress),
       'last_evidence': jsonEncode(
@@ -1104,6 +1118,120 @@ class SessionService {
     return fallback;
   }
 
+  Future<_StudentPromptContext> _buildStudentPromptContext({
+    required int teacherId,
+    required String? courseKey,
+    required int? studentId,
+  }) async {
+    final normalizedCourseKey = _normalizeCourseKey(courseKey);
+    final systemProfile = await _db.getStudentPromptProfile(
+      teacherId: teacherId,
+      courseKey: null,
+      studentId: null,
+    );
+    final courseProfile = normalizedCourseKey == null
+        ? null
+        : await _db.getStudentPromptProfile(
+            teacherId: teacherId,
+            courseKey: normalizedCourseKey,
+            studentId: null,
+          );
+    final studentProfile = (normalizedCourseKey == null || studentId == null)
+        ? null
+        : await _db.getStudentPromptProfile(
+            teacherId: teacherId,
+            courseKey: normalizedCourseKey,
+            studentId: studentId,
+          );
+    final gradeLevel = _resolveStudentPromptField(
+      studentProfile?.gradeLevel,
+      courseProfile?.gradeLevel,
+      systemProfile?.gradeLevel,
+    );
+    final readingLevel = _resolveStudentPromptField(
+      studentProfile?.readingLevel,
+      courseProfile?.readingLevel,
+      systemProfile?.readingLevel,
+    );
+    final preferredLanguage = _resolveStudentPromptField(
+      studentProfile?.preferredLanguage,
+      courseProfile?.preferredLanguage,
+      systemProfile?.preferredLanguage,
+    );
+    final interests = _resolveStudentPromptField(
+      studentProfile?.interests,
+      courseProfile?.interests,
+      systemProfile?.interests,
+    );
+    final preferredTone = _resolveStudentPromptField(
+      studentProfile?.preferredTone,
+      courseProfile?.preferredTone,
+      systemProfile?.preferredTone,
+    );
+    final preferredPace = _resolveStudentPromptField(
+      studentProfile?.preferredPace,
+      courseProfile?.preferredPace,
+      systemProfile?.preferredPace,
+    );
+    final preferredFormat = _resolveStudentPromptField(
+      studentProfile?.preferredFormat,
+      courseProfile?.preferredFormat,
+      systemProfile?.preferredFormat,
+    );
+    final supportNotes = _resolveStudentPromptField(
+      studentProfile?.supportNotes,
+      courseProfile?.supportNotes,
+      systemProfile?.supportNotes,
+    );
+    final profileLines = <String>[];
+    if (gradeLevel != null) {
+      profileLines.add('Grade level: $gradeLevel');
+    }
+    if (readingLevel != null) {
+      profileLines.add('Reading level: $readingLevel');
+    }
+    if (preferredLanguage != null) {
+      profileLines.add('Preferred language: $preferredLanguage');
+    }
+    if (interests != null) {
+      profileLines.add('Interests: $interests');
+    }
+    if (supportNotes != null) {
+      profileLines.add('Support notes: $supportNotes');
+    }
+    final preferenceLines = <String>[];
+    if (preferredTone != null) {
+      preferenceLines.add('Tone: $preferredTone');
+    }
+    if (preferredPace != null) {
+      preferenceLines.add('Pace: $preferredPace');
+    }
+    if (preferredFormat != null) {
+      preferenceLines.add('Format: $preferredFormat');
+    }
+    return _StudentPromptContext(
+      profileText: profileLines.join('\n'),
+      preferencesText: preferenceLines.join('\n'),
+    );
+  }
+
+  String? _resolveStudentPromptField(
+    String? studentValue,
+    String? courseValue,
+    String? systemValue,
+  ) {
+    if (studentValue != null && studentValue.trim().isNotEmpty) {
+      return studentValue.trim();
+    }
+    if (courseValue != null && courseValue.trim().isNotEmpty) {
+      return courseValue.trim();
+    }
+    if (systemValue != null && systemValue.trim().isNotEmpty) {
+      return systemValue.trim();
+    }
+    return null;
+  }
+
   bool _isStructuredPrompt(String promptName) {
     return promptName == 'learn_init' ||
         promptName == 'learn_cont' ||
@@ -1121,4 +1249,14 @@ class _AssistantJsonRef {
 
   final int index;
   final Map<String, dynamic>? json;
+}
+
+class _StudentPromptContext {
+  _StudentPromptContext({
+    required this.profileText,
+    required this.preferencesText,
+  });
+
+  final String profileText;
+  final String preferencesText;
 }

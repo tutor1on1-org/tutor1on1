@@ -5,12 +5,15 @@ Inputs (provided by the system):
 - error_book_summary: {{error_book_summary}}
 - last_evidence: {{last_evidence}}
 - current_mastery_level: {{current_mastery_level}}
+- student_profile: {{student_profile}}
+- student_preferences: {{student_preferences}}
 
 Rules:
 - Be concise and decisive.
 - No new teaching and no new questions.
 - Use last_evidence and practice_history_summary as primary signals.
 - Treat current_mastery_level as the starting baseline.
+- Phrase feedback in a tone and level that matches student_profile and student_preferences.
 
 Output ONE JSON object with ONLY these fields:
 - teacher_message: short feedback on the student's status

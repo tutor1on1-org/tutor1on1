@@ -325,6 +325,26 @@
   "languageChinese": "Chinese",
   "languageSavedMessage": "Language updated.",
   "promptTemplatesTitle": "Prompt Templates",
+  "studentPromptSectionTitle": "Student Prompts",
+  "studentPromptSectionHint": "Structured profile and preferences used to personalize prompts for this scope.",
+  "studentPromptGradeLabel": "Grade level",
+  "studentPromptReadingLabel": "Reading level",
+  "studentPromptLanguageLabel": "Preferred language",
+  "studentPromptInterestsLabel": "Interests",
+  "studentPromptToneLabel": "Preferred tone",
+  "studentPromptPaceLabel": "Preferred pace",
+  "studentPromptFormatLabel": "Preferred format",
+  "studentPromptSupportLabel": "Support notes",
+  "studentPromptSaved": "Student prompts saved.",
+  "studentPromptCleared": "Student prompts cleared.",
+  "studentPromptNotSaved": "Not saved yet.",
+  "studentPromptLastSaved": "Last saved: {time}",
+  "@studentPromptLastSaved": {
+    "placeholders": {
+      "time": {}
+    }
+  },
+  "clearButton": "Clear",
   "promptTemplatesButton": "Prompts",
   "promptScopeLabel": "Prompt scope",
   "promptScopeDefault": "Teacher default",

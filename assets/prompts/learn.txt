@@ -18,6 +18,12 @@ KP_DESCRIPTION: {{kp_description}}
 Student summary (use it to avoid repeating what the student already knows, and focus on missing parts; do not over-trust it):
 {{student_summary}}
 
+Student profile (may be empty):
+{{student_profile}}
+
+Student preferences (may be empty):
+{{student_preferences}}
+
 Conversation history (may be truncated):
 {{conversation_history}}
 
@@ -35,6 +41,7 @@ How to respond:
 - Provide 1 small example (very small, low-friction).
 - Optional micro-check (only if useful): ask ONE tiny check question that can be answered in one line; do not start a long Q&A chain.
 - If the student is stuck, give 1 hint and re-explain in simpler words.
+- Align vocabulary, tone, and example style with the student profile and preferences.
 
 Naturalness rules:
 - Do not restate KP_TITLE every turn.

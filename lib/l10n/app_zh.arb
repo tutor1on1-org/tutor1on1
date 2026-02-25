@@ -325,6 +325,26 @@
   "languageChinese": "中文",
   "languageSavedMessage": "语言已更新。",
   "promptTemplatesTitle": "提示词模板",
+  "studentPromptSectionTitle": "学生提示",
+  "studentPromptSectionHint": "用于此范围的结构化学生信息与偏好。",
+  "studentPromptGradeLabel": "年级",
+  "studentPromptReadingLabel": "阅读水平",
+  "studentPromptLanguageLabel": "偏好语言",
+  "studentPromptInterestsLabel": "兴趣",
+  "studentPromptToneLabel": "偏好语气",
+  "studentPromptPaceLabel": "偏好节奏",
+  "studentPromptFormatLabel": "偏好形式",
+  "studentPromptSupportLabel": "支持备注",
+  "studentPromptSaved": "学生提示已保存。",
+  "studentPromptCleared": "学生提示已清除。",
+  "studentPromptNotSaved": "尚未保存。",
+  "studentPromptLastSaved": "上次保存：{time}",
+  "@studentPromptLastSaved": {
+    "placeholders": {
+      "time": {}
+    }
+  },
+  "clearButton": "清除",
   "promptTemplatesButton": "提示词",
   "promptScopeLabel": "提示词范围",
   "promptScopeDefault": "老师默认",
