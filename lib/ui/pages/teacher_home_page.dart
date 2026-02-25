@@ -9,6 +9,8 @@ import '../../services/app_services.dart';
 import '../../state/auth_controller.dart';
 import 'course_version_page.dart';
 import 'prompt_settings_page.dart';
+import 'teacher_enrollment_requests_page.dart';
+import 'teacher_marketplace_courses_page.dart';
 import '../app_settings_page.dart';
 import 'skill_tree_page.dart';
 import 'student_sessions_page.dart';
@@ -68,6 +70,28 @@ class TeacherHomePage extends StatelessWidget {
                     );
                   },
                   child: Text(l10n.createCourseButton),
+                ),
+                ElevatedButton(
+                  key: const Key('marketplace_courses_button'),
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const TeacherMarketplaceCoursesPage(),
+                      ),
+                    );
+                  },
+                  child: Text(l10n.teacherMarketplaceButton),
+                ),
+                ElevatedButton(
+                  key: const Key('enrollment_requests_button'),
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const TeacherEnrollmentRequestsPage(),
+                      ),
+                    );
+                  },
+                  child: Text(l10n.enrollmentRequestsButton),
                 ),
                 ElevatedButton(
                   key: const Key('create_teacher_button'),

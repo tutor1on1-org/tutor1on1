@@ -6,6 +6,7 @@ import '../../db/app_database.dart';
 import '../../models/skill_tree.dart';
 import '../../state/auth_controller.dart';
 import '../app_settings_page.dart';
+import 'marketplace_page.dart';
 import 'skill_tree_page.dart';
 
 class StudentHomePage extends StatelessWidget {
@@ -22,6 +23,15 @@ class StudentHomePage extends StatelessWidget {
       appBar: AppBar(
         title: Text(l10n.studentTitle(student.username)),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.store),
+            tooltip: l10n.marketplaceTitle,
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const MarketplacePage()),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () {

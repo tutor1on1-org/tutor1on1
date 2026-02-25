@@ -78,6 +78,78 @@
   },
   "teacherCreatedMessage": "Teacher created.",
   "noAssignedCourses": "No assigned courses.",
+  "marketplaceTitle": "Marketplace",
+  "marketplaceButton": "Marketplace",
+  "marketplaceNoCourses": "No courses available.",
+  "marketplaceLoadFailed": "Failed to load marketplace: {error}",
+  "@marketplaceLoadFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "marketplaceTeacherLine": "Teacher: {name}",
+  "@marketplaceTeacherLine": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "marketplaceGradeLine": "Grade: {grade}",
+  "@marketplaceGradeLine": {
+    "placeholders": {
+      "grade": {}
+    }
+  },
+  "marketplaceVisibilityLine": "Visibility: {visibility}",
+  "@marketplaceVisibilityLine": {
+    "placeholders": {
+      "visibility": {}
+    }
+  },
+  "marketplaceRequestButton": "Request Enrollment",
+  "marketplaceRequestTitle": "Request enrollment for {course}",
+  "@marketplaceRequestTitle": {
+    "placeholders": {
+      "course": {}
+    }
+  },
+  "marketplaceRequestMessage": "Message (optional)",
+  "marketplaceRequestSent": "Enrollment request sent.",
+  "marketplaceRequestFailed": "Request failed: {error}",
+  "@marketplaceRequestFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "marketplacePending": "Request pending.",
+  "marketplaceApproved": "Request approved.",
+  "marketplaceRejected": "Request rejected.",
+  "marketplaceEnrolled": "Enrolled.",
+  "enrollmentRequestsTitle": "Enrollment Requests",
+  "enrollmentRequestsButton": "Enrollment Requests",
+  "enrollmentRequestsEmpty": "No pending requests.",
+  "enrollmentRequestTitle": "{student} \u2192 {course}",
+  "@enrollmentRequestTitle": {
+    "placeholders": {
+      "student": {},
+      "course": {}
+    }
+  },
+  "enrollmentRequestNoMessage": "No message.",
+  "enrollmentApproveButton": "Approve",
+  "enrollmentRejectButton": "Reject",
+  "enrollmentRequestUpdated": "Request updated.",
+  "teacherMarketplaceTitle": "Marketplace Courses",
+  "teacherMarketplaceButton": "Marketplace Courses",
+  "teacherMarketplaceEmpty": "No marketplace courses yet.",
+  "teacherMarketplaceCreateTitle": "Create Marketplace Course",
+  "teacherMarketplaceCreated": "Course created.",
+  "marketplaceVisibilityPublic": "Public",
+  "marketplaceVisibilityUnlisted": "Unlisted",
+  "marketplaceVisibilityPrivate": "Private",
+  "marketplaceVisibilityUpdated": "Visibility updated.",
+  "gradeLabel": "Grade",
+  "descriptionLabel": "Description",
+  "createButton": "Create",
   "granularityLabel": "Granularity {value}",
   "@granularityLabel": {
     "placeholders": {

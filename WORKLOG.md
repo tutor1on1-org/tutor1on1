@@ -61,5 +61,10 @@ Date: 2026-02-25
 - Verified `/health` on `127.0.0.1:8080` returned OK.
 - Re-ran `scripts/test_auth.ps1` after rate limit changes.
 
+## Remote server updates (2026-02-25)
+- Added marketplace APIs: catalog listing, teacher courses, enrollment requests/approvals, and student enrollments.
+- Deployed new handlers to `/opt/family_teacher_remote`, rebuilt API, and restarted `family-teacher-api.service`.
+- Verified `/health` on `127.0.0.1:8080` returned OK.
+
 ## Known issues
 - Shell prints errors from `/etc/profile.d/which2.sh` because `readlink`/`basename` not found in PATH. Not blocking, but should be fixed.

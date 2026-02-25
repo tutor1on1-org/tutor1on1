@@ -78,6 +78,78 @@
   },
   "teacherCreatedMessage": "老师已创建。",
   "noAssignedCourses": "暂无分配课程。",
+  "marketplaceTitle": "课程市场",
+  "marketplaceButton": "课程市场",
+  "marketplaceNoCourses": "暂无课程。",
+  "marketplaceLoadFailed": "加载市场失败：{error}",
+  "@marketplaceLoadFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "marketplaceTeacherLine": "老师：{name}",
+  "@marketplaceTeacherLine": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "marketplaceGradeLine": "年级：{grade}",
+  "@marketplaceGradeLine": {
+    "placeholders": {
+      "grade": {}
+    }
+  },
+  "marketplaceVisibilityLine": "可见性：{visibility}",
+  "@marketplaceVisibilityLine": {
+    "placeholders": {
+      "visibility": {}
+    }
+  },
+  "marketplaceRequestButton": "申请加入",
+  "marketplaceRequestTitle": "申请加入 {course}",
+  "@marketplaceRequestTitle": {
+    "placeholders": {
+      "course": {}
+    }
+  },
+  "marketplaceRequestMessage": "留言（可选）",
+  "marketplaceRequestSent": "申请已发送。",
+  "marketplaceRequestFailed": "申请失败：{error}",
+  "@marketplaceRequestFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "marketplacePending": "申请处理中。",
+  "marketplaceApproved": "申请已通过。",
+  "marketplaceRejected": "申请被拒绝。",
+  "marketplaceEnrolled": "已加入。",
+  "enrollmentRequestsTitle": "报名申请",
+  "enrollmentRequestsButton": "报名申请",
+  "enrollmentRequestsEmpty": "暂无待处理申请。",
+  "enrollmentRequestTitle": "{student} → {course}",
+  "@enrollmentRequestTitle": {
+    "placeholders": {
+      "student": {},
+      "course": {}
+    }
+  },
+  "enrollmentRequestNoMessage": "无留言。",
+  "enrollmentApproveButton": "通过",
+  "enrollmentRejectButton": "拒绝",
+  "enrollmentRequestUpdated": "申请已更新。",
+  "teacherMarketplaceTitle": "市场课程",
+  "teacherMarketplaceButton": "市场课程",
+  "teacherMarketplaceEmpty": "暂无市场课程。",
+  "teacherMarketplaceCreateTitle": "创建市场课程",
+  "teacherMarketplaceCreated": "课程已创建。",
+  "marketplaceVisibilityPublic": "公开",
+  "marketplaceVisibilityUnlisted": "不公开",
+  "marketplaceVisibilityPrivate": "私有",
+  "marketplaceVisibilityUpdated": "可见性已更新。",
+  "gradeLabel": "年级",
+  "descriptionLabel": "简介",
+  "createButton": "创建",
   "granularityLabel": "粒度 {value}",
   "@granularityLabel": {
     "placeholders": {

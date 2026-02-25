@@ -66,3 +66,6 @@
 
 ## Experience Learned (2026-02-25)
 - Auth endpoints now have per-IP rate limiting; request-recovery avoids account enumeration by returning consistent responses.
+
+## Experience Learned (2026-02-25)
+- Marketplace APIs require role checks (teacher account for publish/approvals) and only list `course_catalog_entries` with `visibility='public'` for the public catalog.
