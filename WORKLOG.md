@@ -48,5 +48,12 @@ Date: 2026-02-25
 - Verified `/health` on `127.0.0.1:8080` returned OK.
 - Ran `scripts/test_auth.ps1` to simulate registration, change-password, and recovery flows.
 
+## Remote server updates (2026-02-25)
+- Added SMTP mailer support for recovery emails; request-recovery now sends email when SMTP is enabled.
+- Set `RECOVERY_TOKEN_ECHO=true` and `SMTP_ENABLED=false` in `/etc/family_teacher_remote/env` for dev testing.
+- Rebuilt `/opt/family_teacher_remote/bin/family-teacher-api` and restarted `family-teacher-api.service`.
+- Verified `/health` on `127.0.0.1:8080` returned OK.
+- Re-ran `scripts/test_auth.ps1` after SMTP changes.
+
 ## Known issues
 - Shell prints errors from `/etc/profile.d/which2.sh` because `readlink`/`basename` not found in PATH. Not blocking, but should be fixed.

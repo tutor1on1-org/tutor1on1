@@ -11,6 +11,7 @@ import (
 
 	"family_teacher_remote/internal/config"
 	"family_teacher_remote/internal/db"
+	"family_teacher_remote/internal/mailer"
 	"family_teacher_remote/internal/storage"
 
 	"github.com/gofiber/fiber/v2"
@@ -22,17 +23,20 @@ type Dependencies struct {
 	Config config.Config
 	Store  *db.Store
 	Storage *storage.Service
+	Mailer  *mailer.Service
 }
 
 type AuthHandler struct {
-	cfg   config.Config
-	store *db.Store
+	cfg    config.Config
+	store  *db.Store
+	mailer *mailer.Service
 }
 
 func NewAuthHandler(deps Dependencies) *AuthHandler {
 	return &AuthHandler{
-		cfg:   deps.Config,
-		store: deps.Store,
+		cfg:    deps.Config,
+		store:  deps.Store,
+		mailer: deps.Mailer,
 	}
 }
 
@@ -270,11 +274,27 @@ func (h *AuthHandler) RequestRecovery(c *fiber.Ctx) error {
 	); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "recovery insert failed")
 	}
-	return c.JSON(fiber.Map{
-		"status":         "ok",
-		"recovery_token": token,
-		"expires_in":     h.cfg.RecoveryTokenTTLMin * 60,
-	})
+	if h.mailer == nil || !h.mailer.Enabled() {
+		if h.cfg.RecoveryTokenEcho {
+			return c.JSON(fiber.Map{
+				"status":         "ok",
+				"recovery_token": token,
+				"expires_in":     h.cfg.RecoveryTokenTTLMin * 60,
+			})
+		}
+		return fiber.NewError(fiber.StatusServiceUnavailable, "smtp not configured")
+	}
+	if err := h.mailer.SendRecoveryEmail(email, token, h.cfg.RecoveryTokenTTLMin); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "recovery email failed")
+	}
+	response := fiber.Map{
+		"status":     "ok",
+		"expires_in": h.cfg.RecoveryTokenTTLMin * 60,
+	}
+	if h.cfg.RecoveryTokenEcho {
+		response["recovery_token"] = token
+	}
+	return c.JSON(response)
 }
 
 func (h *AuthHandler) ResetPassword(c *fiber.Ctx) error {

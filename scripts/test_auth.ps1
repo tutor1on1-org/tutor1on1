@@ -105,14 +105,18 @@ $recovery = Invoke-Json -Method 'POST' -Path '/api/auth/request-recovery' -Body 
   email = $studentEmail
 }
 
-if (-not $recovery.recovery_token) {
-  throw "Recovery token missing."
+$recoveryToken = $recovery.recovery_token
+if (-not $recoveryToken) {
+  $recoveryToken = $env:FT_RECOVERY_TOKEN
+}
+if (-not $recoveryToken) {
+  throw "Recovery token missing. Enable RECOVERY_TOKEN_ECHO or set FT_RECOVERY_TOKEN."
 }
 
 Write-Host "Resetting password via recovery token"
 $reset = Invoke-Json -Method 'POST' -Path '/api/auth/reset-password' -Body @{
   email          = $studentEmail
-  recovery_token = $recovery.recovery_token
+  recovery_token = $recoveryToken
   new_password   = $studentPassword3
 }
 

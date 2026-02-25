@@ -60,3 +60,6 @@
 
 ## Experience Learned (2026-02-25)
 - Auth now uses username + recovery email (email is for 2FA/recovery only); recovery flows are exercised via `scripts/test_auth.ps1`.
+
+## Experience Learned (2026-02-25)
+- Recovery email delivery uses SMTP when enabled; `RECOVERY_TOKEN_ECHO` should be true only for dev/testing, and recovery requests should fail if SMTP is disabled without echo.
