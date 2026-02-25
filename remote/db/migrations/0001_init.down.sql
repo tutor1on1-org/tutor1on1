@@ -1,0 +1,14 @@
+DROP TABLE IF EXISTS offline_queue;
+DROP TABLE IF EXISTS ack_state;
+DROP TABLE IF EXISTS e2ee_events;
+DROP TABLE IF EXISTS marketplace_reports;
+DROP TABLE IF EXISTS enrollments;
+DROP TABLE IF EXISTS enrollment_requests;
+DROP TABLE IF EXISTS bundle_versions;
+DROP TABLE IF EXISTS bundles;
+DROP TABLE IF EXISTS course_catalog_entries;
+DROP TABLE IF EXISTS courses;
+DROP TABLE IF EXISTS teacher_accounts;
+DROP TABLE IF EXISTS devices;
+DROP TABLE IF EXISTS refresh_tokens;
+DROP TABLE IF EXISTS users;
