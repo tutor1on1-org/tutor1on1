@@ -68,6 +68,18 @@ class _AssistantPayload {
   final String? parsedJson;
 }
 
+class _StructuredPayloadResolution {
+  _StructuredPayloadResolution({
+    required this.payload,
+    required this.result,
+    required this.didRetry,
+  });
+
+  final _AssistantPayload payload;
+  final LlmCallResult result;
+  final bool didRetry;
+}
+
 class SessionService {
   SessionService(
     this._db,
@@ -349,21 +361,32 @@ class SessionService {
         if (result.responseText.trim().isEmpty) {
           throw StateError('LLM returned an empty response.');
         }
-        final payload = _buildAssistantPayload(
+        final resolution = await _resolveStructuredPayload(
           promptName: promptName,
+          renderedPrompt: rendered,
+          modelOverride: modelOverride,
+          context: LlmCallContext(
+            teacherId: courseVersion.teacherId,
+            studentId: session?.studentId,
+            courseVersionId: courseVersion.id,
+            sessionId: sessionId,
+            kpKey: node.kpKey,
+            action: actionMode,
+          ),
           responseText: result.responseText,
+          result: result,
         );
         await _db.into(_db.chatMessages).insert(
               ChatMessagesCompanion.insert(
                 sessionId: sessionId,
                 role: 'assistant',
-                content: payload.displayText,
-                rawContent: Value(payload.rawText),
-                parsedJson: Value(payload.parsedJson),
+                content: resolution.payload.displayText,
+                rawContent: Value(resolution.payload.rawText),
+                parsedJson: Value(resolution.payload.parsedJson),
                 action: Value(actionMode),
               ),
             );
-        return result;
+        return resolution.result;
       });
       return LlmRequestHandle(future: future, cancel: handle.cancel);
     }
@@ -437,12 +460,23 @@ class SessionService {
       if (finalText.trim().isEmpty) {
         throw StateError('LLM returned an empty response.');
       }
-      final payload = _buildAssistantPayload(
+      final resolution = await _resolveStructuredPayload(
         promptName: promptName,
+        renderedPrompt: rendered,
+        modelOverride: modelOverride,
+        context: LlmCallContext(
+          teacherId: courseVersion.teacherId,
+          studentId: session?.studentId,
+          courseVersionId: courseVersion.id,
+          sessionId: sessionId,
+          kpKey: node.kpKey,
+          action: actionMode,
+        ),
         responseText: finalText,
+        result: result,
       );
       if (_isStructuredPrompt(promptName) && onChunk != null) {
-        onChunk(payload.displayText);
+        onChunk(resolution.payload.displayText);
       }
       final writeDirectly = streamToDatabase ||
           onAssistantMessageCreated == null ||
@@ -450,12 +484,12 @@ class SessionService {
       if (writeDirectly) {
         await _db.updateChatMessageAssistantPayload(
           messageId: assistantId,
-          content: payload.displayText,
-          rawContent: payload.rawText,
-          parsedJson: payload.parsedJson,
+          content: resolution.payload.displayText,
+          rawContent: resolution.payload.rawText,
+          parsedJson: resolution.payload.parsedJson,
         );
       }
-      return result;
+      return resolution.result;
     });
     return LlmRequestHandle(future: future, cancel: handle.cancel);
   }
@@ -1217,6 +1251,49 @@ class SessionService {
       rawText: responseText,
       parsedJson: parsedJson,
     );
+  }
+
+  Future<_StructuredPayloadResolution> _resolveStructuredPayload({
+    required String promptName,
+    required String renderedPrompt,
+    required String? modelOverride,
+    required LlmCallContext context,
+    required String responseText,
+    required LlmCallResult result,
+  }) async {
+    var currentResult = result;
+    var currentText = responseText;
+    var didRetry = false;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final payload = _buildAssistantPayload(
+          promptName: promptName,
+          responseText: currentText,
+        );
+        return _StructuredPayloadResolution(
+          payload: payload,
+          result: currentResult,
+          didRetry: didRetry,
+        );
+      } catch (_) {
+        if (!_isStructuredPrompt(promptName) || attempt > 0) {
+          rethrow;
+        }
+        didRetry = true;
+        final retryHandle = _llmService.startCall(
+          promptName: promptName,
+          renderedPrompt: renderedPrompt,
+          modelOverride: modelOverride,
+          context: context,
+        );
+        currentResult = await retryHandle.future;
+        currentText = currentResult.responseText;
+        if (currentText.trim().isEmpty) {
+          throw StateError('LLM returned an empty response.');
+        }
+      }
+    }
+    throw StateError('Failed to resolve structured response.');
   }
 
   String _resolveTeacherDisplayText({
