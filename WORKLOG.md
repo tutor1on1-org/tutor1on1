@@ -55,5 +55,11 @@ Date: 2026-02-25
 - Verified `/health` on `127.0.0.1:8080` returned OK.
 - Re-ran `scripts/test_auth.ps1` after SMTP changes.
 
+## Remote server updates (2026-02-25)
+- Added per-IP rate limiting for auth endpoints (register/login/recovery/change/refresh) and anti-enumeration adjustments in request-recovery.
+- Rebuilt `/opt/family_teacher_remote/bin/family-teacher-api` and restarted `family-teacher-api.service`.
+- Verified `/health` on `127.0.0.1:8080` returned OK.
+- Re-ran `scripts/test_auth.ps1` after rate limit changes.
+
 ## Known issues
 - Shell prints errors from `/etc/profile.d/which2.sh` because `readlink`/`basename` not found in PATH. Not blocking, but should be fixed.

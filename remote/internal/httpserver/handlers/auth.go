@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"log"
 	"strings"
 	"time"
 
@@ -250,6 +251,9 @@ func (h *AuthHandler) RequestRecovery(c *fiber.Ctx) error {
 	if h.store == nil || h.store.DB == nil {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "database unavailable")
 	}
+	if (h.mailer == nil || !h.mailer.Enabled()) && !h.cfg.RecoveryTokenEcho {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "smtp not configured")
+	}
 	var req recoveryRequest
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
@@ -259,33 +263,25 @@ func (h *AuthHandler) RequestRecovery(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "email required")
 	}
 	userID, err := h.getUserIDByEmail(email)
-	if err != nil {
-		return fiber.NewError(fiber.StatusNotFound, "email not found")
-	}
+	userExists := err == nil
 	token, err := randomToken(24)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "token generation failed")
 	}
 	hash := hashToken(token)
 	expiresAt := time.Now().Add(time.Duration(h.cfg.RecoveryTokenTTLMin) * time.Minute)
-	if _, err := h.store.DB.Exec(
-		"INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES (?, ?, ?)",
-		userID, hash, expiresAt,
-	); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "recovery insert failed")
-	}
-	if h.mailer == nil || !h.mailer.Enabled() {
-		if h.cfg.RecoveryTokenEcho {
-			return c.JSON(fiber.Map{
-				"status":         "ok",
-				"recovery_token": token,
-				"expires_in":     h.cfg.RecoveryTokenTTLMin * 60,
-			})
+	if userExists {
+		if _, err := h.store.DB.Exec(
+			"INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES (?, ?, ?)",
+			userID, hash, expiresAt,
+		); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "recovery insert failed")
 		}
-		return fiber.NewError(fiber.StatusServiceUnavailable, "smtp not configured")
 	}
-	if err := h.mailer.SendRecoveryEmail(email, token, h.cfg.RecoveryTokenTTLMin); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "recovery email failed")
+	if userExists && h.mailer != nil && h.mailer.Enabled() {
+		if err := h.mailer.SendRecoveryEmail(email, token, h.cfg.RecoveryTokenTTLMin); err != nil {
+			log.Printf("recovery email failed: %v", err)
+		}
 	}
 	response := fiber.Map{
 		"status":     "ok",

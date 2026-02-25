@@ -63,3 +63,6 @@
 
 ## Experience Learned (2026-02-25)
 - Recovery email delivery uses SMTP when enabled; `RECOVERY_TOKEN_ECHO` should be true only for dev/testing, and recovery requests should fail if SMTP is disabled without echo.
+
+## Experience Learned (2026-02-25)
+- Auth endpoints now have per-IP rate limiting; request-recovery avoids account enumeration by returning consistent responses.
