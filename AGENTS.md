@@ -33,3 +33,6 @@
 ## Experience Learned (2026-02-22)
 - Prompt loading flow: `PromptRepository` loads bundled prompt text from `assets/prompts/<name>.prompt.txt` (fallback `.txt`), optionally overrides the system prompt per teacher, then appends course/student scoped templates; `SessionService` selects `learn_init/learn_cont` or `review_init/review_cont` based on prior `turn_state`, renders variables via `PromptRenderer`, and uses `summary` + `summarize` schema for final summaries; legacy `learn/review/summarize` prompts remain available.
 - PromptTemplateValidator required variables must appear as placeholders in system prompts; missing placeholders trigger validation warnings and drop context from renders.
+
+## Experience Learned (2026-02-25)
+- Structured tutor prompts must return valid JSON with required keys (especially `teacher_message`), otherwise surface an error instead of displaying raw JSON.

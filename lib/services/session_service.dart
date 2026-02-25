@@ -739,6 +739,123 @@ class SessionService {
     }
   }
 
+  void _validateStructuredResponse({
+    required String promptName,
+    required String responseText,
+    required Map<String, dynamic>? parsed,
+  }) {
+    if (!_isStructuredPrompt(promptName)) {
+      return;
+    }
+    if (parsed == null) {
+      throw StateError(
+        'LLM response for "$promptName" is not valid JSON. '
+        'Response preview: ${_summarizeResponseForError(responseText)}',
+      );
+    }
+    final required = _requiredStructuredKeys(promptName);
+    final missing = required.where((key) => !parsed.containsKey(key)).toList();
+    if (missing.isNotEmpty) {
+      throw StateError(
+        'LLM response for "$promptName" is missing keys: ${missing.join(', ')}. '
+        'Response preview: ${_summarizeResponseForError(responseText)}',
+      );
+    }
+    final teacherMessage = parsed['teacher_message'];
+    if (teacherMessage is! String || teacherMessage.trim().isEmpty) {
+      throw StateError(
+        'LLM response for "$promptName" is missing "teacher_message". '
+        'Response preview: ${_summarizeResponseForError(responseText)}',
+      );
+    }
+    if (promptName == 'review_init') {
+      final question = parsed['question'];
+      if (question is! Map) {
+        throw StateError(
+          'LLM response for "$promptName" has invalid "question". '
+          'Response preview: ${_summarizeResponseForError(responseText)}',
+        );
+      }
+      final questionText = question['text'];
+      final questionType = question['type_id'];
+      if (questionText is! String || questionText.trim().isEmpty) {
+        throw StateError(
+          'LLM response for "$promptName" is missing question.text. '
+          'Response preview: ${_summarizeResponseForError(responseText)}',
+        );
+      }
+      if (questionType is! String || questionType.trim().isEmpty) {
+        throw StateError(
+          'LLM response for "$promptName" is missing question.type_id. '
+          'Response preview: ${_summarizeResponseForError(responseText)}',
+        );
+      }
+    }
+    if (promptName == 'review_cont') {
+      final question = parsed['question'];
+      if (question != null && question is! Map) {
+        throw StateError(
+          'LLM response for "$promptName" has invalid "question". '
+          'Response preview: ${_summarizeResponseForError(responseText)}',
+        );
+      }
+    }
+  }
+
+  Set<String> _requiredStructuredKeys(String promptName) {
+    switch (promptName) {
+      case 'learn_init':
+      case 'learn_cont':
+        return {
+          'teacher_message',
+          'understanding',
+          'next_mode',
+          'turn_state',
+        };
+      case 'review_init':
+        return {
+          'teacher_message',
+          'turn_state',
+          'question',
+          'grading',
+          'error_book_update',
+          'evidence',
+          'mastery_level',
+          'next_mode',
+        };
+      case 'review_cont':
+        return {
+          'teacher_message',
+          'turn_state',
+          'question',
+          'grading',
+          'error_book_update',
+          'evidence',
+          'mastery_level',
+          'next_mode',
+        };
+      case 'summary':
+        return {
+          'teacher_message',
+          'mastery_level',
+          'next_step',
+        };
+      default:
+        return {'teacher_message'};
+    }
+  }
+
+  String _summarizeResponseForError(String responseText) {
+    final trimmed = responseText.trim();
+    if (trimmed.isEmpty) {
+      return '<empty>';
+    }
+    if (trimmed.length <= 240) {
+      return trimmed;
+    }
+    return '${trimmed.substring(0, 240)}...';
+  }
+
   String? _normalizeLevel(Object? value) {
     if (value is! String) {
       return null;
@@ -1084,6 +1201,11 @@ class SessionService {
     required String responseText,
   }) {
     final parsed = _tryDecodeJsonObject(responseText);
+    _validateStructuredResponse(
+      promptName: promptName,
+      responseText: responseText,
+      parsed: parsed,
+    );
     final parsedJson = parsed == null ? null : jsonEncode(parsed);
     final display = _resolveTeacherDisplayText(
       promptName: promptName,
