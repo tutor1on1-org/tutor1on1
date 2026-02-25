@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:family_teacher/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
-import '../../db/app_database.dart';
 import '../../state/auth_controller.dart';
 import '../../state/settings_controller.dart';
 import '../app_settings_page.dart';
@@ -16,66 +15,41 @@ class WelcomePage extends StatefulWidget {
 
 class _WelcomePageState extends State<WelcomePage> {
   final _loginUsername = TextEditingController();
-  final _loginPin = TextEditingController();
-  final _registerUsername = TextEditingController();
-  final _registerPin = TextEditingController();
-  bool? _hasTeacher;
+  final _loginPassword = TextEditingController();
+  final _teacherUsername = TextEditingController();
+  final _teacherPassword = TextEditingController();
+  final _teacherRecoveryEmail = TextEditingController();
+  final _teacherDisplayName = TextEditingController();
+  final _teacherBio = TextEditingController();
+  final _teacherAvatarUrl = TextEditingController();
+  final _teacherContact = TextEditingController();
+  final _studentUsername = TextEditingController();
+  final _studentPassword = TextEditingController();
+  final _studentRecoveryEmail = TextEditingController();
+  bool _teacherContactPublished = false;
 
   @override
   void dispose() {
     _loginUsername.dispose();
-    _loginPin.dispose();
-    _registerUsername.dispose();
-    _registerPin.dispose();
+    _loginPassword.dispose();
+    _teacherUsername.dispose();
+    _teacherPassword.dispose();
+    _teacherRecoveryEmail.dispose();
+    _teacherDisplayName.dispose();
+    _teacherBio.dispose();
+    _teacherAvatarUrl.dispose();
+    _teacherContact.dispose();
+    _studentUsername.dispose();
+    _studentPassword.dispose();
+    _studentRecoveryEmail.dispose();
     super.dispose();
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _loadTeacherStatus();
-  }
-
-  Future<void> _loadTeacherStatus() async {
-    final db = context.read<AppDatabase>();
-    bool hasTeacher = true;
-    try {
-      hasTeacher = await db.hasAnyTeacher();
-    } catch (_) {
-      hasTeacher = true;
-    }
-    if (mounted) {
-      setState(() => _hasTeacher = hasTeacher);
-    }
   }
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final hasTeacher = _hasTeacher ?? true;
-    if (hasTeacher) {
-      return Scaffold(
-        appBar: AppBar(
-          title: Text(l10n.appTitle),
-          actions: [
-            IconButton(
-              key: const Key('open_settings'),
-              icon: const Icon(Icons.settings),
-              onPressed: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const SettingsPage(),
-                  ),
-                );
-              },
-            ),
-          ],
-        ),
-        body: _buildLogin(context),
-      );
-    }
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Scaffold(
         appBar: AppBar(
           title: Text(l10n.appTitle),
@@ -96,13 +70,15 @@ class _WelcomePageState extends State<WelcomePage> {
             tabs: [
               Tab(text: l10n.loginTab),
               Tab(text: l10n.registerTeacherTab),
+              Tab(text: l10n.registerStudentTab),
             ],
           ),
         ),
         body: TabBarView(
           children: [
             _buildLogin(context),
-            _buildRegister(context),
+            _buildRegisterTeacher(context),
+            _buildRegisterStudent(context),
           ],
         ),
       ),
@@ -111,72 +87,163 @@ class _WelcomePageState extends State<WelcomePage> {
 
   Widget _buildLogin(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return Padding(
+    return ListView(
       padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          _buildLanguageSelector(context),
-          const SizedBox(height: 16),
-          TextField(
-            key: const Key('login_username'),
-            controller: _loginUsername,
-            decoration: InputDecoration(labelText: l10n.usernameLabel),
-          ),
-          TextField(
-            key: const Key('login_pin'),
-            controller: _loginPin,
-            decoration: InputDecoration(labelText: l10n.pinLabel),
-            obscureText: true,
-            textInputAction: TextInputAction.go,
-            onSubmitted: (_) => _handleLogin(context),
-          ),
-          const SizedBox(height: 16),
-          ElevatedButton(
-            key: const Key('login_button'),
-            onPressed: () => _handleLogin(context),
-            child: Text(l10n.loginButton),
-          ),
-        ],
-      ),
+      children: [
+        _buildLanguageSelector(context),
+        const SizedBox(height: 16),
+        TextField(
+          key: const Key('login_username'),
+          controller: _loginUsername,
+          decoration: InputDecoration(labelText: l10n.usernameLabel),
+          keyboardType: TextInputType.text,
+          textInputAction: TextInputAction.next,
+          autofillHints: const [AutofillHints.username],
+          autocorrect: false,
+        ),
+        TextField(
+          key: const Key('login_password'),
+          controller: _loginPassword,
+          decoration: InputDecoration(labelText: l10n.pinLabel),
+          obscureText: true,
+          textInputAction: TextInputAction.go,
+          onSubmitted: (_) => _handleLogin(context),
+        ),
+        const SizedBox(height: 16),
+        ElevatedButton(
+          key: const Key('login_button'),
+          onPressed: () => _handleLogin(context),
+          child: Text(l10n.loginButton),
+        ),
+      ],
     );
   }
 
-  Widget _buildRegister(BuildContext context) {
+  Widget _buildRegisterTeacher(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return Padding(
+    return ListView(
       padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          _buildLanguageSelector(context),
-          const SizedBox(height: 16),
-          TextField(
-            key: const Key('register_username'),
-            controller: _registerUsername,
-            decoration: InputDecoration(labelText: l10n.usernameLabel),
-          ),
-          TextField(
-            key: const Key('register_pin'),
-            controller: _registerPin,
-            decoration: InputDecoration(labelText: l10n.pinLabel),
-            obscureText: true,
-          ),
-          const SizedBox(height: 16),
-          ElevatedButton(
-            key: const Key('register_button'),
-            onPressed: () async {
-              final auth = context.read<AuthController>();
-              final user = await auth.registerTeacher(
-                _registerUsername.text,
-                _registerPin.text,
-              );
-              if (user == null && mounted) {
-                _showMessage(context, l10n.usernameExists);
-              }
-            },
-            child: Text(l10n.createTeacherButton),
-          ),
-        ],
-      ),
+      children: [
+        _buildLanguageSelector(context),
+        const SizedBox(height: 8),
+        Text(
+          l10n.email2faHint,
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          key: const Key('register_teacher_username'),
+          controller: _teacherUsername,
+          decoration: InputDecoration(labelText: l10n.usernameLabel),
+          keyboardType: TextInputType.text,
+          textInputAction: TextInputAction.next,
+          autofillHints: const [AutofillHints.username],
+          autocorrect: false,
+        ),
+        TextField(
+          key: const Key('register_teacher_password'),
+          controller: _teacherPassword,
+          decoration: InputDecoration(labelText: l10n.pinLabel),
+          obscureText: true,
+          textInputAction: TextInputAction.next,
+        ),
+        TextField(
+          key: const Key('register_teacher_recovery_email'),
+          controller: _teacherRecoveryEmail,
+          decoration: InputDecoration(labelText: l10n.recoveryEmailLabel),
+          keyboardType: TextInputType.emailAddress,
+          textInputAction: TextInputAction.next,
+          autofillHints: const [AutofillHints.email],
+          autocorrect: false,
+        ),
+        TextField(
+          key: const Key('register_teacher_display_name'),
+          controller: _teacherDisplayName,
+          decoration: InputDecoration(labelText: l10n.displayNameLabel),
+          textInputAction: TextInputAction.next,
+        ),
+        TextField(
+          key: const Key('register_teacher_bio'),
+          controller: _teacherBio,
+          decoration: InputDecoration(labelText: l10n.bioLabel),
+          textInputAction: TextInputAction.next,
+        ),
+        TextField(
+          key: const Key('register_teacher_avatar'),
+          controller: _teacherAvatarUrl,
+          decoration: InputDecoration(labelText: l10n.avatarUrlLabel),
+          textInputAction: TextInputAction.next,
+          keyboardType: TextInputType.url,
+        ),
+        TextField(
+          key: const Key('register_teacher_contact'),
+          controller: _teacherContact,
+          decoration: InputDecoration(labelText: l10n.contactLabel),
+          textInputAction: TextInputAction.done,
+        ),
+        SwitchListTile(
+          value: _teacherContactPublished,
+          contentPadding: EdgeInsets.zero,
+          title: Text(l10n.contactPublishedLabel),
+          onChanged: (value) {
+            setState(() => _teacherContactPublished = value);
+          },
+        ),
+        const SizedBox(height: 12),
+        ElevatedButton(
+          key: const Key('register_teacher_button'),
+          onPressed: () => _handleRegisterTeacher(context),
+          child: Text(l10n.registerTeacherButton),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRegisterStudent(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        _buildLanguageSelector(context),
+        const SizedBox(height: 8),
+        Text(
+          l10n.email2faHint,
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          key: const Key('register_student_username'),
+          controller: _studentUsername,
+          decoration: InputDecoration(labelText: l10n.usernameLabel),
+          keyboardType: TextInputType.text,
+          textInputAction: TextInputAction.next,
+          autofillHints: const [AutofillHints.username],
+          autocorrect: false,
+        ),
+        TextField(
+          key: const Key('register_student_password'),
+          controller: _studentPassword,
+          decoration: InputDecoration(labelText: l10n.pinLabel),
+          obscureText: true,
+          textInputAction: TextInputAction.next,
+        ),
+        TextField(
+          key: const Key('register_student_recovery_email'),
+          controller: _studentRecoveryEmail,
+          decoration: InputDecoration(labelText: l10n.recoveryEmailLabel),
+          keyboardType: TextInputType.emailAddress,
+          textInputAction: TextInputAction.go,
+          onSubmitted: (_) => _handleRegisterStudent(context),
+          autofillHints: const [AutofillHints.email],
+          autocorrect: false,
+        ),
+        const SizedBox(height: 16),
+        ElevatedButton(
+          key: const Key('register_student_button'),
+          onPressed: () => _handleRegisterStudent(context),
+          child: Text(l10n.registerStudentButton),
+        ),
+      ],
     );
   }
 
@@ -196,7 +263,7 @@ class _WelcomePageState extends State<WelcomePage> {
         _languageButton(
           context: context,
           locale: null,
-          label: '🌐',
+          label: '馃寪',
           tooltip: l10n.languageSystem,
           selected: locale.isEmpty,
         ),
@@ -204,7 +271,7 @@ class _WelcomePageState extends State<WelcomePage> {
         _languageButton(
           context: context,
           locale: 'en',
-          label: '🇺🇸',
+          label: '馃嚭馃嚫',
           tooltip: l10n.languageEnglish,
           selected: locale == 'en',
         ),
@@ -212,7 +279,7 @@ class _WelcomePageState extends State<WelcomePage> {
         _languageButton(
           context: context,
           locale: 'zh',
-          label: '🇨🇳',
+          label: '馃嚚馃嚦',
           tooltip: l10n.languageChinese,
           selected: locale == 'zh',
         ),
@@ -247,15 +314,97 @@ class _WelcomePageState extends State<WelcomePage> {
     );
   }
 
+  bool _ensureUsername(BuildContext context, String username) {
+    final l10n = AppLocalizations.of(context)!;
+    if (username.trim().isEmpty) {
+      _showMessage(context, l10n.usernameRequired);
+      return false;
+    }
+    return true;
+  }
+
+  bool _ensureRecoveryEmail(BuildContext context, String email) {
+    final l10n = AppLocalizations.of(context)!;
+    if (email.trim().isEmpty) {
+      _showMessage(context, l10n.emailRequired);
+      return false;
+    }
+    return true;
+  }
+
+  bool _ensurePassword(BuildContext context, String password) {
+    final l10n = AppLocalizations.of(context)!;
+    if (password.trim().isEmpty) {
+      _showMessage(context, l10n.passwordRequired);
+      return false;
+    }
+    return true;
+  }
+
   Future<void> _handleLogin(BuildContext context) async {
     final l10n = AppLocalizations.of(context)!;
+    final username = _loginUsername.text;
+    final password = _loginPassword.text;
+    if (!_ensureUsername(context, username) ||
+        !_ensurePassword(context, password)) {
+      return;
+    }
     final auth = context.read<AuthController>();
-    final ok = await auth.login(
-      _loginUsername.text,
-      _loginPin.text,
-    );
+    final ok = await auth.login(username, password);
     if (!ok && mounted) {
-      _showMessage(context, l10n.invalidLogin);
+      _showMessage(context, auth.lastError ?? l10n.invalidLogin);
+    }
+  }
+
+  Future<void> _handleRegisterTeacher(BuildContext context) async {
+    final l10n = AppLocalizations.of(context)!;
+    final username = _teacherUsername.text;
+    final password = _teacherPassword.text;
+    final recoveryEmail = _teacherRecoveryEmail.text;
+    final displayName = _teacherDisplayName.text.trim();
+    if (!_ensureUsername(context, username) ||
+        !_ensurePassword(context, password) ||
+        !_ensureRecoveryEmail(context, recoveryEmail)) {
+      return;
+    }
+    if (displayName.isEmpty) {
+      _showMessage(context, l10n.displayNameRequired);
+      return;
+    }
+    final auth = context.read<AuthController>();
+    final user = await auth.registerTeacher(
+      username: username,
+      email: recoveryEmail,
+      password: password,
+      displayName: displayName,
+      bio: _teacherBio.text,
+      avatarUrl: _teacherAvatarUrl.text,
+      contact: _teacherContact.text,
+      contactPublished: _teacherContactPublished,
+    );
+    if (user == null && mounted) {
+      _showMessage(context, auth.lastError ?? l10n.registrationFailed);
+    }
+  }
+
+  Future<void> _handleRegisterStudent(BuildContext context) async {
+    final l10n = AppLocalizations.of(context)!;
+    final username = _studentUsername.text;
+    final password = _studentPassword.text;
+    final recoveryEmail = _studentRecoveryEmail.text;
+    if (!_ensureUsername(context, username) ||
+        !_ensurePassword(context, password) ||
+        !_ensureRecoveryEmail(context, recoveryEmail)) {
+      return;
+    }
+    final auth = context.read<AuthController>();
+    final user = await auth.registerStudent(
+      username: username,
+      email: recoveryEmail,
+      password: password,
+    );
+    if (user == null && mounted) {
+      _showMessage(context, auth.lastError ?? l10n.registrationFailed);
     }
   }
 }

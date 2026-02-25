@@ -1,6 +1,11 @@
 -- name: CreateUser :execresult
-INSERT INTO users (email, password_hash, status)
-VALUES (?, ?, ?);
+INSERT INTO users (username, email, password_hash, status)
+VALUES (?, ?, ?, ?);
+
+-- name: GetUserByUsername :one
+SELECT * FROM users
+WHERE username = ?
+LIMIT 1;
 
 -- name: GetUserByEmail :one
 SELECT * FROM users
