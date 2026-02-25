@@ -327,6 +327,16 @@
   "promptTemplatesTitle": "Prompt Templates",
   "studentPromptSectionTitle": "Student Prompts",
   "studentPromptSectionHint": "Structured profile and preferences used to personalize prompts for this scope.",
+  "studentPromptPreviewTitle": "Effective Profile Preview",
+  "studentPromptPreviewProfileLabel": "Profile",
+  "studentPromptPreviewPreferencesLabel": "Preferences",
+  "studentPromptPreviewEmpty": "No profile data.",
+  "studentPromptPreviewError": "Failed to load preview: {error}",
+  "@studentPromptPreviewError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
   "studentPromptGradeLabel": "Grade level",
   "studentPromptReadingLabel": "Reading level",
   "studentPromptLanguageLabel": "Preferred language",

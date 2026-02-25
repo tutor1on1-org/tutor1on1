@@ -1261,6 +1261,103 @@ ORDER BY l.created_at DESC
         .getSingleOrNull();
   }
 
+  Future<StudentPromptContext> resolveStudentPromptContext({
+    required int teacherId,
+    String? courseKey,
+    int? studentId,
+  }) async {
+    final normalizedCourseKey = _normalizeCourseKey(courseKey);
+    final systemProfile = await getStudentPromptProfile(
+      teacherId: teacherId,
+      courseKey: null,
+      studentId: null,
+    );
+    final courseProfile = normalizedCourseKey == null
+        ? null
+        : await getStudentPromptProfile(
+            teacherId: teacherId,
+            courseKey: normalizedCourseKey,
+            studentId: null,
+          );
+    final studentProfile = (normalizedCourseKey == null || studentId == null)
+        ? null
+        : await getStudentPromptProfile(
+            teacherId: teacherId,
+            courseKey: normalizedCourseKey,
+            studentId: studentId,
+          );
+    final gradeLevel = _resolveStudentPromptField(
+      studentProfile?.gradeLevel,
+      courseProfile?.gradeLevel,
+      systemProfile?.gradeLevel,
+    );
+    final readingLevel = _resolveStudentPromptField(
+      studentProfile?.readingLevel,
+      courseProfile?.readingLevel,
+      systemProfile?.readingLevel,
+    );
+    final preferredLanguage = _resolveStudentPromptField(
+      studentProfile?.preferredLanguage,
+      courseProfile?.preferredLanguage,
+      systemProfile?.preferredLanguage,
+    );
+    final interests = _resolveStudentPromptField(
+      studentProfile?.interests,
+      courseProfile?.interests,
+      systemProfile?.interests,
+    );
+    final preferredTone = _resolveStudentPromptField(
+      studentProfile?.preferredTone,
+      courseProfile?.preferredTone,
+      systemProfile?.preferredTone,
+    );
+    final preferredPace = _resolveStudentPromptField(
+      studentProfile?.preferredPace,
+      courseProfile?.preferredPace,
+      systemProfile?.preferredPace,
+    );
+    final preferredFormat = _resolveStudentPromptField(
+      studentProfile?.preferredFormat,
+      courseProfile?.preferredFormat,
+      systemProfile?.preferredFormat,
+    );
+    final supportNotes = _resolveStudentPromptField(
+      studentProfile?.supportNotes,
+      courseProfile?.supportNotes,
+      systemProfile?.supportNotes,
+    );
+    final profileLines = <String>[];
+    if (gradeLevel != null) {
+      profileLines.add('Grade level: $gradeLevel');
+    }
+    if (readingLevel != null) {
+      profileLines.add('Reading level: $readingLevel');
+    }
+    if (preferredLanguage != null) {
+      profileLines.add('Preferred language: $preferredLanguage');
+    }
+    if (interests != null) {
+      profileLines.add('Interests: $interests');
+    }
+    if (supportNotes != null) {
+      profileLines.add('Support notes: $supportNotes');
+    }
+    final preferenceLines = <String>[];
+    if (preferredTone != null) {
+      preferenceLines.add('Tone: $preferredTone');
+    }
+    if (preferredPace != null) {
+      preferenceLines.add('Pace: $preferredPace');
+    }
+    if (preferredFormat != null) {
+      preferenceLines.add('Format: $preferredFormat');
+    }
+    return StudentPromptContext(
+      profileText: profileLines.join('\n'),
+      preferencesText: preferenceLines.join('\n'),
+    );
+  }
+
   Future<void> upsertStudentPromptProfile({
     required int teacherId,
     String? courseKey,
@@ -1372,6 +1469,26 @@ ORDER BY l.created_at DESC
       return null;
     }
     return trimmed;
+  }
+
+  String? _resolveStudentPromptField(
+    String? studentValue,
+    String? courseValue,
+    String? systemValue,
+  ) {
+    final resolvedStudent = _normalizePromptField(studentValue);
+    if (resolvedStudent != null) {
+      return resolvedStudent;
+    }
+    final resolvedCourse = _normalizePromptField(courseValue);
+    if (resolvedCourse != null) {
+      return resolvedCourse;
+    }
+    final resolvedSystem = _normalizePromptField(systemValue);
+    if (resolvedSystem != null) {
+      return resolvedSystem;
+    }
+    return null;
   }
 
   Expression<bool> Function($PromptTemplatesTable) _promptScopeMatch({
@@ -1501,6 +1618,16 @@ class LlmLogEntry {
     }
     return null;
   }
+}
+
+class StudentPromptContext {
+  StudentPromptContext({
+    required this.profileText,
+    required this.preferencesText,
+  });
+
+  final String profileText;
+  final String preferencesText;
 }
 
 class StudentSessionInfo {

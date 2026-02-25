@@ -163,6 +163,13 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
               courseKey: _selectedScope?.courseKey,
               studentId: _selectedScope?.studentId,
             ),
+          if (_selectedScope != null) const SizedBox(height: 16),
+          if (_selectedScope != null)
+            _StudentPromptPreviewSection(
+              teacherId: widget.teacherId,
+              courseKey: _selectedScope?.courseKey,
+              studentId: _selectedScope?.studentId,
+            ),
           if (_selectedScope != null) const SizedBox(height: 24),
           if (_selectedScope != null)
             ...items.map((item) {
@@ -975,6 +982,92 @@ class _StudentPromptProfileSectionState
           ],
         ),
       ),
+    );
+  }
+}
+
+class _StudentPromptPreviewSection extends StatelessWidget {
+  const _StudentPromptPreviewSection({
+    required this.teacherId,
+    required this.courseKey,
+    required this.studentId,
+  });
+
+  final int teacherId;
+  final String? courseKey;
+  final int? studentId;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final db = context.read<AppDatabase>();
+    return FutureBuilder<StudentPromptContext>(
+      future: db.resolveStudentPromptContext(
+        teacherId: teacherId,
+        courseKey: courseKey,
+        studentId: studentId,
+      ),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                l10n.studentPromptPreviewError(
+                  snapshot.error.toString(),
+                ),
+              ),
+            ),
+          );
+        }
+        if (!snapshot.hasData) {
+          return const Card(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: LinearProgressIndicator(),
+            ),
+          );
+        }
+        final resolved = snapshot.data!;
+        final profileText = resolved.profileText.trim();
+        final preferenceText = resolved.preferencesText.trim();
+        return Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  l10n.studentPromptPreviewTitle,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  l10n.studentPromptPreviewProfileLabel,
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
+                const SizedBox(height: 4),
+                SelectableText(
+                  profileText.isEmpty
+                      ? l10n.studentPromptPreviewEmpty
+                      : profileText,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  l10n.studentPromptPreviewPreferencesLabel,
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
+                const SizedBox(height: 4),
+                SelectableText(
+                  preferenceText.isEmpty
+                      ? l10n.studentPromptPreviewEmpty
+                      : preferenceText,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

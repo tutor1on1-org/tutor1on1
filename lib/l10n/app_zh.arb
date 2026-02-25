@@ -327,6 +327,16 @@
   "promptTemplatesTitle": "提示词模板",
   "studentPromptSectionTitle": "学生提示",
   "studentPromptSectionHint": "用于此范围的结构化学生信息与偏好。",
+  "studentPromptPreviewTitle": "生效资料预览",
+  "studentPromptPreviewProfileLabel": "资料",
+  "studentPromptPreviewPreferencesLabel": "偏好",
+  "studentPromptPreviewEmpty": "暂无资料。",
+  "studentPromptPreviewError": "预览加载失败：{error}",
+  "@studentPromptPreviewError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
   "studentPromptGradeLabel": "年级",
   "studentPromptReadingLabel": "阅读水平",
   "studentPromptLanguageLabel": "偏好语言",
