@@ -371,6 +371,7 @@ class _MarketplacePageState extends State<MarketplacePage> {
         bundleVersionId: bundleVersionId,
         targetPath: targetPath,
       );
+      await bundleService.validateBundleForImport(bundleFile);
       final promptMetadata =
           await bundleService.readPromptMetadataFromBundleFile(bundleFile);
       final folderPath = await bundleService.extractBundleFromFile(

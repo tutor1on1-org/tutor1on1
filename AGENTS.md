@@ -17,6 +17,7 @@
 - Structured tutor output must be valid JSON and include `teacher_message`; invalid output should be surfaced as an error, not rendered raw.
 - Bundle prompt metadata is in `_family_teacher/prompt_bundle.json`; apply only when incoming `version_id` is newer.
 - User-facing errors should not be transient-only; keep a persistent, copyable error surface in-page (avoid snackbar-only for important failures).
+- Bundle upload/download should validate required course files (`contents.txt`/`context.txt` + lecture files referenced by the skill tree) before import/publish.
 - Drift migrations that create a table mid-upgrade must guard later `addColumn` with `from >= <createVersion>` to avoid duplicate-column failures.
 
 ## Remote ops notes
