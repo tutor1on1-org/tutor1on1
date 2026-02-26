@@ -31,3 +31,14 @@ Last updated: 2026-02-26
 3. Verify health endpoint and log tail.
 
 Historical setup timeline moved to `LOGBOOK.md`.
+
+## Remote server updates (2026-02-26)
+- Investigated student import failure after download for `special_relativity`.
+- Verified `bundle_version_id=10` downloaded from server and mapped to `/var/lib/family_teacher_remote/storage/bundles/3/1772075735.zip`.
+- Verified server bundle includes `contents.txt` and all required lecture files (no missing lecture IDs from parsed contents).
+- Added server-side bundle validation in `bundles.Upload` to reject invalid uploads:
+  - require `contents.txt` or `context.txt`
+  - parse node IDs from contents
+  - require lecture file per node (`<id>_lecture.txt` or `<id>/lecture.txt`)
+  - ignore AppleDouble/macOS metadata entries (`._*`, `__MACOSX/*`)
+- Deployed updated API binary and restarted `family-teacher-api.service`; health check returned OK.

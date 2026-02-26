@@ -411,6 +411,9 @@ class _MarketplacePageState extends State<MarketplacePage> {
       if (!mounted) {
         return;
       }
+      setState(() {
+        _stickyError = null;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(l10n.marketplaceDownloadSuccess)),
       );
