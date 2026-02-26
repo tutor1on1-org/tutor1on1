@@ -8,6 +8,10 @@
   - Do reasonable self-validation before reporting done (tests/build/log checks/scripted flow checks as applicable).
   - For bug fixes, do root-cause-first validation with evidence: reproduce -> identify failing layer -> verify fix on that layer and adjacent layer(s).
   - Prefer end-to-end checks when feasible (API + data + client import path), not only unit-level checks.
+- Bug-fixing workflow (must follow):
+  - 1) Root cause: reproduce and pinpoint the true failing layer with evidence.
+  - 2) Fix + rigorous validation: validate fix directly and run adjacent-layer regression checks.
+  - 3) Update `BUGS.md`: record root cause, fix commit, and validation evidence so lessons are retained.
 
 ## Current product state
 - Flutter app + remote Go API for family teaching.
