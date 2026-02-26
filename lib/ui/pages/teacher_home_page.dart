@@ -665,9 +665,7 @@ class _CourseTile extends StatelessWidget {
             TextButton(
               key: Key('course_edit_${course.id}'),
               onPressed: onReload,
-              child: Text(
-                isLoaded ? l10n.reloadCourseButton : l10n.loadCourseButton,
-              ),
+              child: Text(l10n.reloadCourseButton),
             ),
             IconButton(
               tooltip: l10n.deleteCourseButton,
