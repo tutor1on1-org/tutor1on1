@@ -20,6 +20,7 @@
 - User-facing errors should not be transient-only; keep a persistent, copyable error surface in-page (avoid snackbar-only for important failures).
 - Bundle upload/download should validate required course files (`contents.txt`/`context.txt` + lecture files referenced by the skill tree) before import/publish.
 - Server must also enforce bundle validation on upload (do not rely only on client checks) so invalid bundles cannot become latest downloadable versions.
+- `archive` package extraction (`extractArchiveToDisk`) is async; always await it (or use sync API). Returning early causes intermittent missing `contents.txt`/`context.txt` during immediate post-download import.
 - Drift migrations that create a table mid-upgrade must guard later `addColumn` with `from >= <createVersion>` to avoid duplicate-column failures.
 
 ## Remote ops notes

@@ -54,3 +54,13 @@ Historical setup timeline moved to `LOGBOOK.md`.
   - built binary with `/usr/local/go/bin/go build`
   - restarted `family-teacher-api.service`
   - verified `curl -k https://43.99.59.107/health` returned `{"status":"ok"}`
+
+## Root-cause note (2026-02-26, student download import)
+- Investigated repeated student error: `Missing file: ...\\contents.txt (or ...\\context.txt)` immediately after marketplace download.
+- Verified server bundle integrity:
+  - latest DB row for `special_relativity` points to `bundles/3/1772077823.zip`
+  - zip contains `contents.txt` and prompt metadata.
+- Root cause was client-side race in `CourseBundleService`:
+  - used `extractArchiveToDisk(...)` without `await`.
+  - `archive` 3.x extraction API is async, so import sometimes started before extraction finished.
+- Fix: await extraction in both `extractBundleFromFile` and `extractBundleFromBytes`.

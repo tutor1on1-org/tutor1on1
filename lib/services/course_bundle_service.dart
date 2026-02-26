@@ -82,7 +82,9 @@ class CourseBundleService {
     final archive = ZipDecoder().decodeBuffer(input);
     input.close();
     _validateArchivePaths(archive);
-    extractArchiveToDisk(archive, targetPath);
+    // archive.extractArchiveToDisk is async in archive 3.x. Must await to
+    // avoid returning before contents/context files are written.
+    await extractArchiveToDisk(archive, targetPath);
     return _resolveExtractedCourseRoot(targetPath);
   }
 
@@ -127,7 +129,9 @@ class CourseBundleService {
     targetDir.createSync(recursive: true);
     final archive = ZipDecoder().decodeBytes(bytes, verify: true);
     _validateArchivePaths(archive);
-    extractArchiveToDisk(archive, targetPath);
+    // archive.extractArchiveToDisk is async in archive 3.x. Must await to
+    // avoid returning before contents/context files are written.
+    await extractArchiveToDisk(archive, targetPath);
     return _resolveExtractedCourseRoot(targetPath);
   }
 
