@@ -1,4 +1,8 @@
-# Bugs / Issues Encountered
-Last updated: 2026-02-06
+﻿# BUGS
+Last updated: 2026-02-26
 
-- 2026-01-31 - `:app:processReleaseResources` failed with `java.nio.charset.MalformedInputException: Input length = 1`. It's due to the encryption software. The files are likely in .\build\app\intermediates\*.txt.
+## Open
+- ECS shell environment can have empty `PATH` in some non-login SSH commands. Use absolute paths or fix profile scripts.
+
+## Closed / historical
+- Moved to `LOGBOOK.md`.
