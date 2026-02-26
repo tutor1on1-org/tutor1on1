@@ -66,5 +66,19 @@ Date: 2026-02-25
 - Deployed new handlers to `/opt/family_teacher_remote`, rebuilt API, and restarted `family-teacher-api.service`.
 - Verified `/health` on `127.0.0.1:8080` returned OK.
 
+## Remote server updates (2026-02-26)
+- Built `/opt/family_teacher_remote` API with session sync handlers and migration changes.
+- Moved new `family-teacher-api` binary into `/opt/family_teacher_remote/bin`.
+- Restarted `family-teacher-api.service` and verified it is active.
+
+## Remote server updates (2026-02-26)
+- Investigated student marketplace download `403` failures on `/api/bundles/download`.
+- Confirmed Nginx access log showed `403` with body size `153` (Nginx error page), indicating file read permission issue during `X-Accel-Redirect`.
+- Verified bundle files were `-rw-r----- ftapp:ftapp` under `/var/lib/family_teacher_remote/storage/bundles`.
+- Fixed server permissions path by adding Nginx worker user to `ftapp` group:
+  - `sudo usermod -a -G ftapp nginx`
+  - `sudo systemctl restart nginx`
+- Verified Nginx user can read bundle files (`sudo -u nginx head -c 4 ...` returned ZIP magic `504b0304`).
+
 ## Known issues
 - Shell prints errors from `/etc/profile.d/which2.sh` because `readlink`/`basename` not found in PATH. Not blocking, but should be fixed.

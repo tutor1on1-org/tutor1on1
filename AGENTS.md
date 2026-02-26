@@ -84,3 +84,6 @@
 
 ## Experience Learned (2026-02-26)
 - Teacher home course rows should keep course-version actions minimal (`Reload Course` + `Upload Bundle`) and move per-student tree access into a separate `(course, student, tree)` list to avoid mixing version management with student progress views.
+
+## Experience Learned (2026-02-26)
+- For `X-Accel-Redirect` bundle downloads, Nginx worker user must have read/traverse permission on `STORAGE_ROOT`; on this host, adding `nginx` to `ftapp` group fixed student download `403` caused by file permission denial.
