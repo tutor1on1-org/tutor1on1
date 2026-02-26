@@ -221,6 +221,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                           );
                         },
                         onDelete: () => _confirmDeleteCourse(context, course),
+                        onVersions: () => _openBundleVersionsPage(course),
                         onUpload: isLoaded
                             ? () => _uploadCourseToMarketplace(teacher, course)
                             : null,
@@ -329,6 +330,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       final bundleId = await _marketplaceApi.ensureBundle(remoteCourseId);
       final bundleService = CourseBundleService();
       final baseVersion = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      var uploadedStatus = 'uploaded';
 
       for (var attempt = 0; attempt < 3; attempt++) {
         final versionId = baseVersion + attempt;
@@ -345,18 +347,25 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         );
 
         try {
-          await _marketplaceApi.uploadBundle(
+          final uploadResponse = await _marketplaceApi.uploadBundle(
             bundleId: bundleId,
             version: versionId,
             bundleFile: bundleFile,
           );
+          uploadedStatus = (uploadResponse['status'] as String?) ?? 'uploaded';
           await _marketplaceApi.updateCourseVisibility(
             courseId: remoteCourseId,
             visibility: 'public',
           );
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(l10n.marketplaceUploadSuccess)),
+              SnackBar(
+                content: Text(
+                  uploadedStatus == 'unchanged'
+                      ? 'No file changes detected. Kept existing bundle version.'
+                      : l10n.marketplaceUploadSuccess,
+                ),
+              ),
             );
           }
           break;
@@ -383,6 +392,29 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         });
       }
     }
+  }
+
+  Future<void> _openBundleVersionsPage(CourseVersion course) async {
+    final db = context.read<AppDatabase>();
+    final remoteCourseId = await db.getRemoteCourseId(course.id);
+    if (remoteCourseId == null || remoteCourseId <= 0) {
+      _setPersistentError(
+        'No remote bundle found for "${course.subject}". Upload bundle first.',
+      );
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _BundleVersionsPage(
+          api: _marketplaceApi,
+          remoteCourseId: remoteCourseId,
+          courseSubject: course.subject,
+        ),
+      ),
+    );
   }
 
   void _setPersistentError(String message) {
@@ -704,6 +736,7 @@ class _CourseTile extends StatelessWidget {
     required this.isUploading,
     required this.onReload,
     required this.onDelete,
+    required this.onVersions,
     required this.onUpload,
   });
 
@@ -712,6 +745,7 @@ class _CourseTile extends StatelessWidget {
   final bool isUploading;
   final VoidCallback onReload;
   final VoidCallback onDelete;
+  final VoidCallback onVersions;
   final VoidCallback? onUpload;
 
   @override
@@ -735,6 +769,10 @@ class _CourseTile extends StatelessWidget {
               onPressed: onReload,
               child: Text(l10n.reloadCourseButton),
             ),
+            TextButton(
+              onPressed: onVersions,
+              child: const Text('Bundle Versions'),
+            ),
             IconButton(
               tooltip: l10n.deleteCourseButton,
               icon: const Icon(Icons.delete),
@@ -748,6 +786,192 @@ class _CourseTile extends StatelessWidget {
                     ? l10n.marketplaceUploadingLabel
                     : l10n.marketplaceUploadButton,
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BundleVersionsPage extends StatefulWidget {
+  const _BundleVersionsPage({
+    required this.api,
+    required this.remoteCourseId,
+    required this.courseSubject,
+  });
+
+  final MarketplaceApiService api;
+  final int remoteCourseId;
+  final String courseSubject;
+
+  @override
+  State<_BundleVersionsPage> createState() => _BundleVersionsPageState();
+}
+
+class _BundleVersionsPageState extends State<_BundleVersionsPage> {
+  bool _loading = true;
+  String? _error;
+  int? _deletingVersionId;
+  List<TeacherBundleVersionSummary> _versions = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final versions = await widget.api.listTeacherBundleVersions(
+        widget.remoteCourseId,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _versions = versions;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _error = '$error';
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _deleteVersion(TeacherBundleVersionSummary version) async {
+    final l10n = AppLocalizations.of(context)!;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Bundle Version'),
+        content: Text('Delete version ${version.version}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(l10n.cancelButton),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(l10n.deleteButton),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+
+    setState(() {
+      _deletingVersionId = version.bundleVersionId;
+    });
+    try {
+      await widget.api.deleteTeacherBundleVersion(
+        courseId: widget.remoteCourseId,
+        bundleVersionId: version.bundleVersionId,
+      );
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Deleted version ${version.version}.')),
+      );
+      await _load();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _error = '$error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _deletingVersionId = null;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Bundle Versions - ${widget.courseSubject}'),
+        actions: [
+          IconButton(
+            onPressed: _load,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Auto keep latest 5 versions after each upload.'),
+            const SizedBox(height: 8),
+            if (_error != null) ...[
+              Card(
+                color: Theme.of(context).colorScheme.errorContainer,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: SelectableText(_error!),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+            Expanded(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _versions.isEmpty
+                      ? const Center(child: Text('No bundle versions yet.'))
+                      : ListView.builder(
+                          itemCount: _versions.length,
+                          itemBuilder: (context, index) {
+                            final version = _versions[index];
+                            final deleting =
+                                _deletingVersionId == version.bundleVersionId;
+                            final hashDisplay = version.hash.length > 12
+                                ? version.hash.substring(0, 12)
+                                : version.hash;
+                            return ListTile(
+                              title: Text(
+                                'v${version.version}'
+                                '${version.isLatest ? ' (latest)' : ''}',
+                              ),
+                              subtitle: Text(
+                                'id=${version.bundleVersionId}, hash=$hashDisplay, '
+                                'size=${version.sizeBytes} bytes, created=${version.createdAt}'
+                                '${version.fileMissing ? ' [file missing]' : ''}',
+                              ),
+                              trailing: IconButton(
+                                icon: deleting
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.delete_outline),
+                                onPressed: deleting
+                                    ? null
+                                    : () => _deleteVersion(version),
+                              ),
+                            );
+                          },
+                        ),
             ),
           ],
         ),

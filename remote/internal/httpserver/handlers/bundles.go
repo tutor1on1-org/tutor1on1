@@ -26,6 +26,11 @@ type BundlesHandler struct {
 	storage *storage.Service
 }
 
+type bundleVersionPruneTarget struct {
+	id      int64
+	relPath string
+}
+
 func NewBundlesHandler(deps Dependencies) *BundlesHandler {
 	return &BundlesHandler{
 		cfg:     deps,
@@ -83,7 +88,50 @@ func (h *BundlesHandler) Upload(c *fiber.Ctx) error {
 		_ = h.removeStoredFile(relPath)
 		return fiber.NewError(fiber.StatusBadRequest, "invalid bundle: "+err.Error())
 	}
-	result, err := h.cfg.Store.DB.Exec(
+	var (
+		latestID      int64
+		latestVersion int
+		latestHash    string
+		latestPath    string
+	)
+	latestRow := h.cfg.Store.DB.QueryRow(
+		`SELECT id, version, hash, oss_path
+		 FROM bundle_versions
+		 WHERE bundle_id = ?
+		 ORDER BY version DESC, id DESC
+		 LIMIT 1`,
+		bundleID,
+	)
+	if err := latestRow.Scan(&latestID, &latestVersion, &latestHash, &latestPath); err == nil {
+		if latestHash == hash {
+			_ = h.removeStoredFile(relPath)
+			return c.JSON(fiber.Map{
+				"bundle_version_id": latestID,
+				"bundle_id":         bundleID,
+				"version":           latestVersion,
+				"path":              latestPath,
+				"size":              size,
+				"hash":              hash,
+				"status":            "unchanged",
+			})
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		_ = h.removeStoredFile(relPath)
+		return fiber.NewError(fiber.StatusInternalServerError, "bundle lookup failed")
+	}
+
+	tx, err := h.cfg.Store.DB.Begin()
+	if err != nil {
+		_ = h.removeStoredFile(relPath)
+		return fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	result, err := tx.Exec(
 		"INSERT INTO bundle_versions (bundle_id, version, hash, oss_path) VALUES (?, ?, ?, ?)",
 		bundleID, version, hash, relPath,
 	)
@@ -91,7 +139,37 @@ func (h *BundlesHandler) Upload(c *fiber.Ctx) error {
 		_ = h.removeStoredFile(relPath)
 		return fiber.NewError(fiber.StatusBadRequest, "bundle version insert failed")
 	}
-	insertID, _ := result.LastInsertId()
+	insertID, err := result.LastInsertId()
+	if err != nil {
+		_ = h.removeStoredFile(relPath)
+		return fiber.NewError(fiber.StatusInternalServerError, "bundle version insert failed")
+	}
+
+	prunedTargets, err := h.collectPruneTargets(tx, bundleID, 5)
+	if err != nil {
+		_ = h.removeStoredFile(relPath)
+		return fiber.NewError(fiber.StatusInternalServerError, "bundle prune lookup failed")
+	}
+	for _, target := range prunedTargets {
+		if _, err = tx.Exec(
+			"DELETE FROM bundle_versions WHERE id = ?",
+			target.id,
+		); err != nil {
+			_ = h.removeStoredFile(relPath)
+			return fiber.NewError(fiber.StatusInternalServerError, "bundle prune failed")
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		_ = h.removeStoredFile(relPath)
+		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
+	}
+
+	for _, target := range prunedTargets {
+		if removeErr := h.removeStoredFile(target.relPath); removeErr != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "bundle file delete failed")
+		}
+	}
+
 	return c.JSON(fiber.Map{
 		"bundle_version_id": insertID,
 		"bundle_id":         bundleID,
@@ -99,7 +177,216 @@ func (h *BundlesHandler) Upload(c *fiber.Ctx) error {
 		"path":              relPath,
 		"size":              size,
 		"hash":              hash,
+		"status":            "uploaded",
+		"pruned_count":      len(prunedTargets),
 	})
+}
+
+func (h *BundlesHandler) ListTeacherCourseBundleVersions(c *fiber.Ctx) error {
+	userID, err := requireUserID(c, h.cfg.Config.JWTSecret)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	}
+	teacherID, err := getTeacherAccountID(h.cfg.Store.DB, userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusForbidden, "teacher account required")
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, "teacher lookup failed")
+	}
+	courseID, err := parseInt64Param(c, "id")
+	if err != nil {
+		return err
+	}
+
+	rows, err := h.cfg.Store.DB.Query(
+		`SELECT bv.id, b.id, bv.version, bv.hash, bv.oss_path, bv.created_at
+		 FROM bundle_versions bv
+		 JOIN bundles b ON b.id = bv.bundle_id
+		 WHERE b.course_id = ? AND b.teacher_id = ?
+		 ORDER BY bv.version DESC, bv.id DESC`,
+		courseID,
+		teacherID,
+	)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "bundle version list failed")
+	}
+	defer rows.Close()
+
+	type bundleVersionSummary struct {
+		BundleVersionID int64  `json:"bundle_version_id"`
+		BundleID        int64  `json:"bundle_id"`
+		Version         int    `json:"version"`
+		Hash            string `json:"hash"`
+		CreatedAt       string `json:"created_at"`
+		SizeBytes       int64  `json:"size_bytes"`
+		IsLatest        bool   `json:"is_latest"`
+		FileMissing     bool   `json:"file_missing"`
+	}
+
+	results := []bundleVersionSummary{}
+	index := 0
+	for rows.Next() {
+		var (
+			bundleVersionID int64
+			bundleID        int64
+			versionVal      int
+			hashVal         string
+			relPathVal      string
+			createdAt       sql.NullTime
+		)
+		if err := rows.Scan(
+			&bundleVersionID,
+			&bundleID,
+			&versionVal,
+			&hashVal,
+			&relPathVal,
+			&createdAt,
+		); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "bundle version list failed")
+		}
+
+		sizeBytes := int64(0)
+		fileMissing := false
+		if h.storage != nil {
+			absPath := h.storage.BundleAbsolutePath(relPathVal)
+			info, statErr := os.Stat(absPath)
+			if statErr != nil {
+				if errors.Is(statErr, os.ErrNotExist) {
+					fileMissing = true
+				} else {
+					return fiber.NewError(fiber.StatusInternalServerError, "bundle file stat failed")
+				}
+			} else {
+				sizeBytes = info.Size()
+			}
+		}
+
+		created := ""
+		if createdAt.Valid {
+			created = createdAt.Time.Format(timeLayout)
+		}
+		results = append(results, bundleVersionSummary{
+			BundleVersionID: bundleVersionID,
+			BundleID:        bundleID,
+			Version:         versionVal,
+			Hash:            hashVal,
+			CreatedAt:       created,
+			SizeBytes:       sizeBytes,
+			IsLatest:        index == 0,
+			FileMissing:     fileMissing,
+		})
+		index++
+	}
+	if err := rows.Err(); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "bundle version list failed")
+	}
+
+	return c.JSON(results)
+}
+
+func (h *BundlesHandler) DeleteTeacherCourseBundleVersion(c *fiber.Ctx) error {
+	userID, err := requireUserID(c, h.cfg.Config.JWTSecret)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	}
+	teacherID, err := getTeacherAccountID(h.cfg.Store.DB, userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusForbidden, "teacher account required")
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, "teacher lookup failed")
+	}
+	courseID, err := parseInt64Param(c, "id")
+	if err != nil {
+		return err
+	}
+	bundleVersionID, err := parseInt64Param(c, "versionId")
+	if err != nil {
+		return err
+	}
+
+	var relPath string
+	row := h.cfg.Store.DB.QueryRow(
+		`SELECT bv.oss_path
+		 FROM bundle_versions bv
+		 JOIN bundles b ON b.id = bv.bundle_id
+		 WHERE bv.id = ? AND b.course_id = ? AND b.teacher_id = ?`,
+		bundleVersionID,
+		courseID,
+		teacherID,
+	)
+	if err := row.Scan(&relPath); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "bundle version not found")
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, "bundle version lookup failed")
+	}
+
+	result, err := h.cfg.Store.DB.Exec(
+		`DELETE bv FROM bundle_versions bv
+		 JOIN bundles b ON b.id = bv.bundle_id
+		 WHERE bv.id = ? AND b.course_id = ? AND b.teacher_id = ?`,
+		bundleVersionID,
+		courseID,
+		teacherID,
+	)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "bundle version delete failed")
+	}
+	affected, err := result.RowsAffected()
+	if err != nil || affected == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "bundle version not found")
+	}
+
+	if removeErr := h.removeStoredFile(relPath); removeErr != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "bundle file delete failed")
+	}
+	return c.JSON(fiber.Map{
+		"bundle_version_id": bundleVersionID,
+		"status":            "deleted",
+	})
+}
+
+func (h *BundlesHandler) collectPruneTargets(
+	tx *sql.Tx,
+	bundleID int64,
+	keep int,
+) ([]bundleVersionPruneTarget, error) {
+	rows, err := tx.Query(
+		`SELECT id, oss_path
+		 FROM bundle_versions
+		 WHERE bundle_id = ?
+		 ORDER BY version DESC, id DESC`,
+		bundleID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	targets := []bundleVersionPruneTarget{}
+	index := 0
+	for rows.Next() {
+		var (
+			id      int64
+			relPath string
+		)
+		if err := rows.Scan(&id, &relPath); err != nil {
+			return nil, err
+		}
+		if index >= keep {
+			targets = append(targets, bundleVersionPruneTarget{
+				id:      id,
+				relPath: relPath,
+			})
+		}
+		index++
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return targets, nil
 }
 
 func (h *BundlesHandler) Download(c *fiber.Ctx) error {

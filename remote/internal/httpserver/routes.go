@@ -51,6 +51,8 @@ func registerRoutes(app *fiber.App, deps handlers.Dependencies) {
 	api.Post("/teacher/courses/:id/publish", teacherCourses.PublishCourse)
 	api.Post("/teacher/courses/:id/delete", teacherCourses.DeleteCourse)
 	api.Post("/teacher/courses/:id/bundles", teacherCourses.EnsureBundle)
+	api.Get("/teacher/courses/:id/bundle-versions", bundles.ListTeacherCourseBundleVersions)
+	api.Post("/teacher/courses/:id/bundle-versions/:versionId/delete", bundles.DeleteTeacherCourseBundleVersion)
 
 	api.Post("/enrollment-requests", enrollmentLimiter.Handler(middleware.KeyByIP), enrollments.CreateRequest)
 	api.Get("/enrollment-requests", enrollments.ListStudentRequests)

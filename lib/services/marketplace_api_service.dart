@@ -197,6 +197,41 @@ class TeacherCourseSummary {
   }
 }
 
+class TeacherBundleVersionSummary {
+  TeacherBundleVersionSummary({
+    required this.bundleVersionId,
+    required this.bundleId,
+    required this.version,
+    required this.hash,
+    required this.createdAt,
+    required this.sizeBytes,
+    required this.isLatest,
+    required this.fileMissing,
+  });
+
+  final int bundleVersionId;
+  final int bundleId;
+  final int version;
+  final String hash;
+  final String createdAt;
+  final int sizeBytes;
+  final bool isLatest;
+  final bool fileMissing;
+
+  factory TeacherBundleVersionSummary.fromJson(Map<String, dynamic> json) {
+    return TeacherBundleVersionSummary(
+      bundleVersionId: (json['bundle_version_id'] as num?)?.toInt() ?? 0,
+      bundleId: (json['bundle_id'] as num?)?.toInt() ?? 0,
+      version: (json['version'] as num?)?.toInt() ?? 0,
+      hash: (json['hash'] as String?) ?? '',
+      createdAt: (json['created_at'] as String?) ?? '',
+      sizeBytes: (json['size_bytes'] as num?)?.toInt() ?? 0,
+      isLatest: (json['is_latest'] as bool?) ?? false,
+      fileMissing: (json['file_missing'] as bool?) ?? false,
+    );
+  }
+}
+
 class MarketplaceApiService {
   MarketplaceApiService({
     required SecureStorageService secureStorage,
@@ -309,6 +344,27 @@ class MarketplaceApiService {
       }
     }
     throw MarketplaceApiException('Unexpected response format.');
+  }
+
+  Future<List<TeacherBundleVersionSummary>> listTeacherBundleVersions(
+    int courseId,
+  ) async {
+    final response =
+        await _get('/api/teacher/courses/$courseId/bundle-versions');
+    return _decodeList(
+      response,
+      (json) => TeacherBundleVersionSummary.fromJson(json),
+    );
+  }
+
+  Future<void> deleteTeacherBundleVersion({
+    required int courseId,
+    required int bundleVersionId,
+  }) async {
+    await _post(
+      '/api/teacher/courses/$courseId/bundle-versions/$bundleVersionId/delete',
+      {},
+    );
   }
 
   Future<Map<String, dynamic>> uploadBundle({
