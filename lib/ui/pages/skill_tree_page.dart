@@ -20,10 +20,12 @@ class SkillTreePage extends StatefulWidget {
     super.key,
     required this.courseVersionId,
     required this.isTeacherView,
+    this.teacherStudentId,
   });
 
   final int courseVersionId;
   final bool isTeacherView;
+  final int? teacherStudentId;
 
   @override
   State<SkillTreePage> createState() => _SkillTreePageState();
@@ -113,6 +115,15 @@ class _SkillTreePageState extends State<SkillTreePage> {
   }
 
   Future<void> _loadTeacherAssignment() async {
+    if (widget.teacherStudentId != null) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _teacherStudentId = widget.teacherStudentId;
+      });
+      return;
+    }
     final assignments =
         await _db.getAssignmentsForCourse(widget.courseVersionId);
     if (!mounted) {
@@ -246,8 +257,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
     final isStudent = currentUser?.role == 'student';
     final isTeacher = currentUser?.role == 'teacher';
     final db = context.read<AppDatabase>();
-    final targetStudentId =
-        isStudent ? currentUser?.id : _teacherStudentId;
+    final targetStudentId = isStudent ? currentUser?.id : _teacherStudentId;
 
     if (_loading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
@@ -297,11 +307,13 @@ class _SkillTreePageState extends State<SkillTreePage> {
       body: StreamBuilder<List<ProgressEntry>>(
         stream: targetStudentId == null
             ? const Stream.empty()
-            : db.watchProgressForCourse(targetStudentId, widget.courseVersionId),
+            : db.watchProgressForCourse(
+                targetStudentId, widget.courseVersionId),
         builder: (context, snapshot) {
           final progress = snapshot.data ?? [];
           final litPercentMap = {
-            for (final entry in progress) entry.kpKey: _resolveLitPercent(entry),
+            for (final entry in progress)
+              entry.kpKey: _resolveLitPercent(entry),
           };
           _nodeProgress
             ..clear()
@@ -359,9 +371,8 @@ class _SkillTreePageState extends State<SkillTreePage> {
                   Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .surfaceContainerHighest,
+                      color:
+                          Theme.of(context).colorScheme.surfaceContainerHighest,
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -804,8 +815,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
     });
     _scheduleViewStateSave();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-      }
+      if (mounted) {}
     });
   }
 
@@ -832,8 +842,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
   List<SkillNode> _detailNodesForSelection(SkillNode node) {
     final path = _pathToNode(node);
     final result = <SkillNode>[...path];
-    final parent =
-        node.parentId == null ? node : _nodeById(node.parentId!);
+    final parent = node.parentId == null ? node : _nodeById(node.parentId!);
     if (parent != null) {
       for (final sibling in parent.children) {
         if (!result.contains(sibling)) {
@@ -865,8 +874,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
 
   void _collapseNode(SkillNode node) {
     final descendantIds = _collectBranchDescendantIds(node);
-    final expandedDescendants =
-        descendantIds.where(_expanded.contains).toSet();
+    final expandedDescendants = descendantIds.where(_expanded.contains).toSet();
     _collapsedDescendants[node.id] = expandedDescendants;
     _expanded.remove(node.id);
     _expanded.removeAll(expandedDescendants);
@@ -879,7 +887,8 @@ class _SkillTreePageState extends State<SkillTreePage> {
       return;
     }
     final valid = saved
-        .where((id) => id == 'math' || _parseResult?.nodes.containsKey(id) == true)
+        .where(
+            (id) => id == 'math' || _parseResult?.nodes.containsKey(id) == true)
         .toSet();
     _expanded.addAll(valid);
   }
@@ -898,6 +907,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
     walk(node);
     return ids;
   }
+
   Future<void> _openSession({
     required int sessionId,
     required CourseVersion courseVersion,
@@ -1142,8 +1152,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
     if (leaves.isEmpty) {
       return;
     }
-    final allLit =
-        leaves.every((leaf) => (litPercentMap[leaf.id] ?? 0) >= 100);
+    final allLit = leaves.every((leaf) => (litPercentMap[leaf.id] ?? 0) >= 100);
     final nextLit = !allLit;
     await db.transaction(() async {
       for (final leaf in leaves) {
@@ -1157,7 +1166,6 @@ class _SkillTreePageState extends State<SkillTreePage> {
       }
     });
   }
-
 
   int _nodeDepth(SkillNode node) {
     if (node.id == 'math') {
@@ -1379,5 +1387,4 @@ class _SkillTreePageState extends State<SkillTreePage> {
     }
     return (minYear, maxYear);
   }
-
 }

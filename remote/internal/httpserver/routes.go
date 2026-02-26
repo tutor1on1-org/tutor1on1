@@ -16,6 +16,8 @@ func registerRoutes(app *fiber.App, deps handlers.Dependencies) {
 	catalog := handlers.NewCatalogHandler(deps)
 	enrollments := handlers.NewEnrollmentHandler(deps)
 	teacherCourses := handlers.NewTeacherCoursesHandler(deps)
+	userKeys := handlers.NewUserKeysHandler(deps)
+	sessionSync := handlers.NewSessionSyncHandler(deps)
 
 	app.Get("/health", health.Check)
 
@@ -27,6 +29,7 @@ func registerRoutes(app *fiber.App, deps handlers.Dependencies) {
 	authLimiterRefresh := middleware.NewRateLimiter(20, time.Minute)
 	catalogLimiter := middleware.NewRateLimiter(60, time.Minute)
 	enrollmentLimiter := middleware.NewRateLimiter(20, time.Minute)
+	syncLimiter := middleware.NewRateLimiter(30, time.Minute)
 
 	api.Post("/auth/register", authLimiterRegister.Handler(middleware.KeyByIP), auth.Register)
 	api.Post("/auth/register-student", authLimiterRegister.Handler(middleware.KeyByIP), auth.RegisterStudent)
@@ -46,6 +49,7 @@ func registerRoutes(app *fiber.App, deps handlers.Dependencies) {
 	api.Get("/teacher/courses", teacherCourses.ListCourses)
 	api.Post("/teacher/courses", teacherCourses.CreateCourse)
 	api.Post("/teacher/courses/:id/publish", teacherCourses.PublishCourse)
+	api.Post("/teacher/courses/:id/delete", teacherCourses.DeleteCourse)
 	api.Post("/teacher/courses/:id/bundles", teacherCourses.EnsureBundle)
 
 	api.Post("/enrollment-requests", enrollmentLimiter.Handler(middleware.KeyByIP), enrollments.CreateRequest)
@@ -54,4 +58,11 @@ func registerRoutes(app *fiber.App, deps handlers.Dependencies) {
 	api.Get("/teacher/enrollment-requests", enrollments.ListTeacherRequests)
 	api.Post("/teacher/enrollment-requests/:id/approve", enrollments.ApproveRequest)
 	api.Post("/teacher/enrollment-requests/:id/reject", enrollments.RejectRequest)
+
+	api.Get("/keys/self", userKeys.GetSelf)
+	api.Post("/keys/self", userKeys.UpsertSelf)
+	api.Get("/keys/course", userKeys.GetCourseKeys)
+
+	api.Post("/sessions/sync/upload", syncLimiter.Handler(middleware.KeyByIP), sessionSync.Upload)
+	api.Get("/sessions/sync/list", syncLimiter.Handler(middleware.KeyByIP), sessionSync.List)
 }

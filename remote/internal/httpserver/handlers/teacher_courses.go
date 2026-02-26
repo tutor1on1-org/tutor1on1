@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"os"
 	"strings"
 	"time"
 
@@ -274,3 +275,138 @@ func (h *TeacherCoursesHandler) EnsureBundle(c *fiber.Ctx) error {
 	})
 }
 
+func (h *TeacherCoursesHandler) DeleteCourse(c *fiber.Ctx) error {
+	userID, err := requireUserID(c, h.cfg.Config.JWTSecret)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	}
+	teacherID, err := getTeacherAccountID(h.cfg.Store.DB, userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return fiber.NewError(fiber.StatusForbidden, "teacher account required")
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, "teacher lookup failed")
+	}
+	courseID, err := parseInt64Param(c, "id")
+	if err != nil {
+		return err
+	}
+
+	filePaths := []string{}
+	rows, err := h.cfg.Store.DB.Query(
+		`SELECT bv.oss_path
+		 FROM bundle_versions bv
+		 JOIN bundles b ON bv.bundle_id = b.id
+		 WHERE b.course_id = ? AND b.teacher_id = ?`,
+		courseID,
+		teacherID,
+	)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "bundle lookup failed")
+	}
+	for rows.Next() {
+		var relPath sql.NullString
+		if err := rows.Scan(&relPath); err != nil {
+			rows.Close()
+			return fiber.NewError(fiber.StatusInternalServerError, "bundle lookup failed")
+		}
+		if relPath.Valid {
+			filePaths = append(filePaths, relPath.String)
+		}
+	}
+	rows.Close()
+
+	tx, err := h.cfg.Store.DB.Begin()
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err = tx.Exec(
+		`DELETE FROM session_text_sync WHERE course_id = ?`,
+		courseID,
+	); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "session sync delete failed")
+	}
+	if _, err = tx.Exec(
+		`DELETE FROM e2ee_events WHERE course_id = ?`,
+		courseID,
+	); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "events delete failed")
+	}
+	if _, err = tx.Exec(
+		`DELETE FROM marketplace_reports WHERE course_id = ?`,
+		courseID,
+	); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "reports delete failed")
+	}
+	if _, err = tx.Exec(
+		`DELETE FROM enrollment_requests WHERE course_id = ?`,
+		courseID,
+	); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "requests delete failed")
+	}
+	if _, err = tx.Exec(
+		`DELETE FROM enrollments WHERE course_id = ?`,
+		courseID,
+	); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "enrollments delete failed")
+	}
+	if _, err = tx.Exec(
+		`DELETE FROM course_catalog_entries WHERE course_id = ? AND teacher_id = ?`,
+		courseID,
+		teacherID,
+	); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "catalog delete failed")
+	}
+	if _, err = tx.Exec(
+		`DELETE bv FROM bundle_versions bv
+		 JOIN bundles b ON bv.bundle_id = b.id
+		 WHERE b.course_id = ? AND b.teacher_id = ?`,
+		courseID,
+		teacherID,
+	); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "bundle versions delete failed")
+	}
+	if _, err = tx.Exec(
+		`DELETE FROM bundles WHERE course_id = ? AND teacher_id = ?`,
+		courseID,
+		teacherID,
+	); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "bundles delete failed")
+	}
+	result, err := tx.Exec(
+		`DELETE c FROM courses c
+		 WHERE c.id = ? AND c.teacher_id = ?`,
+		courseID,
+		teacherID,
+	)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "course delete failed")
+	}
+	affected, err := result.RowsAffected()
+	if err != nil || affected == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "course not found")
+	}
+	if err = tx.Commit(); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
+	}
+
+	if h.cfg.Storage != nil {
+		for _, relPath := range filePaths {
+			absPath := h.cfg.Storage.BundleAbsolutePath(relPath)
+			if removeErr := os.Remove(absPath); removeErr != nil && !os.IsNotExist(removeErr) {
+				return fiber.NewError(fiber.StatusInternalServerError, "bundle file delete failed")
+			}
+		}
+	}
+
+	return c.JSON(fiber.Map{
+		"course_id": courseID,
+		"status":    "deleted",
+	})
+}

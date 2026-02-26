@@ -12,6 +12,7 @@ import '../../services/marketplace_api_service.dart';
 import '../../state/auth_controller.dart';
 import '../app_settings_page.dart';
 import 'course_version_page.dart';
+import 'marketplace_page.dart';
 import 'prompt_settings_page.dart';
 import 'skill_tree_page.dart';
 import 'student_sessions_page.dart';
@@ -73,6 +74,15 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       appBar: AppBar(
         title: Text(l10n.teacherTitle(teacher.username)),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.store),
+            tooltip: l10n.marketplaceTitle,
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const MarketplacePage()),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () {
@@ -205,21 +215,49 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                           );
                         },
                         onDelete: () => _confirmDeleteCourse(context, course),
-                        onViewTree: isLoaded
-                            ? () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) => SkillTreePage(
-                                      courseVersionId: course.id,
-                                      isTeacherView: true,
-                                    ),
-                                  ),
-                                );
-                              }
-                            : null,
                         onUpload: isLoaded
                             ? () => _uploadCourseToMarketplace(teacher, course)
                             : null,
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Course / Student / Tree',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            Expanded(
+              child: StreamBuilder<List<CourseStudentTreeInfo>>(
+                stream: db.watchCourseStudentTrees(teacher.id),
+                builder: (context, snapshot) {
+                  final rows = snapshot.data ?? [];
+                  if (rows.isEmpty) {
+                    return const Center(child: Text('No rows yet.'));
+                  }
+                  return ListView.builder(
+                    itemCount: rows.length,
+                    itemBuilder: (context, index) {
+                      final row = rows[index];
+                      return ListTile(
+                        title: Text(
+                            '${row.courseSubject} / ${row.studentUsername}'),
+                        trailing: TextButton(
+                          onPressed: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => SkillTreePage(
+                                  courseVersionId: row.courseVersionId,
+                                  isTeacherView: true,
+                                  teacherStudentId: row.studentId,
+                                ),
+                              ),
+                            );
+                          },
+                          child: Text(l10n.treeButton),
+                        ),
                       );
                     },
                   );
@@ -519,26 +557,69 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
   ) async {
     final l10n = AppLocalizations.of(context)!;
     final db = context.read<AppDatabase>();
+    final phrase =
+        'I understand students ${course.subject} progress will be deleted';
+    final inputController = TextEditingController();
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(l10n.deleteCourseTitle(course.subject)),
-        content: Text(l10n.deleteCourseMessage),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text(l10n.cancelButton),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text(l10n.deleteCourseTitle(course.subject)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'This deletes local and marketplace course data for this course. '
+                'Students may lose progress linked to this course.',
+              ),
+              const SizedBox(height: 8),
+              SelectableText(phrase),
+              const SizedBox(height: 8),
+              TextField(
+                controller: inputController,
+                decoration: const InputDecoration(
+                  labelText: 'Type confirmation text',
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+            ],
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(l10n.deleteButton),
-          ),
-        ],
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(l10n.cancelButton),
+            ),
+            ElevatedButton(
+              onPressed: inputController.text.trim() == phrase
+                  ? () => Navigator.of(context).pop(true)
+                  : null,
+              child: Text(l10n.deleteButton),
+            ),
+          ],
+        ),
       ),
     );
     if (confirmed != true) {
       return;
     }
+
+    final remoteCourseId = await db.getRemoteCourseId(course.id);
+    if (remoteCourseId != null && remoteCourseId > 0) {
+      try {
+        await _marketplaceApi.deleteTeacherCourse(remoteCourseId);
+      } catch (error) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to delete marketplace course: $error'),
+            ),
+          );
+        }
+        return;
+      }
+    }
+
     await db.deleteCourseVersion(course.id);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -555,7 +636,6 @@ class _CourseTile extends StatelessWidget {
     required this.isUploading,
     required this.onReload,
     required this.onDelete,
-    required this.onViewTree,
     required this.onUpload,
   });
 
@@ -564,7 +644,6 @@ class _CourseTile extends StatelessWidget {
   final bool isUploading;
   final VoidCallback onReload;
   final VoidCallback onDelete;
-  final VoidCallback? onViewTree;
   final VoidCallback? onUpload;
 
   @override
@@ -594,15 +673,6 @@ class _CourseTile extends StatelessWidget {
               tooltip: l10n.deleteCourseButton,
               icon: const Icon(Icons.delete),
               onPressed: onDelete,
-            ),
-            TextButton(
-              style: isLoaded
-                  ? null
-                  : TextButton.styleFrom(
-                      foregroundColor: Theme.of(context).disabledColor,
-                    ),
-              onPressed: onViewTree,
-              child: Text(l10n.treeButton),
             ),
             const SizedBox(width: 8),
             ElevatedButton(

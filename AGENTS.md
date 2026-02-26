@@ -81,3 +81,6 @@
 
 ## Experience Learned (2026-02-26)
 - Marketplace bundles now embed active prompt/profile metadata (`_family_teacher/prompt_bundle.json`); download applies teacher/course/current-student scopes and uses bundle `version_id` to avoid applying older prompt payloads.
+
+## Experience Learned (2026-02-26)
+- Teacher home course rows should keep course-version actions minimal (`Reload Course` + `Upload Bundle`) and move per-student tree access into a separate `(course, student, tree)` list to avoid mixing version management with student progress views.

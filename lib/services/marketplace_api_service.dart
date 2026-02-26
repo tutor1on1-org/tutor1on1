@@ -296,6 +296,88 @@ class MarketplaceApiService {
     });
   }
 
+  Future<void> deleteTeacherCourse(int courseId) async {
+    await _post('/api/teacher/courses/$courseId/delete', {});
+  }
+
+  Future<int> ensureBundle(int courseId) async {
+    final response = await _post('/api/teacher/courses/$courseId/bundles', {});
+    if (response is Map<String, dynamic>) {
+      final id = (response['bundle_id'] as num?)?.toInt();
+      if (id != null && id > 0) {
+        return id;
+      }
+    }
+    throw MarketplaceApiException('Unexpected response format.');
+  }
+
+  Future<Map<String, dynamic>> uploadBundle({
+    required int bundleId,
+    required int version,
+    required File bundleFile,
+  }) async {
+    final token = await _requireAccessToken();
+    final uri = Uri.parse('$_baseUrl/api/bundles/upload').replace(
+      queryParameters: {
+        'bundle_id': bundleId.toString(),
+        'version': version.toString(),
+      },
+    );
+    final request = http.MultipartRequest('POST', uri);
+    request.headers['Authorization'] = 'Bearer $token';
+    request.files.add(await http.MultipartFile.fromPath(
+      'bundle',
+      bundleFile.path,
+    ));
+    http.StreamedResponse streamed;
+    try {
+      streamed = await _client.send(request);
+    } on Exception catch (error) {
+      throw MarketplaceApiException('Request failed: $error');
+    }
+    final response = await http.Response.fromStream(streamed);
+    final decoded = _decodeResponse(response);
+    if (decoded is! Map<String, dynamic>) {
+      throw MarketplaceApiException('Unexpected response format.');
+    }
+    return decoded;
+  }
+
+  Future<File> downloadBundleToFile({
+    required int bundleVersionId,
+    required String targetPath,
+  }) async {
+    final token = await _requireAccessToken();
+    final uri = Uri.parse('$_baseUrl/api/bundles/download').replace(
+      queryParameters: {
+        'bundle_version_id': bundleVersionId.toString(),
+      },
+    );
+    final request = http.Request('GET', uri);
+    request.headers['Authorization'] = 'Bearer $token';
+    http.StreamedResponse streamed;
+    try {
+      streamed = await _client.send(request);
+    } on Exception catch (error) {
+      throw MarketplaceApiException('Request failed: $error');
+    }
+    if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
+      final body = await streamed.stream.bytesToString();
+      throw MarketplaceApiException(
+        _extractError(body) ?? 'Request failed.',
+        statusCode: streamed.statusCode,
+      );
+    }
+    final file = File(targetPath);
+    final sink = file.openWrite();
+    try {
+      await streamed.stream.pipe(sink);
+    } finally {
+      await sink.close();
+    }
+    return file;
+  }
+
   Future<dynamic> _get(
     String path, {
     Map<String, String>? params,
@@ -366,10 +448,7 @@ class MarketplaceApiService {
     if (decoded is! List) {
       throw MarketplaceApiException('Unexpected response format.');
     }
-    return decoded
-        .whereType<Map<String, dynamic>>()
-        .map(parser)
-        .toList();
+    return decoded.whereType<Map<String, dynamic>>().map(parser).toList();
   }
 
   static http.Client _buildClient(bool allowInsecureTls) {
@@ -407,4 +486,3 @@ class MarketplaceApiService {
     return body.trim();
   }
 }
-

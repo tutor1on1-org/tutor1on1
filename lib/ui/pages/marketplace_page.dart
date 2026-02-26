@@ -30,6 +30,7 @@ class _MarketplacePageState extends State<MarketplacePage> {
   ];
 
   late final MarketplaceApiService _api;
+  bool _studentActionsEnabled = false;
   bool _loading = true;
   String? _error;
   List<CatalogCourse> _courses = [];
@@ -51,19 +52,25 @@ class _MarketplacePageState extends State<MarketplacePage> {
       _error = null;
     });
     try {
+      final role = context.read<AuthController>().currentUser?.role;
+      final isStudent = role == 'student';
       final courses = await _api.listCourses();
-      final requests = await _api.listStudentRequests();
-      final enrollments = await _api.listEnrollments();
       final requestMap = <int, EnrollmentRequestSummary>{};
-      for (final request in requests) {
-        requestMap[request.courseId] = request;
+      final enrolledIds = <int>{};
+      if (isStudent) {
+        final requests = await _api.listStudentRequests();
+        final enrollments = await _api.listEnrollments();
+        for (final request in requests) {
+          requestMap[request.courseId] = request;
+        }
+        enrolledIds.addAll(enrollments.map((e) => e.courseId));
       }
-      final enrolledIds = enrollments.map((e) => e.courseId).toSet();
       if (!mounted) {
         return;
       }
       setState(() {
         _courses = courses;
+        _studentActionsEnabled = isStudent;
         _requestsByCourse
           ..clear()
           ..addAll(requestMap);
@@ -133,6 +140,23 @@ class _MarketplacePageState extends State<MarketplacePage> {
     AppLocalizations l10n,
     CatalogCourse course,
   ) {
+    if (!_studentActionsEnabled) {
+      return Card(
+        child: ListTile(
+          title: Text(course.subject),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(l10n.marketplaceTeacherLine(course.teacherName)),
+              if (course.grade.isNotEmpty)
+                Text(l10n.marketplaceGradeLine(course.grade)),
+              if (course.description.isNotEmpty) Text(course.description),
+            ],
+          ),
+          isThreeLine: true,
+        ),
+      );
+    }
     final request = _requestsByCourse[course.courseId];
     final enrolled = _enrolledCourseIds.contains(course.courseId);
     final isDownloading = _downloadingCourseIds.contains(course.courseId);

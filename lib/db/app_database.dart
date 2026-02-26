@@ -15,6 +15,7 @@ class Users extends Table {
   TextColumn get pinHash => text()();
   TextColumn get role => text()();
   IntColumn get teacherId => integer().nullable()();
+  IntColumn get remoteUserId => integer().nullable()();
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
 
   @override
@@ -106,6 +107,22 @@ class ChatSessions extends Table {
   TextColumn get summaryRawResponse => text().nullable()();
   BoolColumn get summaryValid => boolean().nullable()();
   IntColumn get summarizeCallId => integer().nullable()();
+  TextColumn get syncId => text().nullable()();
+  DateTimeColumn get syncUpdatedAt => dateTime().nullable()();
+  DateTimeColumn get syncUploadedAt => dateTime().nullable()();
+}
+
+class CourseRemoteLinks extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  IntColumn get courseVersionId => integer()();
+  IntColumn get remoteCourseId => integer()();
+  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+
+  @override
+  List<Set<Column>> get uniqueKeys => [
+        {courseVersionId},
+        {remoteCourseId},
+      ];
 }
 
 class ChatMessages extends Table {
@@ -229,6 +246,7 @@ class StudentPromptProfiles extends Table {
     ApiConfigs,
     PromptTemplates,
     StudentPromptProfiles,
+    CourseRemoteLinks,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -243,7 +261,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 22;
+  int get schemaVersion => 23;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -290,7 +308,7 @@ class AppDatabase extends _$AppDatabase {
           if (from < 9) {
             await m.addColumn(chatSessions, chatSessions.title);
           }
-          if (from < 16) {
+          if (from < 16 && from >= 7) {
             await m.addColumn(promptTemplates, promptTemplates.courseKey);
             await m.addColumn(promptTemplates, promptTemplates.studentId);
           }
@@ -318,8 +336,10 @@ class AppDatabase extends _$AppDatabase {
             await m.addColumn(appSettings, appSettings.ttsModel);
             await m.addColumn(appSettings, appSettings.sttModel);
             await m.addColumn(appSettings, appSettings.sttAutoSend);
-            await m.addColumn(apiConfigs, apiConfigs.ttsModel);
-            await m.addColumn(apiConfigs, apiConfigs.sttModel);
+            if (from >= 5) {
+              await m.addColumn(apiConfigs, apiConfigs.ttsModel);
+              await m.addColumn(apiConfigs, apiConfigs.sttModel);
+            }
           }
           if (from < 18) {
             await m.addColumn(appSettings, appSettings.studyModeEnabled);
@@ -337,6 +357,13 @@ class AppDatabase extends _$AppDatabase {
           }
           if (from < 22) {
             await m.createTable(studentPromptProfiles);
+          }
+          if (from < 23) {
+            await m.addColumn(users, users.remoteUserId);
+            await m.addColumn(chatSessions, chatSessions.syncId);
+            await m.addColumn(chatSessions, chatSessions.syncUpdatedAt);
+            await m.addColumn(chatSessions, chatSessions.syncUploadedAt);
+            await m.createTable(courseRemoteLinks);
           }
         },
       );
@@ -364,6 +391,7 @@ class AppDatabase extends _$AppDatabase {
     required String pinHash,
     required String role,
     int? teacherId,
+    int? remoteUserId,
   }) {
     return into(users).insert(
       UsersCompanion.insert(
@@ -371,8 +399,15 @@ class AppDatabase extends _$AppDatabase {
         pinHash: pinHash,
         role: role,
         teacherId: Value(teacherId),
+        remoteUserId: Value(remoteUserId),
       ),
     );
+  }
+
+  Future<User?> findUserByRemoteId(int remoteUserId) {
+    return (select(users)
+          ..where((tbl) => tbl.remoteUserId.equals(remoteUserId)))
+        .getSingleOrNull();
   }
 
   Stream<List<User>> watchStudents(int teacherId) {
@@ -504,6 +539,28 @@ class AppDatabase extends _$AppDatabase {
         .watch();
   }
 
+  Stream<List<CourseStudentTreeInfo>> watchCourseStudentTrees(int teacherId) {
+    return customSelect(
+      '''
+      SELECT a.course_version_id AS course_version_id,
+             c.subject AS course_subject,
+             a.student_id AS student_id,
+             u.username AS student_username
+      FROM student_course_assignments a
+      JOIN course_versions c ON c.id = a.course_version_id
+      JOIN users u ON u.id = a.student_id
+      WHERE c.teacher_id = ?
+      ORDER BY c.subject COLLATE NOCASE ASC, u.username COLLATE NOCASE ASC
+      ''',
+      variables: [Variable.withInt(teacherId)],
+      readsFrom: {studentCourseAssignments, courseVersions, users},
+    ).watch().map(
+          (rows) => rows
+              .map((row) => CourseStudentTreeInfo.fromRow(row.data))
+              .toList(),
+        );
+  }
+
   Stream<List<ChatMessage>> watchMessagesForSession(int sessionId) {
     return (select(chatMessages)
           ..where((tbl) => tbl.sessionId.equals(sessionId))
@@ -580,6 +637,7 @@ class AppDatabase extends _$AppDatabase {
         .write(
       ChatSessionsCompanion(
         title: Value(cleaned.isEmpty ? null : cleaned),
+        syncUpdatedAt: Value(DateTime.now()),
       ),
     );
   }
@@ -955,6 +1013,49 @@ ORDER BY l.created_at DESC
     );
   }
 
+  Future<void> updateUserAuth({
+    required int userId,
+    required String pinHash,
+    required String role,
+    int? remoteUserId,
+  }) {
+    return (update(users)..where((tbl) => tbl.id.equals(userId))).write(
+      UsersCompanion(
+        pinHash: Value(pinHash),
+        role: Value(role),
+        remoteUserId:
+            remoteUserId == null ? const Value.absent() : Value(remoteUserId),
+      ),
+    );
+  }
+
+  Future<void> upsertCourseRemoteLink({
+    required int courseVersionId,
+    required int remoteCourseId,
+  }) {
+    return into(courseRemoteLinks).insert(
+      CourseRemoteLinksCompanion.insert(
+        courseVersionId: courseVersionId,
+        remoteCourseId: remoteCourseId,
+      ),
+      mode: InsertMode.insertOrReplace,
+    );
+  }
+
+  Future<int?> getRemoteCourseId(int courseVersionId) async {
+    final row = await (select(courseRemoteLinks)
+          ..where((tbl) => tbl.courseVersionId.equals(courseVersionId)))
+        .getSingleOrNull();
+    return row?.remoteCourseId;
+  }
+
+  Future<int?> getCourseVersionIdForRemoteCourse(int remoteCourseId) async {
+    final row = await (select(courseRemoteLinks)
+          ..where((tbl) => tbl.remoteCourseId.equals(remoteCourseId)))
+        .getSingleOrNull();
+    return row?.courseVersionId;
+  }
+
   String _normalizeBaseUrl(String value) {
     var trimmed = value.trim();
     if (trimmed.endsWith('/')) {
@@ -990,6 +1091,9 @@ ORDER BY l.created_at DESC
               ..where((tbl) => tbl.courseVersionId.isIn(courseIds)))
             .go();
         await (delete(studentCourseAssignments)
+              ..where((tbl) => tbl.courseVersionId.isIn(courseIds)))
+            .go();
+        await (delete(courseRemoteLinks)
               ..where((tbl) => tbl.courseVersionId.isIn(courseIds)))
             .go();
         await (delete(courseVersions)..where((tbl) => tbl.id.isIn(courseIds)))
@@ -1029,6 +1133,9 @@ ORDER BY l.created_at DESC
             ..where((tbl) => tbl.courseVersionId.equals(courseVersionId)))
           .go();
       await (delete(courseEdges)
+            ..where((tbl) => tbl.courseVersionId.equals(courseVersionId)))
+          .go();
+      await (delete(courseRemoteLinks)
             ..where((tbl) => tbl.courseVersionId.equals(courseVersionId)))
           .go();
       await (delete(llmCalls)
@@ -1667,6 +1774,29 @@ class StudentSessionInfo {
       courseSubject: row['course_subject'] as String?,
       kpKey: row['kp_key'] as String,
       nodeTitle: row['node_title'] as String?,
+    );
+  }
+}
+
+class CourseStudentTreeInfo {
+  CourseStudentTreeInfo({
+    required this.courseVersionId,
+    required this.courseSubject,
+    required this.studentId,
+    required this.studentUsername,
+  });
+
+  final int courseVersionId;
+  final String courseSubject;
+  final int studentId;
+  final String studentUsername;
+
+  factory CourseStudentTreeInfo.fromRow(Map<String, Object?> row) {
+    return CourseStudentTreeInfo(
+      courseVersionId: row['course_version_id'] as int,
+      courseSubject: (row['course_subject'] as String?) ?? '',
+      studentId: row['student_id'] as int,
+      studentUsername: (row['student_username'] as String?) ?? '',
     );
   }
 }
