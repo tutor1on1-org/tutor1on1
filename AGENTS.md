@@ -4,6 +4,10 @@
 - After a code change, before updating `DONEs.md`, run `flutter build windows --release` (timeout 10 minutes). If it fails, fix the root cause from the error. Max 3 retries for the same error.
 - If build is working, commit and push with a clear message.
 - If remote backend code changes (`remote/`), always rebuild server binary and restart service before reporting done.
+- Validation baseline for all future work:
+  - Do reasonable self-validation before reporting done (tests/build/log checks/scripted flow checks as applicable).
+  - For bug fixes, do root-cause-first validation with evidence: reproduce -> identify failing layer -> verify fix on that layer and adjacent layer(s).
+  - Prefer end-to-end checks when feasible (API + data + client import path), not only unit-level checks.
 
 ## Current product state
 - Flutter app + remote Go API for family teaching.
