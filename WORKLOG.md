@@ -42,3 +42,15 @@ Historical setup timeline moved to `LOGBOOK.md`.
   - require lecture file per node (`<id>_lecture.txt` or `<id>/lecture.txt`)
   - ignore AppleDouble/macOS metadata entries (`._*`, `__MACOSX/*`)
 - Deployed updated API binary and restarted `family-teacher-api.service`; health check returned OK.
+
+## Remote server updates (2026-02-26, bundle version controls)
+- Added upload dedupe by hash in API upload flow: if the uploaded bundle hash matches latest version, API returns `status=unchanged` and does not create a new version row.
+- Added server retention policy in upload flow: keep latest 5 versions per bundle; prune older DB rows and delete old files.
+- Added teacher APIs:
+  - `GET /api/teacher/courses/:id/bundle-versions`
+  - `POST /api/teacher/courses/:id/bundle-versions/:versionId/delete`
+- Deployed backend changes:
+  - copied updated `bundles.go` and `routes.go` to `/opt/family_teacher_remote`
+  - built binary with `/usr/local/go/bin/go build`
+  - restarted `family-teacher-api.service`
+  - verified `curl -k https://43.99.59.107/health` returned `{"status":"ok"}`

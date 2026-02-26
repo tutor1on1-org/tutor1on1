@@ -27,6 +27,7 @@
 - For authenticated bundle downloads, API checks auth and returns `X-Accel-Redirect`; Nginx serves files from internal alias.
 - Nginx worker must have read/traverse permission on `STORAGE_ROOT` (current host: `nginx` user is in `ftapp` group).
 - Keep API upload limit and Nginx `client_max_body_size` aligned.
+- On current ECS shell sessions, default `PATH` can miss tools in non-interactive commands; use absolute binaries (for example `/usr/bin/ls`, `/usr/local/go/bin/go`, `/usr/bin/systemctl`) in automation scripts.
 
 ## References
 - `README.md` for current architecture and flows.
