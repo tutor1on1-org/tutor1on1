@@ -1,9 +1,14 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../db/app_database.dart';
 import '../../l10n/app_localizations.dart';
 import '../../services/app_services.dart';
+import '../../services/course_bundle_service.dart';
 import '../../services/marketplace_api_service.dart';
+import '../../state/auth_controller.dart';
 
 class MarketplacePage extends StatefulWidget {
   const MarketplacePage({super.key});
@@ -13,12 +18,24 @@ class MarketplacePage extends StatefulWidget {
 }
 
 class _MarketplacePageState extends State<MarketplacePage> {
+  static const List<String> _promptNames = [
+    'learn_init',
+    'learn_cont',
+    'review_init',
+    'review_cont',
+    'summary',
+    'learn',
+    'review',
+    'summarize',
+  ];
+
   late final MarketplaceApiService _api;
   bool _loading = true;
   String? _error;
   List<CatalogCourse> _courses = [];
   final Map<int, EnrollmentRequestSummary> _requestsByCourse = {};
   final Set<int> _enrolledCourseIds = {};
+  final Set<int> _downloadingCourseIds = {};
 
   @override
   void initState() {
@@ -118,13 +135,15 @@ class _MarketplacePageState extends State<MarketplacePage> {
   ) {
     final request = _requestsByCourse[course.courseId];
     final enrolled = _enrolledCourseIds.contains(course.courseId);
+    final isDownloading = _downloadingCourseIds.contains(course.courseId);
     String statusLabel = '';
     String buttonLabel = l10n.marketplaceRequestButton;
     bool canRequest = !enrolled;
+    bool canDownload = false;
     if (enrolled) {
       statusLabel = l10n.marketplaceEnrolled;
       canRequest = false;
-      buttonLabel = l10n.marketplaceEnrolled;
+      canDownload = course.latestBundleVersionId != null;
     } else if (request != null) {
       if (request.status == 'pending') {
         statusLabel = l10n.marketplacePending;
@@ -149,16 +168,35 @@ class _MarketplacePageState extends State<MarketplacePage> {
             Text(l10n.marketplaceTeacherLine(course.teacherName)),
             if (course.grade.isNotEmpty)
               Text(l10n.marketplaceGradeLine(course.grade)),
-            if (course.description.isNotEmpty)
-              Text(course.description),
+            if (course.description.isNotEmpty) Text(course.description),
             if (statusLabel.isNotEmpty) Text(statusLabel),
+            if (enrolled && !canDownload) Text(l10n.marketplaceBundleMissing),
           ],
         ),
         isThreeLine: true,
-        trailing: ElevatedButton(
-          onPressed: canRequest ? () => _requestEnrollment(context, course) : null,
-          child: Text(buttonLabel),
-        ),
+        trailing: enrolled
+            ? SizedBox(
+                width: 140,
+                child: ElevatedButton(
+                  onPressed: canDownload && !isDownloading
+                      ? () => _downloadBundle(context, course)
+                      : null,
+                  child: Text(
+                    isDownloading
+                        ? l10n.marketplaceDownloadingLabel
+                        : canDownload
+                            ? l10n.marketplaceDownloadButton
+                            : l10n.marketplaceNoBundleButton,
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              )
+            : ElevatedButton(
+                onPressed: canRequest
+                    ? () => _requestEnrollment(context, course)
+                    : null,
+                child: Text(buttonLabel),
+              ),
       ),
     );
   }
@@ -175,7 +213,8 @@ class _MarketplacePageState extends State<MarketplacePage> {
         title: Text(l10n.marketplaceRequestTitle(course.subject)),
         content: TextField(
           controller: controller,
-          decoration: InputDecoration(labelText: l10n.marketplaceRequestMessage),
+          decoration:
+              InputDecoration(labelText: l10n.marketplaceRequestMessage),
         ),
         actions: [
           TextButton(
@@ -212,5 +251,285 @@ class _MarketplacePageState extends State<MarketplacePage> {
         SnackBar(content: Text(l10n.marketplaceRequestFailed('$error'))),
       );
     }
+  }
+
+  Future<void> _downloadBundle(
+    BuildContext context,
+    CatalogCourse course,
+  ) async {
+    final l10n = AppLocalizations.of(context)!;
+    final bundleVersionId = course.latestBundleVersionId;
+    if (bundleVersionId == null || bundleVersionId <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.marketplaceBundleMissing)),
+      );
+      return;
+    }
+    final auth = context.read<AuthController>();
+    final user = auth.currentUser;
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.notLoggedInMessage)),
+      );
+      return;
+    }
+
+    setState(() {
+      _downloadingCourseIds.add(course.courseId);
+    });
+    final services = context.read<AppServices>();
+    final bundleService = CourseBundleService();
+    File? bundleFile;
+    try {
+      final targetPath =
+          await bundleService.createTempBundlePath(label: course.subject);
+      bundleFile = await _api.downloadBundleToFile(
+        bundleVersionId: bundleVersionId,
+        targetPath: targetPath,
+      );
+      final promptMetadata =
+          await bundleService.readPromptMetadataFromBundleFile(bundleFile);
+      final folderPath = await bundleService.extractBundleFromFile(
+        bundleFile: bundleFile,
+        courseName: course.subject,
+      );
+      final loadResult = await services.courseService.loadCourseFromFolder(
+        teacherId: user.id,
+        folderPath: folderPath,
+      );
+      if (!loadResult.success || loadResult.course == null) {
+        throw StateError(loadResult.message);
+      }
+      await services.db.upsertCourseRemoteLink(
+        courseVersionId: loadResult.course!.id,
+        remoteCourseId: course.courseId,
+      );
+      await services.db.assignStudent(
+        studentId: user.id,
+        courseVersionId: loadResult.course!.id,
+      );
+      if (promptMetadata != null) {
+        await _applyPromptMetadata(
+          services: services,
+          metadata: promptMetadata,
+          course: loadResult.course!,
+          user: user,
+          remoteCourseId: course.courseId,
+        );
+      }
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.marketplaceDownloadSuccess)),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.marketplaceDownloadFailed('$error'))),
+      );
+    } finally {
+      if (bundleFile != null && bundleFile.existsSync()) {
+        await bundleFile.delete();
+      }
+      if (mounted) {
+        setState(() {
+          _downloadingCourseIds.remove(course.courseId);
+        });
+      }
+    }
+  }
+
+  Future<void> _applyPromptMetadata({
+    required AppServices services,
+    required Map<String, dynamic> metadata,
+    required CourseVersion course,
+    required User user,
+    required int remoteCourseId,
+  }) async {
+    final schema = (metadata['schema'] as String?)?.trim() ?? '';
+    if (schema != 'family_teacher_prompt_bundle_v1') {
+      return;
+    }
+    final versionId = (metadata['version_id'] as num?)?.toInt();
+    final remoteUserId = user.remoteUserId;
+    if (versionId != null &&
+        remoteUserId != null &&
+        remoteUserId > 0 &&
+        remoteCourseId > 0) {
+      final existingVersion =
+          await services.secureStorage.readCoursePromptBundleVersion(
+        remoteUserId: remoteUserId,
+        remoteCourseId: remoteCourseId,
+      );
+      if (existingVersion != null && versionId <= existingVersion) {
+        return;
+      }
+    }
+
+    final db = services.db;
+    final teacherId = course.teacherId;
+    final courseKey = course.sourcePath?.trim();
+    if (courseKey == null || courseKey.isEmpty) {
+      return;
+    }
+
+    for (final promptName in _promptNames) {
+      await db.clearActivePromptTemplates(
+        teacherId: teacherId,
+        promptName: promptName,
+        courseKey: null,
+        studentId: null,
+      );
+      await db.clearActivePromptTemplates(
+        teacherId: teacherId,
+        promptName: promptName,
+        courseKey: courseKey,
+        studentId: null,
+      );
+      await db.clearActivePromptTemplates(
+        teacherId: teacherId,
+        promptName: promptName,
+        courseKey: courseKey,
+        studentId: user.id,
+      );
+    }
+
+    await db.deleteStudentPromptProfile(
+      teacherId: teacherId,
+      courseKey: null,
+      studentId: null,
+    );
+    await db.deleteStudentPromptProfile(
+      teacherId: teacherId,
+      courseKey: courseKey,
+      studentId: null,
+    );
+    await db.deleteStudentPromptProfile(
+      teacherId: teacherId,
+      courseKey: courseKey,
+      studentId: user.id,
+    );
+
+    final promptTemplates = metadata['prompt_templates'];
+    if (promptTemplates is List) {
+      for (final item in promptTemplates) {
+        if (item is! Map<String, dynamic>) {
+          continue;
+        }
+        final promptName = (item['prompt_name'] as String?)?.trim() ?? '';
+        final content = (item['content'] as String?)?.trim() ?? '';
+        final scope = (item['scope'] as String?)?.trim() ?? '';
+        if (promptName.isEmpty || content.isEmpty) {
+          continue;
+        }
+        if (!_promptNames.contains(promptName)) {
+          continue;
+        }
+
+        String? scopeCourseKey;
+        int? scopeStudentId;
+        if (scope == 'teacher') {
+          scopeCourseKey = null;
+          scopeStudentId = null;
+        } else if (scope == 'course') {
+          scopeCourseKey = courseKey;
+          scopeStudentId = null;
+        } else if (scope == 'student') {
+          final targetRemoteUserId =
+              (item['student_remote_user_id'] as num?)?.toInt();
+          final targetUsername =
+              (item['student_username'] as String?)?.trim() ?? '';
+          final remoteMatched = remoteUserId != null &&
+              targetRemoteUserId != null &&
+              targetRemoteUserId > 0 &&
+              remoteUserId == targetRemoteUserId;
+          final usernameMatched = targetUsername.isNotEmpty &&
+              targetUsername.toLowerCase() == user.username.toLowerCase();
+          if (!remoteMatched && !usernameMatched) {
+            continue;
+          }
+          scopeCourseKey = courseKey;
+          scopeStudentId = user.id;
+        } else {
+          continue;
+        }
+
+        await db.insertPromptTemplate(
+          teacherId: teacherId,
+          promptName: promptName,
+          content: content,
+          courseKey: scopeCourseKey,
+          studentId: scopeStudentId,
+        );
+      }
+    }
+
+    final profiles = metadata['student_prompt_profiles'];
+    if (profiles is List) {
+      for (final item in profiles) {
+        if (item is! Map<String, dynamic>) {
+          continue;
+        }
+        final scope = (item['scope'] as String?)?.trim() ?? '';
+        String? scopeCourseKey;
+        int? scopeStudentId;
+
+        if (scope == 'teacher') {
+          scopeCourseKey = null;
+          scopeStudentId = null;
+        } else if (scope == 'course') {
+          scopeCourseKey = courseKey;
+          scopeStudentId = null;
+        } else if (scope == 'student') {
+          final targetRemoteUserId =
+              (item['student_remote_user_id'] as num?)?.toInt();
+          final targetUsername =
+              (item['student_username'] as String?)?.trim() ?? '';
+          final remoteMatched = remoteUserId != null &&
+              targetRemoteUserId != null &&
+              targetRemoteUserId > 0 &&
+              remoteUserId == targetRemoteUserId;
+          final usernameMatched = targetUsername.isNotEmpty &&
+              targetUsername.toLowerCase() == user.username.toLowerCase();
+          if (!remoteMatched && !usernameMatched) {
+            continue;
+          }
+          scopeCourseKey = courseKey;
+          scopeStudentId = user.id;
+        } else {
+          continue;
+        }
+
+        await db.upsertStudentPromptProfile(
+          teacherId: teacherId,
+          courseKey: scopeCourseKey,
+          studentId: scopeStudentId,
+          gradeLevel: item['grade_level'] as String?,
+          readingLevel: item['reading_level'] as String?,
+          preferredLanguage: item['preferred_language'] as String?,
+          interests: item['interests'] as String?,
+          preferredTone: item['preferred_tone'] as String?,
+          preferredPace: item['preferred_pace'] as String?,
+          preferredFormat: item['preferred_format'] as String?,
+          supportNotes: item['support_notes'] as String?,
+        );
+      }
+    }
+
+    if (remoteUserId != null &&
+        remoteUserId > 0 &&
+        remoteCourseId > 0 &&
+        versionId != null) {
+      await services.secureStorage.writeCoursePromptBundleVersion(
+        remoteUserId: remoteUserId,
+        remoteCourseId: remoteCourseId,
+        versionId: versionId,
+      );
+    }
+
+    services.promptRepository.invalidatePromptCache();
   }
 }

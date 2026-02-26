@@ -8,6 +8,13 @@ class SecureStorageService {
   static const _apiKeyKey = 'openai_api_key';
   static const _apiKeyPrefix = 'openai_api_key:';
   static const _apiKeyBasePrefix = 'api_key_base:';
+  static const _authAccessTokenKey = 'auth_access_token';
+  static const _authRefreshTokenKey = 'auth_refresh_token';
+  static const _userPrivateKeyPrefix = 'user_private_key:';
+  static const _userPublicKeyPrefix = 'user_public_key:';
+  static const _sessionSyncCursorPrefix = 'session_sync_cursor:';
+  static const _coursePromptBundleVersionPrefix =
+      'course_prompt_bundle_version:';
   final FlutterSecureStorage _storage;
 
   Future<String?> readApiKey() => _storage.read(key: _apiKeyKey);
@@ -45,6 +52,86 @@ class SecureStorageService {
 
   Future<void> deleteApiKeyForHash(String hash) {
     return _storage.delete(key: '$_apiKeyPrefix$hash');
+  }
+
+  Future<String?> readAuthAccessToken() =>
+      _storage.read(key: _authAccessTokenKey);
+
+  Future<String?> readAuthRefreshToken() =>
+      _storage.read(key: _authRefreshTokenKey);
+
+  Future<void> writeAuthTokens({
+    required String accessToken,
+    required String refreshToken,
+  }) async {
+    await _storage.write(key: _authAccessTokenKey, value: accessToken.trim());
+    await _storage.write(key: _authRefreshTokenKey, value: refreshToken.trim());
+  }
+
+  Future<void> deleteAuthTokens() async {
+    await _storage.delete(key: _authAccessTokenKey);
+    await _storage.delete(key: _authRefreshTokenKey);
+  }
+
+  Future<String?> readUserPrivateKey(int remoteUserId) {
+    return _storage.read(key: '$_userPrivateKeyPrefix$remoteUserId');
+  }
+
+  Future<void> writeUserPrivateKey(int remoteUserId, String value) {
+    return _storage.write(
+      key: '$_userPrivateKeyPrefix$remoteUserId',
+      value: value.trim(),
+    );
+  }
+
+  Future<void> deleteUserPrivateKey(int remoteUserId) {
+    return _storage.delete(key: '$_userPrivateKeyPrefix$remoteUserId');
+  }
+
+  Future<String?> readUserPublicKey(int remoteUserId) {
+    return _storage.read(key: '$_userPublicKeyPrefix$remoteUserId');
+  }
+
+  Future<void> writeUserPublicKey(int remoteUserId, String value) {
+    return _storage.write(
+      key: '$_userPublicKeyPrefix$remoteUserId',
+      value: value.trim(),
+    );
+  }
+
+  Future<String?> readSessionSyncCursor(int remoteUserId) {
+    return _storage.read(key: '$_sessionSyncCursorPrefix$remoteUserId');
+  }
+
+  Future<void> writeSessionSyncCursor(int remoteUserId, String value) {
+    return _storage.write(
+      key: '$_sessionSyncCursorPrefix$remoteUserId',
+      value: value.trim(),
+    );
+  }
+
+  Future<int?> readCoursePromptBundleVersion({
+    required int remoteUserId,
+    required int remoteCourseId,
+  }) async {
+    final value = await _storage.read(
+      key: '$_coursePromptBundleVersionPrefix$remoteUserId:$remoteCourseId',
+    );
+    if (value == null || value.trim().isEmpty) {
+      return null;
+    }
+    return int.tryParse(value.trim());
+  }
+
+  Future<void> writeCoursePromptBundleVersion({
+    required int remoteUserId,
+    required int remoteCourseId,
+    required int versionId,
+  }) {
+    return _storage.write(
+      key: '$_coursePromptBundleVersionPrefix$remoteUserId:$remoteCourseId',
+      value: versionId.toString(),
+    );
   }
 
   String _baseUrlKey(String baseUrl) {

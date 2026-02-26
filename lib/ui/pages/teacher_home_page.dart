@@ -1,23 +1,66 @@
+import 'dart:io';
+
+import 'package:drift/drift.dart' hide Column;
 import 'package:flutter/material.dart';
-import 'package:family_teacher/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
+import 'package:family_teacher/l10n/app_localizations.dart';
 
 import '../../db/app_database.dart';
-import '../../models/skill_tree.dart';
-import '../../security/pin_hasher.dart';
 import '../../services/app_services.dart';
+import '../../services/course_bundle_service.dart';
+import '../../services/marketplace_api_service.dart';
 import '../../state/auth_controller.dart';
+import '../app_settings_page.dart';
 import 'course_version_page.dart';
 import 'prompt_settings_page.dart';
-import 'teacher_enrollment_requests_page.dart';
-import 'teacher_marketplace_courses_page.dart';
-import '../app_settings_page.dart';
 import 'skill_tree_page.dart';
 import 'student_sessions_page.dart';
-import '../widgets/pan_scroll_view.dart';
+import 'teacher_enrollment_requests_page.dart';
 
-class TeacherHomePage extends StatelessWidget {
+class TeacherHomePage extends StatefulWidget {
   const TeacherHomePage({super.key});
+
+  @override
+  State<TeacherHomePage> createState() => _TeacherHomePageState();
+}
+
+class _TeacherHomePageState extends State<TeacherHomePage> {
+  bool _syncStarted = false;
+  final Set<int> _uploadingCourseIds = {};
+  late MarketplaceApiService _marketplaceApi;
+
+  @override
+  void initState() {
+    super.initState();
+    final services = context.read<AppServices>();
+    _marketplaceApi =
+        MarketplaceApiService(secureStorage: services.secureStorage);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startSync());
+  }
+
+  Future<void> _startSync() async {
+    if (_syncStarted || !mounted) {
+      return;
+    }
+    _syncStarted = true;
+    final l10n = AppLocalizations.of(context)!;
+    final auth = context.read<AuthController>();
+    final user = auth.currentUser;
+    if (user == null) {
+      return;
+    }
+    final services = context.read<AppServices>();
+    try {
+      await services.sessionSyncService.syncIfReady(currentUser: user);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.sessionSyncFailed('$error'))),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -54,12 +97,6 @@ class TeacherHomePage extends StatelessWidget {
               runSpacing: 8,
               children: [
                 ElevatedButton(
-                  key: const Key('create_student_button'),
-                  onPressed: () =>
-                      _showCreateStudentDialog(context, teacher.id),
-                  child: Text(l10n.createStudentButton),
-                ),
-                ElevatedButton(
                   key: const Key('create_course_button'),
                   onPressed: () {
                     Navigator.of(context).push(
@@ -72,17 +109,6 @@ class TeacherHomePage extends StatelessWidget {
                   child: Text(l10n.createCourseButton),
                 ),
                 ElevatedButton(
-                  key: const Key('marketplace_courses_button'),
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const TeacherMarketplaceCoursesPage(),
-                      ),
-                    );
-                  },
-                  child: Text(l10n.teacherMarketplaceButton),
-                ),
-                ElevatedButton(
                   key: const Key('enrollment_requests_button'),
                   onPressed: () {
                     Navigator.of(context).push(
@@ -92,11 +118,6 @@ class TeacherHomePage extends StatelessWidget {
                     );
                   },
                   child: Text(l10n.enrollmentRequestsButton),
-                ),
-                ElevatedButton(
-                  key: const Key('create_teacher_button'),
-                  onPressed: () => _showCreateTeacherDialog(context),
-                  child: Text(l10n.createTeacherButton),
                 ),
                 ElevatedButton(
                   key: const Key('prompt_settings_button'),
@@ -132,36 +153,17 @@ class TeacherHomePage extends StatelessWidget {
                       final student = students[index];
                       return ListTile(
                         title: Text(student.username),
-                        trailing: Wrap(
-                          spacing: 8,
-                          children: [
-                            IconButton(
-                              tooltip: l10n.resetPinButton,
-                              icon: const Icon(Icons.lock_reset),
-                              onPressed: () => _showResetStudentPinDialog(
-                                context,
-                                student,
+                        trailing: IconButton(
+                          tooltip: l10n.studentSessionsButton,
+                          icon: const Icon(Icons.history),
+                          onPressed: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    StudentSessionsPage(student: student),
                               ),
-                            ),
-                            IconButton(
-                              tooltip: l10n.studentSessionsButton,
-                              icon: const Icon(Icons.history),
-                              onPressed: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                        StudentSessionsPage(student: student),
-                                  ),
-                                );
-                              },
-                            ),
-                            IconButton(
-                              tooltip: l10n.deleteStudentButton,
-                              icon: const Icon(Icons.delete),
-                              onPressed: () =>
-                                  _confirmDeleteStudent(context, student),
-                            ),
-                          ],
+                            );
+                          },
                         ),
                       );
                     },
@@ -188,10 +190,10 @@ class TeacherHomePage extends StatelessWidget {
                       final course = courses[index];
                       final isLoaded = course.sourcePath != null &&
                           course.sourcePath!.trim().isNotEmpty;
-                      return _CourseAssignmentTile(
+                      return _CourseTile(
                         course: course,
-                        teacherId: teacher.id,
                         isLoaded: isLoaded,
+                        isUploading: _uploadingCourseIds.contains(course.id),
                         onReload: () {
                           Navigator.of(context).push(
                             MaterialPageRoute(
@@ -215,12 +217,8 @@ class TeacherHomePage extends StatelessWidget {
                                 );
                               }
                             : null,
-                        onAssign: isLoaded
-                            ? () => _showAssignDialog(
-                                  context,
-                                  course.id,
-                                  teacher.id,
-                                )
+                        onUpload: isLoaded
+                            ? () => _uploadCourseToMarketplace(teacher, course)
                             : null,
                       );
                     },
@@ -234,276 +232,285 @@ class TeacherHomePage extends StatelessWidget {
     );
   }
 
-  Future<void> _showCreateStudentDialog(
-    BuildContext context,
-    int teacherId,
+  Future<void> _uploadCourseToMarketplace(
+    User teacher,
+    CourseVersion course,
   ) async {
     final l10n = AppLocalizations.of(context)!;
-    final usernameController = TextEditingController();
-    final pinController = TextEditingController();
-    final db = context.read<AppDatabase>();
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(l10n.createStudentDialogTitle),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: usernameController,
-              decoration: InputDecoration(labelText: l10n.usernameLabel),
-            ),
-            TextField(
-              controller: pinController,
-              decoration: InputDecoration(labelText: l10n.pinLabel),
-              obscureText: true,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text(l10n.cancelButton),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final username = usernameController.text.trim();
-              final pin = pinController.text.trim();
-              if (username.isEmpty || pin.isEmpty) {
-                return;
-              }
-              try {
-                await db.createUser(
-                  username: username,
-                  pinHash: PinHasher.hash(pin),
-                  role: 'student',
-                  teacherId: teacherId,
-                );
-              } catch (e) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(l10n.createFailedMessage('$e'))),
-                  );
-                }
-                return;
-              }
-              if (context.mounted) {
-                Navigator.of(context).pop();
-              }
-            },
-            child: Text(l10n.createDialogCreate),
-          ),
-        ],
-      ),
-    );
-  }
+    final sourcePath = (course.sourcePath ?? '').trim();
+    if (sourcePath.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.courseFolderRequired)),
+      );
+      return;
+    }
+    if (_uploadingCourseIds.contains(course.id)) {
+      return;
+    }
 
-  Future<void> _showAssignDialog(
-    BuildContext context,
-    int courseVersionId,
-    int teacherId,
-  ) async {
-    final l10n = AppLocalizations.of(context)!;
-    final db = context.read<AppDatabase>();
-    final students = await db.watchStudents(teacherId).first;
-    if (students.isEmpty) {
-      if (!context.mounted) {
-        return;
+    final services = context.read<AppServices>();
+    final db = services.db;
+    setState(() {
+      _uploadingCourseIds.add(course.id);
+    });
+
+    File? bundleFile;
+    try {
+      var remoteCourseId = await db.getRemoteCourseId(course.id);
+      if (remoteCourseId == null || remoteCourseId <= 0) {
+        final created = await _marketplaceApi.createTeacherCourse(
+          subject: course.subject,
+          grade: '',
+          description: 'Uploaded from Family Teacher app.',
+        );
+        remoteCourseId = created.courseId;
+        await db.upsertCourseRemoteLink(
+          courseVersionId: course.id,
+          remoteCourseId: remoteCourseId,
+        );
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.assignDialogNoStudents)),
-      );
-      return;
+
+      final bundleId = await _marketplaceApi.ensureBundle(remoteCourseId);
+      final bundleService = CourseBundleService();
+      final baseVersion = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+
+      for (var attempt = 0; attempt < 3; attempt++) {
+        final versionId = baseVersion + attempt;
+        final promptMetadata = await _buildPromptBundleMetadata(
+          teacher: teacher,
+          course: course,
+          remoteCourseId: remoteCourseId,
+          versionId: versionId,
+        );
+
+        bundleFile = await bundleService.createBundleFromFolder(
+          sourcePath,
+          promptMetadata: promptMetadata,
+        );
+
+        try {
+          await _marketplaceApi.uploadBundle(
+            bundleId: bundleId,
+            version: versionId,
+            bundleFile: bundleFile,
+          );
+          await _marketplaceApi.updateCourseVisibility(
+            courseId: remoteCourseId,
+            visibility: 'public',
+          );
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(l10n.marketplaceUploadSuccess)),
+            );
+          }
+          break;
+        } on MarketplaceApiException catch (error) {
+          if (bundleFile.existsSync()) {
+            await bundleFile.delete();
+          }
+          bundleFile = null;
+          if (error.statusCode == 409 && attempt < 2) {
+            continue;
+          }
+          rethrow;
+        }
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(l10n.marketplaceUploadFailed('$error'))),
+        );
+      }
+    } finally {
+      if (bundleFile != null && bundleFile.existsSync()) {
+        await bundleFile.delete();
+      }
+      if (mounted) {
+        setState(() {
+          _uploadingCourseIds.remove(course.id);
+        });
+      }
     }
-    int? selectedId = students.first.id;
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(l10n.assignDialogTitle),
-        content: DropdownButton<int>(
-          value: selectedId,
-          items: students
-              .map(
-                (student) => DropdownMenuItem(
-                  value: student.id,
-                  child: Text(student.username),
+  }
+
+  Future<Map<String, dynamic>> _buildPromptBundleMetadata({
+    required User teacher,
+    required CourseVersion course,
+    required int remoteCourseId,
+    required int versionId,
+  }) async {
+    final db = context.read<AppDatabase>();
+    final courseKey = (course.sourcePath ?? '').trim();
+    if (courseKey.isEmpty) {
+      throw StateError('Course path missing.');
+    }
+
+    final scopeTemplates = <PromptTemplate>[];
+    final systemTemplates = await (db.select(db.promptTemplates)
+          ..where((tbl) =>
+              tbl.teacherId.equals(teacher.id) &
+              tbl.isActive.equals(true) &
+              tbl.courseKey.isNull() &
+              tbl.studentId.isNull())
+          ..orderBy([
+            (tbl) =>
+                OrderingTerm(expression: tbl.createdAt, mode: OrderingMode.desc)
+          ]))
+        .get();
+    scopeTemplates.addAll(systemTemplates);
+
+    final courseTemplates = await (db.select(db.promptTemplates)
+          ..where((tbl) =>
+              tbl.teacherId.equals(teacher.id) &
+              tbl.isActive.equals(true) &
+              tbl.courseKey.equals(courseKey))
+          ..orderBy([
+            (tbl) =>
+                OrderingTerm(expression: tbl.createdAt, mode: OrderingMode.desc)
+          ]))
+        .get();
+    scopeTemplates.addAll(courseTemplates);
+
+    final dedupedByScope = <String, PromptTemplate>{};
+    for (final template in scopeTemplates) {
+      final key = [
+        template.promptName,
+        template.courseKey ?? '',
+        template.studentId?.toString() ?? '',
+      ].join('::');
+      dedupedByScope.putIfAbsent(key, () => template);
+    }
+
+    final studentCache = <int, User?>{};
+    final promptTemplatesPayload = <Map<String, dynamic>>[];
+    for (final template in dedupedByScope.values) {
+      final studentId = template.studentId;
+      User? student;
+      if (studentId != null) {
+        student = studentCache[studentId];
+        student ??= await db.getUserById(studentId);
+        studentCache[studentId] = student;
+      }
+
+      String scope = 'teacher';
+      if (template.courseKey != null && template.studentId == null) {
+        scope = 'course';
+      } else if (template.courseKey != null && template.studentId != null) {
+        scope = 'student';
+      }
+
+      promptTemplatesPayload.add({
+        'prompt_name': template.promptName,
+        'scope': scope,
+        'content': template.content,
+        'student_remote_user_id': student?.remoteUserId,
+        'student_username': student?.username,
+        'created_at': template.createdAt.toUtc().toIso8601String(),
+      });
+    }
+
+    final profilesPayload = <Map<String, dynamic>>[];
+    final systemProfile = await db.getStudentPromptProfile(
+      teacherId: teacher.id,
+      courseKey: null,
+      studentId: null,
+    );
+    if (systemProfile != null) {
+      profilesPayload.add(
+        _profileToJson(systemProfile, scope: 'teacher'),
+      );
+    }
+
+    final courseProfile = await db.getStudentPromptProfile(
+      teacherId: teacher.id,
+      courseKey: courseKey,
+      studentId: null,
+    );
+    if (courseProfile != null) {
+      profilesPayload.add(
+        _profileToJson(courseProfile, scope: 'course'),
+      );
+    }
+
+    final studentProfileRows = await (db.select(db.studentPromptProfiles)
+          ..where((tbl) =>
+              tbl.teacherId.equals(teacher.id) &
+              tbl.courseKey.equals(courseKey) &
+              tbl.studentId.isNotNull())
+          ..orderBy([
+            (tbl) => OrderingTerm(
+                  expression: tbl.updatedAt,
+                  mode: OrderingMode.desc,
                 ),
-              )
-              .toList(),
-          onChanged: (value) => selectedId = value,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text(l10n.cancelButton),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              if (selectedId == null) {
-                return;
-              }
-              await db.assignStudent(
-                studentId: selectedId!,
-                courseVersionId: courseVersionId,
-              );
-              final services = context.read<AppServices>();
-              await services.promptRepository.ensureAssignmentPrompts(
-                teacherId: teacherId,
-                studentId: selectedId!,
-                courseVersionId: courseVersionId,
-              );
-              if (context.mounted) {
-                Navigator.of(context).pop();
-              }
-            },
-            child: Text(l10n.assignConfirmButton),
-          ),
-        ],
-      ),
-    );
-  }
+            (tbl) => OrderingTerm(
+                  expression: tbl.createdAt,
+                  mode: OrderingMode.desc,
+                ),
+          ]))
+        .get();
 
-  Future<void> _showCreateTeacherDialog(BuildContext context) async {
-    final l10n = AppLocalizations.of(context)!;
-    final usernameController = TextEditingController();
-    final pinController = TextEditingController();
-    final db = context.read<AppDatabase>();
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(l10n.createTeacherDialogTitle),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: usernameController,
-              decoration: InputDecoration(labelText: l10n.usernameLabel),
-            ),
-            TextField(
-              controller: pinController,
-              decoration: InputDecoration(labelText: l10n.pinLabel),
-              obscureText: true,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text(l10n.cancelButton),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final username = usernameController.text.trim();
-              final pin = pinController.text.trim();
-              if (username.isEmpty || pin.isEmpty) {
-                return;
-              }
-              try {
-                await db.createUser(
-                  username: username,
-                  pinHash: PinHasher.hash(pin),
-                  role: 'teacher',
-                  teacherId: null,
-                );
-              } catch (e) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(l10n.createFailedMessage('$e'))),
-                  );
-                }
-                return;
-              }
-              if (context.mounted) {
-                Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(l10n.teacherCreatedMessage)),
-                );
-              }
-            },
-            child: Text(l10n.createDialogCreate),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _showResetStudentPinDialog(
-    BuildContext context,
-    User student,
-  ) async {
-    final l10n = AppLocalizations.of(context)!;
-    final pinController = TextEditingController();
-    final db = context.read<AppDatabase>();
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(l10n.resetPinDialogTitle(student.username)),
-        content: TextField(
-          controller: pinController,
-          decoration: InputDecoration(labelText: l10n.pinLabel),
-          obscureText: true,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text(l10n.cancelButton),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final pin = pinController.text.trim();
-              if (pin.isEmpty) {
-                return;
-              }
-              await db.updateUserPin(
-                userId: student.id,
-                pinHash: PinHasher.hash(pin),
-              );
-              if (context.mounted) {
-                Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(l10n.pinUpdatedMessage)),
-                );
-              }
-            },
-            child: Text(l10n.confirmButton),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _confirmDeleteStudent(
-    BuildContext context,
-    User student,
-  ) async {
-    final l10n = AppLocalizations.of(context)!;
-    final db = context.read<AppDatabase>();
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(l10n.deleteStudentTitle(student.username)),
-        content: Text(l10n.deleteStudentMessage),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text(l10n.cancelButton),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(l10n.deleteButton),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) {
-      return;
+    final studentIds = <int>{};
+    for (final row in studentProfileRows) {
+      final studentId = row.studentId;
+      if (studentId != null) {
+        studentIds.add(studentId);
+      }
     }
-    await db.deleteStudent(student.id);
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.deleteStudentSuccess)),
+
+    for (final studentId in studentIds) {
+      final profile = await db.getStudentPromptProfile(
+        teacherId: teacher.id,
+        courseKey: courseKey,
+        studentId: studentId,
+      );
+      if (profile == null) {
+        continue;
+      }
+      var student = studentCache[studentId];
+      student ??= await db.getUserById(studentId);
+      studentCache[studentId] = student;
+      profilesPayload.add(
+        _profileToJson(
+          profile,
+          scope: 'student',
+          studentRemoteUserId: student?.remoteUserId,
+          studentUsername: student?.username,
+        ),
       );
     }
+
+    return {
+      'schema': 'family_teacher_prompt_bundle_v1',
+      'version_id': versionId,
+      'remote_course_id': remoteCourseId,
+      'generated_at': DateTime.now().toUtc().toIso8601String(),
+      'teacher_username': teacher.username,
+      'prompt_templates': promptTemplatesPayload,
+      'student_prompt_profiles': profilesPayload,
+    };
+  }
+
+  Map<String, dynamic> _profileToJson(
+    StudentPromptProfile profile, {
+    required String scope,
+    int? studentRemoteUserId,
+    String? studentUsername,
+  }) {
+    return {
+      'scope': scope,
+      'student_remote_user_id': studentRemoteUserId,
+      'student_username': studentUsername,
+      'grade_level': profile.gradeLevel,
+      'reading_level': profile.readingLevel,
+      'preferred_language': profile.preferredLanguage,
+      'interests': profile.interests,
+      'preferred_tone': profile.preferredTone,
+      'preferred_pace': profile.preferredPace,
+      'preferred_format': profile.preferredFormat,
+      'support_notes': profile.supportNotes,
+      'updated_at':
+          (profile.updatedAt ?? profile.createdAt).toUtc().toIso8601String(),
+    };
   }
 
   Future<void> _confirmDeleteCourse(
@@ -541,183 +548,74 @@ class TeacherHomePage extends StatelessWidget {
   }
 }
 
-class _CourseAssignmentTile extends StatefulWidget {
-  const _CourseAssignmentTile({
+class _CourseTile extends StatelessWidget {
+  const _CourseTile({
     required this.course,
-    required this.teacherId,
     required this.isLoaded,
+    required this.isUploading,
     required this.onReload,
     required this.onDelete,
     required this.onViewTree,
-    required this.onAssign,
+    required this.onUpload,
   });
 
   final CourseVersion course;
-  final int teacherId;
   final bool isLoaded;
+  final bool isUploading;
   final VoidCallback onReload;
   final VoidCallback onDelete;
   final VoidCallback? onViewTree;
-  final VoidCallback? onAssign;
-
-  @override
-  State<_CourseAssignmentTile> createState() => _CourseAssignmentTileState();
-}
-
-class _CourseAssignmentTileState extends State<_CourseAssignmentTile> {
-  int _totalLeaves = 0;
-  Set<String> _leafIds = const {};
-
-  @override
-  void initState() {
-    super.initState();
-    _computeLeafCount();
-  }
-
-  @override
-  void didUpdateWidget(covariant _CourseAssignmentTile oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.course.textbookText != widget.course.textbookText) {
-      _computeLeafCount();
-    }
-  }
-
-  void _computeLeafCount() {
-    var count = 0;
-    var leafIds = <String>{};
-    try {
-      final parser = SkillTreeParser();
-      final result = parser.parse(widget.course.textbookText);
-      leafIds = result.nodes.values
-          .where((node) => !node.isPlaceholder)
-          .where((node) => node.children.isEmpty)
-          .map((node) => node.id)
-          .toSet();
-      count = leafIds.length;
-    } catch (_) {
-      count = 0;
-      leafIds = <String>{};
-    }
-    if (count == _totalLeaves && leafIds.length == _leafIds.length) {
-      return;
-    }
-    setState(() {
-      _totalLeaves = count;
-      _leafIds = leafIds;
-    });
-  }
+  final VoidCallback? onUpload;
 
   @override
   Widget build(BuildContext context) {
-    final db = context.read<AppDatabase>();
     final l10n = AppLocalizations.of(context)!;
-    return StreamBuilder<List<StudentCourseAssignment>>(
-      stream: db.watchAssignmentsForCourse(widget.course.id),
-      builder: (context, assignmentSnapshot) {
-        final assignments = assignmentSnapshot.data ?? [];
-        final assignment = assignments.isNotEmpty ? assignments.first : null;
-        final assignedStudentId = assignment?.studentId;
-        final assignEnabled =
-            widget.isLoaded && assignedStudentId == null && widget.onAssign != null;
-        return StreamBuilder<List<ProgressEntry>>(
-          stream: assignedStudentId == null
-              ? const Stream<List<ProgressEntry>>.empty()
-              : db.watchProgressForCourse(
-                  assignedStudentId,
-                  widget.course.id,
-                ),
-          builder: (context, progressSnapshot) {
-            final progress = progressSnapshot.data ?? [];
-            final progressPercent = assignedStudentId == null
-                ? 0
-                : _calculateProgressPercent(progress, _leafIds);
-            return FutureBuilder<User?>(
-              future: assignedStudentId == null
-                  ? Future<User?>.value(null)
-                  : db.getUserById(assignedStudentId),
-              builder: (context, studentSnapshot) {
-                final studentName = studentSnapshot.data?.username;
-                final titleText = studentName == null
-                    ? widget.course.subject
-                    : '${widget.course.subject} • $studentName ($progressPercent%)';
-                return Card(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                course.subject,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            TextButton(
+              key: Key('course_edit_${course.id}'),
+              onPressed: onReload,
+              child: Text(
+                isLoaded ? l10n.reloadCourseButton : l10n.loadCourseButton,
+              ),
+            ),
+            IconButton(
+              tooltip: l10n.deleteCourseButton,
+              icon: const Icon(Icons.delete),
+              onPressed: onDelete,
+            ),
+            TextButton(
+              style: isLoaded
+                  ? null
+                  : TextButton.styleFrom(
+                      foregroundColor: Theme.of(context).disabledColor,
                     ),
-                    child: PanScrollView(
-                      horizontal: true,
-                      vertical: false,
-                      child: Row(
-                        key: Key('course_item_${widget.course.id}'),
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            titleText,
-                            softWrap: false,
-                          ),
-                          const SizedBox(width: 12),
-                          TextButton(
-                            key: Key('course_edit_${widget.course.id}'),
-                            onPressed: widget.onReload,
-                            child: Text(
-                              widget.isLoaded
-                                  ? l10n.reloadCourseButton
-                                  : l10n.loadCourseButton,
-                            ),
-                          ),
-                          IconButton(
-                            tooltip: l10n.deleteCourseButton,
-                            icon: const Icon(Icons.delete),
-                            onPressed: widget.onDelete,
-                          ),
-                          TextButton(
-                            style: widget.isLoaded
-                                ? null
-                                : TextButton.styleFrom(
-                                    foregroundColor:
-                                        Theme.of(context).disabledColor,
-                                  ),
-                            onPressed: widget.onViewTree,
-                            child: Text(l10n.treeButton),
-                          ),
-                          TextButton(
-                            onPressed: assignEnabled ? widget.onAssign : null,
-                            child: Text(l10n.assignButton),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                );
-              },
-            );
-          },
-        );
-      },
+              onPressed: onViewTree,
+              child: Text(l10n.treeButton),
+            ),
+            const SizedBox(width: 8),
+            ElevatedButton(
+              onPressed: isUploading ? null : onUpload,
+              child: Text(
+                isUploading
+                    ? l10n.marketplaceUploadingLabel
+                    : l10n.marketplaceUploadButton,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
-  }
-
-  int _calculateProgressPercent(
-    List<ProgressEntry> progress,
-    Set<String> leafIds,
-  ) {
-    if (leafIds.isEmpty) {
-      return 0;
-    }
-    var sum = 0;
-    for (final entry in progress) {
-      if (!leafIds.contains(entry.kpKey)) {
-        continue;
-      }
-      final percent = entry.litPercent == 0 && entry.lit
-          ? 100
-          : entry.litPercent;
-      final clamped = percent.clamp(0, 100);
-      sum += clamped;
-    }
-    final ratio = sum / (leafIds.length * 100);
-    return (ratio * 100).round();
   }
 }

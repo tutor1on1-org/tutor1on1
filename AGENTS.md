@@ -69,3 +69,15 @@
 
 ## Experience Learned (2026-02-25)
 - Marketplace APIs require role checks (teacher account for publish/approvals) and only list `course_catalog_entries` with `visibility='public'` for the public catalog.
+
+## Experience Learned (2026-02-25)
+- Course bundles should be zipped without a top-level folder and validated for path traversal before extraction; bundle uploads use multipart with `bundle_id` + `version` query params and downloads should stream to disk to avoid large memory spikes.
+
+## Experience Learned (2026-02-25)
+- Drift migrations that `createTable` mid-upgrade can include newer columns; guard later `addColumn` steps with `from >= <createVersion>` to avoid duplicate column errors during v1 upgrades.
+
+## Experience Learned (2026-02-26)
+- Session sync E2EE uses per-user X25519 keys; the private key is encrypted with the user password (PBKDF2 + AES-GCM) and stored on the server for multi-device recovery, while payloads are AES-GCM encrypted and wrapped for teacher+student recipients.
+
+## Experience Learned (2026-02-26)
+- Marketplace bundles now embed active prompt/profile metadata (`_family_teacher/prompt_bundle.json`); download applies teacher/course/current-student scopes and uses bundle `version_id` to avoid applying older prompt payloads.
