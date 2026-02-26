@@ -3,6 +3,7 @@
 ## Work routine
 - After a code change, before updating `DONEs.md`, run `flutter build windows --release` (timeout 10 minutes). If it fails, fix the root cause from the error. Max 3 retries for the same error.
 - If build is working, commit and push with a clear message.
+- If remote backend code changes (`remote/`), always rebuild server binary and restart service before reporting done.
 
 ## Current product state
 - Flutter app + remote Go API for family teaching.
