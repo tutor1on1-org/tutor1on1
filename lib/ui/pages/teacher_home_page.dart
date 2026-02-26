@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:drift/drift.dart' hide Column;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:family_teacher/l10n/app_localizations.dart';
 
@@ -28,6 +29,7 @@ class TeacherHomePage extends StatefulWidget {
 class _TeacherHomePageState extends State<TeacherHomePage> {
   bool _syncStarted = false;
   final Set<int> _uploadingCourseIds = {};
+  String? _persistentError;
   late MarketplaceApiService _marketplaceApi;
 
   @override
@@ -102,6 +104,10 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (_persistentError != null) ...[
+              _buildPersistentErrorCard(l10n),
+              const SizedBox(height: 12),
+            ],
             Wrap(
               spacing: 12,
               runSpacing: 8,
@@ -288,6 +294,18 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
 
     final services = context.read<AppServices>();
     final db = services.db;
+
+    final preview = await services.courseService.previewCourseLoad(
+      folderPath: sourcePath,
+      courseVersionId: course.id,
+    );
+    if (!preview.success) {
+      _setPersistentError(
+        'Upload blocked: local course folder is invalid.\n${preview.message}',
+      );
+      return;
+    }
+
     setState(() {
       _uploadingCourseIds.add(course.id);
     });
@@ -354,11 +372,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         }
       }
     } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l10n.marketplaceUploadFailed('$error'))),
-        );
-      }
+      _setPersistentError(l10n.marketplaceUploadFailed('$error'));
     } finally {
       if (bundleFile != null && bundleFile.existsSync()) {
         await bundleFile.delete();
@@ -369,6 +383,60 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         });
       }
     }
+  }
+
+  void _setPersistentError(String message) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _persistentError = message;
+    });
+  }
+
+  Widget _buildPersistentErrorCard(AppLocalizations l10n) {
+    final message = _persistentError!;
+    return Card(
+      color: Theme.of(context).colorScheme.errorContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(top: 2),
+              child: Icon(Icons.error_outline),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: SelectableText(message),
+            ),
+            IconButton(
+              tooltip: l10n.copyTooltip,
+              icon: const Icon(Icons.copy),
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: message));
+                if (!mounted) {
+                  return;
+                }
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(l10n.copySuccess)),
+                );
+              },
+            ),
+            IconButton(
+              tooltip: l10n.clearButton,
+              icon: const Icon(Icons.close),
+              onPressed: () {
+                setState(() {
+                  _persistentError = null;
+                });
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<Map<String, dynamic>> _buildPromptBundleMetadata({

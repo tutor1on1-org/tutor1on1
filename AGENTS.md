@@ -16,6 +16,7 @@
 - Session prompt selection: `learn_init`/`learn_cont` and `review_init`/`review_cont` are selected by session turn state and label.
 - Structured tutor output must be valid JSON and include `teacher_message`; invalid output should be surfaced as an error, not rendered raw.
 - Bundle prompt metadata is in `_family_teacher/prompt_bundle.json`; apply only when incoming `version_id` is newer.
+- User-facing errors should not be transient-only; keep a persistent, copyable error surface in-page (avoid snackbar-only for important failures).
 - Drift migrations that create a table mid-upgrade must guard later `addColumn` with `from >= <createVersion>` to avoid duplicate-column failures.
 
 ## Remote ops notes

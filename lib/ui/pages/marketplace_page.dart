@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../db/app_database.dart';
@@ -33,6 +34,7 @@ class _MarketplacePageState extends State<MarketplacePage> {
   bool _studentActionsEnabled = false;
   bool _loading = true;
   String? _error;
+  String? _stickyError;
   List<CatalogCourse> _courses = [];
   final Map<int, EnrollmentRequestSummary> _requestsByCourse = {};
   final Set<int> _enrolledCourseIds = {};
@@ -103,34 +105,101 @@ class _MarketplacePageState extends State<MarketplacePage> {
           ),
         ],
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? _buildError(context, l10n)
-              : _courses.isEmpty
-                  ? Center(child: Text(l10n.marketplaceNoCourses))
-                  : ListView.builder(
-                      itemCount: _courses.length,
-                      itemBuilder: (context, index) {
-                        final course = _courses[index];
-                        return _buildCourseTile(context, l10n, course);
-                      },
-                    ),
+      body: Column(
+        children: [
+          if (_stickyError != null) _buildStickyError(context, l10n),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _error != null
+                    ? _buildError(context, l10n)
+                    : _courses.isEmpty
+                        ? Center(child: Text(l10n.marketplaceNoCourses))
+                        : ListView.builder(
+                            itemCount: _courses.length,
+                            itemBuilder: (context, index) {
+                              final course = _courses[index];
+                              return _buildCourseTile(context, l10n, course);
+                            },
+                          ),
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildError(BuildContext context, AppLocalizations l10n) {
+    final errorText = l10n.marketplaceLoadFailed(_error ?? '');
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(l10n.marketplaceLoadFailed(_error ?? '')),
+          SelectableText(errorText),
+          TextButton.icon(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: errorText));
+              if (!mounted) {
+                return;
+              }
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(l10n.copySuccess)),
+              );
+            },
+            icon: const Icon(Icons.copy),
+            label: Text(l10n.copyTooltip),
+          ),
           const SizedBox(height: 12),
           ElevatedButton(
             onPressed: _load,
             child: Text(l10n.retryButton),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildStickyError(BuildContext context, AppLocalizations l10n) {
+    final message = _stickyError!;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      child: Card(
+        color: Theme.of(context).colorScheme.errorContainer,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(top: 2),
+                child: Icon(Icons.error_outline),
+              ),
+              const SizedBox(width: 8),
+              Expanded(child: SelectableText(message)),
+              IconButton(
+                tooltip: l10n.copyTooltip,
+                icon: const Icon(Icons.copy),
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: message));
+                  if (!mounted) {
+                    return;
+                  }
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(l10n.copySuccess)),
+                  );
+                },
+              ),
+              IconButton(
+                tooltip: l10n.clearButton,
+                icon: const Icon(Icons.close),
+                onPressed: () {
+                  setState(() {
+                    _stickyError = null;
+                  });
+                },
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -268,12 +337,7 @@ class _MarketplacePageState extends State<MarketplacePage> {
       );
       await _load();
     } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.marketplaceRequestFailed('$error'))),
-      );
+      _setStickyError(l10n.marketplaceRequestFailed('$error'));
     }
   }
 
@@ -284,17 +348,13 @@ class _MarketplacePageState extends State<MarketplacePage> {
     final l10n = AppLocalizations.of(context)!;
     final bundleVersionId = course.latestBundleVersionId;
     if (bundleVersionId == null || bundleVersionId <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.marketplaceBundleMissing)),
-      );
+      _setStickyError(l10n.marketplaceBundleMissing);
       return;
     }
     final auth = context.read<AuthController>();
     final user = auth.currentUser;
     if (user == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.notLoggedInMessage)),
-      );
+      _setStickyError(l10n.notLoggedInMessage);
       return;
     }
 
@@ -322,7 +382,13 @@ class _MarketplacePageState extends State<MarketplacePage> {
         folderPath: folderPath,
       );
       if (!loadResult.success || loadResult.course == null) {
-        throw StateError(loadResult.message);
+        var details = loadResult.message;
+        if (details.contains('Missing file:')) {
+          details =
+              '$details\nThe course bundle is incomplete. Ask the teacher to reload and upload the course again.';
+        }
+        _setStickyError(l10n.marketplaceDownloadFailed(details));
+        return;
       }
       await services.db.upsertCourseRemoteLink(
         courseVersionId: loadResult.course!.id,
@@ -348,12 +414,7 @@ class _MarketplacePageState extends State<MarketplacePage> {
         SnackBar(content: Text(l10n.marketplaceDownloadSuccess)),
       );
     } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.marketplaceDownloadFailed('$error'))),
-      );
+      _setStickyError(l10n.marketplaceDownloadFailed('$error'));
     } finally {
       if (bundleFile != null && bundleFile.existsSync()) {
         await bundleFile.delete();
@@ -364,6 +425,15 @@ class _MarketplacePageState extends State<MarketplacePage> {
         });
       }
     }
+  }
+
+  void _setStickyError(String message) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _stickyError = message;
+    });
   }
 
   Future<void> _applyPromptMetadata({
