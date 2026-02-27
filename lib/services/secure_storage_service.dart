@@ -1,6 +1,20 @@
+import 'dart:convert';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../security/hash_utils.dart';
+
+class SyncItemState {
+  SyncItemState({
+    required this.contentHash,
+    required this.lastChangedAt,
+    required this.lastSyncedAt,
+  });
+
+  final String contentHash;
+  final DateTime lastChangedAt;
+  final DateTime lastSyncedAt;
+}
 
 class SecureStorageService {
   SecureStorageService() : _storage = const FlutterSecureStorage();
@@ -20,6 +34,7 @@ class SecureStorageService {
   static const _installedCourseBundleVersionPrefix =
       'installed_course_bundle_version:';
   static const _promptMetadataAppliedAtPrefix = 'prompt_metadata_applied_at:';
+  static const _syncItemStatePrefix = 'sync_item_state:';
   final FlutterSecureStorage _storage;
 
   Future<String?> readApiKey() => _storage.read(key: _apiKeyKey);
@@ -167,6 +182,70 @@ class SecureStorageService {
     );
   }
 
+  Future<SyncItemState?> readSyncItemState({
+    required int remoteUserId,
+    required String domain,
+    required String scopeKey,
+  }) async {
+    final value = await _storage.read(
+      key: _syncItemStateKey(
+        remoteUserId: remoteUserId,
+        domain: domain,
+        scopeKey: scopeKey,
+      ),
+    );
+    if (value == null || value.trim().isEmpty) {
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(value);
+      if (decoded is! Map<String, dynamic>) {
+        return null;
+      }
+      final hash = (decoded['hash'] as String?)?.trim() ?? '';
+      final changedAtRaw =
+          (decoded['last_changed_at'] as String?)?.trim() ?? '';
+      final syncedAtRaw = (decoded['last_synced_at'] as String?)?.trim() ?? '';
+      final changedAt = DateTime.tryParse(changedAtRaw);
+      final syncedAt = DateTime.tryParse(syncedAtRaw);
+      if (hash.isEmpty || changedAt == null || syncedAt == null) {
+        return null;
+      }
+      return SyncItemState(
+        contentHash: hash,
+        lastChangedAt: changedAt,
+        lastSyncedAt: syncedAt,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> writeSyncItemState({
+    required int remoteUserId,
+    required String domain,
+    required String scopeKey,
+    required String contentHash,
+    required DateTime lastChangedAt,
+    required DateTime lastSyncedAt,
+  }) async {
+    final payload = jsonEncode(
+      <String, String>{
+        'hash': contentHash.trim(),
+        'last_changed_at': lastChangedAt.toUtc().toIso8601String(),
+        'last_synced_at': lastSyncedAt.toUtc().toIso8601String(),
+      },
+    );
+    await _storage.write(
+      key: _syncItemStateKey(
+        remoteUserId: remoteUserId,
+        domain: domain,
+        scopeKey: scopeKey,
+      ),
+      value: payload,
+    );
+  }
+
   Future<DateTime?> readPromptMetadataAppliedAt({
     required int remoteUserId,
     required int remoteCourseId,
@@ -234,5 +313,16 @@ class SecureStorageService {
   String _baseUrlKey(String baseUrl) {
     final normalized = baseUrl.trim().toLowerCase();
     return '$_apiKeyBasePrefix${sha256Hex(normalized)}';
+  }
+
+  String _syncItemStateKey({
+    required int remoteUserId,
+    required String domain,
+    required String scopeKey,
+  }) {
+    final normalizedDomain = domain.trim().toLowerCase();
+    final normalizedScope = scopeKey.trim();
+    final scopeHash = sha256Hex(normalizedScope);
+    return '$_syncItemStatePrefix$remoteUserId:$normalizedDomain:$scopeHash';
   }
 }

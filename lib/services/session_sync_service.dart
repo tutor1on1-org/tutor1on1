@@ -33,6 +33,10 @@ class SessionSyncService {
   final SessionCryptoService _crypto;
   static final Uuid _uuid = Uuid();
   static final RegExp _versionSuffixPattern = RegExp(r'_(\d{10,})$');
+  static const String _syncDomainSessionUpload = 'session_upload';
+  static const String _syncDomainProgressUpload = 'progress_upload';
+  static const String _syncDomainSessionDownload = 'session_download';
+  static const String _syncDomainProgressDownload = 'progress_download';
   bool _syncing = false;
 
   Future<void> syncNow({
@@ -101,12 +105,39 @@ class SessionSyncService {
     }
     final keysByCourse = <int, CourseKeyBundle>{};
     final uploads = <ProgressUploadEntry>[];
+    final pendingStateWrites = <_SyncStateWrite>[];
     for (final entry in entries) {
       if (entry.kpKey == kTreeViewStateKpKey) {
         continue;
       }
       final remoteCourseId = await _db.getRemoteCourseId(entry.courseVersionId);
       if (remoteCourseId == null || remoteCourseId <= 0) {
+        continue;
+      }
+      final entryUpdatedAt = entry.updatedAt.toUtc();
+      final scopeKey = '$remoteCourseId:${entry.kpKey}';
+      final syncState = await _secureStorage.readSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainProgressUpload,
+        scopeKey: scopeKey,
+      );
+      if (!_isTimestampNewer(entryUpdatedAt, syncState?.lastSyncedAt)) {
+        continue;
+      }
+      final payloadHash = _hashProgressPayloadCore(
+        entry: entry,
+        remoteCourseId: remoteCourseId,
+        remoteUserId: remoteUserId,
+      );
+      if (syncState != null && syncState.contentHash == payloadHash) {
+        await _secureStorage.writeSyncItemState(
+          remoteUserId: remoteUserId,
+          domain: _syncDomainProgressUpload,
+          scopeKey: scopeKey,
+          contentHash: payloadHash,
+          lastChangedAt: entryUpdatedAt,
+          lastSyncedAt: entryUpdatedAt,
+        );
         continue;
       }
       var resolvedKeys = keysByCourse[remoteCourseId];
@@ -144,11 +175,30 @@ class SessionSyncService {
           envelopeHash: _hashEnvelope(envelopeJson),
         ),
       );
+      pendingStateWrites.add(
+        _SyncStateWrite(
+          domain: _syncDomainProgressUpload,
+          scopeKey: scopeKey,
+          contentHash: payloadHash,
+          lastChangedAt: entryUpdatedAt,
+          lastSyncedAt: entryUpdatedAt,
+        ),
+      );
     }
     if (uploads.isEmpty) {
       return;
     }
     await _api.uploadProgressBatch(uploads);
+    for (final stateWrite in pendingStateWrites) {
+      await _secureStorage.writeSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: stateWrite.domain,
+        scopeKey: stateWrite.scopeKey,
+        contentHash: stateWrite.contentHash,
+        lastChangedAt: stateWrite.lastChangedAt,
+        lastSyncedAt: stateWrite.lastSyncedAt,
+      );
+    }
   }
 
   Future<void> _uploadPendingSessions(
@@ -171,6 +221,24 @@ class SessionSyncService {
         continue;
       }
       final syncSession = await _ensureSessionSyncMeta(session);
+      final syncId = (syncSession.syncId ?? '').trim();
+      if (syncId.isEmpty) {
+        continue;
+      }
+      final syncUpdatedAt =
+          (syncSession.syncUpdatedAt ?? DateTime.now()).toUtc();
+      final syncState = await _secureStorage.readSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainSessionUpload,
+        scopeKey: syncId,
+      );
+      if (!_isTimestampNewer(syncUpdatedAt, syncState?.lastSyncedAt)) {
+        await _markSessionUploaded(
+          sessionId: syncSession.id,
+          uploadedAt: syncUpdatedAt,
+        );
+        continue;
+      }
       final remoteCourseId =
           await _db.getRemoteCourseId(syncSession.courseVersionId);
       if (remoteCourseId == null || remoteCourseId <= 0) {
@@ -199,8 +267,24 @@ class SessionSyncService {
         teacherUserId: resolvedKeys.teacherUserId,
         studentUserId: resolvedKeys.studentUserId,
         studentUsername: currentUser.username,
-        updatedAt: syncSession.syncUpdatedAt ?? DateTime.now(),
+        updatedAt: syncUpdatedAt,
       );
+      final payloadHash = _hashCanonicalJson(payload);
+      if (syncState != null && syncState.contentHash == payloadHash) {
+        await _markSessionUploaded(
+          sessionId: syncSession.id,
+          uploadedAt: syncUpdatedAt,
+        );
+        await _secureStorage.writeSyncItemState(
+          remoteUserId: remoteUserId,
+          domain: _syncDomainSessionUpload,
+          scopeKey: syncId,
+          contentHash: payloadHash,
+          lastChangedAt: syncUpdatedAt,
+          lastSyncedAt: syncUpdatedAt,
+        );
+        continue;
+      }
       final envelope = await _crypto.encryptPayload(
         payload: payload,
         recipients: [
@@ -225,12 +309,17 @@ class SessionSyncService {
         envelope: envelopeBase64,
         envelopeHash: _hashEnvelope(envelopeJson),
       );
-      await (_db.update(_db.chatSessions)
-            ..where((tbl) => tbl.id.equals(syncSession.id)))
-          .write(
-        ChatSessionsCompanion(
-          syncUploadedAt: Value(syncSession.syncUpdatedAt ?? DateTime.now()),
-        ),
+      await _markSessionUploaded(
+        sessionId: syncSession.id,
+        uploadedAt: syncUpdatedAt,
+      );
+      await _secureStorage.writeSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainSessionUpload,
+        scopeKey: syncId,
+        contentHash: payloadHash,
+        lastChangedAt: syncUpdatedAt,
+        lastSyncedAt: syncUpdatedAt,
       );
     }
   }
@@ -247,15 +336,56 @@ class SessionSyncService {
     }
     DateTime? latest;
     for (final item in items) {
+      final itemUpdatedAt =
+          DateTime.tryParse(item.updatedAt)?.toUtc() ?? DateTime.now().toUtc();
+      final sessionSyncId = item.sessionSyncId.trim();
+      if (sessionSyncId.isEmpty) {
+        latest = _latestTimestamp(latest, itemUpdatedAt);
+        continue;
+      }
+      final syncState = await _secureStorage.readSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainSessionDownload,
+        scopeKey: sessionSyncId,
+      );
+      if (!_isTimestampNewer(itemUpdatedAt, syncState?.lastChangedAt)) {
+        latest = _latestTimestamp(latest, itemUpdatedAt);
+        continue;
+      }
+      final remoteHash = _resolveSyncHash(
+        primaryHash: item.envelopeHash,
+        fallbackValue: item.envelope,
+      );
+      if (syncState != null &&
+          remoteHash.isNotEmpty &&
+          syncState.contentHash == remoteHash) {
+        await _secureStorage.writeSyncItemState(
+          remoteUserId: remoteUserId,
+          domain: _syncDomainSessionDownload,
+          scopeKey: sessionSyncId,
+          contentHash: remoteHash,
+          lastChangedAt: itemUpdatedAt,
+          lastSyncedAt: itemUpdatedAt,
+        );
+        latest = _latestTimestamp(latest, itemUpdatedAt);
+        continue;
+      }
       final payload = await _decryptItem(item, remoteUserId, keyPair);
       await _importPayload(currentUser, payload);
       final updatedAt =
-          DateTime.tryParse(payload['updated_at'] as String? ?? '');
-      if (updatedAt != null) {
-        if (latest == null || updatedAt.isAfter(latest)) {
-          latest = updatedAt;
-        }
-      }
+          DateTime.tryParse(payload['updated_at'] as String? ?? '')?.toUtc() ??
+              itemUpdatedAt;
+      final resolvedHash =
+          remoteHash.isNotEmpty ? remoteHash : _hashCanonicalJson(payload);
+      await _secureStorage.writeSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainSessionDownload,
+        scopeKey: sessionSyncId,
+        contentHash: resolvedHash,
+        lastChangedAt: updatedAt,
+        lastSyncedAt: updatedAt,
+      );
+      latest = _latestTimestamp(latest, updatedAt);
     }
     if (latest != null) {
       await _secureStorage.writeSessionSyncCursor(
@@ -280,6 +410,38 @@ class SessionSyncService {
     }
     DateTime? latest;
     for (final item in items) {
+      final itemUpdatedAt =
+          DateTime.tryParse(item.updatedAt)?.toUtc() ?? DateTime.now().toUtc();
+      final scopeKey = '${item.courseId}:${item.kpKey.trim()}';
+      final syncState = await _secureStorage.readSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainProgressDownload,
+        scopeKey: scopeKey,
+      );
+      if (!_isTimestampNewer(itemUpdatedAt, syncState?.lastChangedAt)) {
+        latest = _latestTimestamp(latest, itemUpdatedAt);
+        continue;
+      }
+      final fallbackHash = _hashProgressSyncItem(item);
+      final remoteHash = _resolveSyncHash(
+        primaryHash: item.envelopeHash,
+        fallbackValue:
+            item.envelope.trim().isNotEmpty ? item.envelope : fallbackHash,
+      );
+      if (syncState != null &&
+          remoteHash.isNotEmpty &&
+          syncState.contentHash == remoteHash) {
+        await _secureStorage.writeSyncItemState(
+          remoteUserId: remoteUserId,
+          domain: _syncDomainProgressDownload,
+          scopeKey: scopeKey,
+          contentHash: remoteHash,
+          lastChangedAt: itemUpdatedAt,
+          lastSyncedAt: itemUpdatedAt,
+        );
+        latest = _latestTimestamp(latest, itemUpdatedAt);
+        continue;
+      }
       final resolved = await _resolveProgressPayload(
         item: item,
         remoteUserId: remoteUserId,
@@ -322,9 +484,18 @@ class SessionSyncService {
         summaryValid: resolved.summaryValid,
         updatedAt: updatedAt,
       );
-      if (latest == null || updatedAt.isAfter(latest)) {
-        latest = updatedAt;
-      }
+      final updatedAtUtc = updatedAt.toUtc();
+      final resolvedHash =
+          remoteHash.isNotEmpty ? remoteHash : _hashResolvedProgress(resolved);
+      await _secureStorage.writeSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainProgressDownload,
+        scopeKey: scopeKey,
+        contentHash: resolvedHash,
+        lastChangedAt: updatedAtUtc,
+        lastSyncedAt: updatedAtUtc,
+      );
+      latest = _latestTimestamp(latest, updatedAtUtc);
     }
     if (latest != null) {
       await _secureStorage.writeProgressSyncCursor(
@@ -612,6 +783,96 @@ class SessionSyncService {
     };
   }
 
+  String _hashProgressPayloadCore({
+    required ProgressEntry entry,
+    required int remoteCourseId,
+    required int remoteUserId,
+  }) {
+    return _hashCanonicalJson(
+      <String, Object?>{
+        'course_id': remoteCourseId,
+        'student_remote_user_id': remoteUserId,
+        'kp_key': entry.kpKey,
+        'lit': entry.lit,
+        'lit_percent': entry.litPercent,
+        'question_level': entry.questionLevel ?? '',
+        'summary_text': entry.summaryText ?? '',
+        'summary_raw_response': entry.summaryRawResponse ?? '',
+        'summary_valid': entry.summaryValid,
+        'updated_at': entry.updatedAt.toUtc().toIso8601String(),
+      },
+    );
+  }
+
+  String _hashProgressSyncItem(ProgressSyncItem item) {
+    return _hashCanonicalJson(
+      <String, Object?>{
+        'course_id': item.courseId,
+        'course_subject': item.courseSubject,
+        'teacher_user_id': item.teacherUserId,
+        'student_user_id': item.studentUserId,
+        'kp_key': item.kpKey,
+        'lit': item.lit,
+        'lit_percent': item.litPercent,
+        'question_level': item.questionLevel,
+        'summary_text': item.summaryText,
+        'summary_raw_response': item.summaryRawResponse,
+        'summary_valid': item.summaryValid,
+        'updated_at': item.updatedAt,
+      },
+    );
+  }
+
+  String _hashResolvedProgress(_ResolvedProgressPayload payload) {
+    return _hashCanonicalJson(
+      <String, Object?>{
+        'course_id': payload.courseId,
+        'course_subject': payload.courseSubject,
+        'kp_key': payload.kpKey,
+        'lit': payload.lit,
+        'lit_percent': payload.litPercent,
+        'question_level': payload.questionLevel,
+        'summary_text': payload.summaryText,
+        'summary_raw_response': payload.summaryRawResponse,
+        'summary_valid': payload.summaryValid,
+        'updated_at': payload.updatedAt,
+      },
+    );
+  }
+
+  String _hashCanonicalJson(Map<String, Object?> payload) {
+    return _hashEnvelope(jsonEncode(payload));
+  }
+
+  String _resolveSyncHash({
+    required String primaryHash,
+    required String fallbackValue,
+  }) {
+    final trimmedPrimary = primaryHash.trim();
+    if (trimmedPrimary.isNotEmpty) {
+      return trimmedPrimary;
+    }
+    final trimmedFallback = fallbackValue.trim();
+    if (trimmedFallback.isEmpty) {
+      return '';
+    }
+    return _hashEnvelope(trimmedFallback);
+  }
+
+  bool _isTimestampNewer(DateTime candidate, DateTime? baseline) {
+    if (baseline == null) {
+      return true;
+    }
+    return candidate.isAfter(baseline.toUtc());
+  }
+
+  DateTime _latestTimestamp(DateTime? current, DateTime candidate) {
+    if (current == null) {
+      return candidate;
+    }
+    return candidate.isAfter(current) ? candidate : current;
+  }
+
   Future<_ResolvedProgressPayload> _resolveProgressPayload({
     required ProgressSyncItem item,
     required int remoteUserId,
@@ -717,6 +978,20 @@ class SessionSyncService {
       }
     }
     return session;
+  }
+
+  Future<void> _markSessionUploaded({
+    required int sessionId,
+    required DateTime uploadedAt,
+  }) {
+    final normalized = uploadedAt.toUtc();
+    return (_db.update(_db.chatSessions)
+          ..where((tbl) => tbl.id.equals(sessionId)))
+        .write(
+      ChatSessionsCompanion(
+        syncUploadedAt: Value(normalized),
+      ),
+    );
   }
 
   int _requireRemoteUserId(User user) {
@@ -883,4 +1158,20 @@ class _ResolvedProgressPayload {
   final String summaryRawResponse;
   final bool? summaryValid;
   final String updatedAt;
+}
+
+class _SyncStateWrite {
+  _SyncStateWrite({
+    required this.domain,
+    required this.scopeKey,
+    required this.contentHash,
+    required this.lastChangedAt,
+    required this.lastSyncedAt,
+  });
+
+  final String domain;
+  final String scopeKey;
+  final String contentHash;
+  final DateTime lastChangedAt;
+  final DateTime lastSyncedAt;
 }
