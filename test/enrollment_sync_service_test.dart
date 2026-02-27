@@ -1,0 +1,256 @@
+import 'package:drift/native.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+
+import 'package:family_teacher/db/app_database.dart';
+import 'package:family_teacher/services/course_service.dart';
+import 'package:family_teacher/services/enrollment_sync_service.dart';
+import 'package:family_teacher/services/marketplace_api_service.dart';
+import 'package:family_teacher/services/secure_storage_service.dart';
+
+class _TestSecureStorageService extends SecureStorageService {
+  _TestSecureStorageService({String? accessToken}) : _accessToken = accessToken;
+
+  final String? _accessToken;
+  int? _deletionCursor;
+  final Map<String, int> _installedVersionByKey = <String, int>{};
+
+  @override
+  Future<String?> readAuthAccessToken() async => _accessToken;
+
+  @override
+  Future<int?> readEnrollmentDeletionCursor(int remoteUserId) async {
+    return _deletionCursor;
+  }
+
+  @override
+  Future<void> writeEnrollmentDeletionCursor(
+    int remoteUserId,
+    int eventId,
+  ) async {
+    _deletionCursor = eventId;
+  }
+
+  @override
+  Future<int?> readInstalledCourseBundleVersion({
+    required int remoteUserId,
+    required int remoteCourseId,
+  }) async {
+    return _installedVersionByKey['$remoteUserId:$remoteCourseId'];
+  }
+
+  @override
+  Future<void> writeInstalledCourseBundleVersion({
+    required int remoteUserId,
+    required int remoteCourseId,
+    required int versionId,
+  }) async {
+    _installedVersionByKey['$remoteUserId:$remoteCourseId'] = versionId;
+  }
+}
+
+class _TestMarketplaceApiService extends MarketplaceApiService {
+  _TestMarketplaceApiService({
+    required SecureStorageService secureStorage,
+    List<EnrollmentSummary>? enrollments,
+    List<EnrollmentDeletionEvent>? deletionEvents,
+    List<TeacherCourseSummary>? teacherCourses,
+  })  : _enrollments = enrollments ?? const <EnrollmentSummary>[],
+        _deletionEvents = deletionEvents ?? const <EnrollmentDeletionEvent>[],
+        _teacherCourses = teacherCourses ?? const <TeacherCourseSummary>[],
+        super(
+          secureStorage: secureStorage,
+          baseUrl: 'https://example.com',
+          client: MockClient(
+            (_) async => http.Response('[]', 200),
+          ),
+        );
+
+  final List<EnrollmentSummary> _enrollments;
+  final List<EnrollmentDeletionEvent> _deletionEvents;
+  final List<TeacherCourseSummary> _teacherCourses;
+
+  @override
+  Future<List<EnrollmentSummary>> listEnrollments() async {
+    return _enrollments;
+  }
+
+  @override
+  Future<List<EnrollmentDeletionEvent>> listEnrollmentDeletionEvents({
+    int? sinceId,
+  }) async {
+    return _deletionEvents;
+  }
+
+  @override
+  Future<List<TeacherCourseSummary>> listTeacherCourses() async {
+    return _teacherCourses;
+  }
+}
+
+void main() {
+  late AppDatabase db;
+
+  setUp(() {
+    db = AppDatabase.forTesting(NativeDatabase.memory());
+  });
+
+  tearDown(() async {
+    await db.close();
+  });
+
+  test(
+    'teacher sync reuses suffix-named local course via normalized subject',
+    () async {
+      final teacherId = await db.createUser(
+        username: 'teacher_a',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 701,
+      );
+      final localCourseId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Algebra_1700000000',
+        granularity: 1,
+        textbookText: '',
+        sourcePath: r'C:\courses\algebra',
+      );
+      final teacher = await db.getUserById(teacherId);
+      expect(teacher, isNotNull);
+
+      final secureStorage = _TestSecureStorageService();
+      final api = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+        teacherCourses: <TeacherCourseSummary>[
+          TeacherCourseSummary(
+            courseId: 91,
+            subject: 'Algebra',
+            grade: '',
+            description: '',
+            visibility: 'private',
+            publishedAt: '',
+            latestBundleVersionId: 3,
+            status: 'active',
+          ),
+        ],
+      );
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService: CourseService(db),
+        marketplaceApi: api,
+      );
+
+      await service.syncIfReady(currentUser: teacher!);
+
+      final linkedCourseId = await db.getCourseVersionIdForRemoteCourse(91);
+      expect(linkedCourseId, equals(localCourseId));
+      final linkedRemoteId = await db.getRemoteCourseId(localCourseId);
+      expect(linkedRemoteId, equals(91));
+
+      final updated = await db.getCourseVersionById(localCourseId);
+      expect(updated, isNotNull);
+      expect(updated!.subject, equals('Algebra'));
+
+      final allTeacherCourses = await db.getCourseVersionsForTeacher(teacherId);
+      expect(allTeacherCourses.length, equals(1));
+      expect(allTeacherCourses.first.id, equals(localCourseId));
+    },
+  );
+
+  test(
+    'student sync migrates and removes suffix duplicate course rows',
+    () async {
+      final teacherId = await db.createUser(
+        username: 'teacher_b',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 801,
+      );
+      final studentId = await db.createUser(
+        username: 'student_b',
+        pinHash: 'hash',
+        role: 'student',
+        teacherId: teacherId,
+        remoteUserId: 901,
+      );
+      final canonicalCourseId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Biology',
+        granularity: 1,
+        textbookText: '',
+        sourcePath: r'C:\courses\biology',
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: canonicalCourseId,
+        remoteCourseId: 5001,
+      );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: canonicalCourseId,
+      );
+
+      final staleCourseId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Biology_1700000000',
+        granularity: 1,
+        textbookText: '',
+        sourcePath: r'C:\courses\biology_old',
+      );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: staleCourseId,
+      );
+      await db.upsertProgress(
+        studentId: studentId,
+        courseVersionId: staleCourseId,
+        kpKey: '1.1',
+        lit: true,
+      );
+
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+
+      final secureStorage = _TestSecureStorageService();
+      final api = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+        enrollments: <EnrollmentSummary>[
+          EnrollmentSummary(
+            enrollmentId: 1,
+            courseId: 5001,
+            teacherId: teacherId,
+            status: 'approved',
+            assignedAt: '2026-02-27T00:00:00Z',
+            courseSubject: 'Biology',
+            teacherName: 'teacher_b',
+            latestBundleVersionId: null,
+          ),
+        ],
+      );
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService: CourseService(db),
+        marketplaceApi: api,
+      );
+
+      await service.syncIfReady(currentUser: student!);
+
+      final assigned = await db.getAssignedCoursesForStudent(studentId);
+      expect(assigned.length, equals(1));
+      expect(assigned.first.id, equals(canonicalCourseId));
+
+      final staleCourse = await db.getCourseVersionById(staleCourseId);
+      expect(staleCourse, isNull);
+
+      final movedProgress = await db.getProgress(
+        studentId: studentId,
+        courseVersionId: canonicalCourseId,
+        kpKey: '1.1',
+      );
+      expect(movedProgress, isNotNull);
+      expect(movedProgress!.lit, isTrue);
+    },
+  );
+}

@@ -40,6 +40,12 @@ class $UsersTable extends Users with TableInfo<$UsersTable, User> {
   late final GeneratedColumn<int> teacherId = GeneratedColumn<int>(
       'teacher_id', aliasedName, true,
       type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _remoteUserIdMeta =
+      const VerificationMeta('remoteUserId');
+  @override
+  late final GeneratedColumn<int> remoteUserId = GeneratedColumn<int>(
+      'remote_user_id', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
   static const VerificationMeta _createdAtMeta =
       const VerificationMeta('createdAt');
   @override
@@ -50,7 +56,7 @@ class $UsersTable extends Users with TableInfo<$UsersTable, User> {
       defaultValue: currentDateAndTime);
   @override
   List<GeneratedColumn> get $columns =>
-      [id, username, pinHash, role, teacherId, createdAt];
+      [id, username, pinHash, role, teacherId, remoteUserId, createdAt];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -86,6 +92,12 @@ class $UsersTable extends Users with TableInfo<$UsersTable, User> {
       context.handle(_teacherIdMeta,
           teacherId.isAcceptableOrUnknown(data['teacher_id']!, _teacherIdMeta));
     }
+    if (data.containsKey('remote_user_id')) {
+      context.handle(
+          _remoteUserIdMeta,
+          remoteUserId.isAcceptableOrUnknown(
+              data['remote_user_id']!, _remoteUserIdMeta));
+    }
     if (data.containsKey('created_at')) {
       context.handle(_createdAtMeta,
           createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
@@ -113,6 +125,8 @@ class $UsersTable extends Users with TableInfo<$UsersTable, User> {
           .read(DriftSqlType.string, data['${effectivePrefix}role'])!,
       teacherId: attachedDatabase.typeMapping
           .read(DriftSqlType.int, data['${effectivePrefix}teacher_id']),
+      remoteUserId: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}remote_user_id']),
       createdAt: attachedDatabase.typeMapping
           .read(DriftSqlType.dateTime, data['${effectivePrefix}created_at'])!,
     );
@@ -130,6 +144,7 @@ class User extends DataClass implements Insertable<User> {
   final String pinHash;
   final String role;
   final int? teacherId;
+  final int? remoteUserId;
   final DateTime createdAt;
   const User(
       {required this.id,
@@ -137,6 +152,7 @@ class User extends DataClass implements Insertable<User> {
       required this.pinHash,
       required this.role,
       this.teacherId,
+      this.remoteUserId,
       required this.createdAt});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -147,6 +163,9 @@ class User extends DataClass implements Insertable<User> {
     map['role'] = Variable<String>(role);
     if (!nullToAbsent || teacherId != null) {
       map['teacher_id'] = Variable<int>(teacherId);
+    }
+    if (!nullToAbsent || remoteUserId != null) {
+      map['remote_user_id'] = Variable<int>(remoteUserId);
     }
     map['created_at'] = Variable<DateTime>(createdAt);
     return map;
@@ -161,6 +180,9 @@ class User extends DataClass implements Insertable<User> {
       teacherId: teacherId == null && nullToAbsent
           ? const Value.absent()
           : Value(teacherId),
+      remoteUserId: remoteUserId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(remoteUserId),
       createdAt: Value(createdAt),
     );
   }
@@ -174,6 +196,7 @@ class User extends DataClass implements Insertable<User> {
       pinHash: serializer.fromJson<String>(json['pinHash']),
       role: serializer.fromJson<String>(json['role']),
       teacherId: serializer.fromJson<int?>(json['teacherId']),
+      remoteUserId: serializer.fromJson<int?>(json['remoteUserId']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
     );
   }
@@ -186,6 +209,7 @@ class User extends DataClass implements Insertable<User> {
       'pinHash': serializer.toJson<String>(pinHash),
       'role': serializer.toJson<String>(role),
       'teacherId': serializer.toJson<int?>(teacherId),
+      'remoteUserId': serializer.toJson<int?>(remoteUserId),
       'createdAt': serializer.toJson<DateTime>(createdAt),
     };
   }
@@ -196,6 +220,7 @@ class User extends DataClass implements Insertable<User> {
           String? pinHash,
           String? role,
           Value<int?> teacherId = const Value.absent(),
+          Value<int?> remoteUserId = const Value.absent(),
           DateTime? createdAt}) =>
       User(
         id: id ?? this.id,
@@ -203,6 +228,8 @@ class User extends DataClass implements Insertable<User> {
         pinHash: pinHash ?? this.pinHash,
         role: role ?? this.role,
         teacherId: teacherId.present ? teacherId.value : this.teacherId,
+        remoteUserId:
+            remoteUserId.present ? remoteUserId.value : this.remoteUserId,
         createdAt: createdAt ?? this.createdAt,
       );
   User copyWithCompanion(UsersCompanion data) {
@@ -212,6 +239,9 @@ class User extends DataClass implements Insertable<User> {
       pinHash: data.pinHash.present ? data.pinHash.value : this.pinHash,
       role: data.role.present ? data.role.value : this.role,
       teacherId: data.teacherId.present ? data.teacherId.value : this.teacherId,
+      remoteUserId: data.remoteUserId.present
+          ? data.remoteUserId.value
+          : this.remoteUserId,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
     );
   }
@@ -224,14 +254,15 @@ class User extends DataClass implements Insertable<User> {
           ..write('pinHash: $pinHash, ')
           ..write('role: $role, ')
           ..write('teacherId: $teacherId, ')
+          ..write('remoteUserId: $remoteUserId, ')
           ..write('createdAt: $createdAt')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode =>
-      Object.hash(id, username, pinHash, role, teacherId, createdAt);
+  int get hashCode => Object.hash(
+      id, username, pinHash, role, teacherId, remoteUserId, createdAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -241,6 +272,7 @@ class User extends DataClass implements Insertable<User> {
           other.pinHash == this.pinHash &&
           other.role == this.role &&
           other.teacherId == this.teacherId &&
+          other.remoteUserId == this.remoteUserId &&
           other.createdAt == this.createdAt);
 }
 
@@ -250,6 +282,7 @@ class UsersCompanion extends UpdateCompanion<User> {
   final Value<String> pinHash;
   final Value<String> role;
   final Value<int?> teacherId;
+  final Value<int?> remoteUserId;
   final Value<DateTime> createdAt;
   const UsersCompanion({
     this.id = const Value.absent(),
@@ -257,6 +290,7 @@ class UsersCompanion extends UpdateCompanion<User> {
     this.pinHash = const Value.absent(),
     this.role = const Value.absent(),
     this.teacherId = const Value.absent(),
+    this.remoteUserId = const Value.absent(),
     this.createdAt = const Value.absent(),
   });
   UsersCompanion.insert({
@@ -265,6 +299,7 @@ class UsersCompanion extends UpdateCompanion<User> {
     required String pinHash,
     required String role,
     this.teacherId = const Value.absent(),
+    this.remoteUserId = const Value.absent(),
     this.createdAt = const Value.absent(),
   })  : username = Value(username),
         pinHash = Value(pinHash),
@@ -275,6 +310,7 @@ class UsersCompanion extends UpdateCompanion<User> {
     Expression<String>? pinHash,
     Expression<String>? role,
     Expression<int>? teacherId,
+    Expression<int>? remoteUserId,
     Expression<DateTime>? createdAt,
   }) {
     return RawValuesInsertable({
@@ -283,6 +319,7 @@ class UsersCompanion extends UpdateCompanion<User> {
       if (pinHash != null) 'pin_hash': pinHash,
       if (role != null) 'role': role,
       if (teacherId != null) 'teacher_id': teacherId,
+      if (remoteUserId != null) 'remote_user_id': remoteUserId,
       if (createdAt != null) 'created_at': createdAt,
     });
   }
@@ -293,6 +330,7 @@ class UsersCompanion extends UpdateCompanion<User> {
       Value<String>? pinHash,
       Value<String>? role,
       Value<int?>? teacherId,
+      Value<int?>? remoteUserId,
       Value<DateTime>? createdAt}) {
     return UsersCompanion(
       id: id ?? this.id,
@@ -300,6 +338,7 @@ class UsersCompanion extends UpdateCompanion<User> {
       pinHash: pinHash ?? this.pinHash,
       role: role ?? this.role,
       teacherId: teacherId ?? this.teacherId,
+      remoteUserId: remoteUserId ?? this.remoteUserId,
       createdAt: createdAt ?? this.createdAt,
     );
   }
@@ -322,6 +361,9 @@ class UsersCompanion extends UpdateCompanion<User> {
     if (teacherId.present) {
       map['teacher_id'] = Variable<int>(teacherId.value);
     }
+    if (remoteUserId.present) {
+      map['remote_user_id'] = Variable<int>(remoteUserId.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -336,6 +378,7 @@ class UsersCompanion extends UpdateCompanion<User> {
           ..write('pinHash: $pinHash, ')
           ..write('role: $role, ')
           ..write('teacherId: $teacherId, ')
+          ..write('remoteUserId: $remoteUserId, ')
           ..write('createdAt: $createdAt')
           ..write(')'))
         .toString();
@@ -2533,6 +2576,23 @@ class $ChatSessionsTable extends ChatSessions
   late final GeneratedColumn<int> summarizeCallId = GeneratedColumn<int>(
       'summarize_call_id', aliasedName, true,
       type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _syncIdMeta = const VerificationMeta('syncId');
+  @override
+  late final GeneratedColumn<String> syncId = GeneratedColumn<String>(
+      'sync_id', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _syncUpdatedAtMeta =
+      const VerificationMeta('syncUpdatedAt');
+  @override
+  late final GeneratedColumn<DateTime> syncUpdatedAt =
+      GeneratedColumn<DateTime>('sync_updated_at', aliasedName, true,
+          type: DriftSqlType.dateTime, requiredDuringInsert: false);
+  static const VerificationMeta _syncUploadedAtMeta =
+      const VerificationMeta('syncUploadedAt');
+  @override
+  late final GeneratedColumn<DateTime> syncUploadedAt =
+      GeneratedColumn<DateTime>('sync_uploaded_at', aliasedName, true,
+          type: DriftSqlType.dateTime, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -2548,7 +2608,10 @@ class $ChatSessionsTable extends ChatSessions
         summaryLitPercent,
         summaryRawResponse,
         summaryValid,
-        summarizeCallId
+        summarizeCallId,
+        syncId,
+        syncUpdatedAt,
+        syncUploadedAt
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -2635,6 +2698,22 @@ class $ChatSessionsTable extends ChatSessions
           summarizeCallId.isAcceptableOrUnknown(
               data['summarize_call_id']!, _summarizeCallIdMeta));
     }
+    if (data.containsKey('sync_id')) {
+      context.handle(_syncIdMeta,
+          syncId.isAcceptableOrUnknown(data['sync_id']!, _syncIdMeta));
+    }
+    if (data.containsKey('sync_updated_at')) {
+      context.handle(
+          _syncUpdatedAtMeta,
+          syncUpdatedAt.isAcceptableOrUnknown(
+              data['sync_updated_at']!, _syncUpdatedAtMeta));
+    }
+    if (data.containsKey('sync_uploaded_at')) {
+      context.handle(
+          _syncUploadedAtMeta,
+          syncUploadedAt.isAcceptableOrUnknown(
+              data['sync_uploaded_at']!, _syncUploadedAtMeta));
+    }
     return context;
   }
 
@@ -2672,6 +2751,12 @@ class $ChatSessionsTable extends ChatSessions
           .read(DriftSqlType.bool, data['${effectivePrefix}summary_valid']),
       summarizeCallId: attachedDatabase.typeMapping
           .read(DriftSqlType.int, data['${effectivePrefix}summarize_call_id']),
+      syncId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}sync_id']),
+      syncUpdatedAt: attachedDatabase.typeMapping.read(
+          DriftSqlType.dateTime, data['${effectivePrefix}sync_updated_at']),
+      syncUploadedAt: attachedDatabase.typeMapping.read(
+          DriftSqlType.dateTime, data['${effectivePrefix}sync_uploaded_at']),
     );
   }
 
@@ -2696,6 +2781,9 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
   final String? summaryRawResponse;
   final bool? summaryValid;
   final int? summarizeCallId;
+  final String? syncId;
+  final DateTime? syncUpdatedAt;
+  final DateTime? syncUploadedAt;
   const ChatSession(
       {required this.id,
       required this.studentId,
@@ -2710,7 +2798,10 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
       this.summaryLitPercent,
       this.summaryRawResponse,
       this.summaryValid,
-      this.summarizeCallId});
+      this.summarizeCallId,
+      this.syncId,
+      this.syncUpdatedAt,
+      this.syncUploadedAt});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -2743,6 +2834,15 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
     }
     if (!nullToAbsent || summarizeCallId != null) {
       map['summarize_call_id'] = Variable<int>(summarizeCallId);
+    }
+    if (!nullToAbsent || syncId != null) {
+      map['sync_id'] = Variable<String>(syncId);
+    }
+    if (!nullToAbsent || syncUpdatedAt != null) {
+      map['sync_updated_at'] = Variable<DateTime>(syncUpdatedAt);
+    }
+    if (!nullToAbsent || syncUploadedAt != null) {
+      map['sync_uploaded_at'] = Variable<DateTime>(syncUploadedAt);
     }
     return map;
   }
@@ -2778,6 +2878,14 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
       summarizeCallId: summarizeCallId == null && nullToAbsent
           ? const Value.absent()
           : Value(summarizeCallId),
+      syncId:
+          syncId == null && nullToAbsent ? const Value.absent() : Value(syncId),
+      syncUpdatedAt: syncUpdatedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(syncUpdatedAt),
+      syncUploadedAt: syncUploadedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(syncUploadedAt),
     );
   }
 
@@ -2800,6 +2908,9 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
           serializer.fromJson<String?>(json['summaryRawResponse']),
       summaryValid: serializer.fromJson<bool?>(json['summaryValid']),
       summarizeCallId: serializer.fromJson<int?>(json['summarizeCallId']),
+      syncId: serializer.fromJson<String?>(json['syncId']),
+      syncUpdatedAt: serializer.fromJson<DateTime?>(json['syncUpdatedAt']),
+      syncUploadedAt: serializer.fromJson<DateTime?>(json['syncUploadedAt']),
     );
   }
   @override
@@ -2820,6 +2931,9 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
       'summaryRawResponse': serializer.toJson<String?>(summaryRawResponse),
       'summaryValid': serializer.toJson<bool?>(summaryValid),
       'summarizeCallId': serializer.toJson<int?>(summarizeCallId),
+      'syncId': serializer.toJson<String?>(syncId),
+      'syncUpdatedAt': serializer.toJson<DateTime?>(syncUpdatedAt),
+      'syncUploadedAt': serializer.toJson<DateTime?>(syncUploadedAt),
     };
   }
 
@@ -2837,7 +2951,10 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
           Value<int?> summaryLitPercent = const Value.absent(),
           Value<String?> summaryRawResponse = const Value.absent(),
           Value<bool?> summaryValid = const Value.absent(),
-          Value<int?> summarizeCallId = const Value.absent()}) =>
+          Value<int?> summarizeCallId = const Value.absent(),
+          Value<String?> syncId = const Value.absent(),
+          Value<DateTime?> syncUpdatedAt = const Value.absent(),
+          Value<DateTime?> syncUploadedAt = const Value.absent()}) =>
       ChatSession(
         id: id ?? this.id,
         studentId: studentId ?? this.studentId,
@@ -2860,6 +2977,11 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
         summarizeCallId: summarizeCallId.present
             ? summarizeCallId.value
             : this.summarizeCallId,
+        syncId: syncId.present ? syncId.value : this.syncId,
+        syncUpdatedAt:
+            syncUpdatedAt.present ? syncUpdatedAt.value : this.syncUpdatedAt,
+        syncUploadedAt:
+            syncUploadedAt.present ? syncUploadedAt.value : this.syncUploadedAt,
       );
   ChatSession copyWithCompanion(ChatSessionsCompanion data) {
     return ChatSession(
@@ -2889,6 +3011,13 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
       summarizeCallId: data.summarizeCallId.present
           ? data.summarizeCallId.value
           : this.summarizeCallId,
+      syncId: data.syncId.present ? data.syncId.value : this.syncId,
+      syncUpdatedAt: data.syncUpdatedAt.present
+          ? data.syncUpdatedAt.value
+          : this.syncUpdatedAt,
+      syncUploadedAt: data.syncUploadedAt.present
+          ? data.syncUploadedAt.value
+          : this.syncUploadedAt,
     );
   }
 
@@ -2908,7 +3037,10 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
           ..write('summaryLitPercent: $summaryLitPercent, ')
           ..write('summaryRawResponse: $summaryRawResponse, ')
           ..write('summaryValid: $summaryValid, ')
-          ..write('summarizeCallId: $summarizeCallId')
+          ..write('summarizeCallId: $summarizeCallId, ')
+          ..write('syncId: $syncId, ')
+          ..write('syncUpdatedAt: $syncUpdatedAt, ')
+          ..write('syncUploadedAt: $syncUploadedAt')
           ..write(')'))
         .toString();
   }
@@ -2928,7 +3060,10 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
       summaryLitPercent,
       summaryRawResponse,
       summaryValid,
-      summarizeCallId);
+      summarizeCallId,
+      syncId,
+      syncUpdatedAt,
+      syncUploadedAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -2946,7 +3081,10 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
           other.summaryLitPercent == this.summaryLitPercent &&
           other.summaryRawResponse == this.summaryRawResponse &&
           other.summaryValid == this.summaryValid &&
-          other.summarizeCallId == this.summarizeCallId);
+          other.summarizeCallId == this.summarizeCallId &&
+          other.syncId == this.syncId &&
+          other.syncUpdatedAt == this.syncUpdatedAt &&
+          other.syncUploadedAt == this.syncUploadedAt);
 }
 
 class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
@@ -2964,6 +3102,9 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
   final Value<String?> summaryRawResponse;
   final Value<bool?> summaryValid;
   final Value<int?> summarizeCallId;
+  final Value<String?> syncId;
+  final Value<DateTime?> syncUpdatedAt;
+  final Value<DateTime?> syncUploadedAt;
   const ChatSessionsCompanion({
     this.id = const Value.absent(),
     this.studentId = const Value.absent(),
@@ -2979,6 +3120,9 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
     this.summaryRawResponse = const Value.absent(),
     this.summaryValid = const Value.absent(),
     this.summarizeCallId = const Value.absent(),
+    this.syncId = const Value.absent(),
+    this.syncUpdatedAt = const Value.absent(),
+    this.syncUploadedAt = const Value.absent(),
   });
   ChatSessionsCompanion.insert({
     this.id = const Value.absent(),
@@ -2995,6 +3139,9 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
     this.summaryRawResponse = const Value.absent(),
     this.summaryValid = const Value.absent(),
     this.summarizeCallId = const Value.absent(),
+    this.syncId = const Value.absent(),
+    this.syncUpdatedAt = const Value.absent(),
+    this.syncUploadedAt = const Value.absent(),
   })  : studentId = Value(studentId),
         courseVersionId = Value(courseVersionId),
         kpKey = Value(kpKey);
@@ -3013,6 +3160,9 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
     Expression<String>? summaryRawResponse,
     Expression<bool>? summaryValid,
     Expression<int>? summarizeCallId,
+    Expression<String>? syncId,
+    Expression<DateTime>? syncUpdatedAt,
+    Expression<DateTime>? syncUploadedAt,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -3030,6 +3180,9 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
         'summary_raw_response': summaryRawResponse,
       if (summaryValid != null) 'summary_valid': summaryValid,
       if (summarizeCallId != null) 'summarize_call_id': summarizeCallId,
+      if (syncId != null) 'sync_id': syncId,
+      if (syncUpdatedAt != null) 'sync_updated_at': syncUpdatedAt,
+      if (syncUploadedAt != null) 'sync_uploaded_at': syncUploadedAt,
     });
   }
 
@@ -3047,7 +3200,10 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
       Value<int?>? summaryLitPercent,
       Value<String?>? summaryRawResponse,
       Value<bool?>? summaryValid,
-      Value<int?>? summarizeCallId}) {
+      Value<int?>? summarizeCallId,
+      Value<String?>? syncId,
+      Value<DateTime?>? syncUpdatedAt,
+      Value<DateTime?>? syncUploadedAt}) {
     return ChatSessionsCompanion(
       id: id ?? this.id,
       studentId: studentId ?? this.studentId,
@@ -3063,6 +3219,9 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
       summaryRawResponse: summaryRawResponse ?? this.summaryRawResponse,
       summaryValid: summaryValid ?? this.summaryValid,
       summarizeCallId: summarizeCallId ?? this.summarizeCallId,
+      syncId: syncId ?? this.syncId,
+      syncUpdatedAt: syncUpdatedAt ?? this.syncUpdatedAt,
+      syncUploadedAt: syncUploadedAt ?? this.syncUploadedAt,
     );
   }
 
@@ -3111,6 +3270,15 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
     if (summarizeCallId.present) {
       map['summarize_call_id'] = Variable<int>(summarizeCallId.value);
     }
+    if (syncId.present) {
+      map['sync_id'] = Variable<String>(syncId.value);
+    }
+    if (syncUpdatedAt.present) {
+      map['sync_updated_at'] = Variable<DateTime>(syncUpdatedAt.value);
+    }
+    if (syncUploadedAt.present) {
+      map['sync_uploaded_at'] = Variable<DateTime>(syncUploadedAt.value);
+    }
     return map;
   }
 
@@ -3130,7 +3298,10 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
           ..write('summaryLitPercent: $summaryLitPercent, ')
           ..write('summaryRawResponse: $summaryRawResponse, ')
           ..write('summaryValid: $summaryValid, ')
-          ..write('summarizeCallId: $summarizeCallId')
+          ..write('summarizeCallId: $summarizeCallId, ')
+          ..write('syncId: $syncId, ')
+          ..write('syncUpdatedAt: $syncUpdatedAt, ')
+          ..write('syncUploadedAt: $syncUploadedAt')
           ..write(')'))
         .toString();
   }
@@ -6900,6 +7071,282 @@ class StudentPromptProfilesCompanion
   }
 }
 
+class $CourseRemoteLinksTable extends CourseRemoteLinks
+    with TableInfo<$CourseRemoteLinksTable, CourseRemoteLink> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $CourseRemoteLinksTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+      'id', aliasedName, false,
+      hasAutoIncrement: true,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('PRIMARY KEY AUTOINCREMENT'));
+  static const VerificationMeta _courseVersionIdMeta =
+      const VerificationMeta('courseVersionId');
+  @override
+  late final GeneratedColumn<int> courseVersionId = GeneratedColumn<int>(
+      'course_version_id', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _remoteCourseIdMeta =
+      const VerificationMeta('remoteCourseId');
+  @override
+  late final GeneratedColumn<int> remoteCourseId = GeneratedColumn<int>(
+      'remote_course_id', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _createdAtMeta =
+      const VerificationMeta('createdAt');
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+      'created_at', aliasedName, false,
+      type: DriftSqlType.dateTime,
+      requiredDuringInsert: false,
+      defaultValue: currentDateAndTime);
+  @override
+  List<GeneratedColumn> get $columns =>
+      [id, courseVersionId, remoteCourseId, createdAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'course_remote_links';
+  @override
+  VerificationContext validateIntegrity(Insertable<CourseRemoteLink> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('course_version_id')) {
+      context.handle(
+          _courseVersionIdMeta,
+          courseVersionId.isAcceptableOrUnknown(
+              data['course_version_id']!, _courseVersionIdMeta));
+    } else if (isInserting) {
+      context.missing(_courseVersionIdMeta);
+    }
+    if (data.containsKey('remote_course_id')) {
+      context.handle(
+          _remoteCourseIdMeta,
+          remoteCourseId.isAcceptableOrUnknown(
+              data['remote_course_id']!, _remoteCourseIdMeta));
+    } else if (isInserting) {
+      context.missing(_remoteCourseIdMeta);
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(_createdAtMeta,
+          createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+        {courseVersionId},
+        {remoteCourseId},
+      ];
+  @override
+  CourseRemoteLink map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return CourseRemoteLink(
+      id: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}id'])!,
+      courseVersionId: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}course_version_id'])!,
+      remoteCourseId: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}remote_course_id'])!,
+      createdAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}created_at'])!,
+    );
+  }
+
+  @override
+  $CourseRemoteLinksTable createAlias(String alias) {
+    return $CourseRemoteLinksTable(attachedDatabase, alias);
+  }
+}
+
+class CourseRemoteLink extends DataClass
+    implements Insertable<CourseRemoteLink> {
+  final int id;
+  final int courseVersionId;
+  final int remoteCourseId;
+  final DateTime createdAt;
+  const CourseRemoteLink(
+      {required this.id,
+      required this.courseVersionId,
+      required this.remoteCourseId,
+      required this.createdAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['course_version_id'] = Variable<int>(courseVersionId);
+    map['remote_course_id'] = Variable<int>(remoteCourseId);
+    map['created_at'] = Variable<DateTime>(createdAt);
+    return map;
+  }
+
+  CourseRemoteLinksCompanion toCompanion(bool nullToAbsent) {
+    return CourseRemoteLinksCompanion(
+      id: Value(id),
+      courseVersionId: Value(courseVersionId),
+      remoteCourseId: Value(remoteCourseId),
+      createdAt: Value(createdAt),
+    );
+  }
+
+  factory CourseRemoteLink.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return CourseRemoteLink(
+      id: serializer.fromJson<int>(json['id']),
+      courseVersionId: serializer.fromJson<int>(json['courseVersionId']),
+      remoteCourseId: serializer.fromJson<int>(json['remoteCourseId']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'courseVersionId': serializer.toJson<int>(courseVersionId),
+      'remoteCourseId': serializer.toJson<int>(remoteCourseId),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+    };
+  }
+
+  CourseRemoteLink copyWith(
+          {int? id,
+          int? courseVersionId,
+          int? remoteCourseId,
+          DateTime? createdAt}) =>
+      CourseRemoteLink(
+        id: id ?? this.id,
+        courseVersionId: courseVersionId ?? this.courseVersionId,
+        remoteCourseId: remoteCourseId ?? this.remoteCourseId,
+        createdAt: createdAt ?? this.createdAt,
+      );
+  CourseRemoteLink copyWithCompanion(CourseRemoteLinksCompanion data) {
+    return CourseRemoteLink(
+      id: data.id.present ? data.id.value : this.id,
+      courseVersionId: data.courseVersionId.present
+          ? data.courseVersionId.value
+          : this.courseVersionId,
+      remoteCourseId: data.remoteCourseId.present
+          ? data.remoteCourseId.value
+          : this.remoteCourseId,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CourseRemoteLink(')
+          ..write('id: $id, ')
+          ..write('courseVersionId: $courseVersionId, ')
+          ..write('remoteCourseId: $remoteCourseId, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(id, courseVersionId, remoteCourseId, createdAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is CourseRemoteLink &&
+          other.id == this.id &&
+          other.courseVersionId == this.courseVersionId &&
+          other.remoteCourseId == this.remoteCourseId &&
+          other.createdAt == this.createdAt);
+}
+
+class CourseRemoteLinksCompanion extends UpdateCompanion<CourseRemoteLink> {
+  final Value<int> id;
+  final Value<int> courseVersionId;
+  final Value<int> remoteCourseId;
+  final Value<DateTime> createdAt;
+  const CourseRemoteLinksCompanion({
+    this.id = const Value.absent(),
+    this.courseVersionId = const Value.absent(),
+    this.remoteCourseId = const Value.absent(),
+    this.createdAt = const Value.absent(),
+  });
+  CourseRemoteLinksCompanion.insert({
+    this.id = const Value.absent(),
+    required int courseVersionId,
+    required int remoteCourseId,
+    this.createdAt = const Value.absent(),
+  })  : courseVersionId = Value(courseVersionId),
+        remoteCourseId = Value(remoteCourseId);
+  static Insertable<CourseRemoteLink> custom({
+    Expression<int>? id,
+    Expression<int>? courseVersionId,
+    Expression<int>? remoteCourseId,
+    Expression<DateTime>? createdAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (courseVersionId != null) 'course_version_id': courseVersionId,
+      if (remoteCourseId != null) 'remote_course_id': remoteCourseId,
+      if (createdAt != null) 'created_at': createdAt,
+    });
+  }
+
+  CourseRemoteLinksCompanion copyWith(
+      {Value<int>? id,
+      Value<int>? courseVersionId,
+      Value<int>? remoteCourseId,
+      Value<DateTime>? createdAt}) {
+    return CourseRemoteLinksCompanion(
+      id: id ?? this.id,
+      courseVersionId: courseVersionId ?? this.courseVersionId,
+      remoteCourseId: remoteCourseId ?? this.remoteCourseId,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (courseVersionId.present) {
+      map['course_version_id'] = Variable<int>(courseVersionId.value);
+    }
+    if (remoteCourseId.present) {
+      map['remote_course_id'] = Variable<int>(remoteCourseId.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('CourseRemoteLinksCompanion(')
+          ..write('id: $id, ')
+          ..write('courseVersionId: $courseVersionId, ')
+          ..write('remoteCourseId: $remoteCourseId, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -6920,6 +7367,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $PromptTemplatesTable(this);
   late final $StudentPromptProfilesTable studentPromptProfiles =
       $StudentPromptProfilesTable(this);
+  late final $CourseRemoteLinksTable courseRemoteLinks =
+      $CourseRemoteLinksTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -6937,7 +7386,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         appSettings,
         apiConfigs,
         promptTemplates,
-        studentPromptProfiles
+        studentPromptProfiles,
+        courseRemoteLinks
       ];
 }
 
@@ -6947,6 +7397,7 @@ typedef $$UsersTableCreateCompanionBuilder = UsersCompanion Function({
   required String pinHash,
   required String role,
   Value<int?> teacherId,
+  Value<int?> remoteUserId,
   Value<DateTime> createdAt,
 });
 typedef $$UsersTableUpdateCompanionBuilder = UsersCompanion Function({
@@ -6955,6 +7406,7 @@ typedef $$UsersTableUpdateCompanionBuilder = UsersCompanion Function({
   Value<String> pinHash,
   Value<String> role,
   Value<int?> teacherId,
+  Value<int?> remoteUserId,
   Value<DateTime> createdAt,
 });
 
@@ -6980,6 +7432,9 @@ class $$UsersTableFilterComposer extends Composer<_$AppDatabase, $UsersTable> {
 
   ColumnFilters<int> get teacherId => $composableBuilder(
       column: $table.teacherId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get remoteUserId => $composableBuilder(
+      column: $table.remoteUserId, builder: (column) => ColumnFilters(column));
 
   ColumnFilters<DateTime> get createdAt => $composableBuilder(
       column: $table.createdAt, builder: (column) => ColumnFilters(column));
@@ -7009,6 +7464,10 @@ class $$UsersTableOrderingComposer
   ColumnOrderings<int> get teacherId => $composableBuilder(
       column: $table.teacherId, builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<int> get remoteUserId => $composableBuilder(
+      column: $table.remoteUserId,
+      builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
       column: $table.createdAt, builder: (column) => ColumnOrderings(column));
 }
@@ -7036,6 +7495,9 @@ class $$UsersTableAnnotationComposer
 
   GeneratedColumn<int> get teacherId =>
       $composableBuilder(column: $table.teacherId, builder: (column) => column);
+
+  GeneratedColumn<int> get remoteUserId => $composableBuilder(
+      column: $table.remoteUserId, builder: (column) => column);
 
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
@@ -7069,6 +7531,7 @@ class $$UsersTableTableManager extends RootTableManager<
             Value<String> pinHash = const Value.absent(),
             Value<String> role = const Value.absent(),
             Value<int?> teacherId = const Value.absent(),
+            Value<int?> remoteUserId = const Value.absent(),
             Value<DateTime> createdAt = const Value.absent(),
           }) =>
               UsersCompanion(
@@ -7077,6 +7540,7 @@ class $$UsersTableTableManager extends RootTableManager<
             pinHash: pinHash,
             role: role,
             teacherId: teacherId,
+            remoteUserId: remoteUserId,
             createdAt: createdAt,
           ),
           createCompanionCallback: ({
@@ -7085,6 +7549,7 @@ class $$UsersTableTableManager extends RootTableManager<
             required String pinHash,
             required String role,
             Value<int?> teacherId = const Value.absent(),
+            Value<int?> remoteUserId = const Value.absent(),
             Value<DateTime> createdAt = const Value.absent(),
           }) =>
               UsersCompanion.insert(
@@ -7093,6 +7558,7 @@ class $$UsersTableTableManager extends RootTableManager<
             pinHash: pinHash,
             role: role,
             teacherId: teacherId,
+            remoteUserId: remoteUserId,
             createdAt: createdAt,
           ),
           withReferenceMapper: (p0) => p0
@@ -8161,6 +8627,9 @@ typedef $$ChatSessionsTableCreateCompanionBuilder = ChatSessionsCompanion
   Value<String?> summaryRawResponse,
   Value<bool?> summaryValid,
   Value<int?> summarizeCallId,
+  Value<String?> syncId,
+  Value<DateTime?> syncUpdatedAt,
+  Value<DateTime?> syncUploadedAt,
 });
 typedef $$ChatSessionsTableUpdateCompanionBuilder = ChatSessionsCompanion
     Function({
@@ -8178,6 +8647,9 @@ typedef $$ChatSessionsTableUpdateCompanionBuilder = ChatSessionsCompanion
   Value<String?> summaryRawResponse,
   Value<bool?> summaryValid,
   Value<int?> summarizeCallId,
+  Value<String?> syncId,
+  Value<DateTime?> syncUpdatedAt,
+  Value<DateTime?> syncUploadedAt,
 });
 
 class $$ChatSessionsTableFilterComposer
@@ -8233,6 +8705,16 @@ class $$ChatSessionsTableFilterComposer
 
   ColumnFilters<int> get summarizeCallId => $composableBuilder(
       column: $table.summarizeCallId,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get syncId => $composableBuilder(
+      column: $table.syncId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get syncUpdatedAt => $composableBuilder(
+      column: $table.syncUpdatedAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get syncUploadedAt => $composableBuilder(
+      column: $table.syncUploadedAt,
       builder: (column) => ColumnFilters(column));
 }
 
@@ -8291,6 +8773,17 @@ class $$ChatSessionsTableOrderingComposer
   ColumnOrderings<int> get summarizeCallId => $composableBuilder(
       column: $table.summarizeCallId,
       builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get syncId => $composableBuilder(
+      column: $table.syncId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get syncUpdatedAt => $composableBuilder(
+      column: $table.syncUpdatedAt,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get syncUploadedAt => $composableBuilder(
+      column: $table.syncUploadedAt,
+      builder: (column) => ColumnOrderings(column));
 }
 
 class $$ChatSessionsTableAnnotationComposer
@@ -8343,6 +8836,15 @@ class $$ChatSessionsTableAnnotationComposer
 
   GeneratedColumn<int> get summarizeCallId => $composableBuilder(
       column: $table.summarizeCallId, builder: (column) => column);
+
+  GeneratedColumn<String> get syncId =>
+      $composableBuilder(column: $table.syncId, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get syncUpdatedAt => $composableBuilder(
+      column: $table.syncUpdatedAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get syncUploadedAt => $composableBuilder(
+      column: $table.syncUploadedAt, builder: (column) => column);
 }
 
 class $$ChatSessionsTableTableManager extends RootTableManager<
@@ -8385,6 +8887,9 @@ class $$ChatSessionsTableTableManager extends RootTableManager<
             Value<String?> summaryRawResponse = const Value.absent(),
             Value<bool?> summaryValid = const Value.absent(),
             Value<int?> summarizeCallId = const Value.absent(),
+            Value<String?> syncId = const Value.absent(),
+            Value<DateTime?> syncUpdatedAt = const Value.absent(),
+            Value<DateTime?> syncUploadedAt = const Value.absent(),
           }) =>
               ChatSessionsCompanion(
             id: id,
@@ -8401,6 +8906,9 @@ class $$ChatSessionsTableTableManager extends RootTableManager<
             summaryRawResponse: summaryRawResponse,
             summaryValid: summaryValid,
             summarizeCallId: summarizeCallId,
+            syncId: syncId,
+            syncUpdatedAt: syncUpdatedAt,
+            syncUploadedAt: syncUploadedAt,
           ),
           createCompanionCallback: ({
             Value<int> id = const Value.absent(),
@@ -8417,6 +8925,9 @@ class $$ChatSessionsTableTableManager extends RootTableManager<
             Value<String?> summaryRawResponse = const Value.absent(),
             Value<bool?> summaryValid = const Value.absent(),
             Value<int?> summarizeCallId = const Value.absent(),
+            Value<String?> syncId = const Value.absent(),
+            Value<DateTime?> syncUpdatedAt = const Value.absent(),
+            Value<DateTime?> syncUploadedAt = const Value.absent(),
           }) =>
               ChatSessionsCompanion.insert(
             id: id,
@@ -8433,6 +8944,9 @@ class $$ChatSessionsTableTableManager extends RootTableManager<
             summaryRawResponse: summaryRawResponse,
             summaryValid: summaryValid,
             summarizeCallId: summarizeCallId,
+            syncId: syncId,
+            syncUpdatedAt: syncUpdatedAt,
+            syncUploadedAt: syncUploadedAt,
           ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
@@ -10157,6 +10671,164 @@ typedef $$StudentPromptProfilesTableProcessedTableManager
         ),
         StudentPromptProfile,
         PrefetchHooks Function()>;
+typedef $$CourseRemoteLinksTableCreateCompanionBuilder
+    = CourseRemoteLinksCompanion Function({
+  Value<int> id,
+  required int courseVersionId,
+  required int remoteCourseId,
+  Value<DateTime> createdAt,
+});
+typedef $$CourseRemoteLinksTableUpdateCompanionBuilder
+    = CourseRemoteLinksCompanion Function({
+  Value<int> id,
+  Value<int> courseVersionId,
+  Value<int> remoteCourseId,
+  Value<DateTime> createdAt,
+});
+
+class $$CourseRemoteLinksTableFilterComposer
+    extends Composer<_$AppDatabase, $CourseRemoteLinksTable> {
+  $$CourseRemoteLinksTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get courseVersionId => $composableBuilder(
+      column: $table.courseVersionId,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get remoteCourseId => $composableBuilder(
+      column: $table.remoteCourseId,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+      column: $table.createdAt, builder: (column) => ColumnFilters(column));
+}
+
+class $$CourseRemoteLinksTableOrderingComposer
+    extends Composer<_$AppDatabase, $CourseRemoteLinksTable> {
+  $$CourseRemoteLinksTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get courseVersionId => $composableBuilder(
+      column: $table.courseVersionId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get remoteCourseId => $composableBuilder(
+      column: $table.remoteCourseId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+      column: $table.createdAt, builder: (column) => ColumnOrderings(column));
+}
+
+class $$CourseRemoteLinksTableAnnotationComposer
+    extends Composer<_$AppDatabase, $CourseRemoteLinksTable> {
+  $$CourseRemoteLinksTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get courseVersionId => $composableBuilder(
+      column: $table.courseVersionId, builder: (column) => column);
+
+  GeneratedColumn<int> get remoteCourseId => $composableBuilder(
+      column: $table.remoteCourseId, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+}
+
+class $$CourseRemoteLinksTableTableManager extends RootTableManager<
+    _$AppDatabase,
+    $CourseRemoteLinksTable,
+    CourseRemoteLink,
+    $$CourseRemoteLinksTableFilterComposer,
+    $$CourseRemoteLinksTableOrderingComposer,
+    $$CourseRemoteLinksTableAnnotationComposer,
+    $$CourseRemoteLinksTableCreateCompanionBuilder,
+    $$CourseRemoteLinksTableUpdateCompanionBuilder,
+    (
+      CourseRemoteLink,
+      BaseReferences<_$AppDatabase, $CourseRemoteLinksTable, CourseRemoteLink>
+    ),
+    CourseRemoteLink,
+    PrefetchHooks Function()> {
+  $$CourseRemoteLinksTableTableManager(
+      _$AppDatabase db, $CourseRemoteLinksTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$CourseRemoteLinksTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$CourseRemoteLinksTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$CourseRemoteLinksTableAnnotationComposer(
+                  $db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<int> id = const Value.absent(),
+            Value<int> courseVersionId = const Value.absent(),
+            Value<int> remoteCourseId = const Value.absent(),
+            Value<DateTime> createdAt = const Value.absent(),
+          }) =>
+              CourseRemoteLinksCompanion(
+            id: id,
+            courseVersionId: courseVersionId,
+            remoteCourseId: remoteCourseId,
+            createdAt: createdAt,
+          ),
+          createCompanionCallback: ({
+            Value<int> id = const Value.absent(),
+            required int courseVersionId,
+            required int remoteCourseId,
+            Value<DateTime> createdAt = const Value.absent(),
+          }) =>
+              CourseRemoteLinksCompanion.insert(
+            id: id,
+            courseVersionId: courseVersionId,
+            remoteCourseId: remoteCourseId,
+            createdAt: createdAt,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$CourseRemoteLinksTableProcessedTableManager = ProcessedTableManager<
+    _$AppDatabase,
+    $CourseRemoteLinksTable,
+    CourseRemoteLink,
+    $$CourseRemoteLinksTableFilterComposer,
+    $$CourseRemoteLinksTableOrderingComposer,
+    $$CourseRemoteLinksTableAnnotationComposer,
+    $$CourseRemoteLinksTableCreateCompanionBuilder,
+    $$CourseRemoteLinksTableUpdateCompanionBuilder,
+    (
+      CourseRemoteLink,
+      BaseReferences<_$AppDatabase, $CourseRemoteLinksTable, CourseRemoteLink>
+    ),
+    CourseRemoteLink,
+    PrefetchHooks Function()>;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -10188,4 +10860,6 @@ class $AppDatabaseManager {
       $$PromptTemplatesTableTableManager(_db, _db.promptTemplates);
   $$StudentPromptProfilesTableTableManager get studentPromptProfiles =>
       $$StudentPromptProfilesTableTableManager(_db, _db.studentPromptProfiles);
+  $$CourseRemoteLinksTableTableManager get courseRemoteLinks =>
+      $$CourseRemoteLinksTableTableManager(_db, _db.courseRemoteLinks);
 }

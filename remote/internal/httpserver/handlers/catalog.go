@@ -17,7 +17,7 @@ func NewCatalogHandler(deps Dependencies) *CatalogHandler {
 }
 
 func (h *CatalogHandler) ListTeachers(c *fiber.Ctx) error {
-	if _, err := requireUserID(c, h.cfg.Config.JWTSecret); err != nil {
+	if _, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets); err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
 	limit, err := parseLimitQuery(c, 50, 100)
@@ -30,12 +30,16 @@ func (h *CatalogHandler) ListTeachers(c *fiber.Ctx) error {
 	}
 	q := strings.TrimSpace(c.Query("q"))
 	args := []interface{}{}
-	query := `
+query := `
 SELECT t.id, t.display_name, t.bio, t.avatar_url, t.contact, t.contact_published
 FROM teacher_accounts t
 WHERE t.status = 'active'
   AND EXISTS (
-    SELECT 1 FROM course_catalog_entries ce
+    SELECT 1
+    FROM course_catalog_entries ce
+    JOIN courses c ON c.id = ce.course_id
+    JOIN bundles b ON b.course_id = c.id
+    JOIN bundle_versions bv ON bv.bundle_id = b.id
     WHERE ce.teacher_id = t.id AND ce.visibility = 'public'
   )
 `
@@ -92,7 +96,7 @@ WHERE t.status = 'active'
 }
 
 func (h *CatalogHandler) ListCourses(c *fiber.Ctx) error {
-	userID, err := requireUserID(c, h.cfg.Config.JWTSecret)
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
@@ -111,7 +115,7 @@ func (h *CatalogHandler) ListCourses(c *fiber.Ctx) error {
 	teacherID := strings.TrimSpace(c.Query("teacher_id"))
 
 	args := []interface{}{}
-	query := `
+query := `
 SELECT c.id, c.subject, c.grade, c.description,
        c.teacher_id, t.display_name, t.avatar_url,
        ce.visibility, ce.published_at,
@@ -123,9 +127,21 @@ SELECT c.id, c.subject, c.grade, c.description,
          LIMIT 1
        ) AS latest_bundle_version_id
 FROM courses c
+JOIN (
+  SELECT teacher_id, course_name_key, MAX(id) AS latest_course_id
+  FROM courses
+  GROUP BY teacher_id, course_name_key
+) latest ON latest.latest_course_id = c.id
 JOIN teacher_accounts t ON c.teacher_id = t.id
 JOIN course_catalog_entries ce ON ce.course_id = c.id
-WHERE t.status = 'active' AND ce.visibility = 'public'
+WHERE t.status = 'active'
+  AND ce.visibility = 'public'
+  AND EXISTS (
+    SELECT 1
+    FROM bundles b
+    JOIN bundle_versions bv ON bv.bundle_id = b.id
+    WHERE b.course_id = c.id
+  )
 `
 	if teacherID != "" {
 		parsedID, err := strconv.ParseInt(teacherID, 10, 64)

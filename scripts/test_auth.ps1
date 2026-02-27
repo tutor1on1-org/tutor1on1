@@ -110,7 +110,7 @@ if (-not $recoveryToken) {
   $recoveryToken = $env:FT_RECOVERY_TOKEN
 }
 if (-not $recoveryToken) {
-  throw "Recovery token missing. Enable RECOVERY_TOKEN_ECHO or set FT_RECOVERY_TOKEN."
+  throw "Recovery token missing. In production (RECOVERY_TOKEN_ECHO=false), fetch token from SMTP inbox and pass FT_RECOVERY_TOKEN."
 }
 
 Write-Host "Resetting password via recovery token"

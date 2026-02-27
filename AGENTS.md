@@ -1,49 +1,40 @@
-﻿# Project Memory - family_teacher
+# family_teacher Docs Index
 
-## Work routine
-- After a code change, before updating `DONEs.md`, run `flutter build windows --release` (timeout 10 minutes). If it fails, fix the root cause from the error. Max 3 retries for the same error.
-- If build is working, commit and push with a clear message.
-- If remote backend code changes (`remote/`), always rebuild server binary and restart service before reporting done.
-- Validation baseline for all future work:
-  - Do reasonable self-validation before reporting done (tests/build/log checks/scripted flow checks as applicable).
-  - For bug fixes, do root-cause-first validation with evidence: reproduce -> identify failing layer -> verify fix on that layer and adjacent layer(s).
-  - Prefer end-to-end checks when feasible (API + data + client import path), not only unit-level checks.
-- Bug-fixing workflow (must follow):
-  - 1) Root cause: reproduce and pinpoint the true failing layer with evidence.
-  - 2) Fix + rigorous validation: validate fix directly and run adjacent-layer regression checks.
-  - 3) Update `BUGS.md`: record root cause, fix commit, and validation evidence so lessons are retained.
+`AGENTS.md` is the entry point only. Use the following documents:
 
-## Current product state
-- Flutter app + remote Go API for family teaching.
-- Roles: `teacher` and `student`.
-- Teacher flow: load/reload local course versions, upload bundle to marketplace, approve enrollment requests, review student sessions/progress.
-- Student flow: browse public marketplace, request enrollment, download approved bundles, study with LLM tutor.
-- Session sync uses end-to-end encrypted text payloads and supports multi-device sync.
+- `README.md` - project description, logical flow, architecture, and final aim.
+- `WORKFLOW.md` - standard way to execute work from diagnosis to release.
+- `SCRIPTS.md` - commands for setup, tests, validation, and builds.
+- `BUGS.md` - durable lessons learned and active bug watch items.
+- `TODOS.md` - prioritized backlog.
+- `LOGBOOK.md` - historical operations timeline.
+- `WORKLOG.md` - active remote runbook and host details.
+- `PLANS.md` - phased roadmap.
+- `DONEs.md` - recent completed items.
+- `SECRETS.md` - temporary credentials (rotate regularly).
 
-## Critical implementation notes
-- Prompt scope behavior: teacher scope overrides base system prompt per prompt name; course/student scopes are additive append templates.
-- Session prompt selection: `learn_init`/`learn_cont` and `review_init`/`review_cont` are selected by session turn state and label.
-- Structured tutor output must be valid JSON and include `teacher_message`; invalid output should be surfaced as an error, not rendered raw.
-- Bundle prompt metadata is in `_family_teacher/prompt_bundle.json`; apply only when incoming `version_id` is newer.
-- User-facing errors should not be transient-only; keep a persistent, copyable error surface in-page (avoid snackbar-only for important failures).
-- Bundle upload/download should validate required course files (`contents.txt`/`context.txt` + lecture files referenced by the skill tree) before import/publish.
-- Server must also enforce bundle validation on upload (do not rely only on client checks) so invalid bundles cannot become latest downloadable versions.
-- `archive` package extraction (`extractArchiveToDisk`) is async; always await it (or use sync API). Returning early causes intermittent missing `contents.txt`/`context.txt` during immediate post-download import.
-- Drift migrations that create a table mid-upgrade must guard later `addColumn` with `from >= <createVersion>` to avoid duplicate-column failures.
-
-## Remote ops notes
-- Keep `GOPATH` and `GOMODCACHE` outside repo (example: `/var/lib/family_teacher_remote/go`) to avoid module-cache corruption in project tree.
-- For authenticated bundle downloads, API checks auth and returns `X-Accel-Redirect`; Nginx serves files from internal alias.
-- Nginx worker must have read/traverse permission on `STORAGE_ROOT` (current host: `nginx` user is in `ftapp` group).
-- Keep API upload limit and Nginx `client_max_body_size` aligned.
-- On current ECS shell sessions, default `PATH` can miss tools in non-interactive commands; use absolute binaries (for example `/usr/bin/ls`, `/usr/local/go/bin/go`, `/usr/bin/systemctl`) in automation scripts.
-
-## References
-- `README.md` for current architecture and flows.
-- `BUGS.md` for active issues only.
-- `TODOS.md` for prioritized next tasks.
-- `DONEs.md` for recent completed work.
-- `PLANS.md` for roadmap and sequence.
-- `WORKLOG.md` for current server runbook.
-- `LOGBOOK.md` for historical timeline and archived notes.
-- `SECRETS.md` for temporary credentials (rotate later).
+## Experience updates
+- Course sync correctness depends on server-authoritative versioning and deletion events: treat remote bundle version as source of truth, and replay deletion events on login to clean multi-device local state.
+- UI feedback preference: use persistent, manually dismissible messages for workflow-critical status (no auto-fade snackbars).
+- Marketplace course identity must be normalized and enforced server-side as `(teacher_id + course_name_key)` to prevent duplicate course rows across repeated uploads.
+- Marketplace visibility must require at least one bundle version; deleting the last bundle version should auto-unpublish the course to avoid stale/duplicate listings.
+- JWT secret exposure is critical: with HS256 auth, anyone holding the secret can mint bearer tokens for arbitrary `sub`; rotate secrets immediately if exposed and minimize distribution.
+- JWT rotation rollout must keep signing and verification separated: sign with current `JWT_SECRET`, verify with `[JWT_SECRET + JWT_PREVIOUS_SECRETS]` during cutover, and enforce `RECOVERY_TOKEN_ECHO=false` when `APP_ENV=production`.
+- Stale local `remoteCourseId` links after server deletions can trigger bundle ensure failures; server must return `404 course not found` (not 500), and client upload flow must re-resolve/create remote course before `ensureBundle`.
+- SSH key path for remote ops in this environment is `C:\\Users\\kl\\.ssh\\id_rsa`; use `-i` and `-o IdentitiesOnly=yes` explicitly.
+- Canonical remote login tuple for this project: `ecs-user@43.99.59.107` with key `C:\\Users\\kl\\.ssh\\id_rsa` (key-only auth; do not do password/no-key retries).
+- Bundle ensure recovery: when stale `course_id` is sent, server `EnsureBundle` should accept `course_name` fallback to resolve/create course and catalog row, preventing teacher upload failures after server-side deletions.
+- After `EnsureBundle` fallback, client must use the returned `course_id` (not stale local ID) for subsequent calls like publish/update visibility, or upload flow can still fail with `course not found`.
+- Student login sync must tolerate older servers missing `/api/enrollments/quit-requests` (treat 404 as empty) and auto-remove legacy assigned courses whose local teacher record is missing (equivalent to auto-approved quit cleanup).
+- Archive stream lifecycle rule: when decoding ZIPs via `InputFileStream` + `ZipDecoder`, do not close the stream until all lazy entry reads are complete (validation/extraction/metadata read); close in `finally` after these steps.
+- Student bundle re-download must reuse the existing local course mapped by `remoteCourseId` and apply `override` mode with server subject as course name; importing from extracted folder basename creates duplicate local courses and splits progress.
+- Progress sync should be uploaded in batch (`/api/progress/sync/upload-batch`) instead of one-by-one requests to avoid per-minute sync rate-limit bursts.
+- Teacher quit/deletion event replay must delete only the affected student assignment/data; never delete the teacher's local course definition based on "no assignments", or teacher course catalogs can silently shrink.
+- When session sync import cannot resolve `remoteCourseId`, resolve local course by normalized subject (strip `_<timestamp>` suffix) before creating a new placeholder to prevent duplicate local course rows.
+- Teacher upload preflight must run in this order: local course validation, semantic hash compare with latest remote bundle, then KP diff (added/deleted/updated) confirmation before upload when hash differs.
+- Async cleanup rule: in `try/finally`, do not `return` an un-awaited `Future` that still depends on resources deleted in `finally` (use `await` first), or temp files can be removed before downstream read.
+- Bundle creation must include only required course assets (`contents/context`, referenced lecture `.txt`, and prompt `.txt` files plus prompt metadata payload), excluding unrelated files to keep semantic hash stable.
+- Local plugin path overrides must stay signature-compatible with upstream platform interfaces (for example, `record_platform_interface` permission API changes), or release builds can fail unexpectedly.
+- Progress sync E2EE must upload/store ciphertext envelopes (`envelope` + `envelope_hash`) and decrypt client-side; keep compatibility by accepting legacy plaintext rows when envelope is absent.
+- User key lifecycle must re-encrypt and upsert an existing local key pair with the current login password during `syncNow`; otherwise password changes can leave server key blobs undecryptable on new devices.
+- Go toolchain is installed at `C:\\Program Files\\Go\\bin\\go.exe` (`go1.26.0`); if `go` is not recognized in PowerShell, invoke the absolute path or prepend `C:\\Program Files\\Go\\bin` to `PATH` for that session.

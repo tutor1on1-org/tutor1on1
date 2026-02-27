@@ -13,8 +13,12 @@ class SecureStorageService {
   static const _userPrivateKeyPrefix = 'user_private_key:';
   static const _userPublicKeyPrefix = 'user_public_key:';
   static const _sessionSyncCursorPrefix = 'session_sync_cursor:';
+  static const _progressSyncCursorPrefix = 'progress_sync_cursor:';
+  static const _enrollmentDeletionCursorPrefix = 'enrollment_deletion_cursor:';
   static const _coursePromptBundleVersionPrefix =
       'course_prompt_bundle_version:';
+  static const _installedCourseBundleVersionPrefix =
+      'installed_course_bundle_version:';
   final FlutterSecureStorage _storage;
 
   Future<String?> readApiKey() => _storage.read(key: _apiKeyKey);
@@ -110,12 +114,20 @@ class SecureStorageService {
     );
   }
 
-  Future<int?> readCoursePromptBundleVersion({
-    required int remoteUserId,
-    required int remoteCourseId,
-  }) async {
+  Future<String?> readProgressSyncCursor(int remoteUserId) {
+    return _storage.read(key: '$_progressSyncCursorPrefix$remoteUserId');
+  }
+
+  Future<void> writeProgressSyncCursor(int remoteUserId, String value) {
+    return _storage.write(
+      key: '$_progressSyncCursorPrefix$remoteUserId',
+      value: value.trim(),
+    );
+  }
+
+  Future<int?> readEnrollmentDeletionCursor(int remoteUserId) async {
     final value = await _storage.read(
-      key: '$_coursePromptBundleVersionPrefix$remoteUserId:$remoteCourseId',
+      key: '$_enrollmentDeletionCursorPrefix$remoteUserId',
     );
     if (value == null || value.trim().isEmpty) {
       return null;
@@ -123,12 +135,68 @@ class SecureStorageService {
     return int.tryParse(value.trim());
   }
 
-  Future<void> writeCoursePromptBundleVersion({
+  Future<void> writeEnrollmentDeletionCursor(int remoteUserId, int eventId) {
+    return _storage.write(
+      key: '$_enrollmentDeletionCursorPrefix$remoteUserId',
+      value: eventId.toString(),
+    );
+  }
+
+  Future<int?> readInstalledCourseBundleVersion({
+    required int remoteUserId,
+    required int remoteCourseId,
+  }) async {
+    final value = await _storage.read(
+      key: '$_installedCourseBundleVersionPrefix$remoteUserId:$remoteCourseId',
+    );
+    if (value == null || value.trim().isEmpty) {
+      return null;
+    }
+    return int.tryParse(value.trim());
+  }
+
+  Future<void> writeInstalledCourseBundleVersion({
     required int remoteUserId,
     required int remoteCourseId,
     required int versionId,
   }) {
     return _storage.write(
+      key: '$_installedCourseBundleVersionPrefix$remoteUserId:$remoteCourseId',
+      value: versionId.toString(),
+    );
+  }
+
+  Future<int?> readCoursePromptBundleVersion({
+    required int remoteUserId,
+    required int remoteCourseId,
+  }) async {
+    final installed = await readInstalledCourseBundleVersion(
+      remoteUserId: remoteUserId,
+      remoteCourseId: remoteCourseId,
+    );
+    if (installed != null) {
+      return installed;
+    }
+    final legacy = await _storage.read(
+      key: '$_coursePromptBundleVersionPrefix$remoteUserId:$remoteCourseId',
+    );
+    if (legacy == null || legacy.trim().isEmpty) {
+      return null;
+    }
+    return int.tryParse(legacy.trim());
+  }
+
+  Future<void> writeCoursePromptBundleVersion({
+    required int remoteUserId,
+    required int remoteCourseId,
+    required int versionId,
+  }) async {
+    await writeInstalledCourseBundleVersion(
+      remoteUserId: remoteUserId,
+      remoteCourseId: remoteCourseId,
+      versionId: versionId,
+    );
+    await _storage.write(
       key: '$_coursePromptBundleVersionPrefix$remoteUserId:$remoteCourseId',
       value: versionId.toString(),
     );

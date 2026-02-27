@@ -64,3 +64,10 @@ Historical setup timeline moved to `LOGBOOK.md`.
   - used `extractArchiveToDisk(...)` without `await`.
   - `archive` 3.x extraction API is async, so import sometimes started before extraction finished.
 - Fix: await extraction in both `extractBundleFromFile` and `extractBundleFromBytes`.
+
+## Remote server updates (2026-02-26, progress sync batch)
+- Added API endpoint `POST /api/progress/sync/upload-batch` and deployed to host.
+- Updated `progress_sync.go` and `routes.go`, rebuilt binary with `/usr/local/go/bin/go build`, restarted `family-teacher-api.service`.
+- Verified:
+  - health endpoint `https://43.99.59.107/health` returned `{"status":"ok"}`.
+  - batch endpoint responds (unauthorized without token), confirming route is active.

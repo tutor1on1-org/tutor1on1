@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
-	"log"
 	"strings"
 	"time"
 
@@ -210,7 +209,7 @@ func (h *AuthHandler) ChangePassword(c *fiber.Ctx) error {
 	if h.store == nil || h.store.DB == nil {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "database unavailable")
 	}
-	userID, err := requireUserID(c, h.cfg.JWTSecret)
+	userID, err := requireUserID(c, h.cfg.JWTVerifySecrets)
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
@@ -280,7 +279,7 @@ func (h *AuthHandler) RequestRecovery(c *fiber.Ctx) error {
 	}
 	if userExists && h.mailer != nil && h.mailer.Enabled() {
 		if err := h.mailer.SendRecoveryEmail(email, token, h.cfg.RecoveryTokenTTLMin); err != nil {
-			log.Printf("recovery email failed: %v", err)
+			return fiber.NewError(fiber.StatusServiceUnavailable, "recovery email failed")
 		}
 	}
 	response := fiber.Map{

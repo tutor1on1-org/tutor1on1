@@ -29,7 +29,8 @@ class TeacherHomePage extends StatefulWidget {
 class _TeacherHomePageState extends State<TeacherHomePage> {
   bool _syncStarted = false;
   final Set<int> _uploadingCourseIds = {};
-  String? _persistentError;
+  String? _persistentMessage;
+  bool _persistentMessageIsError = false;
   late MarketplaceApiService _marketplaceApi;
 
   @override
@@ -54,6 +55,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     }
     final services = context.read<AppServices>();
     try {
+      await services.enrollmentSyncService.syncIfReady(currentUser: user);
       await services.sessionSyncService.syncIfReady(currentUser: user);
     } catch (error) {
       if (!mounted) {
@@ -104,8 +106,8 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (_persistentError != null) ...[
-              _buildPersistentErrorCard(l10n),
+            if (_persistentMessage != null) ...[
+              _buildPersistentMessageCard(l10n),
               const SizedBox(height: 12),
             ],
             Wrap(
@@ -250,7 +252,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                       final row = rows[index];
                       return ListTile(
                         title: Text(
-                            '${row.courseSubject} / ${row.studentUsername}'),
+                            '${_stripVersionSuffix(row.courseSubject)} / ${row.studentUsername}'),
                         trailing: TextButton(
                           onPressed: () {
                             Navigator.of(context).push(
@@ -301,8 +303,9 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       courseVersionId: course.id,
     );
     if (!preview.success) {
-      _setPersistentError(
+      _setPersistentMessage(
         'Upload blocked: local course folder is invalid.\n${preview.message}',
+        isError: true,
       );
       return;
     }
@@ -313,7 +316,33 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
 
     File? bundleFile;
     try {
-      var remoteCourseId = await db.getRemoteCourseId(course.id);
+      final storedRemoteCourseId = await db.getRemoteCourseId(course.id);
+      var remoteCourseId = storedRemoteCourseId;
+      final teacherCourses = await _marketplaceApi.listTeacherCourses();
+      final normalizedCourseName = _normalizeCourseName(course.subject);
+      TeacherCourseSummary? sameNameCourse;
+      for (final remoteCourse in teacherCourses) {
+        if (_normalizeCourseName(remoteCourse.subject) ==
+            normalizedCourseName) {
+          sameNameCourse = remoteCourse;
+          break;
+        }
+      }
+      if (sameNameCourse != null) {
+        remoteCourseId = sameNameCourse.courseId;
+        if (storedRemoteCourseId != remoteCourseId) {
+          await db.upsertCourseRemoteLink(
+            courseVersionId: course.id,
+            remoteCourseId: remoteCourseId,
+          );
+        }
+      } else if (remoteCourseId != null && remoteCourseId > 0) {
+        final remoteExists = teacherCourses
+            .any((remoteCourse) => remoteCourse.courseId == remoteCourseId);
+        if (!remoteExists) {
+          remoteCourseId = null;
+        }
+      }
       if (remoteCourseId == null || remoteCourseId <= 0) {
         final created = await _marketplaceApi.createTeacherCourse(
           subject: course.subject,
@@ -327,61 +356,117 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         );
       }
 
-      final bundleId = await _marketplaceApi.ensureBundle(remoteCourseId);
-      final bundleService = CourseBundleService();
-      final baseVersion = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-      var uploadedStatus = 'uploaded';
-
-      for (var attempt = 0; attempt < 3; attempt++) {
-        final versionId = baseVersion + attempt;
-        final promptMetadata = await _buildPromptBundleMetadata(
-          teacher: teacher,
-          course: course,
+      var bundleId = 0;
+      try {
+        final ensured = await _marketplaceApi.ensureBundle(
+          remoteCourseId,
+          courseName: course.subject,
+        );
+        bundleId = ensured.bundleId;
+        remoteCourseId = ensured.courseId;
+        await db.upsertCourseRemoteLink(
+          courseVersionId: course.id,
           remoteCourseId: remoteCourseId,
-          versionId: versionId,
         );
-
-        bundleFile = await bundleService.createBundleFromFolder(
-          sourcePath,
-          promptMetadata: promptMetadata,
-        );
-
-        try {
-          final uploadResponse = await _marketplaceApi.uploadBundle(
-            bundleId: bundleId,
-            version: versionId,
-            bundleFile: bundleFile,
-          );
-          uploadedStatus = (uploadResponse['status'] as String?) ?? 'uploaded';
-          await _marketplaceApi.updateCourseVisibility(
-            courseId: remoteCourseId,
-            visibility: 'public',
-          );
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  uploadedStatus == 'unchanged'
-                      ? 'No file changes detected. Kept existing bundle version.'
-                      : l10n.marketplaceUploadSuccess,
-                ),
-              ),
-            );
-          }
-          break;
-        } on MarketplaceApiException catch (error) {
-          if (bundleFile.existsSync()) {
-            await bundleFile.delete();
-          }
-          bundleFile = null;
-          if (error.statusCode == 409 && attempt < 2) {
-            continue;
-          }
+      } on MarketplaceApiException catch (error) {
+        if (error.statusCode != 404) {
           rethrow;
+        }
+        final created = await _marketplaceApi.createTeacherCourse(
+          subject: course.subject,
+          grade: '',
+          description: 'Uploaded from Family Teacher app.',
+        );
+        remoteCourseId = created.courseId;
+        await db.upsertCourseRemoteLink(
+          courseVersionId: course.id,
+          remoteCourseId: remoteCourseId,
+        );
+        final ensured = await _marketplaceApi.ensureBundle(
+          remoteCourseId,
+          courseName: course.subject,
+        );
+        bundleId = ensured.bundleId;
+        remoteCourseId = ensured.courseId;
+        await db.upsertCourseRemoteLink(
+          courseVersionId: course.id,
+          remoteCourseId: remoteCourseId,
+        );
+      }
+      final bundleService = CourseBundleService();
+      final promptMetadata = await _buildPromptBundleMetadata(
+        teacher: teacher,
+        course: course,
+        remoteCourseId: remoteCourseId,
+      );
+
+      bundleFile = await bundleService.createBundleFromFolder(
+        sourcePath,
+        promptMetadata: promptMetadata,
+      );
+
+      final localSemanticHash =
+          await bundleService.computeBundleSemanticHash(bundleFile);
+      final remoteVersions = await _marketplaceApi.listTeacherBundleVersions(
+        remoteCourseId,
+      );
+      final latestRemoteVersion =
+          remoteVersions.isNotEmpty ? remoteVersions.first : null;
+      if (latestRemoteVersion != null &&
+          latestRemoteVersion.hash.isNotEmpty &&
+          latestRemoteVersion.hash == localSemanticHash) {
+        _setPersistentMessage(
+          'No file changes detected compared with latest version hash. No upload needed.',
+          isError: false,
+        );
+        return;
+      }
+      if (latestRemoteVersion != null) {
+        final kpDiff = await _buildKpDiffAgainstLatestBundle(
+          bundleService: bundleService,
+          sourcePath: sourcePath,
+          latestBundleVersionId: latestRemoteVersion.bundleVersionId,
+          courseSubject: course.subject,
+        );
+        final confirmed = await _confirmUploadWithKpDiff(
+          courseSubject: course.subject,
+          diff: kpDiff,
+        );
+        if (!confirmed) {
+          _setPersistentMessage(
+            'Upload cancelled by teacher.',
+            isError: false,
+          );
+          return;
+        }
+      }
+
+      final uploadResponse = await _marketplaceApi.uploadBundle(
+        bundleId: bundleId,
+        courseName: course.subject,
+        bundleFile: bundleFile,
+      );
+      final uploadedStatus =
+          (uploadResponse['status'] as String?) ?? 'uploaded';
+      await _marketplaceApi.updateCourseVisibility(
+        courseId: remoteCourseId,
+        visibility: 'public',
+      );
+      if (mounted) {
+        if (uploadedStatus == 'unchanged') {
+          _setPersistentMessage(
+            'No file changes detected. No upload needed.',
+            isError: false,
+          );
+        } else {
+          _setPersistentMessage(
+            l10n.marketplaceUploadSuccess,
+            isError: false,
+          );
         }
       }
     } catch (error) {
-      _setPersistentError(l10n.marketplaceUploadFailed('$error'));
+      _setPersistentMessage(l10n.marketplaceUploadFailed('$error'));
     } finally {
       if (bundleFile != null && bundleFile.existsSync()) {
         await bundleFile.delete();
@@ -394,12 +479,108 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     }
   }
 
+  Future<CourseKpDiffSummary> _buildKpDiffAgainstLatestBundle({
+    required CourseBundleService bundleService,
+    required String sourcePath,
+    required int latestBundleVersionId,
+    required String courseSubject,
+  }) async {
+    final targetPath = await bundleService.createTempBundlePath(
+      label: 'latest_$courseSubject',
+    );
+    final targetFile = File(targetPath);
+    try {
+      final latestBundle = await _marketplaceApi.downloadBundleToFile(
+        bundleVersionId: latestBundleVersionId,
+        targetPath: targetPath,
+      );
+      final diff = await bundleService.compareCourseFolderWithBundle(
+        folderPath: sourcePath,
+        bundleFile: latestBundle,
+      );
+      return diff;
+    } finally {
+      if (targetFile.existsSync()) {
+        await targetFile.delete();
+      }
+    }
+  }
+
+  Future<bool> _confirmUploadWithKpDiff({
+    required String courseSubject,
+    required CourseKpDiffSummary diff,
+  }) async {
+    if (!mounted) {
+      return false;
+    }
+    final l10n = AppLocalizations.of(context)!;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Confirm Course Upload'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Course: $courseSubject'),
+            const SizedBox(height: 8),
+            Text('KP added: ${diff.addedCount}'),
+            Text('KP deleted: ${diff.removedCount}'),
+            Text('KP updated: ${diff.updatedCount}'),
+            const SizedBox(height: 8),
+            Text(
+              diff.hasChanges
+                  ? 'Detected changes against the latest server version.'
+                  : 'No KP changes detected. Only non-KP metadata changed.',
+            ),
+            const SizedBox(height: 8),
+            const Text('Upload this as a new version?'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(l10n.cancelButton),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(l10n.marketplaceUploadButton),
+          ),
+        ],
+      ),
+    );
+    return confirmed ?? false;
+  }
+
   Future<void> _openBundleVersionsPage(CourseVersion course) async {
     final db = context.read<AppDatabase>();
-    final remoteCourseId = await db.getRemoteCourseId(course.id);
+    var remoteCourseId = await db.getRemoteCourseId(course.id);
     if (remoteCourseId == null || remoteCourseId <= 0) {
-      _setPersistentError(
+      final teacherCourses = await _marketplaceApi.listTeacherCourses();
+      final courseBaseName =
+          _normalizeCourseName(_stripVersionSuffix(course.subject));
+      for (final remoteCourse in teacherCourses) {
+        final remoteBaseName =
+            _normalizeCourseName(_stripVersionSuffix(remoteCourse.subject));
+        if (remoteBaseName != courseBaseName) {
+          continue;
+        }
+        remoteCourseId = remoteCourse.courseId;
+        await db.upsertCourseRemoteLink(
+          courseVersionId: course.id,
+          remoteCourseId: remoteCourseId,
+        );
+        await db.updateCourseVersionSubject(
+          id: course.id,
+          subject: remoteCourse.subject,
+        );
+        break;
+      }
+    }
+    if (remoteCourseId == null || remoteCourseId <= 0) {
+      _setPersistentMessage(
         'No remote bundle found for "${course.subject}". Upload bundle first.',
+        isError: false,
       );
       return;
     }
@@ -410,26 +591,30 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       MaterialPageRoute(
         builder: (_) => _BundleVersionsPage(
           api: _marketplaceApi,
-          remoteCourseId: remoteCourseId,
+          remoteCourseId: remoteCourseId!,
           courseSubject: course.subject,
         ),
       ),
     );
   }
 
-  void _setPersistentError(String message) {
+  void _setPersistentMessage(String message, {bool isError = true}) {
     if (!mounted) {
       return;
     }
     setState(() {
-      _persistentError = message;
+      _persistentMessage = message;
+      _persistentMessageIsError = isError;
     });
   }
 
-  Widget _buildPersistentErrorCard(AppLocalizations l10n) {
-    final message = _persistentError!;
+  Widget _buildPersistentMessageCard(AppLocalizations l10n) {
+    final message = _persistentMessage!;
+    final cardColor = _persistentMessageIsError
+        ? Theme.of(context).colorScheme.errorContainer
+        : Theme.of(context).colorScheme.secondaryContainer;
     return Card(
-      color: Theme.of(context).colorScheme.errorContainer,
+      color: cardColor,
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Row(
@@ -461,7 +646,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
               icon: const Icon(Icons.close),
               onPressed: () {
                 setState(() {
-                  _persistentError = null;
+                  _persistentMessage = null;
                 });
               },
             ),
@@ -475,7 +660,6 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     required User teacher,
     required CourseVersion course,
     required int remoteCourseId,
-    required int versionId,
   }) async {
     final db = context.read<AppDatabase>();
     final courseKey = (course.sourcePath ?? '').trim();
@@ -619,13 +803,19 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
 
     return {
       'schema': 'family_teacher_prompt_bundle_v1',
-      'version_id': versionId,
       'remote_course_id': remoteCourseId,
-      'generated_at': DateTime.now().toUtc().toIso8601String(),
       'teacher_username': teacher.username,
       'prompt_templates': promptTemplatesPayload,
       'student_prompt_profiles': profilesPayload,
     };
+  }
+
+  String _normalizeCourseName(String value) {
+    return value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  String _stripVersionSuffix(String value) {
+    return value.trim().replaceFirst(RegExp(r'_(\d{10,})$'), '');
   }
 
   Map<String, dynamic> _profileToJson(
@@ -710,10 +900,9 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         await _marketplaceApi.deleteTeacherCourse(remoteCourseId);
       } catch (error) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Failed to delete marketplace course: $error'),
-            ),
+          _setPersistentMessage(
+            'Failed to delete marketplace course: $error',
+            isError: true,
           );
         }
         return;
@@ -722,8 +911,9 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
 
     await db.deleteCourseVersion(course.id);
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.deleteCourseSuccess)),
+      _setPersistentMessage(
+        l10n.deleteCourseSuccess,
+        isError: false,
       );
     }
   }
@@ -751,6 +941,8 @@ class _CourseTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final displaySubject =
+        course.subject.trim().replaceFirst(RegExp(r'_(\d{10,})$'), '');
     return Card(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -758,7 +950,7 @@ class _CourseTile extends StatelessWidget {
           children: [
             Expanded(
               child: Text(
-                course.subject,
+                displaySubject,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),

@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:drift/drift.dart';
 import 'package:path/path.dart' as p;
+import 'package:uuid/uuid.dart';
 
 import '../db/app_database.dart';
 import '../llm/llm_models.dart';
@@ -93,6 +94,7 @@ class SessionService {
   final PromptRepository _promptRepository;
   final SettingsRepository _settingsRepository;
   final PromptRenderer _renderer = PromptRenderer();
+  static final Uuid _uuid = Uuid();
 
   Future<int> startSession({
     required int studentId,
@@ -126,6 +128,8 @@ class SessionService {
             kpKey: kpKey,
             title: Value(resolvedTitle),
             status: const Value('active'),
+            syncId: Value(_uuid.v4()),
+            syncUpdatedAt: Value(DateTime.now()),
           ),
         );
   }
@@ -170,6 +174,7 @@ class SessionService {
       ChatSessionsCompanion(
         endedAt: Value(DateTime.now()),
         status: const Value('active'),
+        syncUpdatedAt: Value(DateTime.now()),
       ),
     );
   }
@@ -198,6 +203,7 @@ class SessionService {
               action: Value(actionMode),
             ),
           );
+      await _touchSessionSync(sessionId);
       if (onStudentMessageCreated != null) {
         onStudentMessageCreated(studentMessageId);
       }
@@ -386,6 +392,7 @@ class SessionService {
                 action: Value(actionMode),
               ),
             );
+        await _touchSessionSync(sessionId);
         return resolution.result;
       });
       return LlmRequestHandle(future: future, cancel: handle.cancel);
@@ -488,6 +495,7 @@ class SessionService {
           rawContent: resolution.payload.rawText,
           parsedJson: resolution.payload.parsedJson,
         );
+        await _touchSessionSync(sessionId);
       }
       return resolution.result;
     });
@@ -649,16 +657,17 @@ class SessionService {
         );
 
         await _db.into(_db.chatMessages).insert(
-              ChatMessagesCompanion.insert(
-                sessionId: sessionId,
-                role: 'assistant',
-                content: summary,
-                rawContent: Value(result.responseText),
-                parsedJson: Value(parsedJson),
-                action: const Value('summary'),
-              ),
-            );
+          ChatMessagesCompanion.insert(
+            sessionId: sessionId,
+            role: 'assistant',
+            content: summary,
+            rawContent: Value(result.responseText),
+            parsedJson: Value(parsedJson),
+            action: const Value('summary'),
+          ),
+        );
       });
+      await _touchSessionSync(sessionId);
 
       return SummarizeResult(
         success: true,
@@ -1323,6 +1332,14 @@ class SessionService {
         promptName == 'review_init' ||
         promptName == 'review_cont' ||
         promptName == 'summary';
+  }
+
+  Future<void> _touchSessionSync(int sessionId) {
+    return (_db.update(_db.chatSessions)
+          ..where((tbl) => tbl.id.equals(sessionId)))
+        .write(
+      ChatSessionsCompanion(syncUpdatedAt: Value(DateTime.now())),
+    );
   }
 }
 

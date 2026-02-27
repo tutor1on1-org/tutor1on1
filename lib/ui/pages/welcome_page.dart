@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:family_teacher/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
+import '../../services/app_services.dart';
 import '../../state/auth_controller.dart';
 import '../../state/settings_controller.dart';
 import '../app_settings_page.dart';
@@ -256,60 +257,37 @@ class _WelcomePageState extends State<WelcomePage> {
   Widget _buildLanguageSelector(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final settings = context.watch<SettingsController>().settings;
-    final locale = (settings?.locale ?? '').trim();
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        _languageButton(
-          context: context,
-          locale: null,
-          label: '馃寪',
-          tooltip: l10n.languageSystem,
-          selected: locale.isEmpty,
-        ),
-        const SizedBox(width: 8),
-        _languageButton(
-          context: context,
-          locale: 'en',
-          label: '馃嚭馃嚫',
-          tooltip: l10n.languageEnglish,
-          selected: locale == 'en',
-        ),
-        const SizedBox(width: 8),
-        _languageButton(
-          context: context,
-          locale: 'zh',
-          label: '馃嚚馃嚦',
-          tooltip: l10n.languageChinese,
-          selected: locale == 'zh',
-        ),
-      ],
-    );
-  }
-
-  Widget _languageButton({
-    required BuildContext context,
-    required String? locale,
-    required String label,
-    required String tooltip,
-    required bool selected,
-  }) {
     final settingsController = context.read<SettingsController>();
-    return Tooltip(
-      message: tooltip,
-      child: OutlinedButton(
-        style: OutlinedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          side: BorderSide(
-            color: selected
-                ? Theme.of(context).colorScheme.primary
-                : Theme.of(context).dividerColor,
-          ),
+    final locale = (settings?.locale ?? '').trim();
+    final selectedLocale = locale.isEmpty ? '' : locale;
+    return Align(
+      alignment: Alignment.centerRight,
+      child: SizedBox(
+        width: 220,
+        child: DropdownButtonFormField<String>(
+          initialValue: selectedLocale,
+          decoration: InputDecoration(labelText: l10n.languageTitle),
+          items: [
+            DropdownMenuItem(
+              value: '',
+              child: Text(l10n.languageSystem),
+            ),
+            DropdownMenuItem(
+              value: 'en',
+              child: Text(l10n.languageEnglish),
+            ),
+            DropdownMenuItem(
+              value: 'zh',
+              child: Text(l10n.languageChinese),
+            ),
+          ],
+          onChanged: (value) async {
+            final next = (value ?? '').trim();
+            await settingsController.updateLocale(
+              next.isEmpty ? null : next,
+            );
+          },
         ),
-        onPressed: () async {
-          await settingsController.updateLocale(locale);
-        },
-        child: Text(label, style: const TextStyle(fontSize: 18)),
       ),
     );
   }
@@ -353,6 +331,27 @@ class _WelcomePageState extends State<WelcomePage> {
     final ok = await auth.login(username, password);
     if (!ok && mounted) {
       _showMessage(context, auth.lastError ?? l10n.invalidLogin);
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    final user = auth.currentUser;
+    if (user == null) {
+      return;
+    }
+    final services = context.read<AppServices>();
+    try {
+      await services.enrollmentSyncService.syncIfReady(currentUser: user);
+      await services.sessionSyncService.syncNow(
+        currentUser: user,
+        password: password,
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showMessage(context, l10n.sessionSyncFailed('$error'));
     }
   }
 
@@ -384,6 +383,23 @@ class _WelcomePageState extends State<WelcomePage> {
     );
     if (user == null && mounted) {
       _showMessage(context, auth.lastError ?? l10n.registrationFailed);
+      return;
+    }
+    if (!mounted || user == null) {
+      return;
+    }
+    final services = context.read<AppServices>();
+    try {
+      await services.enrollmentSyncService.syncIfReady(currentUser: user);
+      await services.sessionSyncService.syncNow(
+        currentUser: user,
+        password: password,
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showMessage(context, l10n.sessionSyncFailed('$error'));
     }
   }
 
@@ -405,6 +421,23 @@ class _WelcomePageState extends State<WelcomePage> {
     );
     if (user == null && mounted) {
       _showMessage(context, auth.lastError ?? l10n.registrationFailed);
+      return;
+    }
+    if (!mounted || user == null) {
+      return;
+    }
+    final services = context.read<AppServices>();
+    try {
+      await services.enrollmentSyncService.syncIfReady(currentUser: user);
+      await services.sessionSyncService.syncNow(
+        currentUser: user,
+        password: password,
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showMessage(context, l10n.sessionSyncFailed('$error'));
     }
   }
 }

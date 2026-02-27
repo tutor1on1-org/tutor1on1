@@ -19,7 +19,10 @@ func main() {
 		log.Fatalf("db init failed: %v", err)
 	}
 
-	server := httpserver.New(cfg, store)
+	server, err := httpserver.New(cfg, store)
+	if err != nil {
+		log.Fatalf("server init failed: %v", err)
+	}
 	if err := server.Listen(cfg.HTTPAddr); err != nil {
 		log.Fatalf("server failed: %v", err)
 	}

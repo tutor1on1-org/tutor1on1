@@ -97,6 +97,44 @@ class EnrollmentRequestSummary {
   }
 }
 
+class StudentQuitRequestSummary {
+  StudentQuitRequestSummary({
+    required this.requestId,
+    required this.courseId,
+    required this.status,
+    required this.reason,
+    required this.createdAt,
+    required this.resolvedAt,
+    required this.courseSubject,
+    required this.teacherId,
+    required this.teacherName,
+  });
+
+  final int requestId;
+  final int courseId;
+  final String status;
+  final String reason;
+  final String createdAt;
+  final String resolvedAt;
+  final String courseSubject;
+  final int teacherId;
+  final String teacherName;
+
+  factory StudentQuitRequestSummary.fromJson(Map<String, dynamic> json) {
+    return StudentQuitRequestSummary(
+      requestId: (json['request_id'] as num?)?.toInt() ?? 0,
+      courseId: (json['course_id'] as num?)?.toInt() ?? 0,
+      status: (json['status'] as String?) ?? '',
+      reason: (json['reason'] as String?) ?? '',
+      createdAt: (json['created_at'] as String?) ?? '',
+      resolvedAt: (json['resolved_at'] as String?) ?? '',
+      courseSubject: (json['course_subject'] as String?) ?? '',
+      teacherId: (json['teacher_id'] as num?)?.toInt() ?? 0,
+      teacherName: (json['teacher_name'] as String?) ?? '',
+    );
+  }
+}
+
 class EnrollmentSummary {
   EnrollmentSummary({
     required this.enrollmentId,
@@ -106,6 +144,7 @@ class EnrollmentSummary {
     required this.assignedAt,
     required this.courseSubject,
     required this.teacherName,
+    required this.latestBundleVersionId,
   });
 
   final int enrollmentId;
@@ -115,6 +154,7 @@ class EnrollmentSummary {
   final String assignedAt;
   final String courseSubject;
   final String teacherName;
+  final int? latestBundleVersionId;
 
   factory EnrollmentSummary.fromJson(Map<String, dynamic> json) {
     return EnrollmentSummary(
@@ -125,6 +165,8 @@ class EnrollmentSummary {
       assignedAt: (json['assigned_at'] as String?) ?? '',
       courseSubject: (json['course_subject'] as String?) ?? '',
       teacherName: (json['teacher_name'] as String?) ?? '',
+      latestBundleVersionId:
+          (json['latest_bundle_version_id'] as num?)?.toInt(),
     );
   }
 }
@@ -164,6 +206,70 @@ class TeacherRequestSummary {
   }
 }
 
+class TeacherQuitRequestSummary {
+  TeacherQuitRequestSummary({
+    required this.requestId,
+    required this.courseId,
+    required this.courseSubject,
+    required this.studentId,
+    required this.studentUsername,
+    required this.reason,
+    required this.status,
+    required this.createdAt,
+  });
+
+  final int requestId;
+  final int courseId;
+  final String courseSubject;
+  final int studentId;
+  final String studentUsername;
+  final String reason;
+  final String status;
+  final String createdAt;
+
+  factory TeacherQuitRequestSummary.fromJson(Map<String, dynamic> json) {
+    return TeacherQuitRequestSummary(
+      requestId: (json['request_id'] as num?)?.toInt() ?? 0,
+      courseId: (json['course_id'] as num?)?.toInt() ?? 0,
+      courseSubject: (json['course_subject'] as String?) ?? '',
+      studentId: (json['student_id'] as num?)?.toInt() ?? 0,
+      studentUsername: (json['student_username'] as String?) ?? '',
+      reason: (json['reason'] as String?) ?? '',
+      status: (json['status'] as String?) ?? '',
+      createdAt: (json['created_at'] as String?) ?? '',
+    );
+  }
+}
+
+class EnrollmentDeletionEvent {
+  EnrollmentDeletionEvent({
+    required this.eventId,
+    required this.studentId,
+    required this.teacherUserId,
+    required this.courseId,
+    required this.reason,
+    required this.createdAt,
+  });
+
+  final int eventId;
+  final int studentId;
+  final int teacherUserId;
+  final int courseId;
+  final String reason;
+  final String createdAt;
+
+  factory EnrollmentDeletionEvent.fromJson(Map<String, dynamic> json) {
+    return EnrollmentDeletionEvent(
+      eventId: (json['event_id'] as num?)?.toInt() ?? 0,
+      studentId: (json['student_id'] as num?)?.toInt() ?? 0,
+      teacherUserId: (json['teacher_user_id'] as num?)?.toInt() ?? 0,
+      courseId: (json['course_id'] as num?)?.toInt() ?? 0,
+      reason: (json['reason'] as String?) ?? '',
+      createdAt: (json['created_at'] as String?) ?? '',
+    );
+  }
+}
+
 class TeacherCourseSummary {
   TeacherCourseSummary({
     required this.courseId,
@@ -173,6 +279,7 @@ class TeacherCourseSummary {
     required this.visibility,
     required this.publishedAt,
     required this.latestBundleVersionId,
+    required this.status,
   });
 
   final int courseId;
@@ -182,6 +289,7 @@ class TeacherCourseSummary {
   final String visibility;
   final String publishedAt;
   final int? latestBundleVersionId;
+  final String status;
 
   factory TeacherCourseSummary.fromJson(Map<String, dynamic> json) {
     return TeacherCourseSummary(
@@ -193,6 +301,7 @@ class TeacherCourseSummary {
       publishedAt: (json['published_at'] as String?) ?? '',
       latestBundleVersionId:
           (json['latest_bundle_version_id'] as num?)?.toInt(),
+      status: (json['status'] as String?) ?? '',
     );
   }
 }
@@ -230,6 +339,16 @@ class TeacherBundleVersionSummary {
       fileMissing: (json['file_missing'] as bool?) ?? false,
     );
   }
+}
+
+class EnsureBundleResult {
+  EnsureBundleResult({
+    required this.bundleId,
+    required this.courseId,
+  });
+
+  final int bundleId;
+  final int courseId;
 }
 
 class MarketplaceApiService {
@@ -272,6 +391,21 @@ class MarketplaceApiService {
     );
   }
 
+  Future<List<StudentQuitRequestSummary>> listStudentQuitRequests() async {
+    try {
+      final response = await _get('/api/enrollments/quit-requests');
+      return _decodeList(
+        response,
+        (json) => StudentQuitRequestSummary.fromJson(json),
+      );
+    } on MarketplaceApiException catch (error) {
+      if (error.statusCode == 404) {
+        return [];
+      }
+      rethrow;
+    }
+  }
+
   Future<void> createEnrollmentRequest({
     required int courseId,
     String? message,
@@ -279,6 +413,15 @@ class MarketplaceApiService {
     await _post('/api/enrollment-requests', {
       'course_id': courseId,
       'message': message ?? '',
+    });
+  }
+
+  Future<void> createQuitRequest({
+    required int enrollmentId,
+    String? reason,
+  }) async {
+    await _post('/api/enrollments/$enrollmentId/quit-request', {
+      'reason': reason ?? '',
     });
   }
 
@@ -290,12 +433,43 @@ class MarketplaceApiService {
     );
   }
 
+  Future<List<TeacherQuitRequestSummary>> listTeacherQuitRequests() async {
+    final response = await _get('/api/teacher/quit-requests');
+    return _decodeList(
+      response,
+      (json) => TeacherQuitRequestSummary.fromJson(json),
+    );
+  }
+
   Future<void> approveRequest(int requestId) async {
     await _post('/api/teacher/enrollment-requests/$requestId/approve', {});
   }
 
   Future<void> rejectRequest(int requestId) async {
     await _post('/api/teacher/enrollment-requests/$requestId/reject', {});
+  }
+
+  Future<void> approveQuitRequest(int requestId) async {
+    await _post('/api/teacher/quit-requests/$requestId/approve', {});
+  }
+
+  Future<void> rejectQuitRequest(int requestId) async {
+    await _post('/api/teacher/quit-requests/$requestId/reject', {});
+  }
+
+  Future<List<EnrollmentDeletionEvent>> listEnrollmentDeletionEvents({
+    int? sinceId,
+  }) async {
+    final params = <String, String>{};
+    if ((sinceId ?? 0) > 0) {
+      params['since_id'] = sinceId.toString();
+    }
+    final response =
+        await _get('/api/enrollments/deletion-events', params: params);
+    return _decodeList(
+      response,
+      (json) => EnrollmentDeletionEvent.fromJson(json),
+    );
   }
 
   Future<List<TeacherCourseSummary>> listTeacherCourses() async {
@@ -335,12 +509,28 @@ class MarketplaceApiService {
     await _post('/api/teacher/courses/$courseId/delete', {});
   }
 
-  Future<int> ensureBundle(int courseId) async {
-    final response = await _post('/api/teacher/courses/$courseId/bundles', {});
+  Future<EnsureBundleResult> ensureBundle(
+    int courseId, {
+    String? courseName,
+  }) async {
+    final params = <String, String>{};
+    final normalizedName = (courseName ?? '').trim();
+    if (normalizedName.isNotEmpty) {
+      params['course_name'] = normalizedName;
+    }
+    final response = await _post(
+      '/api/teacher/courses/$courseId/bundles',
+      {},
+      params: params,
+    );
     if (response is Map<String, dynamic>) {
-      final id = (response['bundle_id'] as num?)?.toInt();
-      if (id != null && id > 0) {
-        return id;
+      final bundleId = (response['bundle_id'] as num?)?.toInt() ?? 0;
+      final resolvedCourseId = (response['course_id'] as num?)?.toInt() ?? 0;
+      if (bundleId > 0 && resolvedCourseId > 0) {
+        return EnsureBundleResult(
+          bundleId: bundleId,
+          courseId: resolvedCourseId,
+        );
       }
     }
     throw MarketplaceApiException('Unexpected response format.');
@@ -369,14 +559,14 @@ class MarketplaceApiService {
 
   Future<Map<String, dynamic>> uploadBundle({
     required int bundleId,
-    required int version,
+    required String courseName,
     required File bundleFile,
   }) async {
     final token = await _requireAccessToken();
     final uri = Uri.parse('$_baseUrl/api/bundles/upload').replace(
       queryParameters: {
         'bundle_id': bundleId.toString(),
-        'version': version.toString(),
+        'course_name': courseName.trim(),
       },
     );
     final request = http.MultipartRequest('POST', uri);
@@ -425,11 +615,27 @@ class MarketplaceApiService {
       );
     }
     final file = File(targetPath);
+    await file.parent.create(recursive: true);
+    if (!file.existsSync()) {
+      await file.create(recursive: true);
+    }
     final sink = file.openWrite();
+    var writtenBytes = 0;
     try {
-      await streamed.stream.pipe(sink);
+      await for (final chunk in streamed.stream) {
+        writtenBytes += chunk.length;
+        sink.add(chunk);
+      }
     } finally {
       await sink.close();
+    }
+    if (writtenBytes <= 0) {
+      if (file.existsSync()) {
+        await file.delete();
+      }
+      throw MarketplaceApiException(
+        'Download returned empty body for bundle_version_id=$bundleVersionId.',
+      );
     }
     return file;
   }
@@ -452,9 +658,13 @@ class MarketplaceApiService {
     return _decodeResponse(response);
   }
 
-  Future<dynamic> _post(String path, Map<String, dynamic> body) async {
+  Future<dynamic> _post(
+    String path,
+    Map<String, dynamic> body, {
+    Map<String, String>? params,
+  }) async {
     final token = await _requireAccessToken();
-    final uri = Uri.parse('$_baseUrl$path');
+    final uri = Uri.parse('$_baseUrl$path').replace(queryParameters: params);
     http.Response response;
     try {
       response = await _client.post(

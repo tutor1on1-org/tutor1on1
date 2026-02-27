@@ -14,6 +14,7 @@ void main() {
     final validator = SchemaValidator();
     final sample = {
       'summary_text': 'Reviewed the node and completed one check.',
+      'master_level': 'easy',
       'lit': true,
     };
     final result = await validator.validateJson(

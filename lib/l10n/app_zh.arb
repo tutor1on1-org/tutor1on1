@@ -105,6 +105,27 @@
       "visibility": {}
     }
   },
+  "marketplaceBundleMissing": "课程包：尚未上传。",
+  "marketplaceBundleUploaded": "课程包：已上传。",
+  "marketplaceUploadButton": "上传课程包",
+  "marketplaceUploadingLabel": "上传中...",
+  "marketplaceUploadSuccess": "课程包已上传。",
+  "marketplaceUploadFailed": "上传失败：{error}",
+  "@marketplaceUploadFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "marketplaceDownloadButton": "下载课程",
+  "marketplaceDownloadingLabel": "下载中...",
+  "marketplaceNoBundleButton": "暂无课程包",
+  "marketplaceDownloadSuccess": "课程已下载。",
+  "marketplaceDownloadFailed": "下载失败：{error}",
+  "@marketplaceDownloadFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
   "marketplaceRequestButton": "申请加入",
   "marketplaceRequestTitle": "申请加入 {course}",
   "@marketplaceRequestTitle": {
@@ -713,6 +734,12 @@
   "@sessionStartedLabel": {
     "placeholders": {
       "time": {}
+    }
+  },
+  "sessionSyncFailed": "会话同步失败：{error}",
+  "@sessionSyncFailed": {
+    "placeholders": {
+      "error": {}
     }
   },
   "deleteSessionButton": "删除会话",

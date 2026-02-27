@@ -427,6 +427,12 @@ class AppDatabase extends _$AppDatabase {
         .watch();
   }
 
+  Future<List<CourseVersion>> getCourseVersionsForTeacher(int teacherId) {
+    return (select(courseVersions)
+          ..where((tbl) => tbl.teacherId.equals(teacherId)))
+        .get();
+  }
+
   Future<CourseVersion?> getCourseVersionById(int id) {
     return (select(courseVersions)..where((tbl) => tbl.id.equals(id)))
         .getSingleOrNull();
@@ -496,6 +502,18 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
+  Future<void> updateCourseVersionSubject({
+    required int id,
+    required String subject,
+  }) {
+    return (update(courseVersions)..where((tbl) => tbl.id.equals(id))).write(
+      CourseVersionsCompanion(
+        subject: Value(subject),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
   Future<void> assignStudent({
     required int studentId,
     required int courseVersionId,
@@ -521,6 +539,41 @@ class AppDatabase extends _$AppDatabase {
     return query.watch().map((rows) {
       return rows.map((row) => row.readTable(courseVersions)).toList();
     });
+  }
+
+  Future<List<CourseVersion>> getAssignedCoursesForStudent(
+      int studentId) async {
+    final query = select(courseVersions).join([
+      innerJoin(
+        studentCourseAssignments,
+        studentCourseAssignments.courseVersionId.equalsExp(courseVersions.id),
+      ),
+    ])
+      ..where(studentCourseAssignments.studentId.equals(studentId));
+    final rows = await query.get();
+    return rows.map((row) => row.readTable(courseVersions)).toList();
+  }
+
+  Future<List<AssignedRemoteCourseInfo>> getAssignedRemoteCoursesForStudent(
+    int studentId,
+  ) async {
+    final rows = await customSelect(
+      '''
+SELECT a.course_version_id AS course_version_id,
+       r.remote_course_id AS remote_course_id,
+       c.subject AS course_subject
+FROM student_course_assignments a
+JOIN course_remote_links r ON r.course_version_id = a.course_version_id
+JOIN course_versions c ON c.id = a.course_version_id
+WHERE a.student_id = ?
+ORDER BY c.subject COLLATE NOCASE ASC
+''',
+      variables: [Variable.withInt(studentId)],
+      readsFrom: {studentCourseAssignments, courseRemoteLinks, courseVersions},
+    ).get();
+    return rows
+        .map((row) => AssignedRemoteCourseInfo.fromRow(row.data))
+        .toList();
   }
 
   Future<List<StudentCourseAssignment>> getAssignmentsForCourse(
@@ -858,6 +911,55 @@ ORDER BY s.started_at DESC
     );
   }
 
+  Future<void> upsertProgressFromSync({
+    required int studentId,
+    required int courseVersionId,
+    required String kpKey,
+    required bool lit,
+    required int litPercent,
+    String? questionLevel,
+    String? summaryText,
+    String? summaryRawResponse,
+    bool? summaryValid,
+    required DateTime updatedAt,
+  }) async {
+    final existing = await getProgress(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+      kpKey: kpKey,
+    );
+    final clampedPercent = litPercent.clamp(0, 100);
+    if (existing == null) {
+      await into(progressEntries).insert(
+        ProgressEntriesCompanion.insert(
+          studentId: studentId,
+          courseVersionId: courseVersionId,
+          kpKey: kpKey,
+          lit: Value(lit),
+          litPercent: Value(clampedPercent),
+          questionLevel: Value(questionLevel),
+          summaryText: Value(summaryText),
+          summaryRawResponse: Value(summaryRawResponse),
+          summaryValid: Value(summaryValid),
+          updatedAt: Value(updatedAt),
+        ),
+      );
+      return;
+    }
+    await (update(progressEntries)..where((tbl) => tbl.id.equals(existing.id)))
+        .write(
+      ProgressEntriesCompanion(
+        lit: Value(lit),
+        litPercent: Value(clampedPercent),
+        questionLevel: Value(questionLevel),
+        summaryText: Value(summaryText),
+        summaryRawResponse: Value(summaryRawResponse),
+        summaryValid: Value(summaryValid),
+        updatedAt: Value(updatedAt),
+      ),
+    );
+  }
+
   Future<void> upsertTreeViewState({
     required int studentId,
     required int courseVersionId,
@@ -1143,6 +1245,143 @@ ORDER BY l.created_at DESC
           .go();
       await (delete(courseVersions)
             ..where((tbl) => tbl.id.equals(courseVersionId)))
+          .go();
+    });
+  }
+
+  Future<void> deleteStudentCourseData({
+    required int studentId,
+    required int courseVersionId,
+    bool removeAssignment = true,
+  }) async {
+    await transaction(() async {
+      final sessions = await (select(chatSessions)
+            ..where((tbl) =>
+                tbl.studentId.equals(studentId) &
+                tbl.courseVersionId.equals(courseVersionId)))
+          .get();
+      final sessionIds = sessions.map((session) => session.id).toList();
+      if (sessionIds.isNotEmpty) {
+        await (delete(chatMessages)
+              ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+            .go();
+        await (delete(llmCalls)..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+            .go();
+        await (delete(chatSessions)..where((tbl) => tbl.id.isIn(sessionIds)))
+            .go();
+      }
+      await (delete(progressEntries)
+            ..where((tbl) =>
+                tbl.studentId.equals(studentId) &
+                tbl.courseVersionId.equals(courseVersionId)))
+          .go();
+      if (removeAssignment) {
+        await (delete(studentCourseAssignments)
+              ..where((tbl) =>
+                  tbl.studentId.equals(studentId) &
+                  tbl.courseVersionId.equals(courseVersionId)))
+            .go();
+      }
+    });
+  }
+
+  Future<void> migrateStudentCourseData({
+    required int studentId,
+    required int fromCourseVersionId,
+    required int toCourseVersionId,
+  }) async {
+    if (fromCourseVersionId == toCourseVersionId) {
+      return;
+    }
+    await transaction(() async {
+      await assignStudent(
+        studentId: studentId,
+        courseVersionId: toCourseVersionId,
+      );
+
+      final sourceProgress = await (select(progressEntries)
+            ..where((tbl) =>
+                tbl.studentId.equals(studentId) &
+                tbl.courseVersionId.equals(fromCourseVersionId)))
+          .get();
+      for (final progress in sourceProgress) {
+        final existing = await getProgress(
+          studentId: studentId,
+          courseVersionId: toCourseVersionId,
+          kpKey: progress.kpKey,
+        );
+        if (existing == null) {
+          await into(progressEntries).insert(
+            ProgressEntriesCompanion.insert(
+              studentId: progress.studentId,
+              courseVersionId: toCourseVersionId,
+              kpKey: progress.kpKey,
+              lit: Value(progress.lit),
+              litPercent: Value(progress.litPercent),
+              questionLevel: Value(progress.questionLevel),
+              summaryText: Value(progress.summaryText),
+              summaryRawResponse: Value(progress.summaryRawResponse),
+              summaryValid: Value(progress.summaryValid),
+              updatedAt: Value(progress.updatedAt),
+            ),
+            mode: InsertMode.insertOrReplace,
+          );
+          continue;
+        }
+        final mergedLit = existing.lit || progress.lit;
+        final mergedLitPercent = existing.litPercent >= progress.litPercent
+            ? existing.litPercent
+            : progress.litPercent;
+        final mergedQuestionLevel = _mergeQuestionLevel(
+          existing.questionLevel,
+          progress.questionLevel,
+        );
+        final sourceIsNewer = progress.updatedAt.isAfter(existing.updatedAt);
+        await (update(progressEntries)
+              ..where((tbl) => tbl.id.equals(existing.id)))
+            .write(
+          ProgressEntriesCompanion(
+            lit: Value(mergedLit),
+            litPercent: Value(mergedLitPercent),
+            questionLevel: Value(mergedQuestionLevel),
+            summaryText: Value(
+              sourceIsNewer ? progress.summaryText : existing.summaryText,
+            ),
+            summaryRawResponse: Value(
+              sourceIsNewer
+                  ? progress.summaryRawResponse
+                  : existing.summaryRawResponse,
+            ),
+            summaryValid: Value(
+              sourceIsNewer ? progress.summaryValid : existing.summaryValid,
+            ),
+            updatedAt: Value(
+              sourceIsNewer ? progress.updatedAt : existing.updatedAt,
+            ),
+          ),
+        );
+      }
+
+      await (delete(progressEntries)
+            ..where((tbl) =>
+                tbl.studentId.equals(studentId) &
+                tbl.courseVersionId.equals(fromCourseVersionId)))
+          .go();
+
+      await (update(chatSessions)
+            ..where((tbl) =>
+                tbl.studentId.equals(studentId) &
+                tbl.courseVersionId.equals(fromCourseVersionId)))
+          .write(
+        ChatSessionsCompanion(
+          courseVersionId: Value(toCourseVersionId),
+        ),
+      );
+
+      await (delete(studentCourseAssignments)
+            ..where((tbl) =>
+                tbl.studentId.equals(studentId) &
+                tbl.courseVersionId.equals(fromCourseVersionId)))
           .go();
     });
   }
@@ -1626,6 +1865,31 @@ ORDER BY l.created_at DESC
         : tbl.studentId.equals(studentId);
     return courseMatch & studentMatch;
   }
+
+  String? _mergeQuestionLevel(String? left, String? right) {
+    final leftRank = _questionLevelRank(left);
+    final rightRank = _questionLevelRank(right);
+    if (leftRank == 0) {
+      return right;
+    }
+    if (rightRank == 0) {
+      return left;
+    }
+    return leftRank >= rightRank ? left : right;
+  }
+
+  int _questionLevelRank(String? value) {
+    switch (value?.toLowerCase()) {
+      case 'hard':
+        return 3;
+      case 'medium':
+        return 2;
+      case 'easy':
+        return 1;
+      default:
+        return 0;
+    }
+  }
 }
 
 class LlmLogEntry {
@@ -1774,6 +2038,26 @@ class StudentSessionInfo {
       courseSubject: row['course_subject'] as String?,
       kpKey: row['kp_key'] as String,
       nodeTitle: row['node_title'] as String?,
+    );
+  }
+}
+
+class AssignedRemoteCourseInfo {
+  AssignedRemoteCourseInfo({
+    required this.courseVersionId,
+    required this.remoteCourseId,
+    required this.courseSubject,
+  });
+
+  final int courseVersionId;
+  final int remoteCourseId;
+  final String courseSubject;
+
+  factory AssignedRemoteCourseInfo.fromRow(Map<String, Object?> row) {
+    return AssignedRemoteCourseInfo(
+      courseVersionId: row['course_version_id'] as int,
+      remoteCourseId: row['remote_course_id'] as int,
+      courseSubject: (row['course_subject'] as String?) ?? '',
     );
   }
 }

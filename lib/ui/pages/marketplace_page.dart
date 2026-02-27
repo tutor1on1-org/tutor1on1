@@ -37,6 +37,7 @@ class _MarketplacePageState extends State<MarketplacePage> {
   String? _stickyError;
   List<CatalogCourse> _courses = [];
   final Map<int, EnrollmentRequestSummary> _requestsByCourse = {};
+  final Map<int, EnrollmentSummary> _enrollmentsByCourse = {};
   final Set<int> _enrolledCourseIds = {};
   final Set<int> _downloadingCourseIds = {};
 
@@ -56,16 +57,46 @@ class _MarketplacePageState extends State<MarketplacePage> {
     try {
       final role = context.read<AuthController>().currentUser?.role;
       final isStudent = role == 'student';
-      final courses = await _api.listCourses();
+      final allCourses = await _api.listCourses();
       final requestMap = <int, EnrollmentRequestSummary>{};
       final enrolledIds = <int>{};
+      final enrollmentMap = <int, EnrollmentSummary>{};
+      List<CatalogCourse> courses = allCourses;
       if (isStudent) {
-        final requests = await _api.listStudentRequests();
         final enrollments = await _api.listEnrollments();
+        final requests = await _api.listStudentRequests();
+        final enrollmentCourseIds = <int>{
+          for (final enrollment in enrollments) enrollment.courseId,
+        };
+        courses = _dedupeCoursesByTeacherAndName(
+          allCourses,
+          preferredCourseIds: enrollmentCourseIds,
+        );
+        final canonicalCourseIdByKey = <String, int>{
+          for (final course in courses) _courseUniqKey(course): course.courseId,
+        };
+        final allCoursesById = <int, CatalogCourse>{
+          for (final course in allCourses) course.courseId: course,
+        };
         for (final request in requests) {
-          requestMap[request.courseId] = request;
+          final source = allCoursesById[request.courseId];
+          final key = source == null ? null : _courseUniqKey(source);
+          final canonicalCourseId = key == null
+              ? request.courseId
+              : (canonicalCourseIdByKey[key] ?? request.courseId);
+          requestMap[canonicalCourseId] = request;
         }
-        enrolledIds.addAll(enrollments.map((e) => e.courseId));
+        for (final enrollment in enrollments) {
+          final source = allCoursesById[enrollment.courseId];
+          final key = source == null ? null : _courseUniqKey(source);
+          final canonicalCourseId = key == null
+              ? enrollment.courseId
+              : (canonicalCourseIdByKey[key] ?? enrollment.courseId);
+          enrolledIds.add(canonicalCourseId);
+          enrollmentMap[canonicalCourseId] = enrollment;
+        }
+      } else {
+        courses = _dedupeCoursesByTeacherAndName(allCourses);
       }
       if (!mounted) {
         return;
@@ -76,6 +107,9 @@ class _MarketplacePageState extends State<MarketplacePage> {
         _requestsByCourse
           ..clear()
           ..addAll(requestMap);
+        _enrollmentsByCourse
+          ..clear()
+          ..addAll(enrollmentMap);
         _enrolledCourseIds
           ..clear()
           ..addAll(enrolledIds);
@@ -90,6 +124,35 @@ class _MarketplacePageState extends State<MarketplacePage> {
         _loading = false;
       });
     }
+  }
+
+  List<CatalogCourse> _dedupeCoursesByTeacherAndName(
+    List<CatalogCourse> courses, {
+    Set<int> preferredCourseIds = const <int>{},
+  }) {
+    final dedupedByKey = <String, CatalogCourse>{};
+    for (final course in courses) {
+      final key = _courseUniqKey(course);
+      final existing = dedupedByKey[key];
+      if (existing == null) {
+        dedupedByKey[key] = course;
+        continue;
+      }
+      final isPreferred = preferredCourseIds.contains(course.courseId);
+      final existingPreferred = preferredCourseIds.contains(existing.courseId);
+      if (isPreferred && !existingPreferred) {
+        dedupedByKey[key] = course;
+      }
+    }
+    return dedupedByKey.values.toList(growable: false);
+  }
+
+  String _courseUniqKey(CatalogCourse course) {
+    return '${course.teacherId}:${_normalizeCourseName(course.subject)}';
+  }
+
+  String _normalizeCourseName(String value) {
+    return value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
   }
 
   @override
@@ -228,6 +291,7 @@ class _MarketplacePageState extends State<MarketplacePage> {
     }
     final request = _requestsByCourse[course.courseId];
     final enrolled = _enrolledCourseIds.contains(course.courseId);
+    final enrollment = _enrollmentsByCourse[course.courseId];
     final isDownloading = _downloadingCourseIds.contains(course.courseId);
     String statusLabel = '';
     String buttonLabel = l10n.marketplaceRequestButton;
@@ -248,8 +312,8 @@ class _MarketplacePageState extends State<MarketplacePage> {
         buttonLabel = l10n.marketplaceRequestButton;
       } else if (request.status == 'approved') {
         statusLabel = l10n.marketplaceApproved;
-        canRequest = false;
-        buttonLabel = l10n.marketplaceApproved;
+        canRequest = true;
+        buttonLabel = l10n.marketplaceRequestButton;
       }
     }
     return Card(
@@ -269,19 +333,30 @@ class _MarketplacePageState extends State<MarketplacePage> {
         isThreeLine: true,
         trailing: enrolled
             ? SizedBox(
-                width: 140,
-                child: ElevatedButton(
-                  onPressed: canDownload && !isDownloading
-                      ? () => _downloadBundle(context, course)
-                      : null,
-                  child: Text(
-                    isDownloading
-                        ? l10n.marketplaceDownloadingLabel
-                        : canDownload
-                            ? l10n.marketplaceDownloadButton
-                            : l10n.marketplaceNoBundleButton,
-                    textAlign: TextAlign.center,
-                  ),
+                width: 164,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ElevatedButton(
+                      onPressed: canDownload && !isDownloading
+                          ? () => _downloadBundle(context, course)
+                          : null,
+                      child: Text(
+                        isDownloading
+                            ? l10n.marketplaceDownloadingLabel
+                            : canDownload
+                                ? l10n.marketplaceDownloadButton
+                                : l10n.marketplaceNoBundleButton,
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: (enrollment != null && !isDownloading)
+                          ? () => _requestQuitCourse(context, enrollment)
+                          : null,
+                      child: const Text('Request quit'),
+                    ),
+                  ],
                 ),
               )
             : ElevatedButton(
@@ -292,6 +367,55 @@ class _MarketplacePageState extends State<MarketplacePage> {
               ),
       ),
     );
+  }
+
+  Future<void> _requestQuitCourse(
+    BuildContext context,
+    EnrollmentSummary enrollment,
+  ) async {
+    final l10n = AppLocalizations.of(context)!;
+    final controller = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Request quit: ${enrollment.courseSubject}'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            labelText: 'Reason (optional)',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(l10n.cancelButton),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Send request'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+    try {
+      await _api.createQuitRequest(
+        enrollmentId: enrollment.enrollmentId,
+        reason: controller.text,
+      );
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Quit request sent. Waiting for teacher approval.')),
+      );
+      await _load();
+    } catch (error) {
+      _setStickyError('Quit request failed: $error');
+    }
   }
 
   Future<void> _requestEnrollment(
@@ -378,9 +502,13 @@ class _MarketplacePageState extends State<MarketplacePage> {
         bundleFile: bundleFile,
         courseName: course.subject,
       );
+      final existingCourseVersionId =
+          await services.db.getCourseVersionIdForRemoteCourse(course.courseId);
       final loadResult = await services.courseService.loadCourseFromFolder(
         teacherId: user.id,
         folderPath: folderPath,
+        courseVersionId: existingCourseVersionId,
+        courseNameOverride: course.subject,
       );
       if (!loadResult.success || loadResult.course == null) {
         var details = loadResult.message;
@@ -406,6 +534,15 @@ class _MarketplacePageState extends State<MarketplacePage> {
           course: loadResult.course!,
           user: user,
           remoteCourseId: course.courseId,
+          bundleVersionId: bundleVersionId,
+        );
+      }
+      final remoteUserId = user.remoteUserId;
+      if (remoteUserId != null && remoteUserId > 0) {
+        await services.secureStorage.writeInstalledCourseBundleVersion(
+          remoteUserId: remoteUserId,
+          remoteCourseId: course.courseId,
+          versionId: bundleVersionId,
         );
       }
       if (!mounted) {
@@ -446,23 +583,20 @@ class _MarketplacePageState extends State<MarketplacePage> {
     required CourseVersion course,
     required User user,
     required int remoteCourseId,
+    required int bundleVersionId,
   }) async {
     final schema = (metadata['schema'] as String?)?.trim() ?? '';
     if (schema != 'family_teacher_prompt_bundle_v1') {
       return;
     }
-    final versionId = (metadata['version_id'] as num?)?.toInt();
     final remoteUserId = user.remoteUserId;
-    if (versionId != null &&
-        remoteUserId != null &&
-        remoteUserId > 0 &&
-        remoteCourseId > 0) {
+    if (remoteUserId != null && remoteUserId > 0 && remoteCourseId > 0) {
       final existingVersion =
-          await services.secureStorage.readCoursePromptBundleVersion(
+          await services.secureStorage.readInstalledCourseBundleVersion(
         remoteUserId: remoteUserId,
         remoteCourseId: remoteCourseId,
       );
-      if (existingVersion != null && versionId <= existingVersion) {
+      if (existingVersion != null && bundleVersionId <= existingVersion) {
         return;
       }
     }
@@ -620,11 +754,11 @@ class _MarketplacePageState extends State<MarketplacePage> {
     if (remoteUserId != null &&
         remoteUserId > 0 &&
         remoteCourseId > 0 &&
-        versionId != null) {
-      await services.secureStorage.writeCoursePromptBundleVersion(
+        bundleVersionId > 0) {
+      await services.secureStorage.writeInstalledCourseBundleVersion(
         remoteUserId: remoteUserId,
         remoteCourseId: remoteCourseId,
-        versionId: versionId,
+        versionId: bundleVersionId,
       );
     }
 

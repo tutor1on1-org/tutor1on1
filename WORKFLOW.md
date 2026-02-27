@@ -1,0 +1,45 @@
+# WORKFLOW
+Last updated: 2026-02-26
+
+## Standard workflow
+1. Understand scope and locate the true failing/target layer.
+2. Implement minimal, correct change at root cause.
+3. Validate directly on changed layer, then run adjacent-layer regression checks.
+4. Run `flutter build windows --release` before updating `DONEs.md`.
+5. If backend under `remote/` changed, rebuild binary and restart service before reporting done.
+6. Update memory: review all `.md` files, rewrite into the project's current format, remove duplicate content, and keep each file scoped to its defined purpose.
+7. Update docs (`BUGS.md`, `LOGBOOK.md`, `TODOS.md`, `DONEs.md`) as applicable.
+8. Commit and push with clear message when build/validation passes.
+
+## Bug-fix discipline
+1. Reproduce with evidence (logs, script, or minimal failing test).
+2. Pinpoint root cause, not symptom.
+3. Apply fix without workaround/bypass unless explicitly approved.
+4. Validate:
+   - failing path now passes,
+   - adjacent path still passes,
+   - end-to-end path checked when feasible.
+5. Record lesson in `BUGS.md` with root cause and prevention rule.
+6. For ZIP/archive handling with `InputFileStream`, keep the stream open until all lazy reads (validation/extraction/metadata parsing) finish; close only in `finally`.
+7. In `try/finally`, do not return un-awaited futures that depend on temp files/resources cleaned up in `finally`; await completion before cleanup.
+
+## Validation baseline
+- Prefer automated checks (`flutter test`, `go test`, scripted API checks).
+- Keep user-facing errors persistent and copyable for important failures.
+- Do not silently swallow errors; fail fast and fix root issue.
+- For teacher bundle upload: validate local folder first, compare local semantic hash with latest remote hash, and require explicit confirmation after showing KP added/deleted/updated counts when hash differs.
+- Bundle packaging must include only required course assets and prompt text assets; exclude unrelated files to avoid false-positive version/hash changes.
+
+## Remote ops workflow
+1. Build backend artifact.
+2. Deploy binary to server path.
+3. Restart `family-teacher-api.service`.
+4. Verify health endpoint and log tails.
+5. Re-check storage permissions and body-size alignment if upload/download behavior changed.
+
+## Documentation workflow
+- `AGENTS.md` stays minimal and only points to docs.
+- `update memory` means a full markdown pass: review every `.md` file, normalize headings/sections/order to current standards, deduplicate repeated guidance, and keep one source of truth per rule.
+- Keep `README.md` aligned with current architecture and final product aim.
+- Keep `SCRIPTS.md` command-accurate; remove stale commands immediately.
+- Keep `LOGBOOK.md` chronological (history), and `WORKLOG.md` operational (active runbook).

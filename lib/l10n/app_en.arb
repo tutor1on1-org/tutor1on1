@@ -105,6 +105,27 @@
       "visibility": {}
     }
   },
+  "marketplaceBundleMissing": "Bundle: Not uploaded yet.",
+  "marketplaceBundleUploaded": "Bundle: Uploaded.",
+  "marketplaceUploadButton": "Upload Bundle",
+  "marketplaceUploadingLabel": "Uploading...",
+  "marketplaceUploadSuccess": "Bundle uploaded.",
+  "marketplaceUploadFailed": "Upload failed: {error}",
+  "@marketplaceUploadFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "marketplaceDownloadButton": "Download Course",
+  "marketplaceDownloadingLabel": "Downloading...",
+  "marketplaceNoBundleButton": "No Bundle",
+  "marketplaceDownloadSuccess": "Course downloaded.",
+  "marketplaceDownloadFailed": "Download failed: {error}",
+  "@marketplaceDownloadFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
   "marketplaceRequestButton": "Request Enrollment",
   "marketplaceRequestTitle": "Request enrollment for {course}",
   "@marketplaceRequestTitle": {
@@ -713,6 +734,12 @@
   "@sessionStartedLabel": {
     "placeholders": {
       "time": {}
+    }
+  },
+  "sessionSyncFailed": "Session sync failed: {error}",
+  "@sessionSyncFailed": {
+    "placeholders": {
+      "error": {}
     }
   },
   "deleteSessionButton": "Delete session",

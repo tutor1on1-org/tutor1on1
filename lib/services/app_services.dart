@@ -4,14 +4,20 @@ import '../llm/prompt_repository.dart';
 import '../llm/schema_validator.dart';
 import 'backup_service.dart';
 import 'course_service.dart';
+import 'enrollment_sync_service.dart';
 import 'llm_call_repository.dart';
 import 'llm_log_repository.dart';
+import 'marketplace_api_service.dart';
+import 'session_crypto_service.dart';
+import 'session_sync_api_service.dart';
+import 'session_sync_service.dart';
 import 'secure_storage_service.dart';
 import 'settings_repository.dart';
 import 'session_service.dart';
 import 'stt_service.dart';
 import 'tts_service.dart';
 import 'tts_log_repository.dart';
+import 'user_key_service.dart';
 import '../security/pin_hasher.dart';
 
 class AppServices {
@@ -25,6 +31,8 @@ class AppServices {
     required this.backupService,
     required this.courseService,
     required this.sessionService,
+    required this.enrollmentSyncService,
+    required this.sessionSyncService,
     required this.sttService,
     required this.ttsService,
     required this.ttsLogRepository,
@@ -40,6 +48,8 @@ class AppServices {
   final BackupService backupService;
   final CourseService courseService;
   final SessionService sessionService;
+  final EnrollmentSyncService enrollmentSyncService;
+  final SessionSyncService sessionSyncService;
   final SttService sttService;
   final TtsService ttsService;
   final TtsLogRepository ttsLogRepository;
@@ -75,11 +85,32 @@ class AppServices {
     );
     final backupService = BackupService(db);
     final courseService = CourseService(db);
+    final marketplaceApi = MarketplaceApiService(secureStorage: secureStorage);
+    final enrollmentSyncService = EnrollmentSyncService(
+      db: db,
+      secureStorage: secureStorage,
+      courseService: courseService,
+      marketplaceApi: marketplaceApi,
+    );
     final sessionService = SessionService(
       db,
       llmService,
       promptRepository,
       settingsRepository,
+    );
+    final sessionSyncApi = SessionSyncApiService(secureStorage: secureStorage);
+    final cryptoService = SessionCryptoService();
+    final userKeyService = UserKeyService(
+      secureStorage: secureStorage,
+      api: sessionSyncApi,
+      crypto: cryptoService,
+    );
+    final sessionSyncService = SessionSyncService(
+      db: db,
+      secureStorage: secureStorage,
+      api: sessionSyncApi,
+      userKeyService: userKeyService,
+      crypto: cryptoService,
     );
     final ttsLogRepository = TtsLogRepository(settingsRepository);
     final ttsService =
@@ -97,6 +128,8 @@ class AppServices {
       backupService: backupService,
       courseService: courseService,
       sessionService: sessionService,
+      enrollmentSyncService: enrollmentSyncService,
+      sessionSyncService: sessionSyncService,
       sttService: sttService,
       ttsService: ttsService,
       ttsLogRepository: ttsLogRepository,

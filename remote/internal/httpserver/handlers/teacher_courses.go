@@ -27,8 +27,19 @@ type publishCourseRequest struct {
 	Visibility string `json:"visibility"`
 }
 
+type teacherCourseSummary struct {
+	CourseID              int64  `json:"course_id"`
+	Subject               string `json:"subject"`
+	Grade                 string `json:"grade"`
+	Description           string `json:"description"`
+	Visibility            string `json:"visibility"`
+	PublishedAt           string `json:"published_at"`
+	LatestBundleVersionID int64  `json:"latest_bundle_version_id"`
+	Status                string `json:"status,omitempty"`
+}
+
 func (h *TeacherCoursesHandler) ListCourses(c *fiber.Ctx) error {
-	userID, err := requireUserID(c, h.cfg.Config.JWTSecret)
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
@@ -51,9 +62,16 @@ func (h *TeacherCoursesHandler) ListCourses(c *fiber.Ctx) error {
 		          LIMIT 1
 		        ) AS latest_bundle_version_id
 		 FROM courses c
+		 JOIN (
+		   SELECT teacher_id, course_name_key, MAX(id) AS latest_course_id
+		   FROM courses
+		   WHERE teacher_id = ?
+		   GROUP BY teacher_id, course_name_key
+		 ) latest ON latest.latest_course_id = c.id
 		 JOIN course_catalog_entries ce ON ce.course_id = c.id
 		 WHERE c.teacher_id = ?
 		 ORDER BY c.created_at DESC`,
+		teacherID,
 		teacherID,
 	)
 	if err != nil {
@@ -61,17 +79,7 @@ func (h *TeacherCoursesHandler) ListCourses(c *fiber.Ctx) error {
 	}
 	defer rows.Close()
 
-	type courseSummary struct {
-		CourseID              int64  `json:"course_id"`
-		Subject               string `json:"subject"`
-		Grade                 string `json:"grade"`
-		Description           string `json:"description"`
-		Visibility            string `json:"visibility"`
-		PublishedAt           string `json:"published_at"`
-		LatestBundleVersionID int64  `json:"latest_bundle_version_id"`
-	}
-
-	results := []courseSummary{}
+	results := []teacherCourseSummary{}
 	for rows.Next() {
 		var (
 			courseID   int64
@@ -97,7 +105,7 @@ func (h *TeacherCoursesHandler) ListCourses(c *fiber.Ctx) error {
 		if published.Valid {
 			publishedAt = published.Time.Format(timeLayout)
 		}
-		results = append(results, courseSummary{
+		results = append(results, teacherCourseSummary{
 			CourseID:              courseID,
 			Subject:               subjectVal,
 			Grade:                 gradeVal.String,
@@ -111,7 +119,7 @@ func (h *TeacherCoursesHandler) ListCourses(c *fiber.Ctx) error {
 }
 
 func (h *TeacherCoursesHandler) CreateCourse(c *fiber.Ctx) error {
-	userID, err := requireUserID(c, h.cfg.Config.JWTSecret)
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
@@ -130,8 +138,21 @@ func (h *TeacherCoursesHandler) CreateCourse(c *fiber.Ctx) error {
 	if subject == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "subject required")
 	}
+	courseNameKey := normalizeCourseName(subject)
+	if courseNameKey == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "subject required")
+	}
 	grade := strings.TrimSpace(req.Grade)
 	description := strings.TrimSpace(req.Description)
+
+	existing, found, err := h.lookupTeacherCourseByNameKey(teacherID, courseNameKey)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "course lookup failed")
+	}
+	if found {
+		existing.Status = "existing"
+		return c.JSON(existing)
+	}
 
 	tx, err := h.cfg.Store.DB.Begin()
 	if err != nil {
@@ -144,13 +165,26 @@ func (h *TeacherCoursesHandler) CreateCourse(c *fiber.Ctx) error {
 	}()
 
 	result, err := tx.Exec(
-		"INSERT INTO courses (teacher_id, subject, grade, description) VALUES (?, ?, ?, ?)",
+		"INSERT INTO courses (teacher_id, subject, course_name_key, grade, description) VALUES (?, ?, ?, ?, ?)",
 		teacherID,
 		subject,
+		courseNameKey,
 		nullableString(grade),
 		nullableString(description),
 	)
 	if err != nil {
+		if isDuplicateEntryError(err) {
+			_ = tx.Rollback()
+			existing, found, lookupErr := h.lookupTeacherCourseByNameKey(teacherID, courseNameKey)
+			if lookupErr != nil {
+				return fiber.NewError(fiber.StatusInternalServerError, "course lookup failed")
+			}
+			if !found {
+				return fiber.NewError(fiber.StatusConflict, "course already exists")
+			}
+			existing.Status = "existing"
+			return c.JSON(existing)
+		}
 		return fiber.NewError(fiber.StatusInternalServerError, "course insert failed")
 	}
 	courseID, err := result.LastInsertId()
@@ -167,14 +201,20 @@ func (h *TeacherCoursesHandler) CreateCourse(c *fiber.Ctx) error {
 	if err := tx.Commit(); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
 	}
-	return c.JSON(fiber.Map{
-		"course_id": courseID,
-		"visibility": "private",
+	return c.JSON(teacherCourseSummary{
+		CourseID:              courseID,
+		Subject:               subject,
+		Grade:                 grade,
+		Description:           description,
+		Visibility:            "private",
+		PublishedAt:           "",
+		LatestBundleVersionID: 0,
+		Status:                "created",
 	})
 }
 
 func (h *TeacherCoursesHandler) PublishCourse(c *fiber.Ctx) error {
-	userID, err := requireUserID(c, h.cfg.Config.JWTSecret)
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
@@ -199,6 +239,15 @@ func (h *TeacherCoursesHandler) PublishCourse(c *fiber.Ctx) error {
 	}
 	if visibility != "public" && visibility != "unlisted" && visibility != "private" {
 		return fiber.NewError(fiber.StatusBadRequest, "visibility invalid")
+	}
+	if visibility == "public" || visibility == "unlisted" {
+		hasBundle, err := h.hasAnyBundleVersion(courseID, teacherID)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "bundle lookup failed")
+		}
+		if !hasBundle {
+			return fiber.NewError(fiber.StatusBadRequest, "bundle required before publish")
+		}
 	}
 	publishedAt := sql.NullTime{}
 	if visibility == "public" || visibility == "unlisted" {
@@ -228,7 +277,7 @@ func (h *TeacherCoursesHandler) PublishCourse(c *fiber.Ctx) error {
 }
 
 func (h *TeacherCoursesHandler) EnsureBundle(c *fiber.Ctx) error {
-	userID, err := requireUserID(c, h.cfg.Config.JWTSecret)
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
@@ -242,6 +291,21 @@ func (h *TeacherCoursesHandler) EnsureBundle(c *fiber.Ctx) error {
 	courseID, err := parseInt64Param(c, "id")
 	if err != nil {
 		return err
+	}
+	courseExists, err := h.courseExistsByID(courseID, teacherID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "course lookup failed")
+	}
+	if !courseExists {
+		courseName := strings.TrimSpace(c.Query("course_name"))
+		if courseName == "" {
+			return fiber.NewError(fiber.StatusNotFound, "course not found")
+		}
+		resolvedCourseID, ensureErr := h.resolveOrCreateCourseByName(teacherID, courseName)
+		if ensureErr != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "course ensure failed")
+		}
+		courseID = resolvedCourseID
 	}
 	var existingID int64
 	row := h.cfg.Store.DB.QueryRow(
@@ -276,7 +340,7 @@ func (h *TeacherCoursesHandler) EnsureBundle(c *fiber.Ctx) error {
 }
 
 func (h *TeacherCoursesHandler) DeleteCourse(c *fiber.Ctx) error {
-	userID, err := requireUserID(c, h.cfg.Config.JWTSecret)
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
@@ -333,6 +397,12 @@ func (h *TeacherCoursesHandler) DeleteCourse(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "session sync delete failed")
 	}
 	if _, err = tx.Exec(
+		`DELETE FROM progress_sync WHERE course_id = ?`,
+		courseID,
+	); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "progress sync delete failed")
+	}
+	if _, err = tx.Exec(
 		`DELETE FROM e2ee_events WHERE course_id = ?`,
 		courseID,
 	); err != nil {
@@ -349,6 +419,16 @@ func (h *TeacherCoursesHandler) DeleteCourse(c *fiber.Ctx) error {
 		courseID,
 	); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "requests delete failed")
+	}
+	if _, err = tx.Exec(
+		`INSERT INTO enrollment_deletion_events (student_id, teacher_user_id, course_id, reason)
+		 SELECT e.student_id, ?, e.course_id, 'course_deleted'
+		 FROM enrollments e
+		 WHERE e.course_id = ? AND e.status = 'active'`,
+		userID,
+		courseID,
+	); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "deletion event insert failed")
 	}
 	if _, err = tx.Exec(
 		`DELETE FROM enrollments WHERE course_id = ?`,
@@ -409,4 +489,204 @@ func (h *TeacherCoursesHandler) DeleteCourse(c *fiber.Ctx) error {
 		"course_id": courseID,
 		"status":    "deleted",
 	})
+}
+
+func (h *TeacherCoursesHandler) lookupTeacherCourseByNameKey(
+	teacherID int64,
+	courseNameKey string,
+) (teacherCourseSummary, bool, error) {
+	row := h.cfg.Store.DB.QueryRow(
+		`SELECT c.id, c.subject, c.grade, c.description,
+		        COALESCE(ce.visibility, 'private') AS visibility, ce.published_at,
+		        (
+		          SELECT bv.id FROM bundles b
+		          JOIN bundle_versions bv ON bv.bundle_id = b.id
+		          WHERE b.course_id = c.id
+		          ORDER BY bv.version DESC, bv.id DESC
+		          LIMIT 1
+		        ) AS latest_bundle_version_id
+		 FROM courses c
+		 LEFT JOIN course_catalog_entries ce ON ce.course_id = c.id
+		 WHERE c.teacher_id = ? AND c.course_name_key = ?
+		 ORDER BY c.id DESC
+		 LIMIT 1`,
+		teacherID,
+		courseNameKey,
+	)
+	var (
+		courseID   int64
+		subjectVal string
+		gradeVal   sql.NullString
+		descVal    sql.NullString
+		visibility string
+		published  sql.NullTime
+		latest     sql.NullInt64
+	)
+	if err := row.Scan(
+		&courseID,
+		&subjectVal,
+		&gradeVal,
+		&descVal,
+		&visibility,
+		&published,
+		&latest,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return teacherCourseSummary{}, false, nil
+		}
+		return teacherCourseSummary{}, false, err
+	}
+	publishedAt := ""
+	if published.Valid {
+		publishedAt = published.Time.Format(timeLayout)
+	}
+	return teacherCourseSummary{
+		CourseID:              courseID,
+		Subject:               subjectVal,
+		Grade:                 gradeVal.String,
+		Description:           descVal.String,
+		Visibility:            visibility,
+		PublishedAt:           publishedAt,
+		LatestBundleVersionID: latest.Int64,
+	}, true, nil
+}
+
+func (h *TeacherCoursesHandler) hasAnyBundleVersion(courseID int64, teacherID int64) (bool, error) {
+	row := h.cfg.Store.DB.QueryRow(
+		`SELECT 1
+		 FROM bundles b
+		 JOIN bundle_versions bv ON bv.bundle_id = b.id
+		 WHERE b.course_id = ? AND b.teacher_id = ?
+		 LIMIT 1`,
+		courseID,
+		teacherID,
+	)
+	var found int
+	if err := row.Scan(&found); err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func (h *TeacherCoursesHandler) courseExistsByID(courseID int64, teacherID int64) (bool, error) {
+	row := h.cfg.Store.DB.QueryRow(
+		`SELECT 1
+		 FROM courses
+		 WHERE id = ? AND teacher_id = ?
+		 LIMIT 1`,
+		courseID,
+		teacherID,
+	)
+	var found int
+	if err := row.Scan(&found); err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func (h *TeacherCoursesHandler) resolveOrCreateCourseByName(
+	teacherID int64,
+	courseName string,
+) (int64, error) {
+	normalized := normalizeCourseName(courseName)
+	if normalized == "" {
+		return 0, fiber.NewError(fiber.StatusBadRequest, "course_name required")
+	}
+
+	tx, err := h.cfg.Store.DB.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var courseID int64
+	row := tx.QueryRow(
+		`SELECT id
+		 FROM courses
+		 WHERE teacher_id = ? AND course_name_key = ?
+		 ORDER BY id DESC
+		 LIMIT 1`,
+		teacherID,
+		normalized,
+	)
+	if scanErr := row.Scan(&courseID); scanErr != nil {
+		if scanErr != sql.ErrNoRows {
+			err = scanErr
+			return 0, err
+		}
+		insertResult, insertErr := tx.Exec(
+			`INSERT INTO courses (teacher_id, subject, course_name_key, grade, description)
+			 VALUES (?, ?, ?, NULL, NULL)`,
+			teacherID,
+			strings.TrimSpace(courseName),
+			normalized,
+		)
+		if insertErr != nil {
+			if !isDuplicateEntryError(insertErr) {
+				err = insertErr
+				return 0, err
+			}
+			row = tx.QueryRow(
+				`SELECT id
+				 FROM courses
+				 WHERE teacher_id = ? AND course_name_key = ?
+				 ORDER BY id DESC
+				 LIMIT 1`,
+				teacherID,
+				normalized,
+			)
+			if scanAgainErr := row.Scan(&courseID); scanAgainErr != nil {
+				err = scanAgainErr
+				return 0, err
+			}
+		} else {
+			insertedID, idErr := insertResult.LastInsertId()
+			if idErr != nil {
+				err = idErr
+				return 0, err
+			}
+			courseID = insertedID
+		}
+	}
+
+	var catalogID int64
+	catalogRow := tx.QueryRow(
+		`SELECT id
+		 FROM course_catalog_entries
+		 WHERE course_id = ? AND teacher_id = ?
+		 LIMIT 1`,
+		courseID,
+		teacherID,
+	)
+	if scanErr := catalogRow.Scan(&catalogID); scanErr != nil {
+		if scanErr != sql.ErrNoRows {
+			err = scanErr
+			return 0, err
+		}
+		if _, insertErr := tx.Exec(
+			`INSERT INTO course_catalog_entries (course_id, teacher_id, visibility)
+			 VALUES (?, ?, 'private')`,
+			courseID,
+			teacherID,
+		); insertErr != nil {
+			err = insertErr
+			return 0, err
+		}
+	}
+
+	if commitErr := tx.Commit(); commitErr != nil {
+		err = commitErr
+		return 0, err
+	}
+	return courseID, nil
 }

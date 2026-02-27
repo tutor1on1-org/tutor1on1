@@ -19,6 +19,7 @@ class _TeacherEnrollmentRequestsPageState
   bool _loading = true;
   String? _error;
   List<TeacherRequestSummary> _requests = [];
+  List<TeacherQuitRequestSummary> _quitRequests = [];
 
   @override
   void initState() {
@@ -35,11 +36,13 @@ class _TeacherEnrollmentRequestsPageState
     });
     try {
       final requests = await _api.listTeacherRequests();
+      final quitRequests = await _api.listTeacherQuitRequests();
       if (!mounted) {
         return;
       }
       setState(() {
         _requests = requests;
+        _quitRequests = quitRequests;
         _loading = false;
       });
     } catch (error) {
@@ -70,14 +73,35 @@ class _TeacherEnrollmentRequestsPageState
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? _buildError(context, l10n)
-              : _requests.isEmpty
+              : (_requests.isEmpty && _quitRequests.isEmpty)
                   ? Center(child: Text(l10n.enrollmentRequestsEmpty))
-                  : ListView.builder(
-                      itemCount: _requests.length,
-                      itemBuilder: (context, index) {
-                        final request = _requests[index];
-                        return _buildRequestTile(context, l10n, request);
-                      },
+                  : ListView(
+                      children: [
+                        if (_requests.isNotEmpty)
+                          const Padding(
+                            padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                            child: Text(
+                              'Enrollment requests',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ..._requests.map(
+                          (request) =>
+                              _buildRequestTile(context, l10n, request),
+                        ),
+                        if (_quitRequests.isNotEmpty)
+                          const Padding(
+                            padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                            child: Text(
+                              'Quit course requests',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ..._quitRequests.map(
+                          (request) =>
+                              _buildQuitRequestTile(context, l10n, request),
+                        ),
+                      ],
                     ),
     );
   }
@@ -94,6 +118,37 @@ class _TeacherEnrollmentRequestsPageState
             child: Text(l10n.retryButton),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildQuitRequestTile(
+    BuildContext context,
+    AppLocalizations l10n,
+    TeacherQuitRequestSummary request,
+  ) {
+    final detail = request.reason.trim().isEmpty
+        ? 'No reason provided.'
+        : request.reason.trim();
+    return Card(
+      child: ListTile(
+        title: Text(
+          '${request.studentUsername} requests to quit ${request.courseSubject}',
+        ),
+        subtitle: Text(detail),
+        trailing: Wrap(
+          spacing: 8,
+          children: [
+            TextButton(
+              onPressed: () => _resolveQuitRequest(context, request, true),
+              child: Text(l10n.enrollmentApproveButton),
+            ),
+            TextButton(
+              onPressed: () => _resolveQuitRequest(context, request, false),
+              child: Text(l10n.enrollmentRejectButton),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -159,5 +214,33 @@ class _TeacherEnrollmentRequestsPageState
       );
     }
   }
-}
 
+  Future<void> _resolveQuitRequest(
+    BuildContext context,
+    TeacherQuitRequestSummary request,
+    bool approve,
+  ) async {
+    final l10n = AppLocalizations.of(context)!;
+    try {
+      if (approve) {
+        await _api.approveQuitRequest(request.requestId);
+      } else {
+        await _api.rejectQuitRequest(request.requestId);
+      }
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.enrollmentRequestUpdated)),
+      );
+      await _load();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(l10n.marketplaceRequestFailed('$error'))),
+      );
+    }
+  }
+}

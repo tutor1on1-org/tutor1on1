@@ -18,6 +18,7 @@ func registerRoutes(app *fiber.App, deps handlers.Dependencies) {
 	teacherCourses := handlers.NewTeacherCoursesHandler(deps)
 	userKeys := handlers.NewUserKeysHandler(deps)
 	sessionSync := handlers.NewSessionSyncHandler(deps)
+	progressSync := handlers.NewProgressSyncHandler(deps)
 
 	app.Get("/health", health.Check)
 
@@ -57,9 +58,15 @@ func registerRoutes(app *fiber.App, deps handlers.Dependencies) {
 	api.Post("/enrollment-requests", enrollmentLimiter.Handler(middleware.KeyByIP), enrollments.CreateRequest)
 	api.Get("/enrollment-requests", enrollments.ListStudentRequests)
 	api.Get("/enrollments", enrollments.ListEnrollments)
+	api.Post("/enrollments/:id/quit-request", enrollmentLimiter.Handler(middleware.KeyByIP), enrollments.CreateQuitRequest)
+	api.Get("/enrollments/quit-requests", enrollments.ListStudentQuitRequests)
+	api.Get("/enrollments/deletion-events", syncLimiter.Handler(middleware.KeyByIP), enrollments.ListDeletionEvents)
 	api.Get("/teacher/enrollment-requests", enrollments.ListTeacherRequests)
 	api.Post("/teacher/enrollment-requests/:id/approve", enrollments.ApproveRequest)
 	api.Post("/teacher/enrollment-requests/:id/reject", enrollments.RejectRequest)
+	api.Get("/teacher/quit-requests", enrollments.ListTeacherQuitRequests)
+	api.Post("/teacher/quit-requests/:id/approve", enrollments.ApproveQuitRequest)
+	api.Post("/teacher/quit-requests/:id/reject", enrollments.RejectQuitRequest)
 
 	api.Get("/keys/self", userKeys.GetSelf)
 	api.Post("/keys/self", userKeys.UpsertSelf)
@@ -67,4 +74,7 @@ func registerRoutes(app *fiber.App, deps handlers.Dependencies) {
 
 	api.Post("/sessions/sync/upload", syncLimiter.Handler(middleware.KeyByIP), sessionSync.Upload)
 	api.Get("/sessions/sync/list", syncLimiter.Handler(middleware.KeyByIP), sessionSync.List)
+	api.Post("/progress/sync/upload", syncLimiter.Handler(middleware.KeyByIP), progressSync.Upload)
+	api.Post("/progress/sync/upload-batch", syncLimiter.Handler(middleware.KeyByIP), progressSync.UploadBatch)
+	api.Get("/progress/sync/list", syncLimiter.Handler(middleware.KeyByIP), progressSync.List)
 }

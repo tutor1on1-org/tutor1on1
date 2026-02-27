@@ -3,7 +3,11 @@ package handlers
 import (
 	"archive/zip"
 	"bufio"
+	"bytes"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -31,6 +35,18 @@ type bundleVersionPruneTarget struct {
 	relPath string
 }
 
+type bundleCourseInfo struct {
+	teacherUserID int64
+	courseName    string
+}
+
+type latestBundleInfo struct {
+	id      int64
+	version int
+	hash    string
+	relPath string
+}
+
 func NewBundlesHandler(deps Dependencies) *BundlesHandler {
 	return &BundlesHandler{
 		cfg:     deps,
@@ -39,7 +55,7 @@ func NewBundlesHandler(deps Dependencies) *BundlesHandler {
 }
 
 func (h *BundlesHandler) Upload(c *fiber.Ctx) error {
-	userID, err := requireUserID(c, h.cfg.Config.JWTSecret)
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
@@ -47,18 +63,25 @@ func (h *BundlesHandler) Upload(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	version, err := parseIntQuery(c, "version")
-	if err != nil {
-		return err
+	courseName := strings.TrimSpace(c.Query("course_name"))
+	if courseName == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "course_name required")
 	}
 	if h.storage == nil {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "storage unavailable")
 	}
-	if err := h.ensureTeacherOwnsBundle(userID, bundleID); err != nil {
+	info, err := h.getBundleCourseInfo(bundleID)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fiber.NewError(fiber.StatusNotFound, "bundle not found")
 		}
+		return fiber.NewError(fiber.StatusInternalServerError, "bundle lookup failed")
+	}
+	if info.teacherUserID != userID {
 		return fiber.NewError(fiber.StatusForbidden, "forbidden")
+	}
+	if normalizeCourseName(courseName) != normalizeCourseName(info.courseName) {
+		return fiber.NewError(fiber.StatusBadRequest, "course_name mismatch")
 	}
 	file, err := c.FormFile("bundle")
 	if err != nil {
@@ -67,123 +90,144 @@ func (h *BundlesHandler) Upload(c *fiber.Ctx) error {
 	if file.Size > h.cfg.Config.BundleMaxBytes {
 		return fiber.NewError(fiber.StatusRequestEntityTooLarge, "bundle too large")
 	}
-	src, err := file.Open()
-	if err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "bundle open failed")
-	}
-	defer src.Close()
 
-	relPath, size, hash, err := h.storage.SaveBundle(bundleID, version, src)
-	if err != nil {
-		if errors.Is(err, storage.ErrFileExists) {
-			return fiber.NewError(fiber.StatusConflict, "bundle version exists")
+	const maxAttempts = 6
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		latest, hasLatest, err := h.lookupLatestBundleVersion(bundleID)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "bundle lookup failed")
 		}
-		if errors.Is(err, storage.ErrTooLarge) {
-			return fiber.NewError(fiber.StatusRequestEntityTooLarge, "bundle too large")
+		nextVersion := 1
+		if hasLatest {
+			nextVersion = latest.version + 1
 		}
-		return fiber.NewError(fiber.StatusInternalServerError, "bundle save failed")
-	}
-	absPath := h.storage.BundleAbsolutePath(relPath)
-	if err := validateCourseBundle(absPath); err != nil {
-		_ = h.removeStoredFile(relPath)
-		return fiber.NewError(fiber.StatusBadRequest, "invalid bundle: "+err.Error())
-	}
-	var (
-		latestID      int64
-		latestVersion int
-		latestHash    string
-		latestPath    string
-	)
-	latestRow := h.cfg.Store.DB.QueryRow(
-		`SELECT id, version, hash, oss_path
-		 FROM bundle_versions
-		 WHERE bundle_id = ?
-		 ORDER BY version DESC, id DESC
-		 LIMIT 1`,
-		bundleID,
-	)
-	if err := latestRow.Scan(&latestID, &latestVersion, &latestHash, &latestPath); err == nil {
-		if latestHash == hash {
+
+		src, err := file.Open()
+		if err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "bundle open failed")
+		}
+		relPath, size, _, saveErr := h.storage.SaveBundle(bundleID, nextVersion, src)
+		_ = src.Close()
+		if saveErr != nil {
+			if errors.Is(saveErr, storage.ErrFileExists) {
+				continue
+			}
+			if errors.Is(saveErr, storage.ErrTooLarge) {
+				return fiber.NewError(fiber.StatusRequestEntityTooLarge, "bundle too large")
+			}
+			return fiber.NewError(fiber.StatusInternalServerError, "bundle save failed")
+		}
+
+		absPath := h.storage.BundleAbsolutePath(relPath)
+		newNodeSet, validateErr := extractNodeIDsFromBundle(absPath)
+		if validateErr != nil {
 			_ = h.removeStoredFile(relPath)
-			return c.JSON(fiber.Map{
-				"bundle_version_id": latestID,
-				"bundle_id":         bundleID,
-				"version":           latestVersion,
-				"path":              latestPath,
-				"size":              size,
-				"hash":              hash,
-				"status":            "unchanged",
-			})
+			return fiber.NewError(fiber.StatusBadRequest, "invalid bundle: "+validateErr.Error())
 		}
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		_ = h.removeStoredFile(relPath)
-		return fiber.NewError(fiber.StatusInternalServerError, "bundle lookup failed")
-	}
+		semanticHash, hashErr := computeBundleSemanticHash(absPath)
+		if hashErr != nil {
+			_ = h.removeStoredFile(relPath)
+			return fiber.NewError(fiber.StatusBadRequest, "invalid bundle: "+hashErr.Error())
+		}
 
-	tx, err := h.cfg.Store.DB.Begin()
-	if err != nil {
-		_ = h.removeStoredFile(relPath)
-		return fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
-	}
-	defer func() {
+		addedCount := len(newNodeSet)
+		removedCount := 0
+		if hasLatest {
+			oldPath := h.storage.BundleAbsolutePath(latest.relPath)
+			oldNodeSet, oldErr := extractNodeIDsFromBundle(oldPath)
+			if oldErr != nil {
+				_ = h.removeStoredFile(relPath)
+				return fiber.NewError(fiber.StatusInternalServerError, "latest bundle parse failed")
+			}
+			addedCount, removedCount = countNodeDiff(oldNodeSet, newNodeSet)
+			latestSemanticHash, latestHashErr := computeBundleSemanticHash(oldPath)
+			if latestHashErr != nil {
+				_ = h.removeStoredFile(relPath)
+				return fiber.NewError(fiber.StatusInternalServerError, "latest bundle hash failed")
+			}
+			if latestSemanticHash == semanticHash {
+				_ = h.removeStoredFile(relPath)
+				return c.JSON(fiber.Map{
+					"bundle_version_id": latest.id,
+					"bundle_id":         bundleID,
+					"version":           latest.version,
+					"path":              latest.relPath,
+					"size":              size,
+					"hash":              latestSemanticHash,
+					"status":            "unchanged",
+					"added_nodes":       0,
+					"removed_nodes":     0,
+				})
+			}
+		}
+
+		tx, err := h.cfg.Store.DB.Begin()
+		if err != nil {
+			_ = h.removeStoredFile(relPath)
+			return fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
+		}
+		result, insertErr := tx.Exec(
+			"INSERT INTO bundle_versions (bundle_id, version, hash, oss_path) VALUES (?, ?, ?, ?)",
+			bundleID, nextVersion, semanticHash, relPath,
+		)
+		if insertErr != nil {
+			_ = tx.Rollback()
+			_ = h.removeStoredFile(relPath)
+			if isDuplicateEntryError(insertErr) {
+				continue
+			}
+			return fiber.NewError(fiber.StatusBadRequest, "bundle version insert failed")
+		}
+		insertID, err := result.LastInsertId()
 		if err != nil {
 			_ = tx.Rollback()
-		}
-	}()
-
-	result, err := tx.Exec(
-		"INSERT INTO bundle_versions (bundle_id, version, hash, oss_path) VALUES (?, ?, ?, ?)",
-		bundleID, version, hash, relPath,
-	)
-	if err != nil {
-		_ = h.removeStoredFile(relPath)
-		return fiber.NewError(fiber.StatusBadRequest, "bundle version insert failed")
-	}
-	insertID, err := result.LastInsertId()
-	if err != nil {
-		_ = h.removeStoredFile(relPath)
-		return fiber.NewError(fiber.StatusInternalServerError, "bundle version insert failed")
-	}
-
-	prunedTargets, err := h.collectPruneTargets(tx, bundleID, 5)
-	if err != nil {
-		_ = h.removeStoredFile(relPath)
-		return fiber.NewError(fiber.StatusInternalServerError, "bundle prune lookup failed")
-	}
-	for _, target := range prunedTargets {
-		if _, err = tx.Exec(
-			"DELETE FROM bundle_versions WHERE id = ?",
-			target.id,
-		); err != nil {
 			_ = h.removeStoredFile(relPath)
-			return fiber.NewError(fiber.StatusInternalServerError, "bundle prune failed")
+			return fiber.NewError(fiber.StatusInternalServerError, "bundle version insert failed")
 		}
-	}
-	if err = tx.Commit(); err != nil {
-		_ = h.removeStoredFile(relPath)
-		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
+		prunedTargets, pruneErr := h.collectPruneTargets(tx, bundleID, 5)
+		if pruneErr != nil {
+			_ = tx.Rollback()
+			_ = h.removeStoredFile(relPath)
+			return fiber.NewError(fiber.StatusInternalServerError, "bundle prune lookup failed")
+		}
+		for _, target := range prunedTargets {
+			if _, err = tx.Exec(
+				"DELETE FROM bundle_versions WHERE id = ?",
+				target.id,
+			); err != nil {
+				_ = tx.Rollback()
+				_ = h.removeStoredFile(relPath)
+				return fiber.NewError(fiber.StatusInternalServerError, "bundle prune failed")
+			}
+		}
+		if err = tx.Commit(); err != nil {
+			_ = h.removeStoredFile(relPath)
+			return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
+		}
+		for _, target := range prunedTargets {
+			if removeErr := h.removeStoredFile(target.relPath); removeErr != nil {
+				return fiber.NewError(fiber.StatusInternalServerError, "bundle file delete failed")
+			}
+		}
+		return c.JSON(fiber.Map{
+			"bundle_version_id": insertID,
+			"bundle_id":         bundleID,
+			"version":           nextVersion,
+			"path":              relPath,
+			"size":              size,
+			"hash":              semanticHash,
+			"status":            "uploaded",
+			"pruned_count":      len(prunedTargets),
+			"added_nodes":       addedCount,
+			"removed_nodes":     removedCount,
+		})
 	}
 
-	for _, target := range prunedTargets {
-		if removeErr := h.removeStoredFile(target.relPath); removeErr != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "bundle file delete failed")
-		}
-	}
-
-	return c.JSON(fiber.Map{
-		"bundle_version_id": insertID,
-		"bundle_id":         bundleID,
-		"version":           version,
-		"path":              relPath,
-		"size":              size,
-		"hash":              hash,
-		"status":            "uploaded",
-		"pruned_count":      len(prunedTargets),
-	})
+	return fiber.NewError(fiber.StatusConflict, "bundle version retry limit reached")
 }
 
 func (h *BundlesHandler) ListTeacherCourseBundleVersions(c *fiber.Ctx) error {
-	userID, err := requireUserID(c, h.cfg.Config.JWTSecret)
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
@@ -286,7 +330,7 @@ func (h *BundlesHandler) ListTeacherCourseBundleVersions(c *fiber.Ctx) error {
 }
 
 func (h *BundlesHandler) DeleteTeacherCourseBundleVersion(c *fiber.Ctx) error {
-	userID, err := requireUserID(c, h.cfg.Config.JWTSecret)
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
@@ -337,6 +381,21 @@ func (h *BundlesHandler) DeleteTeacherCourseBundleVersion(c *fiber.Ctx) error {
 	affected, err := result.RowsAffected()
 	if err != nil || affected == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "bundle version not found")
+	}
+	hasRemaining, err := h.hasBundleVersions(courseID, teacherID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "bundle version lookup failed")
+	}
+	if !hasRemaining {
+		if _, err := h.cfg.Store.DB.Exec(
+			`UPDATE course_catalog_entries
+			 SET visibility = 'private', published_at = NULL
+			 WHERE course_id = ? AND teacher_id = ?`,
+			courseID,
+			teacherID,
+		); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "catalog update failed")
+		}
 	}
 
 	if removeErr := h.removeStoredFile(relPath); removeErr != nil {
@@ -390,7 +449,7 @@ func (h *BundlesHandler) collectPruneTargets(
 }
 
 func (h *BundlesHandler) Download(c *fiber.Ctx) error {
-	userID, err := requireUserID(c, h.cfg.Config.JWTSecret)
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
@@ -439,22 +498,45 @@ func (h *BundlesHandler) Download(c *fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusOK)
 }
 
-func (h *BundlesHandler) ensureTeacherOwnsBundle(userID int64, bundleID int64) error {
-	var teacherUserID int64
+func (h *BundlesHandler) getBundleCourseInfo(bundleID int64) (bundleCourseInfo, error) {
 	row := h.cfg.Store.DB.QueryRow(
-		`SELECT ta.user_id
+		`SELECT ta.user_id, c.subject
 		 FROM bundles b
+		 JOIN courses c ON c.id = b.course_id
 		 JOIN teacher_accounts ta ON b.teacher_id = ta.id
 		 WHERE b.id = ?`,
 		bundleID,
 	)
-	if err := row.Scan(&teacherUserID); err != nil {
-		return err
+	var (
+		teacherUserID int64
+		courseName    string
+	)
+	if err := row.Scan(&teacherUserID, &courseName); err != nil {
+		return bundleCourseInfo{}, err
 	}
-	if teacherUserID != userID {
-		return errors.New("not owner")
+	return bundleCourseInfo{
+		teacherUserID: teacherUserID,
+		courseName:    courseName,
+	}, nil
+}
+
+func (h *BundlesHandler) lookupLatestBundleVersion(bundleID int64) (latestBundleInfo, bool, error) {
+	row := h.cfg.Store.DB.QueryRow(
+		`SELECT id, version, hash, oss_path
+		 FROM bundle_versions
+		 WHERE bundle_id = ?
+		 ORDER BY version DESC, id DESC
+		 LIMIT 1`,
+		bundleID,
+	)
+	var latest latestBundleInfo
+	if err := row.Scan(&latest.id, &latest.version, &latest.hash, &latest.relPath); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return latestBundleInfo{}, false, nil
+		}
+		return latestBundleInfo{}, false, err
 	}
-	return nil
+	return latest, true, nil
 }
 
 func (h *BundlesHandler) isEnrolled(studentID int64, courseID int64, teacherID int64) (bool, error) {
@@ -488,6 +570,26 @@ func (h *BundlesHandler) removeStoredFile(relPath string) error {
 	return nil
 }
 
+func (h *BundlesHandler) hasBundleVersions(courseID int64, teacherID int64) (bool, error) {
+	row := h.cfg.Store.DB.QueryRow(
+		`SELECT 1
+		 FROM bundles b
+		 JOIN bundle_versions bv ON bv.bundle_id = b.id
+		 WHERE b.course_id = ? AND b.teacher_id = ?
+		 LIMIT 1`,
+		courseID,
+		teacherID,
+	)
+	var found int
+	if err := row.Scan(&found); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 func parseInt64Query(c *fiber.Ctx, name string) (int64, error) {
 	val := strings.TrimSpace(c.Query(name))
 	if val == "" {
@@ -500,22 +602,10 @@ func parseInt64Query(c *fiber.Ctx, name string) (int64, error) {
 	return parsed, nil
 }
 
-func parseIntQuery(c *fiber.Ctx, name string) (int, error) {
-	val := strings.TrimSpace(c.Query(name))
-	if val == "" {
-		return 0, fiber.NewError(fiber.StatusBadRequest, name+" required")
-	}
-	parsed, err := strconv.Atoi(val)
-	if err != nil || parsed <= 0 {
-		return 0, fiber.NewError(fiber.StatusBadRequest, name+" invalid")
-	}
-	return parsed, nil
-}
-
-func validateCourseBundle(zipPath string) error {
+func extractNodeIDsFromBundle(zipPath string) (map[string]struct{}, error) {
 	reader, err := zip.OpenReader(zipPath)
 	if err != nil {
-		return errors.New("zip open failed")
+		return nil, errors.New("zip open failed")
 	}
 	defer reader.Close()
 
@@ -542,7 +632,7 @@ func validateCourseBundle(zipPath string) error {
 		normalizedNames[name] = struct{}{}
 	}
 	if len(filesByName) == 0 {
-		return errors.New("bundle contains no usable files")
+		return nil, errors.New("bundle contains no usable files")
 	}
 
 	rootCandidates := []string{}
@@ -559,7 +649,7 @@ func validateCourseBundle(zipPath string) error {
 		}
 	}
 	if len(rootCandidates) == 0 {
-		return errors.New("missing contents.txt or context.txt")
+		return nil, errors.New("missing contents.txt or context.txt")
 	}
 	sort.Slice(rootCandidates, func(i, j int) bool {
 		left := rootCandidates[i]
@@ -587,19 +677,19 @@ func validateCourseBundle(zipPath string) error {
 		}
 	}
 	if contentsName == "" {
-		return errors.New("missing contents.txt or context.txt")
+		return nil, errors.New("missing contents.txt or context.txt")
 	}
 
 	contentsFile := filesByName[contentsName]
 	if contentsFile == nil {
-		return errors.New("missing contents.txt or context.txt")
+		return nil, errors.New("missing contents.txt or context.txt")
 	}
 	nodeIDs, err := parseNodeIDs(contentsFile)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(nodeIDs) == 0 {
-		return errors.New("contents has no nodes")
+		return nil, errors.New("contents has no nodes")
 	}
 
 	missing := []string{}
@@ -617,9 +707,213 @@ func validateCourseBundle(zipPath string) error {
 		if len(preview) > 12 {
 			preview = preview[:12]
 		}
-		return fmt.Errorf("missing lecture files for ids: %s", strings.Join(preview, ", "))
+		return nil, fmt.Errorf("missing lecture files for ids: %s", strings.Join(preview, ", "))
 	}
-	return nil
+
+	nodeSet := map[string]struct{}{}
+	for _, nodeID := range nodeIDs {
+		nodeSet[nodeID] = struct{}{}
+	}
+	return nodeSet, nil
+}
+
+func countNodeDiff(oldSet map[string]struct{}, newSet map[string]struct{}) (int, int) {
+	added := 0
+	for key := range newSet {
+		if _, ok := oldSet[key]; !ok {
+			added++
+		}
+	}
+	removed := 0
+	for key := range oldSet {
+		if _, ok := newSet[key]; !ok {
+			removed++
+		}
+	}
+	return added, removed
+}
+
+func isDuplicateEntryError(err error) bool {
+	return strings.Contains(strings.ToLower(err.Error()), "duplicate entry")
+}
+
+func normalizeCourseName(value string) string {
+	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(value)), " "))
+}
+
+func computeBundleSemanticHash(zipPath string) (string, error) {
+	reader, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return "", errors.New("zip open failed")
+	}
+	defer reader.Close()
+
+	type filePayload struct {
+		name string
+		data []byte
+	}
+	files := []filePayload{}
+	for _, file := range reader.File {
+		if file.FileInfo().IsDir() {
+			continue
+		}
+		name := normalizeZipEntryName(file.Name)
+		if name == "" {
+			continue
+		}
+		if strings.HasPrefix(name, "__MACOSX/") {
+			continue
+		}
+		if hasAppleDoubleSegment(name) {
+			continue
+		}
+		entry, err := file.Open()
+		if err != nil {
+			return "", errors.New("zip entry open failed")
+		}
+		data, err := io.ReadAll(entry)
+		_ = entry.Close()
+		if err != nil {
+			return "", errors.New("zip entry read failed")
+		}
+		if name == "_family_teacher/prompt_bundle.json" {
+			normalized, normErr := normalizePromptMetadata(data)
+			if normErr != nil {
+				return "", normErr
+			}
+			data = normalized
+		}
+		files = append(files, filePayload{
+			name: name,
+			data: data,
+		})
+	}
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].name < files[j].name
+	})
+
+	hasher := sha256.New()
+	for _, file := range files {
+		_, _ = hasher.Write([]byte(file.name))
+		_, _ = hasher.Write([]byte{0})
+		_, _ = hasher.Write(file.data)
+		_, _ = hasher.Write([]byte{0})
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+func normalizePromptMetadata(raw []byte) ([]byte, error) {
+	var decoded interface{}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return nil, errors.New("prompt metadata json invalid")
+	}
+	cleaned := removeGeneratedFields(decoded)
+	canonical, err := marshalCanonicalJSON(cleaned)
+	if err != nil {
+		return nil, errors.New("prompt metadata canonicalize failed")
+	}
+	return canonical, nil
+}
+
+func removeGeneratedFields(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		next := make(map[string]interface{}, len(typed))
+		for key, inner := range typed {
+			if key == "generated_at" {
+				continue
+			}
+			next[key] = removeGeneratedFields(inner)
+		}
+		return next
+	case []interface{}:
+		next := make([]interface{}, 0, len(typed))
+		for _, inner := range typed {
+			next = append(next, removeGeneratedFields(inner))
+		}
+		return next
+	default:
+		return value
+	}
+}
+
+func marshalCanonicalJSON(value interface{}) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := writeCanonicalJSON(&buf, value); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func writeCanonicalJSON(buf *bytes.Buffer, value interface{}) error {
+	switch typed := value.(type) {
+	case nil:
+		buf.WriteString("null")
+		return nil
+	case bool:
+		if typed {
+			buf.WriteString("true")
+		} else {
+			buf.WriteString("false")
+		}
+		return nil
+	case string:
+		encoded, err := json.Marshal(typed)
+		if err != nil {
+			return err
+		}
+		buf.Write(encoded)
+		return nil
+	case float64, json.Number, int, int32, int64, uint, uint32, uint64:
+		encoded, err := json.Marshal(typed)
+		if err != nil {
+			return err
+		}
+		buf.Write(encoded)
+		return nil
+	case map[string]interface{}:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		buf.WriteByte('{')
+		for index, key := range keys {
+			if index > 0 {
+				buf.WriteByte(',')
+			}
+			encodedKey, err := json.Marshal(key)
+			if err != nil {
+				return err
+			}
+			buf.Write(encodedKey)
+			buf.WriteByte(':')
+			if err := writeCanonicalJSON(buf, typed[key]); err != nil {
+				return err
+			}
+		}
+		buf.WriteByte('}')
+		return nil
+	case []interface{}:
+		buf.WriteByte('[')
+		for index, inner := range typed {
+			if index > 0 {
+				buf.WriteByte(',')
+			}
+			if err := writeCanonicalJSON(buf, inner); err != nil {
+				return err
+			}
+		}
+		buf.WriteByte(']')
+		return nil
+	default:
+		encoded, err := json.Marshal(typed)
+		if err != nil {
+			return err
+		}
+		buf.Write(encoded)
+		return nil
+	}
 }
 
 func parseNodeIDs(file *zip.File) ([]string, error) {

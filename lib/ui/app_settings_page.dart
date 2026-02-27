@@ -1307,7 +1307,7 @@ class _SettingsPageState extends State<SettingsPage> {
         content: TextField(
           controller: controller,
           obscureText: true,
-          keyboardType: TextInputType.number,
+          keyboardType: TextInputType.visiblePassword,
           decoration: InputDecoration(labelText: l10n.pinLabel),
         ),
         actions: [

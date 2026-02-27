@@ -74,10 +74,12 @@ class CourseService {
     required int teacherId,
     required String folderPath,
     int? courseVersionId,
+    String? courseNameOverride,
   }) async {
     final preview = await previewCourseLoad(
       folderPath: folderPath,
       courseVersionId: courseVersionId,
+      courseNameOverride: courseNameOverride,
     );
     if (!preview.success) {
       return CourseLoadResult(
@@ -85,16 +87,20 @@ class CourseService {
         message: preview.message,
       );
     }
+    final mode = courseVersionId == null
+        ? CourseReloadMode.fresh
+        : CourseReloadMode.override;
     return applyCourseLoad(
       teacherId: teacherId,
       preview: preview,
-      mode: CourseReloadMode.fresh,
+      mode: mode,
     );
   }
 
   Future<CourseLoadPreview> previewCourseLoad({
     required String folderPath,
     int? courseVersionId,
+    String? courseNameOverride,
   }) async {
     final normalizedPath = p.normalize(folderPath);
     final folder = Directory(normalizedPath);
@@ -135,7 +141,10 @@ class CourseService {
     }
 
     final maxDepth = _maxDepth(parseResult.nodes.values);
-    final courseName = p.basename(normalizedPath);
+    final requestedCourseName = (courseNameOverride ?? '').trim();
+    final courseName = requestedCourseName.isEmpty
+        ? p.basename(normalizedPath)
+        : requestedCourseName;
     final oldIdToNewId = <String, String>{};
     final deletedEntries = <CourseReloadEntry>[];
     final addedEntries = <CourseReloadEntry>[];
@@ -279,7 +288,8 @@ class CourseService {
                 courseVersionId: courseId,
                 kpKey: node.id,
                 title: node.title,
-                description: node.rawLine.isNotEmpty ? node.rawLine : node.title,
+                description:
+                    node.rawLine.isNotEmpty ? node.rawLine : node.title,
                 orderIndex: orderIndex++,
               ),
               mode: InsertMode.insertOrReplace,
@@ -338,6 +348,7 @@ class CourseService {
                   courseVersionId: courseId,
                   kpKey: entry.kpKey,
                   lit: Value(entry.lit),
+                  litPercent: Value(entry.litPercent),
                   questionLevel: Value(entry.questionLevel),
                   summaryText: Value(entry.summaryText),
                   summaryRawResponse: Value(entry.summaryRawResponse),
@@ -550,6 +561,7 @@ class _ProgressMergeState {
         courseVersionId = entry.courseVersionId,
         kpKey = newKpKey,
         lit = entry.lit,
+        litPercent = entry.litPercent,
         questionLevel = entry.questionLevel,
         summaryText = entry.summaryText,
         summaryRawResponse = entry.summaryRawResponse,
@@ -560,6 +572,7 @@ class _ProgressMergeState {
   final int courseVersionId;
   final String kpKey;
   bool lit;
+  int litPercent;
   String? questionLevel;
   String? summaryText;
   String? summaryRawResponse;
@@ -568,6 +581,9 @@ class _ProgressMergeState {
 
   void merge(ProgressEntry entry) {
     lit = lit || entry.lit;
+    if (entry.litPercent > litPercent) {
+      litPercent = entry.litPercent;
+    }
     questionLevel = _mergeQuestionLevel(questionLevel, entry.questionLevel);
     if (entry.updatedAt.isAfter(updatedAt)) {
       summaryText = entry.summaryText;

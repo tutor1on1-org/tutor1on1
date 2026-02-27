@@ -11,6 +11,8 @@ type Config struct {
 	HTTPAddr             string
 	DatabaseDSN          string
 	JWTSecret            string
+	JWTVerifySecrets     []string
+	Environment          string
 	AccessTokenTTLMin    int
 	RefreshTokenTTLDays  int
 	RecoveryTokenTTLMin  int
@@ -39,6 +41,21 @@ func Load() (Config, error) {
 	if jwtSecret == "" {
 		return Config{}, fmt.Errorf("JWT_SECRET is required")
 	}
+	jwtSecret = strings.TrimSpace(jwtSecret)
+	if jwtSecret == "" {
+		return Config{}, fmt.Errorf("JWT_SECRET is required")
+	}
+	jwtVerifySecrets := append(
+		[]string{jwtSecret},
+		parseSecretList(os.Getenv("JWT_PREVIOUS_SECRETS"))...,
+	)
+	jwtVerifySecrets = dedupeSecrets(jwtVerifySecrets)
+	if len(jwtVerifySecrets) == 0 {
+		return Config{}, fmt.Errorf("at least one JWT verification secret is required")
+	}
+	environment := normalizeEnvironment(
+		getenv("APP_ENV", getenv("ENV_PROFILE", "development")),
+	)
 	accessTTL := getenvInt("ACCESS_TOKEN_TTL_MINUTES", 30)
 	refreshTTL := getenvInt("REFRESH_TOKEN_TTL_DAYS", 30)
 	recoveryTTL := getenvInt("RECOVERY_TOKEN_TTL_MINUTES", 30)
@@ -64,6 +81,9 @@ func Load() (Config, error) {
 	if recoveryTTL <= 0 {
 		return Config{}, fmt.Errorf("RECOVERY_TOKEN_TTL_MINUTES must be > 0")
 	}
+	if environment == "production" && recoveryEcho {
+		return Config{}, fmt.Errorf("RECOVERY_TOKEN_ECHO must be false in production")
+	}
 	if smtpEnabled {
 		if smtpHost == "" || smtpPort <= 0 || smtpFrom == "" {
 			return Config{}, fmt.Errorf("SMTP_HOST, SMTP_PORT, and SMTP_FROM are required when SMTP is enabled")
@@ -77,6 +97,8 @@ func Load() (Config, error) {
 		HTTPAddr:            httpAddr,
 		DatabaseDSN:         dsn,
 		JWTSecret:           jwtSecret,
+		JWTVerifySecrets:    jwtVerifySecrets,
+		Environment:         environment,
 		AccessTokenTTLMin:   accessTTL,
 		RefreshTokenTTLDays: refreshTTL,
 		RecoveryTokenTTLMin: recoveryTTL,
@@ -94,6 +116,52 @@ func Load() (Config, error) {
 		StorageRoot:         storageRoot,
 		BundleMaxBytes:      bundleMaxBytes,
 	}, nil
+}
+
+func parseSecretList(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\r'
+	})
+	secrets := make([]string, 0, len(parts))
+	for _, part := range parts {
+		secret := strings.TrimSpace(part)
+		if secret == "" {
+			continue
+		}
+		secrets = append(secrets, secret)
+	}
+	return secrets
+}
+
+func dedupeSecrets(secrets []string) []string {
+	if len(secrets) == 0 {
+		return nil
+	}
+	deduped := make([]string, 0, len(secrets))
+	seen := make(map[string]struct{}, len(secrets))
+	for _, secret := range secrets {
+		trimmed := strings.TrimSpace(secret)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		deduped = append(deduped, trimmed)
+	}
+	return deduped
+}
+
+func normalizeEnvironment(value string) string {
+	trimmed := strings.TrimSpace(strings.ToLower(value))
+	if trimmed == "" {
+		return "development"
+	}
+	return trimmed
 }
 
 func getenv(key, fallback string) string {

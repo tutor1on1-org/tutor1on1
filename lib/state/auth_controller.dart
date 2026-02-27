@@ -103,6 +103,7 @@ class AuthController extends ChangeNotifier {
         pinHash: hashed,
         role: response.role,
         teacherId: null,
+        remoteUserId: response.userId > 0 ? response.userId : null,
       );
       _currentUser = await _db.getUserById(userId);
     } else {
@@ -110,6 +111,7 @@ class AuthController extends ChangeNotifier {
         userId: existing.id,
         pinHash: hashed,
         role: response.role,
+        remoteUserId: response.userId > 0 ? response.userId : null,
       );
       _currentUser = await _db.getUserById(existing.id);
     }
