@@ -60,6 +60,10 @@ flutter:
     - assets/prompts/review_cont.prompt.txt
     - assets/prompts/summarize.txt
     - assets/prompts/summary.prompt.txt
+    - assets/schemas/learn_init.schema.json
+    - assets/schemas/learn_cont.schema.json
+    - assets/schemas/review_init.schema.json
+    - assets/schemas/review_cont.schema.json
     - assets/schemas/summarize.schema.json
     - assets/textbooks/math_outline_y5_y12.txt
     - assets/teachers/

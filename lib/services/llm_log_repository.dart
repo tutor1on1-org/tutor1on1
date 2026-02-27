@@ -23,6 +23,13 @@ class LlmLogEntry {
     this.sessionId,
     this.kpKey,
     this.action,
+    this.attempt,
+    this.retryReason,
+    this.backoffMs,
+    this.renderedChars,
+    this.responseChars,
+    this.dbWriteOk,
+    this.uiCommitOk,
   });
 
   final DateTime createdAt;
@@ -41,6 +48,13 @@ class LlmLogEntry {
   final int? sessionId;
   final String? kpKey;
   final String? action;
+  final int? attempt;
+  final String? retryReason;
+  final int? backoffMs;
+  final int? renderedChars;
+  final int? responseChars;
+  final bool? dbWriteOk;
+  final bool? uiCommitOk;
 
   factory LlmLogEntry.fromJson(Map<String, dynamic> json) {
     final createdRaw = json['created_at'];
@@ -67,6 +81,13 @@ class LlmLogEntry {
       sessionId: json['session_id'] as int?,
       kpKey: json['kp_key'] as String?,
       action: json['action'] as String?,
+      attempt: json['attempt'] as int?,
+      retryReason: json['retry_reason'] as String?,
+      backoffMs: json['backoff_ms'] as int?,
+      renderedChars: json['rendered_chars'] as int?,
+      responseChars: json['response_chars'] as int?,
+      dbWriteOk: json['db_write_ok'] as bool?,
+      uiCommitOk: json['ui_commit_ok'] as bool?,
     );
   }
 }
@@ -93,6 +114,13 @@ class LlmLogRepository {
     int? sessionId,
     String? kpKey,
     String? action,
+    int? attempt,
+    String? retryReason,
+    int? backoffMs,
+    int? renderedChars,
+    int? responseChars,
+    bool? dbWriteOk,
+    bool? uiCommitOk,
   }) async {
     _writeQueue = _writeQueue.then((_) async {
       try {
@@ -114,6 +142,13 @@ class LlmLogRepository {
           'session_id': sessionId,
           'kp_key': kpKey,
           'action': action,
+          'attempt': attempt,
+          'retry_reason': retryReason,
+          'backoff_ms': backoffMs,
+          'rendered_chars': renderedChars,
+          'response_chars': responseChars,
+          'db_write_ok': dbWriteOk,
+          'ui_commit_ok': uiCommitOk,
         };
         await file.writeAsString(
           '${jsonEncode(payload)}\n',

@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReviewInitOutput",
+  "type": "object",
+  "required": [
+    "teacher_message",
+    "turn_state",
+    "question",
+    "grading",
+    "error_book_update",
+    "evidence",
+    "mastery_level",
+    "next_mode"
+  ],
+  "properties": {
+    "teacher_message": {
+      "type": "string",
+      "minLength": 1
+    },
+    "turn_state": {
+      "type": "string",
+      "const": "UNFINISHED"
+    },
+    "question": {
+      "type": "object",
+      "required": ["text", "type_id"],
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": true
+    },
+    "grading": {
+      "type": "null"
+    },
+    "error_book_update": {
+      "type": "null"
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["a", "c", "h", "t", "mt"],
+      "properties": {
+        "a": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "c": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "t": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mt": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "mastery_level": {
+      "type": "string",
+      "enum": ["NOT_PASS", "PASS_EASY", "PASS_MEDIUM", "PASS_HARD"]
+    },
+    "next_mode": {
+      "type": "string",
+      "const": "REVIEW"
+    }
+  },
+  "additionalProperties": false
+}

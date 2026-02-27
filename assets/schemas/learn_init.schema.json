@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LearnInitOutput",
+  "type": "object",
+  "required": [
+    "teacher_message",
+    "understanding",
+    "next_mode",
+    "turn_state"
+  ],
+  "properties": {
+    "teacher_message": {
+      "type": "string",
+      "minLength": 1
+    },
+    "understanding": {
+      "type": "string",
+      "enum": ["CONFUSED", "PARTIAL", "READY"]
+    },
+    "next_mode": {
+      "type": "string",
+      "enum": ["LEARN", "REVIEW"]
+    },
+    "turn_state": {
+      "type": "string",
+      "enum": ["UNFINISHED", "FINISHED"]
+    }
+  },
+  "additionalProperties": false
+}

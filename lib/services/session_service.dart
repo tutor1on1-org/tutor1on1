@@ -7,10 +7,13 @@ import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
 
 import '../db/app_database.dart';
+import '../llm/llm_hash.dart';
 import '../llm/llm_models.dart';
+import '../llm/llm_providers.dart';
 import '../llm/llm_service.dart';
 import '../llm/prompt_renderer.dart';
 import '../llm/prompt_repository.dart';
+import 'llm_log_repository.dart';
 import 'settings_repository.dart';
 
 class SummarizeResult {
@@ -87,13 +90,16 @@ class SessionService {
     this._llmService,
     this._promptRepository,
     this._settingsRepository,
+    this._llmLogRepository,
   );
 
   final AppDatabase _db;
   final LlmService _llmService;
   final PromptRepository _promptRepository;
   final SettingsRepository _settingsRepository;
+  final LlmLogRepository _llmLogRepository;
   final PromptRenderer _renderer = PromptRenderer();
+  final Map<String, LlmRequestHandle> _inflightTutorByKey = {};
   static final Uuid _uuid = Uuid();
   static const int _structuredRetryLimit = 2;
   static const Duration _structuredRetryDelay = Duration(
@@ -352,11 +358,23 @@ class SessionService {
       onPromptWarning();
     }
     final rendered = renderResult.rendered;
+    final schemaMap = await _loadStructuredSchema(promptName);
+    final dedupeKey = await _buildTutorDedupeKey(
+      sessionId: sessionId,
+      promptName: promptName,
+      renderedPrompt: rendered,
+      modelOverride: modelOverride,
+    );
+    final inflight = _inflightTutorByKey[dedupeKey];
+    if (inflight != null) {
+      return inflight;
+    }
 
     if (!stream) {
       final handle = _llmService.startCall(
         promptName: promptName,
         renderedPrompt: rendered,
+        schemaMap: schemaMap,
         modelOverride: modelOverride,
         context: LlmCallContext(
           teacherId: courseVersion.teacherId,
@@ -383,6 +401,7 @@ class SessionService {
             kpKey: node.kpKey,
             action: actionMode,
           ),
+          schemaMap: schemaMap,
           responseText: result.responseText,
           result: result,
         );
@@ -396,10 +415,29 @@ class SessionService {
                 action: Value(actionMode),
               ),
             );
+        await _llmLogRepository.appendEntry(
+          promptName: promptName,
+          model: resolution.result.model ?? '',
+          baseUrl: resolution.result.baseUrl ?? '',
+          mode: 'APP',
+          status: 'persist',
+          callHash: resolution.result.callHash,
+          responseChars: resolution.payload.displayText.length,
+          dbWriteOk: true,
+          teacherId: courseVersion.teacherId,
+          studentId: session?.studentId,
+          courseVersionId: courseVersion.id,
+          sessionId: sessionId,
+          kpKey: node.kpKey,
+          action: actionMode,
+        );
         await _touchSessionSync(sessionId);
         return resolution.result;
       });
-      return LlmRequestHandle(future: future, cancel: handle.cancel);
+      return _registerInflightTutorHandle(
+        dedupeKey: dedupeKey,
+        handle: LlmRequestHandle(future: future, cancel: handle.cancel),
+      );
     }
 
     final assistantId = await _db.into(_db.chatMessages).insert(
@@ -454,6 +492,7 @@ class SessionService {
       renderedPrompt: rendered,
       modelOverride: modelOverride,
       onChunk: handleChunk,
+      schemaMap: schemaMap,
       context: LlmCallContext(
         teacherId: courseVersion.teacherId,
         studentId: session?.studentId,
@@ -483,6 +522,7 @@ class SessionService {
           kpKey: node.kpKey,
           action: actionMode,
         ),
+        schemaMap: schemaMap,
         responseText: finalText,
         result: result,
       );
@@ -499,11 +539,30 @@ class SessionService {
           rawContent: resolution.payload.rawText,
           parsedJson: resolution.payload.parsedJson,
         );
+        await _llmLogRepository.appendEntry(
+          promptName: promptName,
+          model: resolution.result.model ?? '',
+          baseUrl: resolution.result.baseUrl ?? '',
+          mode: 'APP',
+          status: 'persist',
+          callHash: resolution.result.callHash,
+          responseChars: resolution.payload.displayText.length,
+          dbWriteOk: true,
+          teacherId: courseVersion.teacherId,
+          studentId: session?.studentId,
+          courseVersionId: courseVersion.id,
+          sessionId: sessionId,
+          kpKey: node.kpKey,
+          action: actionMode,
+        );
         await _touchSessionSync(sessionId);
       }
       return resolution.result;
     });
-    return LlmRequestHandle(future: future, cancel: handle.cancel);
+    return _registerInflightTutorHandle(
+      dedupeKey: dedupeKey,
+      handle: LlmRequestHandle(future: future, cancel: handle.cancel),
+    );
   }
 
   Future<RequestHandle<SummarizeResult>> startSummarize({
@@ -522,6 +581,31 @@ class SessionService {
             kpKey: node.kpKey,
           );
     final messages = await _db.getMessagesForSession(sessionId);
+    final cachedSummary = _buildCachedSummaryResult(
+      messages: messages,
+      session: session,
+      progress: progress,
+    );
+    if (cachedSummary != null) {
+      await _llmLogRepository.appendEntry(
+        promptName: 'summary',
+        model: '',
+        baseUrl: await _resolveCurrentBaseUrl(),
+        mode: 'APP',
+        status: 'cache_hit',
+        responseChars: (cachedSummary.summaryText ?? '').length,
+        teacherId: courseVersion.teacherId,
+        studentId: session?.studentId,
+        courseVersionId: courseVersion.id,
+        sessionId: sessionId,
+        kpKey: node.kpKey,
+        action: 'summary',
+      );
+      return RequestHandle<SummarizeResult>(
+        future: Future<SummarizeResult>.value(cachedSummary),
+        cancel: () {},
+      );
+    }
     final history = _buildHistory(messages);
     final lastEvidence = _extractLatestEvidence(messages);
     final courseKey = _normalizeCourseKey(courseVersion.sourcePath);
@@ -1271,6 +1355,7 @@ class SessionService {
     required String renderedPrompt,
     required String? modelOverride,
     required LlmCallContext context,
+    required Map<String, dynamic>? schemaMap,
     required String responseText,
     required LlmCallResult result,
   }) async {
@@ -1296,13 +1381,41 @@ class SessionService {
           rethrow;
         }
         didRetry = true;
+        final retryAttempt = attempt + 1;
+        final retryModelOverride = await _resolveRetryModelOverride(
+          retryAttempt: retryAttempt,
+          currentModel: currentResult.model,
+          originalModelOverride: modelOverride,
+        );
+        final retryModel = await _resolveModelForOverride(retryModelOverride);
+        final retryReason =
+            'structured_parse_retry: ${_summarizeResponseForError(error.toString())}';
+        await _llmLogRepository.appendEntry(
+          promptName: promptName,
+          model: retryModel,
+          baseUrl: currentResult.baseUrl ?? await _resolveCurrentBaseUrl(),
+          mode: 'APP',
+          status: 'retry',
+          callHash: currentResult.callHash,
+          attempt: retryAttempt,
+          retryReason: retryReason,
+          backoffMs: _structuredRetryDelay.inMilliseconds,
+          renderedChars: renderedPrompt.length,
+          teacherId: context.teacherId,
+          studentId: context.studentId,
+          courseVersionId: context.courseVersionId,
+          sessionId: context.sessionId,
+          kpKey: context.kpKey,
+          action: context.action,
+        );
         if (_structuredRetryDelay.inMilliseconds > 0) {
           await Future<void>.delayed(_structuredRetryDelay);
         }
         final retryHandle = _llmService.startCall(
           promptName: promptName,
           renderedPrompt: renderedPrompt,
-          modelOverride: modelOverride,
+          schemaMap: schemaMap,
+          modelOverride: retryModelOverride,
           context: context,
         );
         currentResult = await retryHandle.future;
@@ -1347,6 +1460,149 @@ class SessionService {
         promptName == 'review_init' ||
         promptName == 'review_cont' ||
         promptName == 'summary';
+  }
+
+  SummarizeResult? _buildCachedSummaryResult({
+    required List<ChatMessage> messages,
+    required ChatSession? session,
+    required ProgressEntry? progress,
+  }) {
+    if (messages.isEmpty || session == null) {
+      return null;
+    }
+    final lastMessage = messages.last;
+    if (lastMessage.role != 'assistant' ||
+        _resolveActionMode(lastMessage.action ?? '') != 'summary') {
+      return null;
+    }
+    final summaryText =
+        (progress?.summaryText ?? session.summaryText ?? '').trim();
+    if (summaryText.isEmpty) {
+      return null;
+    }
+    final masteryLevel = _questionLevelToMasteryLevel(progress?.questionLevel);
+    final litPercent =
+        session.summaryLitPercent ?? _masteryLevelToPercent(masteryLevel);
+    final lit =
+        session.summaryLit ?? (litPercent == null ? null : litPercent >= 100);
+    return SummarizeResult(
+      success: true,
+      message: 'Summary unchanged. Reused cached result.',
+      lit: lit,
+      litPercent: litPercent,
+      summaryText: summaryText,
+      masteryLevel: masteryLevel,
+      masterLevel: _normalizeLevel(progress?.questionLevel),
+      nextStep: lit == true ? 'MOVE_ON' : 'CONTINUE_REVIEW',
+    );
+  }
+
+  Future<Map<String, dynamic>?> _loadStructuredSchema(String promptName) async {
+    switch (promptName) {
+      case 'learn_init':
+        return _promptRepository.loadSchema('learn_init');
+      case 'learn_cont':
+        return _promptRepository.loadSchema('learn_cont');
+      case 'review_init':
+        return _promptRepository.loadSchema('review_init');
+      case 'review_cont':
+        return _promptRepository.loadSchema('review_cont');
+      case 'summary':
+        return _promptRepository.loadSchema('summarize');
+      default:
+        return null;
+    }
+  }
+
+  Future<String> _resolveCurrentBaseUrl() async {
+    final settings = await _settingsRepository.load();
+    return settings.baseUrl.trim();
+  }
+
+  Future<String> _resolveModelForOverride(String? modelOverride) async {
+    final settings = await _settingsRepository.load();
+    final override = modelOverride?.trim() ?? '';
+    if (override.isNotEmpty) {
+      return override;
+    }
+    return settings.model.trim();
+  }
+
+  Future<String?> _resolveRetryModelOverride({
+    required int retryAttempt,
+    required String? currentModel,
+    required String? originalModelOverride,
+  }) async {
+    if (retryAttempt <= 1) {
+      return originalModelOverride;
+    }
+    final fallbackModel = await _resolveFallbackModel(currentModel);
+    if (fallbackModel == null || fallbackModel.trim().isEmpty) {
+      return originalModelOverride;
+    }
+    return fallbackModel.trim();
+  }
+
+  Future<String?> _resolveFallbackModel(String? currentModel) async {
+    final settings = await _settingsRepository.load();
+    final providers = LlmProviders.defaultProviders(
+      envBaseUrl: Platform.environment['OPENAI_BASE_URL'],
+      envModel: Platform.environment['OPENAI_MODEL'],
+    );
+    final provider = LlmProviders.findById(providers, settings.providerId) ??
+        LlmProviders.findByBaseUrl(providers, settings.baseUrl);
+    if (provider == null || provider.models.isEmpty) {
+      return null;
+    }
+    final current = (currentModel ?? '').trim().isNotEmpty
+        ? currentModel!.trim()
+        : settings.model.trim();
+    for (final candidate in provider.models) {
+      if (candidate.trim().isEmpty) {
+        continue;
+      }
+      if (candidate.trim() != current) {
+        return candidate.trim();
+      }
+    }
+    return null;
+  }
+
+  Future<String> _buildTutorDedupeKey({
+    required int sessionId,
+    required String promptName,
+    required String renderedPrompt,
+    required String? modelOverride,
+  }) async {
+    final settings = await _settingsRepository.load();
+    final activeModel = (modelOverride ?? '').trim().isNotEmpty
+        ? modelOverride!.trim()
+        : settings.model.trim();
+    final callHash = LlmHash.compute(
+      baseUrl: settings.baseUrl,
+      model: activeModel,
+      promptName: promptName,
+      renderedPrompt: renderedPrompt,
+      conversationDigest: null,
+    );
+    return '$sessionId|$promptName|$callHash';
+  }
+
+  LlmRequestHandle _registerInflightTutorHandle({
+    required String dedupeKey,
+    required LlmRequestHandle handle,
+  }) {
+    final wrapped = LlmRequestHandle(
+      future: handle.future.whenComplete(() {
+        _inflightTutorByKey.remove(dedupeKey);
+      }),
+      cancel: () {
+        _inflightTutorByKey.remove(dedupeKey);
+        handle.cancel();
+      },
+    );
+    _inflightTutorByKey[dedupeKey] = wrapped;
+    return wrapped;
   }
 
   Future<void> _touchSessionSync(int sessionId) {

@@ -33,6 +33,8 @@ WHEN NOT FINAL (ONGOING QUESTION)
 - error_book_update must be null
 - mastery_level MUST remain exactly prev_json.mastery_level
 - next_mode should usually be "REVIEW" (you may set "LEARN" only if you judge a concept repair is necessary)
+- If two consecutive turns indicate confusion or non-attempt, switch hint style explicitly
+  (for example: conceptual hint -> step-by-step scaffold) instead of repeating wording.
 
 Your teacher_message should guide the student forward. You may provide hints or partial solutions in the text, but do not mark the question as finished unless a final answer is provided.
 If the student seems stuck for multiple turns or repeatedly asks for help, you may set next_mode="LEARN" and give a short concept repair aligned with student_profile and student_preferences.
@@ -103,3 +105,4 @@ Return exactly ONE JSON object with ONLY the following keys:
 - next_mode: "LEARN" | "REVIEW" | "SUMMARY"
 
 No extra keys. The JSON must be parseable.
+- Keep teacher_message concise (target <= 120 words) unless a full worked correction is necessary.

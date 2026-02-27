@@ -52,3 +52,5 @@
 - Marketplace enrollment/quit/download workflow feedback should use persistent, manually dismissible messages; transient snackbars are easy to miss during multi-step actions.
 - Teacher progress review should use `(student + course)` filtering and display session-level `chat_sessions.summary_text` / `summary_lit_percent` so server-synced summaries are visible without opening each session.
 - Recovery flow hardening rule: with `RECOVERY_TOKEN_ECHO=false`, `/api/auth/request-recovery` must not leak token in API response and should be validated with SMTP-path regression tests.
+- Delivery discipline: after code changes pass validation, commit and push in the same turn unless the user explicitly says not to push.
+- Student tutor chat reliability should enforce structured-output schemas for `learn_*`/`review_*`, single-flight dedupe by `(session + prompt + call_hash)`, explicit retry telemetry (`attempt/reason/backoff`), and summary cache reuse when no new evidence exists.

@@ -999,7 +999,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                     shape: BoxShape.circle,
                     boxShadow: [
                       BoxShadow(
-                        color: theme.colorScheme.shadow.withOpacity(0.25),
+                        color: theme.colorScheme.shadow.withValues(alpha: 0.25),
                         blurRadius: 12,
                         offset: const Offset(0, 6),
                       ),
@@ -1060,14 +1060,10 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     final onStudentMessageCreated = pendingAudioPath == null
         ? null
         : (int messageId) {
-            final resolvedPath = pendingAudioPath;
-            if (resolvedPath == null) {
-              return;
-            }
             sttService
                 .saveMessageAudio(
               messageId: messageId,
-              sourcePath: resolvedPath,
+              sourcePath: pendingAudioPath,
               sessionId: widget.sessionId,
             )
                 .then((result) {
@@ -2359,10 +2355,26 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     if (_assistantMessageId == null) {
       return;
     }
-    final db = context.read<AppDatabase>();
+    final services = context.read<AppServices>();
+    final db = services.db;
     await db.updateChatMessageContent(
       messageId: _assistantMessageId!,
       content: _ttsRawBuffer.toString(),
+    );
+    final settings = await services.settingsRepository.load();
+    await services.llmLogRepository.appendEntry(
+      promptName: 'stream_display',
+      model: settings.model,
+      baseUrl: settings.baseUrl,
+      mode: 'APP',
+      status: 'ui_commit',
+      uiCommitOk: true,
+      responseChars: _ttsRawBuffer.length,
+      teacherId: widget.courseVersion.teacherId,
+      courseVersionId: widget.courseVersion.id,
+      sessionId: widget.sessionId,
+      kpKey: widget.node.kpKey,
+      action: _mode.promptName,
     );
   }
 }

@@ -97,6 +97,7 @@ class AppServices {
       llmService,
       promptRepository,
       settingsRepository,
+      llmLogRepository,
     );
     final sessionSyncApi = SessionSyncApiService(secureStorage: secureStorage);
     final cryptoService = SessionCryptoService();

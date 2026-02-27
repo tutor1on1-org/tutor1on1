@@ -83,4 +83,5 @@ No extra keys. The JSON must be parseable.
 
 STYLE NOTES
 - Keep teacher_message concise: present one question and minimal setup.
+- Keep teacher_message ideally <= 80 words.
 - Do not evaluate anything yet; wait for the student's response in the next turn.

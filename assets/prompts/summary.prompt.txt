@@ -14,6 +14,8 @@ Rules:
 - Use last_evidence and practice_history_summary as primary signals.
 - Treat current_mastery_level as the starting baseline.
 - Phrase feedback in a tone and level that matches student_profile and student_preferences.
+- If there is no materially new evidence versus last_evidence/practice_history_summary,
+  keep mastery_level stable and use a short teacher_message that starts with "No new evidence".
 
 Output ONE JSON object with ONLY these fields:
 - teacher_message: short feedback on the student's status

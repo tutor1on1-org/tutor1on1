@@ -6,6 +6,9 @@ class LlmCallResult {
     this.responseJson,
     this.parseValid,
     this.parseError,
+    this.callHash,
+    this.model,
+    this.baseUrl,
   });
 
   final String responseText;
@@ -14,6 +17,9 @@ class LlmCallResult {
   final String? responseJson;
   final bool? parseValid;
   final String? parseError;
+  final String? callHash;
+  final String? model;
+  final String? baseUrl;
 }
 
 class LlmCallContext {

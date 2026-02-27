@@ -59,4 +59,49 @@ Model output:
     expect(result.isValid, isFalse);
     expect(result.error, isNotNull);
   });
+
+  test('learn_init schema validation accepts valid structured output',
+      () async {
+    final repo = PromptRepository();
+    final schema = await repo.loadSchema('learn_init');
+    final validator = SchemaValidator();
+    final sample = {
+      'teacher_message': 'Let us focus on one idea, then a quick check.',
+      'understanding': 'PARTIAL',
+      'next_mode': 'LEARN',
+      'turn_state': 'UNFINISHED',
+    };
+    final result = await validator.validateJson(
+      schemaMap: schema,
+      responseText: jsonEncode(sample),
+    );
+    expect(result.isValid, isTrue);
+  });
+
+  test('review_init schema validation rejects missing question', () async {
+    final repo = PromptRepository();
+    final schema = await repo.loadSchema('review_init');
+    final validator = SchemaValidator();
+    final invalid = {
+      'teacher_message': 'Try this.',
+      'turn_state': 'UNFINISHED',
+      'grading': null,
+      'error_book_update': null,
+      'evidence': {
+        'a': 0,
+        'c': 0,
+        'h': 0,
+        't': 'OTHER',
+        'mt': <String>[],
+      },
+      'mastery_level': 'NOT_PASS',
+      'next_mode': 'REVIEW',
+    };
+    final result = await validator.validateJson(
+      schemaMap: schema,
+      responseText: jsonEncode(invalid),
+    );
+    expect(result.isValid, isFalse);
+    expect(result.error, isNotNull);
+  });
 }

@@ -1,6 +1,7 @@
 # DONES
 Last updated: 2026-02-27
 
+- Hardened student tutor chat reliability: added structured JSON schema validation for `learn_init`, `learn_cont`, `review_init`, and `review_cont`; added single-flight dedupe by `(session + prompt + call_hash)`; added structured-retry telemetry fields (`attempt`, `retry_reason`, `backoff_ms`, `rendered_chars`, `response_chars`, `db_write_ok`, `ui_commit_ok`) to LLM logs; and enabled summary cache reuse when no new evidence was added since the latest summary.
 - Completed marketplace re-download conflict policy for prompt metadata overwrite: newer remote bundles now preserve local prompt/profile edits when local changes were made after previous metadata apply, and report explicit preserved-local messaging.
 - Added secure-storage timestamp tracking for prompt metadata apply (`promptMetadataAppliedAt`) to support conflict detection on re-download.
 - Finished workflow-critical persistent message coverage for teacher enrollment request actions and teacher-home sync/upload preflight errors (manual dismiss, copyable text).

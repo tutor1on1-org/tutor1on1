@@ -147,11 +147,13 @@ class LlmService {
         responseJson: record.responseJson,
         parseValid: record.parseValid,
         parseError: record.parseError,
+        callHash: callHash,
+        model: modelToUse,
+        baseUrl: settings.baseUrl,
       );
     }
 
-    final apiKey =
-        await _secureStorage.readApiKeyForBaseUrl(settings.baseUrl);
+    final apiKey = await _secureStorage.readApiKeyForBaseUrl(settings.baseUrl);
     if ((apiKey ?? '').isEmpty) {
       throw StateError('Missing API key. Set it in Settings.');
     }
@@ -225,6 +227,8 @@ class LlmService {
         sessionId: context?.sessionId,
         kpKey: context?.kpKey,
         action: context?.action,
+        renderedChars: renderedPrompt.length,
+        responseChars: responseText.length,
       );
 
       _logResponse(
@@ -240,6 +244,9 @@ class LlmService {
         responseJson: responseJson,
         parseValid: parseValid,
         parseError: parseError,
+        callHash: callHash,
+        model: modelToUse,
+        baseUrl: settings.baseUrl,
       );
     } catch (error) {
       stopwatch.stop();
@@ -258,6 +265,7 @@ class LlmService {
         sessionId: context?.sessionId,
         kpKey: context?.kpKey,
         action: context?.action,
+        renderedChars: renderedPrompt.length,
       );
       rethrow;
     }
@@ -321,11 +329,13 @@ class LlmService {
         responseJson: record.responseJson,
         parseValid: record.parseValid,
         parseError: record.parseError,
+        callHash: callHash,
+        model: modelToUse,
+        baseUrl: settings.baseUrl,
       );
     }
 
-    final apiKey =
-        await _secureStorage.readApiKeyForBaseUrl(settings.baseUrl);
+    final apiKey = await _secureStorage.readApiKeyForBaseUrl(settings.baseUrl);
     if ((apiKey ?? '').isEmpty) {
       throw StateError('Missing API key. Set it in Settings.');
     }
@@ -400,6 +410,8 @@ class LlmService {
         sessionId: context?.sessionId,
         kpKey: context?.kpKey,
         action: context?.action,
+        renderedChars: renderedPrompt.length,
+        responseChars: responseText.length,
       );
 
       _logResponse(
@@ -415,6 +427,9 @@ class LlmService {
         responseJson: responseJson,
         parseValid: parseValid,
         parseError: parseError,
+        callHash: callHash,
+        model: modelToUse,
+        baseUrl: settings.baseUrl,
       );
     } catch (error) {
       stopwatch.stop();
@@ -433,6 +448,7 @@ class LlmService {
         sessionId: context?.sessionId,
         kpKey: context?.kpKey,
         action: context?.action,
+        renderedChars: renderedPrompt.length,
       );
       rethrow;
     }
@@ -535,9 +551,8 @@ class LlmService {
       provider.authHeader: '${provider.authPrefix}$apiKey',
     });
     request.body = jsonEncode(bodyMap);
-    final response = await client
-        .send(request)
-        .timeout(Duration(seconds: timeoutSeconds));
+    final response =
+        await client.send(request).timeout(Duration(seconds: timeoutSeconds));
 
     if (isCancelled()) {
       throw StateError('Request cancelled.');
@@ -598,7 +613,6 @@ class LlmService {
     }
     return trimmed;
   }
-
 
   String? _extractContentFromPayload(Map<String, dynamic> payload) {
     final choices = payload['choices'];

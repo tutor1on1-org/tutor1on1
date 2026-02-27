@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReviewContOutput",
+  "type": "object",
+  "required": [
+    "teacher_message",
+    "turn_state",
+    "question",
+    "grading",
+    "error_book_update",
+    "evidence",
+    "mastery_level",
+    "next_mode"
+  ],
+  "properties": {
+    "teacher_message": {
+      "type": "string",
+      "minLength": 1
+    },
+    "turn_state": {
+      "type": "string",
+      "enum": ["UNFINISHED", "FINISHED"]
+    },
+    "question": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": ["text", "type_id"],
+          "properties": {
+            "text": {
+              "type": "string",
+              "minLength": 1
+            },
+            "type_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "grading": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": ["is_correct", "mistake_summary", "hint_level"],
+          "properties": {
+            "is_correct": {
+              "type": "boolean"
+            },
+            "mistake_summary": {
+              "type": "string"
+            },
+            "hint_level": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3
+            }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "error_book_update": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": ["type_id", "delta_wrong", "mistake_tag", "mistake_note"],
+          "properties": {
+            "type_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "delta_wrong": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "mistake_tag": {
+              "type": "string",
+              "minLength": 1
+            },
+            "mistake_note": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["a", "c", "h", "t", "mt"],
+      "properties": {
+        "a": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "c": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "t": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mt": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "mastery_level": {
+      "type": "string",
+      "enum": ["NOT_PASS", "PASS_EASY", "PASS_MEDIUM", "PASS_HARD"]
+    },
+    "next_mode": {
+      "type": "string",
+      "enum": ["LEARN", "REVIEW", "SUMMARY"]
+    }
+  },
+  "additionalProperties": false
+}
