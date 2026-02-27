@@ -35,6 +35,8 @@ Historical timeline. Keep active runbook details in `WORKLOG.md`.
 - Reorganized top-level docs: `AGENTS.md` reduced to doc index; operational/process content moved into `README.md`, `WORKFLOW.md`, `SCRIPTS.md`, `BUGS.md`, and `LOGBOOK.md`.
 
 ## 2026-02-27
+- Removed legacy prompt exposure and dead compatibility branches from active app paths (`learn/review/summarize` prompt UI/managed metadata cleanup; session legacy render branch removal) and deleted unused bundled legacy prompt files.
+- Completed analyzer cleanup pass to zero issues by updating deprecated dropdown APIs, removing redundant null-check patterns, and cleaning tool-script imports/casts.
 - Added P0 regression tests for normalized-subject reconciliation (`_<timestamp>` stripping) in enrollment sync for both teacher and student paths.
 - Added compatibility coverage for older servers where `/api/enrollments/quit-requests` returns `404` (now asserted to resolve as empty list).
 - Updated local `packages/record_linux` override to match `record_platform_interface` permission method signature and restored Windows release build success.

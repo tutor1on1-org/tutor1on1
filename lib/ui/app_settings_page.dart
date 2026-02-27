@@ -1158,7 +1158,7 @@ class _SettingsPageState extends State<SettingsPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               DropdownButtonFormField<User>(
-                value: selectedStudent,
+                initialValue: selectedStudent,
                 decoration:
                     InputDecoration(labelText: l10n.selectStudentLabel),
                 items: students

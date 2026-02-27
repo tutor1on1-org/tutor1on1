@@ -28,9 +28,6 @@ class _MarketplacePageState extends State<MarketplacePage> {
     'review_init',
     'review_cont',
     'summary',
-    'learn',
-    'review',
-    'summarize',
   ];
 
   late final MarketplaceApiService _api;

@@ -1,13 +1,9 @@
-import 'package:archive/archive.dart';
 import 'package:archive/archive_io.dart';
-import 'package:archive/src/zip/zip_directory.dart';
-import 'package:archive/src/zip/zip_file_header.dart';
-import 'package:archive/src/zlib/inflate.dart';
 
 Future<void> main() async {
   final input = InputFileStream('tmp_bundle_21.zip');
   final dir = ZipDirectory.read(input);
-  final hdr = dir.fileHeaders.first as ZipFileHeader;
+  final hdr = dir.fileHeaders.first;
   final zf = hdr.file!;
   print('file=${zf.filename} comp=${zf.compressedSize} uncomp=${zf.uncompressedSize} method=${zf.compressionMethod}');
   try {

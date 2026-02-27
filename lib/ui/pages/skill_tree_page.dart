@@ -429,7 +429,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
                                   Expanded(
                                     child: Text(text),
                                   ),
-                                  if (showTeacherControls && studentId != null)
+                                  if (showTeacherControls)
                                     Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
@@ -513,7 +513,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
                         SizedBox(
                           width: 160,
                           child: DropdownButtonFormField<int>(
-                            value: _levelLimit,
+                            initialValue: _levelLimit,
                             decoration: InputDecoration(
                               labelText: l10n.levelFilterLabel,
                               border: const OutlineInputBorder(),
@@ -548,7 +548,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
                         SizedBox(
                           width: 180,
                           child: DropdownButtonFormField<int?>(
-                            value: _yearFilter,
+                            initialValue: _yearFilter,
                             decoration: InputDecoration(
                               labelText: l10n.yearFilterLabel,
                               border: const OutlineInputBorder(),

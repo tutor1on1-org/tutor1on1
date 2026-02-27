@@ -11,6 +11,14 @@ class PromptValidationResult {
 }
 
 class PromptTemplateValidator {
+  static const Set<String> _structuredPromptNames = {
+    'learn_init',
+    'learn_cont',
+    'review_init',
+    'review_cont',
+    'summary',
+  };
+
   Set<String> allSupportedVariables() {
     return allowedVariables('__all__');
   }
@@ -25,11 +33,6 @@ class PromptTemplateValidator {
     final used = _extractVariables(content);
     final missing =
         allowMissingRequired ? <String>{} : required.difference(used);
-    if (_requiresHistory(promptName) &&
-        missing.contains('conversation_history') &&
-        used.contains('session_history')) {
-      missing.remove('conversation_history');
-    }
     final unknown = used.difference(allowed);
     return PromptValidationResult(
       missingVariables: missing,
@@ -39,24 +42,6 @@ class PromptTemplateValidator {
 
   Set<String> requiredVariables(String promptName) {
     switch (promptName) {
-      case 'learn':
-      case 'review':
-        return {
-          'subject',
-          'kp_title',
-          'kp_description',
-          'conversation_history',
-          'student_input',
-          'student_summary',
-        };
-      case 'summarize':
-        return {
-          'subject',
-          'kp_title',
-          'kp_description',
-          'conversation_history',
-          'student_summary',
-        };
       case 'learn_init':
         return {
           'lesson_content',
@@ -118,40 +103,20 @@ class PromptTemplateValidator {
       'last_evidence',
       'current_mastery_level',
     };
-    switch (promptName) {
-      case 'learn':
-      case 'review':
-      case 'summarize':
-        return {
-          ...required,
-          ...baseContext,
-          ...historyContext,
-        };
-      case 'learn_init':
-      case 'learn_cont':
-      case 'review_init':
-      case 'review_cont':
-      case 'summary':
-        return {
-          ...required,
-          ...baseContext,
-          ...nextGenContext,
-          ...historyContext,
-        };
-      default:
-        return {
-          ...required,
-          ...baseContext,
-          ...historyContext,
-          ...nextGenContext,
-        };
+    if (_structuredPromptNames.contains(promptName)) {
+      return {
+        ...required,
+        ...baseContext,
+        ...nextGenContext,
+        ...historyContext,
+      };
     }
-  }
-
-  bool _requiresHistory(String promptName) {
-    return promptName == 'learn' ||
-        promptName == 'review' ||
-        promptName == 'summarize';
+    return {
+      ...required,
+      ...baseContext,
+      ...historyContext,
+      ...nextGenContext,
+    };
   }
 
   Set<String> _extractVariables(String content) {

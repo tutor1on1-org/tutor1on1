@@ -109,18 +109,6 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
         name: 'summary',
         title: 'Summary (Final)',
       ),
-      _PromptItem(
-        name: 'learn',
-        title: '${l10n.promptLearn} (Legacy)',
-      ),
-      _PromptItem(
-        name: 'review',
-        title: '${l10n.promptReview} (Legacy)',
-      ),
-      _PromptItem(
-        name: 'summarize',
-        title: '${l10n.promptSummarize} (Legacy)',
-      ),
     ];
 
     return Scaffold(
@@ -142,7 +130,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
             )
           else
             DropdownButtonFormField<_PromptScope>(
-              value: _selectedScope,
+              initialValue: _selectedScope,
               decoration: InputDecoration(labelText: l10n.promptScopeLabel),
               items: _scopes
                   .map(

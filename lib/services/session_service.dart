@@ -329,30 +329,10 @@ class SessionService {
       );
       values['presented_questions'] = questionsText;
     }
-    final useLegacyPrompt = promptName == 'learn' || promptName == 'review';
     final renderResult = _renderWithHistoryLimit(
       template: template,
       values: values,
       maxTokens: settings.maxTokens,
-      applyExtras: (rendered) {
-        if (!useLegacyPrompt) {
-          return rendered;
-        }
-        final resolvedLecture = lectureText;
-        if (resolvedLecture != null) {
-          return _appendLecture(rendered, resolvedLecture);
-        }
-        final resolvedQuestions = questionsText;
-        final resolvedLevel = questionLevel;
-        if (resolvedQuestions != null && resolvedLevel != null) {
-          return _appendQuestionBank(
-            rendered,
-            resolvedQuestions,
-            resolvedLevel,
-          );
-        }
-        return rendered;
-      },
     );
     if (renderResult.maxTokensTooSmall && onPromptWarning != null) {
       onPromptWarning();
@@ -659,7 +639,6 @@ class SessionService {
       template: template,
       values: values,
       maxTokens: settings.maxTokens,
-      applyExtras: (rendered) => rendered,
     );
     if (renderResult.maxTokensTooSmall && onPromptWarning != null) {
       onPromptWarning();
@@ -789,7 +768,6 @@ class SessionService {
     required String template,
     required Map<String, Object?> values,
     required int maxTokens,
-    required String Function(String rendered) applyExtras,
   }) {
     final historyValue = (values['conversation_history'] ?? '').toString();
     final usesHistory = _hasVariable(template, 'conversation_history') ||
@@ -798,7 +776,7 @@ class SessionService {
       final updated = Map<String, Object?>.from(values);
       updated['conversation_history'] = history;
       updated['session_history'] = history;
-      return applyExtras(_renderer.render(template, updated));
+      return _renderer.render(template, updated);
     }
 
     final full = renderWithHistory(historyValue);
@@ -1107,26 +1085,6 @@ class SessionService {
       throw StateError('Course not loaded. Load the folder first.');
     }
     return basePath;
-  }
-
-  String _appendLecture(String rendered, String lectureText) {
-    final trimmed = lectureText.trim();
-    if (trimmed.isEmpty) {
-      return rendered;
-    }
-    return '$rendered\n\nLecture content (use once):\n$trimmed';
-  }
-
-  String _appendQuestionBank(
-    String rendered,
-    String questionsText,
-    String level,
-  ) {
-    final trimmed = questionsText.trim();
-    if (trimmed.isEmpty) {
-      return rendered;
-    }
-    return '$rendered\n\nQuestion bank ($level):\n$trimmed';
   }
 
   String _resolveActionMode(String mode) {

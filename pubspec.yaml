@@ -52,13 +52,10 @@ flutter:
   uses-material-design: true
   generate: true
   assets:
-    - assets/prompts/learn.txt
     - assets/prompts/learn_init.prompt.txt
     - assets/prompts/learn_cont.prompt.txt
-    - assets/prompts/review.txt
     - assets/prompts/review_init.prompt.txt
     - assets/prompts/review_cont.prompt.txt
-    - assets/prompts/summarize.txt
     - assets/prompts/summary.prompt.txt
     - assets/schemas/learn_init.schema.json
     - assets/schemas/learn_cont.schema.json
