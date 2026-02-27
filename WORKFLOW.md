@@ -1,5 +1,5 @@
 # WORKFLOW
-Last updated: 2026-02-28
+Last updated: 2026-02-27
 
 ## Standard workflow
 1. Understand scope and locate the true failing/target layer.
@@ -7,9 +7,9 @@ Last updated: 2026-02-28
 3. Validate directly on changed layer, then run adjacent-layer regression checks.
 4. Run `flutter build windows --release` before updating `DONEs.md`.
 5. If backend under `remote/` changed, rebuild binary and restart service before reporting done.
-6. Update memory: review all `.md` files, rewrite into the project's current format, remove duplicate content, and keep each file scoped to its defined purpose.
+6. Update memory docs intentionally; memory hook will auto-consolidate only files whose line count delta is greater than `10` since its last snapshot.
 7. Update docs (`BUGS.md`, `LOGBOOK.md`, `TODOS.md`, `DONEs.md`) as applicable.
-8. After feature changes are committed, run `powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1` to execute project validation and trigger the post-validation hook (memory consolidation + push).
+8. After feature changes are committed, run `powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1 -NoPostHook` as the validation gate.
 
 ## Bug-fix discipline
 1. Reproduce with evidence (logs, script, or minimal failing test).
@@ -45,12 +45,13 @@ Last updated: 2026-02-28
 
 ## Documentation workflow
 - `AGENTS.md` stays minimal and only points to docs.
-- `update memory` means a full markdown pass: review every `.md` file, normalize headings/sections/order to current standards, deduplicate repeated guidance, and keep one source of truth per rule.
+- `update memory` should focus on docs that changed meaningfully; pre-push memory hook targets only memory markdown files with line-count delta `>10`.
 - Keep `README.md` aligned with current architecture and final product aim.
 - Keep `SCRIPTS.md` command-accurate; remove stale commands immediately.
 - Keep `LOGBOOK.md` chronological (history), and `WORKLOG.md` operational (active runbook).
 
 ## Hooks workflow
 - Install tracked hooks once per clone: `powershell -ExecutionPolicy Bypass -File scripts/install_githooks.ps1`.
-- Pre-push hook runs project validation gate and blocks push on failures.
-- Post-validation hook (`scripts/post_validate_hook.ps1`) consolidates memory markdown files, commits memory-only updates when present, and pushes branch.
+- Pre-push hook runs `scripts/hook_memory_update.ps1` first, then project validation gate, and blocks push on failures.
+- If memory hook writes updates, pre-push blocks push until those memory files plus snapshot are committed.
+- `scripts/post_validate_hook.ps1` remains an optional manual path.

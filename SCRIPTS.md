@@ -1,5 +1,5 @@
 # SCRIPTS
-Last updated: 2026-02-28
+Last updated: 2026-02-27
 
 All commands are expected from repository root (`C:\family_teacher\app`) unless stated otherwise.
 
@@ -8,26 +8,32 @@ All commands are expected from repository root (`C:\family_teacher\app`) unless 
 - Use `.env.example` as the sanitized template and never commit real secrets.
 - For shared/production environments, prefer managed secret injection over checked-in files.
 
-## Memory consolidation and publish hooks
+## Memory update hook and validation
 Install tracked git hooks:
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/install_githooks.ps1
 ```
 
-Consolidate memory markdown files now:
+Run memory update hook now:
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/consolidate_memory.ps1
+powershell -ExecutionPolicy Bypass -File scripts/hook_memory_update.ps1
 ```
 
-Validate project and then run post-validation hook (consolidate memory + push):
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1
-```
-Use this after you commit feature/code changes; the hook auto-commits only memory markdown updates.
+Hook behavior:
+- Track line counts in `scripts/memory_line_snapshot.json` (tracked file).
+- Trigger Codex memory update only for memory markdown files whose line count changed by more than `10` since last hook run.
+- Reuse a dedicated memory-hook Codex session from `.git/memory_hook_state.json` (local-only state).
+- Pre-push runs this hook first, then validation.
+- If hook updates memory files, pre-push blocks push until those files are committed.
 
-Validate only (no push hook):
+Validate project only:
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1 -NoPostHook
+```
+
+Optional legacy post-validation publish hook:
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1 -RunPostHook
 ```
 
 ## Flutter app setup

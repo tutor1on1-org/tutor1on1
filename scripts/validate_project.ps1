@@ -1,6 +1,7 @@
 param(
   [switch]$SkipFlutter,
   [switch]$SkipGo,
+  [switch]$RunPostHook,
   [switch]$NoPostHook
 )
 
@@ -55,7 +56,7 @@ try {
 
 Write-Output "Validation passed."
 
-if (-not $NoPostHook) {
+if ($RunPostHook -and -not $NoPostHook) {
   $hookScript = Join-Path $PSScriptRoot "post_validate_hook.ps1"
   & $hookScript
 }

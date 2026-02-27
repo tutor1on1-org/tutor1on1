@@ -35,9 +35,9 @@ Historical timeline. Keep active runbook details in `WORKLOG.md`.
 - Reorganized top-level docs: `AGENTS.md` reduced to doc index; operational/process content moved into `README.md`, `WORKFLOW.md`, `SCRIPTS.md`, `BUGS.md`, and `LOGBOOK.md`.
 
 ## 2026-02-27
-- Consolidated markdown memory docs and standardized memory maintenance via `scripts/consolidate_memory.ps1`.
-- Added validation/publish automation: `scripts/validate_project.ps1` now triggers `scripts/post_validate_hook.ps1` (memory consolidation + push on successful validation).
-- Added tracked pre-push hook support under `.githooks/` plus installer script `scripts/install_githooks.ps1`.
+- Added Codex-based memory update hook (`scripts/hook_memory_update.ps1`) with trigger `line-count delta >10` versus tracked snapshot (`scripts/memory_line_snapshot.json`), target-only file updates, and append suggestions for other memory docs.
+- Added dedicated memory-hook session lifecycle (create if missing, resume if present) using local `.git/memory_hook_state.json` and sub-agent prompt source `scripts/hook_memory_update_prompt.txt`.
+- Updated tracked pre-push hook to run memory update first, then validation, and block push until hook-produced memory changes are committed.
 - Added student-intent aware tutor interaction: chat UI now sends explicit `student_intent` hints into prompt context and REVIEW_CONT schema/prompt now require `answer_state` for clearer final-answer transitions.
 - Enhanced error-book signal quality by aggregating historical REVIEW `error_book_update` entries into prompt context and surfacing top recurring mistake tags in tutor-session UI.
 - Removed legacy prompt exposure and dead compatibility branches from active app paths (`learn/review/summarize` prompt UI/managed metadata cleanup; session legacy render branch removal) and deleted unused bundled legacy prompt files.

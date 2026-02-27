@@ -16,4 +16,28 @@ else
   exit 1
 fi
 
+memory_files=(
+  "AGENTS.md"
+  "README.md"
+  "WORKFLOW.md"
+  "SCRIPTS.md"
+  "BUGS.md"
+  "TODOS.md"
+  "LOGBOOK.md"
+  "WORKLOG.md"
+  "PLANS.md"
+  "DONEs.md"
+  "BACKUP_DRILL.md"
+  "scripts/memory_line_snapshot.json"
+)
+
+"${ps_cmd}" -NoProfile -ExecutionPolicy Bypass -File "${repo_root}/scripts/hook_memory_update.ps1"
+
+memory_status="$(git status --porcelain -- "${memory_files[@]}")"
+if [[ -n "${memory_status}" ]]; then
+  echo "Memory hook generated updates. Commit these files before pushing:"
+  echo "${memory_status}"
+  exit 1
+fi
+
 "${ps_cmd}" -NoProfile -ExecutionPolicy Bypass -File "${repo_root}/scripts/validate_project.ps1" -NoPostHook
