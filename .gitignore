@@ -35,3 +35,11 @@ lib/l10n/app_localizations*.dart
 assets/teachers/*/*
 !assets/teachers/*/prompts/
 !assets/teachers/*/prompts/**
+
+# Local secrets
+.env
+.env.*
+!.env.example
+remote/.env
+remote/.env.*
+!remote/.env.example

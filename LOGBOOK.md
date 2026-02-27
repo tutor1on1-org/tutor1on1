@@ -45,5 +45,5 @@ Historical timeline. Keep active runbook details in `WORKLOG.md`.
 - Added marketplace prompt metadata re-download conflict handling to preserve local prompt/profile edits when newer remote metadata arrives.
 - Added auth recovery SMTP-path regression tests with fake SMTP server; enforced no token leak in response when `RECOVERY_TOKEN_ECHO=false`.
 - Added `scripts/remote_exec.ps1` for canonical key-only SSH defaults and added `BACKUP_DRILL.md` restore/incident runbook.
-- Rotated temporary local secrets in `SECRETS.md` and updated operational docs for rotation/revocation and drill workflow.
+- Rotated temporary local secrets in `.env` and updated operational docs for rotation/revocation and drill workflow.
 - Added tutor-chat reliability hardening: structured schemas for learn/review prompts, single-flight request dedupe, retry telemetry fields in LLM logs, and summary cache short-circuit when context is unchanged.

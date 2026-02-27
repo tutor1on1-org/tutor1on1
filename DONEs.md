@@ -10,7 +10,7 @@ Last updated: 2026-02-27
 - Completed marketplace re-download conflict policy for prompt metadata overwrite: newer remote bundles now preserve local prompt/profile edits when local changes were made after previous metadata apply, and report explicit preserved-local messaging.
 - Added secure-storage timestamp tracking for prompt metadata apply (`promptMetadataAppliedAt`) to support conflict detection on re-download.
 - Finished workflow-critical persistent message coverage for teacher enrollment request actions and teacher-home sync/upload preflight errors (manual dismiss, copyable text).
-- Rotated temporary credentials in `SECRETS.md` (MySQL root/app + JWT secret) and documented JWT/token-revocation operational steps in scripts docs.
+- Rotated temporary credentials in local `.env` (MySQL root/app + JWT secret) and documented JWT/token-revocation operational steps in scripts docs.
 - Added deterministic auth recovery regression tests (`remote/internal/httpserver/handlers/auth_recovery_test.go`) validating SMTP recovery path and enforcing no token echo when `RECOVERY_TOKEN_ECHO=false`.
 - Added canonical remote SSH wrapper script (`scripts/remote_exec.ps1`) with key-only defaults (`ecs-user@43.99.59.107`, `C:\Users\kl\.ssh\id_rsa`, `IdentitiesOnly=yes`).
 - Added backup restore verification + incident response runbook (`BACKUP_DRILL.md`) and linked workflow/script usage.

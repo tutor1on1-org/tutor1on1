@@ -3,6 +3,11 @@ Last updated: 2026-02-27
 
 All commands are expected from repository root (`C:\family_teacher\app`) unless stated otherwise.
 
+## Local secrets policy
+- Keep real credentials only in local `.env` (untracked).
+- Use `.env.example` as the sanitized template and never commit real secrets.
+- For shared/production environments, prefer managed secret injection over checked-in files.
+
 ## Flutter app setup
 ```powershell
 flutter --version

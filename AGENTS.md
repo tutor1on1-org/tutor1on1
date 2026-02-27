@@ -11,7 +11,7 @@
 - `WORKLOG.md` - active remote runbook and host details.
 - `PLANS.md` - phased roadmap.
 - `DONEs.md` - recent completed items.
-- `SECRETS.md` - temporary credentials (rotate regularly).
+- `.env.example` - sanitized local secrets template (`.env` is local and untracked).
 - `BACKUP_DRILL.md` - backup restore verification drill and incident checklist.
 
 ## Experience updates
@@ -62,3 +62,4 @@
 - Keep tutor assistant persistence/logging in a shared path for streaming and non-streaming calls; parity avoids drift bugs, and stream flush timers should be cancelled in `whenComplete` so cancellations/errors do not leak pending timers.
 - Sync efficiency rule: run per-item timestamp gate before hash gate; if timestamp indicates no change, skip immediately, and only compute/apply payload hash when timestamp is newer to avoid unnecessary encryption/decryption/upload/import work.
 - Sync list endpoints should emit stable weak `ETag` values and honor `If-None-Match` with `304` on unchanged payloads (`sessions/progress/enrollments/teacher-courses`) so client sync loops can skip JSON decode/import work.
+- Secrets handling baseline: keep runtime credentials only in untracked `.env`, commit only sanitized `.env.example`, and prefer a managed secret store for shared/production environments.
