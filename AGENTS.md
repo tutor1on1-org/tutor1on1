@@ -54,3 +54,4 @@
 - Recovery flow hardening rule: with `RECOVERY_TOKEN_ECHO=false`, `/api/auth/request-recovery` must not leak token in API response and should be validated with SMTP-path regression tests.
 - Delivery discipline: after code changes pass validation, commit and push in the same turn unless the user explicitly says not to push.
 - Student tutor chat reliability should enforce structured-output schemas for `learn_*`/`review_*`, single-flight dedupe by `(session + prompt + call_hash)`, explicit retry telemetry (`attempt/reason/backoff`), and summary cache reuse when no new evidence exists.
+- Desktop integration tests in this workspace can fail with "More than one device connected"; run with an explicit target (for example `flutter test integration_test/app_flow_test.dart -d windows`).
