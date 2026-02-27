@@ -35,6 +35,8 @@ class SecureStorageService {
       'installed_course_bundle_version:';
   static const _promptMetadataAppliedAtPrefix = 'prompt_metadata_applied_at:';
   static const _syncItemStatePrefix = 'sync_item_state:';
+  static const _syncListEtagPrefix = 'sync_list_etag:';
+  static const _syncRunAtPrefix = 'sync_run_at:';
   final FlutterSecureStorage _storage;
 
   Future<String?> readApiKey() => _storage.read(key: _apiKeyKey);
@@ -246,6 +248,66 @@ class SecureStorageService {
     );
   }
 
+  Future<String?> readSyncListEtag({
+    required int remoteUserId,
+    required String domain,
+    required String scopeKey,
+  }) {
+    return _storage.read(
+      key: _syncListEtagKey(
+        remoteUserId: remoteUserId,
+        domain: domain,
+        scopeKey: scopeKey,
+      ),
+    );
+  }
+
+  Future<void> writeSyncListEtag({
+    required int remoteUserId,
+    required String domain,
+    required String scopeKey,
+    required String etag,
+  }) {
+    return _storage.write(
+      key: _syncListEtagKey(
+        remoteUserId: remoteUserId,
+        domain: domain,
+        scopeKey: scopeKey,
+      ),
+      value: etag.trim(),
+    );
+  }
+
+  Future<DateTime?> readSyncRunAt({
+    required int remoteUserId,
+    required String domain,
+  }) async {
+    final raw = await _storage.read(
+      key: _syncRunAtKey(
+        remoteUserId: remoteUserId,
+        domain: domain,
+      ),
+    );
+    if (raw == null || raw.trim().isEmpty) {
+      return null;
+    }
+    return DateTime.tryParse(raw.trim());
+  }
+
+  Future<void> writeSyncRunAt({
+    required int remoteUserId,
+    required String domain,
+    required DateTime runAt,
+  }) {
+    return _storage.write(
+      key: _syncRunAtKey(
+        remoteUserId: remoteUserId,
+        domain: domain,
+      ),
+      value: runAt.toUtc().toIso8601String(),
+    );
+  }
+
   Future<DateTime?> readPromptMetadataAppliedAt({
     required int remoteUserId,
     required int remoteCourseId,
@@ -324,5 +386,24 @@ class SecureStorageService {
     final normalizedScope = scopeKey.trim();
     final scopeHash = sha256Hex(normalizedScope);
     return '$_syncItemStatePrefix$remoteUserId:$normalizedDomain:$scopeHash';
+  }
+
+  String _syncListEtagKey({
+    required int remoteUserId,
+    required String domain,
+    required String scopeKey,
+  }) {
+    final normalizedDomain = domain.trim().toLowerCase();
+    final normalizedScope = scopeKey.trim();
+    final scopeHash = sha256Hex(normalizedScope);
+    return '$_syncListEtagPrefix$remoteUserId:$normalizedDomain:$scopeHash';
+  }
+
+  String _syncRunAtKey({
+    required int remoteUserId,
+    required String domain,
+  }) {
+    final normalizedDomain = domain.trim().toLowerCase();
+    return '$_syncRunAtPrefix$remoteUserId:$normalizedDomain';
   }
 }

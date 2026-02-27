@@ -115,7 +115,10 @@ func (h *TeacherCoursesHandler) ListCourses(c *fiber.Ctx) error {
 			LatestBundleVersionID: latest.Int64,
 		})
 	}
-	return c.JSON(results)
+	if err := rows.Err(); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "course list failed")
+	}
+	return respondJSONWithETag(c, results)
 }
 
 func (h *TeacherCoursesHandler) CreateCourse(c *fiber.Ctx) error {

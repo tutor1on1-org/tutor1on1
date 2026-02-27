@@ -33,7 +33,9 @@ class SessionSyncService {
   final SessionCryptoService _crypto;
   static final Uuid _uuid = Uuid();
   static final RegExp _versionSuffixPattern = RegExp(r'_(\d{10,})$');
+  static final RegExp _secondLevelChapterPattern = RegExp(r'^(\d+\.\d+)');
   static const String _syncDomainSessionUpload = 'session_upload';
+  static const String _syncDomainSessionGroupUpload = 'session_group_upload';
   static const String _syncDomainProgressUpload = 'progress_upload';
   static const String _syncDomainSessionDownload = 'session_download';
   static const String _syncDomainProgressDownload = 'progress_download';
@@ -85,7 +87,7 @@ class SessionSyncService {
     SimpleKeyPair keyPair,
   ) async {
     await _uploadPendingProgress(currentUser, remoteUserId);
-    await _uploadPendingSessions(currentUser, remoteUserId, keyPair);
+    await _uploadPendingSessions(currentUser, remoteUserId);
     await _downloadSessions(currentUser, remoteUserId, keyPair);
     await _downloadProgress(currentUser, remoteUserId, keyPair);
   }
@@ -204,7 +206,6 @@ class SessionSyncService {
   Future<void> _uploadPendingSessions(
     User currentUser,
     int remoteUserId,
-    SimpleKeyPair keyPair,
   ) async {
     final sessions = await (_db.select(_db.chatSessions)
           ..where((tbl) =>
@@ -215,7 +216,7 @@ class SessionSyncService {
     if (sessions.isEmpty) {
       return;
     }
-    final keysByCourse = <int, CourseKeyBundle>{};
+    final groupedSessions = <String, List<_PendingSessionUpload>>{};
     for (final session in sessions) {
       if (session.studentId != currentUser.id) {
         continue;
@@ -225,8 +226,98 @@ class SessionSyncService {
       if (syncId.isEmpty) {
         continue;
       }
+      final remoteCourseId =
+          await _db.getRemoteCourseId(syncSession.courseVersionId);
+      if (remoteCourseId == null || remoteCourseId <= 0) {
+        continue;
+      }
       final syncUpdatedAt =
           (syncSession.syncUpdatedAt ?? DateTime.now()).toUtc();
+      final chapterKey = _extractSecondLevelChapter(syncSession.kpKey);
+      final groupScopeKey = '$remoteCourseId:$chapterKey';
+      groupedSessions
+          .putIfAbsent(groupScopeKey, () => <_PendingSessionUpload>[])
+          .add(
+            _PendingSessionUpload(
+              session: syncSession,
+              syncId: syncId,
+              syncUpdatedAt: syncUpdatedAt,
+              remoteCourseId: remoteCourseId,
+            ),
+          );
+    }
+    if (groupedSessions.isEmpty) {
+      return;
+    }
+    final keysByCourse = <int, CourseKeyBundle>{};
+    for (final groupEntry in groupedSessions.entries) {
+      final groupScopeKey = groupEntry.key;
+      final groupItems = groupEntry.value;
+      if (groupItems.isEmpty) {
+        continue;
+      }
+      final groupUpdatedAt = groupItems
+          .map((item) => item.syncUpdatedAt)
+          .reduce((left, right) => _latestTimestamp(left, right));
+      final groupHash = _hashSessionUploadGroup(groupItems);
+      final groupState = await _secureStorage.readSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainSessionGroupUpload,
+        scopeKey: groupScopeKey,
+      );
+      if (!_isTimestampNewer(groupUpdatedAt, groupState?.lastSyncedAt)) {
+        for (final item in groupItems) {
+          await _markSessionUploaded(
+            sessionId: item.session.id,
+            uploadedAt: item.syncUpdatedAt,
+          );
+        }
+        continue;
+      }
+      if (groupState != null && groupState.contentHash == groupHash) {
+        for (final item in groupItems) {
+          await _markSessionUploaded(
+            sessionId: item.session.id,
+            uploadedAt: item.syncUpdatedAt,
+          );
+        }
+        await _secureStorage.writeSyncItemState(
+          remoteUserId: remoteUserId,
+          domain: _syncDomainSessionGroupUpload,
+          scopeKey: groupScopeKey,
+          contentHash: groupHash,
+          lastChangedAt: groupUpdatedAt,
+          lastSyncedAt: groupUpdatedAt,
+        );
+        continue;
+      }
+      await _uploadSessionGroup(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+        keysByCourse: keysByCourse,
+        groupItems: groupItems,
+      );
+      await _secureStorage.writeSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainSessionGroupUpload,
+        scopeKey: groupScopeKey,
+        contentHash: groupHash,
+        lastChangedAt: groupUpdatedAt,
+        lastSyncedAt: groupUpdatedAt,
+      );
+    }
+  }
+
+  Future<void> _uploadSessionGroup({
+    required User currentUser,
+    required int remoteUserId,
+    required Map<int, CourseKeyBundle> keysByCourse,
+    required List<_PendingSessionUpload> groupItems,
+  }) async {
+    for (final pending in groupItems) {
+      final syncSession = pending.session;
+      final syncId = pending.syncId;
+      final syncUpdatedAt = pending.syncUpdatedAt;
       final syncState = await _secureStorage.readSyncItemState(
         remoteUserId: remoteUserId,
         domain: _syncDomainSessionUpload,
@@ -239,11 +330,7 @@ class SessionSyncService {
         );
         continue;
       }
-      final remoteCourseId =
-          await _db.getRemoteCourseId(syncSession.courseVersionId);
-      if (remoteCourseId == null || remoteCourseId <= 0) {
-        continue;
-      }
+      final remoteCourseId = pending.remoteCourseId;
       var resolvedKeys = keysByCourse[remoteCourseId];
       resolvedKeys ??= await _api.getCourseKeys(
         courseId: remoteCourseId,
@@ -330,7 +417,26 @@ class SessionSyncService {
     SimpleKeyPair keyPair,
   ) async {
     final cursor = await _secureStorage.readSessionSyncCursor(remoteUserId);
-    final items = await _api.listSessions(since: cursor);
+    final listScopeKey = _syncListScopeKey(cursor);
+    final ifNoneMatch = await _secureStorage.readSyncListEtag(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainSessionDownload,
+      scopeKey: listScopeKey,
+    );
+    final listResult = await _api.listSessionsDelta(
+      since: cursor,
+      ifNoneMatch: ifNoneMatch,
+    );
+    await _writeSyncListEtag(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainSessionDownload,
+      scopeKey: listScopeKey,
+      etag: listResult.etag,
+    );
+    if (listResult.notModified) {
+      return;
+    }
+    final items = listResult.items;
     if (items.isEmpty) {
       return;
     }
@@ -404,7 +510,26 @@ class SessionSyncService {
       return;
     }
     final cursor = await _secureStorage.readProgressSyncCursor(remoteUserId);
-    final items = await _api.listProgress(since: cursor);
+    final listScopeKey = _syncListScopeKey(cursor);
+    final ifNoneMatch = await _secureStorage.readSyncListEtag(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainProgressDownload,
+      scopeKey: listScopeKey,
+    );
+    final listResult = await _api.listProgressDelta(
+      since: cursor,
+      ifNoneMatch: ifNoneMatch,
+    );
+    await _writeSyncListEtag(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainProgressDownload,
+      scopeKey: listScopeKey,
+      etag: listResult.etag,
+    );
+    if (listResult.notModified) {
+      return;
+    }
+    final items = listResult.items;
     if (items.isEmpty) {
       return;
     }
@@ -840,8 +965,65 @@ class SessionSyncService {
     );
   }
 
+  String _hashSessionUploadGroup(List<_PendingSessionUpload> groupItems) {
+    final fingerprints = groupItems
+        .map(
+          (item) =>
+              '${item.syncId}|${item.syncUpdatedAt.toUtc().toIso8601String()}',
+        )
+        .toList()
+      ..sort();
+    return _hashEnvelope(fingerprints.join('\n'));
+  }
+
+  String _extractSecondLevelChapter(String kpKey) {
+    final trimmed = kpKey.trim();
+    if (trimmed.isEmpty || trimmed == kTreeViewStateKpKey) {
+      return 'ungrouped';
+    }
+    final match = _secondLevelChapterPattern.firstMatch(trimmed);
+    if (match != null) {
+      final value = match.group(1);
+      if (value != null && value.isNotEmpty) {
+        return value;
+      }
+    }
+    final parts = trimmed.split('.');
+    if (parts.length >= 2) {
+      final first = parts[0].trim();
+      final second = parts[1].trim();
+      if (int.tryParse(first) != null && int.tryParse(second) != null) {
+        return '$first.$second';
+      }
+    }
+    return trimmed;
+  }
+
   String _hashCanonicalJson(Map<String, Object?> payload) {
     return _hashEnvelope(jsonEncode(payload));
+  }
+
+  String _syncListScopeKey(String? cursor) {
+    final normalized = (cursor ?? '').trim();
+    return 'since:$normalized';
+  }
+
+  Future<void> _writeSyncListEtag({
+    required int remoteUserId,
+    required String domain,
+    required String scopeKey,
+    required String? etag,
+  }) async {
+    final normalized = (etag ?? '').trim();
+    if (normalized.isEmpty) {
+      return;
+    }
+    await _secureStorage.writeSyncListEtag(
+      remoteUserId: remoteUserId,
+      domain: domain,
+      scopeKey: scopeKey,
+      etag: normalized,
+    );
   }
 
   String _resolveSyncHash({
@@ -1158,6 +1340,20 @@ class _ResolvedProgressPayload {
   final String summaryRawResponse;
   final bool? summaryValid;
   final String updatedAt;
+}
+
+class _PendingSessionUpload {
+  _PendingSessionUpload({
+    required this.session,
+    required this.syncId,
+    required this.syncUpdatedAt,
+    required this.remoteCourseId,
+  });
+
+  final ChatSession session;
+  final String syncId;
+  final DateTime syncUpdatedAt;
+  final int remoteCourseId;
 }
 
 class _SyncStateWrite {

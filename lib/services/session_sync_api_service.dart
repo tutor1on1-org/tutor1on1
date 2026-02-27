@@ -17,6 +17,18 @@ class SessionSyncApiException implements Exception {
   String toString() => message;
 }
 
+class SyncListResult<T> {
+  SyncListResult({
+    required this.items,
+    required this.etag,
+    required this.notModified,
+  });
+
+  final List<T> items;
+  final String? etag;
+  final bool notModified;
+}
+
 class UserKeyRecord {
   UserKeyRecord({
     required this.publicKey,
@@ -253,18 +265,46 @@ class SessionSyncApiService {
   }
 
   Future<List<SessionSyncItem>> listSessions({String? since}) async {
+    final result = await listSessionsDelta(since: since);
+    return result.items;
+  }
+
+  Future<SyncListResult<SessionSyncItem>> listSessionsDelta({
+    String? since,
+    int? limit,
+    String? ifNoneMatch,
+  }) async {
     final params = <String, String>{};
     if ((since ?? '').trim().isNotEmpty) {
       params['since'] = since!.trim();
     }
-    final response = await _get('/api/sessions/sync/list', params: params);
-    if (response is! List) {
+    if ((limit ?? 0) > 0) {
+      params['limit'] = limit!.toString();
+    }
+    final response = await _getResponse(
+      '/api/sessions/sync/list',
+      params: params,
+      ifNoneMatch: ifNoneMatch,
+    );
+    if (response.statusCode == 304) {
+      return SyncListResult<SessionSyncItem>(
+        items: const <SessionSyncItem>[],
+        etag: response.headers['etag'],
+        notModified: true,
+      );
+    }
+    final decoded = _decodeResponse(response);
+    if (decoded is! List) {
       throw SessionSyncApiException('Unexpected response format.');
     }
-    return response
-        .whereType<Map<String, dynamic>>()
-        .map(SessionSyncItem.fromJson)
-        .toList();
+    return SyncListResult<SessionSyncItem>(
+      items: decoded
+          .whereType<Map<String, dynamic>>()
+          .map(SessionSyncItem.fromJson)
+          .toList(),
+      etag: response.headers['etag'],
+      notModified: false,
+    );
   }
 
   Future<void> uploadProgress({
@@ -313,36 +353,76 @@ class SessionSyncApiService {
   }
 
   Future<List<ProgressSyncItem>> listProgress({String? since}) async {
+    final result = await listProgressDelta(since: since);
+    return result.items;
+  }
+
+  Future<SyncListResult<ProgressSyncItem>> listProgressDelta({
+    String? since,
+    int? limit,
+    String? ifNoneMatch,
+  }) async {
     final params = <String, String>{};
     if ((since ?? '').trim().isNotEmpty) {
       params['since'] = since!.trim();
     }
-    final response = await _get('/api/progress/sync/list', params: params);
-    if (response is! List) {
+    if ((limit ?? 0) > 0) {
+      params['limit'] = limit!.toString();
+    }
+    final response = await _getResponse(
+      '/api/progress/sync/list',
+      params: params,
+      ifNoneMatch: ifNoneMatch,
+    );
+    if (response.statusCode == 304) {
+      return SyncListResult<ProgressSyncItem>(
+        items: const <ProgressSyncItem>[],
+        etag: response.headers['etag'],
+        notModified: true,
+      );
+    }
+    final decoded = _decodeResponse(response);
+    if (decoded is! List) {
       throw SessionSyncApiException('Unexpected response format.');
     }
-    return response
-        .whereType<Map<String, dynamic>>()
-        .map(ProgressSyncItem.fromJson)
-        .toList();
+    return SyncListResult<ProgressSyncItem>(
+      items: decoded
+          .whereType<Map<String, dynamic>>()
+          .map(ProgressSyncItem.fromJson)
+          .toList(),
+      etag: response.headers['etag'],
+      notModified: false,
+    );
   }
 
   Future<dynamic> _get(
     String path, {
     Map<String, String>? params,
   }) async {
+    final response = await _getResponse(path, params: params);
+    return _decodeResponse(response);
+  }
+
+  Future<http.Response> _getResponse(
+    String path, {
+    Map<String, String>? params,
+    String? ifNoneMatch,
+  }) async {
     final token = await _requireAccessToken();
     final uri = Uri.parse('$_baseUrl$path').replace(queryParameters: params);
-    http.Response response;
+    final headers = _authHeaders(token);
+    final etag = (ifNoneMatch ?? '').trim();
+    if (etag.isNotEmpty) {
+      headers['If-None-Match'] = etag;
+    }
     try {
-      response = await _client.get(
+      return await _client.get(
         uri,
-        headers: _authHeaders(token),
+        headers: headers,
       );
     } on Exception catch (error) {
       throw SessionSyncApiException('Request failed: $error');
     }
-    return _decodeResponse(response);
   }
 
   Future<dynamic> _post(String path, Map<String, dynamic> body) async {
@@ -377,6 +457,9 @@ class SessionSyncApiService {
   }
 
   dynamic _decodeResponse(http.Response response) {
+    if (response.statusCode == 304) {
+      return const <String, dynamic>{};
+    }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw SessionSyncApiException(
         _extractError(response.body) ?? 'Request failed.',

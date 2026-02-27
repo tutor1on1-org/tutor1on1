@@ -361,14 +361,14 @@ func (h *EnrollmentHandler) ListEnrollments(c *fiber.Ctx) error {
 	defer rows.Close()
 
 	type enrollmentSummary struct {
-		EnrollmentID         int64 `json:"enrollment_id"`
-		CourseID             int64 `json:"course_id"`
-		TeacherID            int64 `json:"teacher_id"`
-		Status               string `json:"status"`
-		AssignedAt           string `json:"assigned_at"`
-		CourseName           string `json:"course_subject"`
-		TeacherName          string `json:"teacher_name"`
-		LatestBundleVersionID int64 `json:"latest_bundle_version_id"`
+		EnrollmentID          int64  `json:"enrollment_id"`
+		CourseID              int64  `json:"course_id"`
+		TeacherID             int64  `json:"teacher_id"`
+		Status                string `json:"status"`
+		AssignedAt            string `json:"assigned_at"`
+		CourseName            string `json:"course_subject"`
+		TeacherName           string `json:"teacher_name"`
+		LatestBundleVersionID int64  `json:"latest_bundle_version_id"`
 	}
 
 	results := []enrollmentSummary{}
@@ -406,7 +406,10 @@ func (h *EnrollmentHandler) ListEnrollments(c *fiber.Ctx) error {
 			LatestBundleVersionID: latestBundle.Int64,
 		})
 	}
-	return c.JSON(results)
+	if err := rows.Err(); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "enrollment list failed")
+	}
+	return respondJSONWithETag(c, results)
 }
 
 func (h *EnrollmentHandler) ListTeacherRequests(c *fiber.Ctx) error {

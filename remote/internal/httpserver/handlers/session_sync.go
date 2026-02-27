@@ -177,7 +177,10 @@ func (h *SessionSyncHandler) List(c *fiber.Ctx) error {
 			"envelope_hash":   hashValue,
 		})
 	}
-	return c.JSON(results)
+	if err := rows.Err(); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "session sync list failed")
+	}
+	return respondJSONWithETag(c, results)
 }
 
 func getTeacherUserIDForCourse(db *sql.DB, courseID int64) (int64, error) {

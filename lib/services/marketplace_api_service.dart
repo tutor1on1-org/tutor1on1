@@ -17,6 +17,18 @@ class MarketplaceApiException implements Exception {
   String toString() => message;
 }
 
+class MarketplaceListResult<T> {
+  MarketplaceListResult({
+    required this.items,
+    required this.etag,
+    required this.notModified,
+  });
+
+  final List<T> items;
+  final String? etag;
+  final bool notModified;
+}
+
 class CatalogCourse {
   CatalogCourse({
     required this.courseId,
@@ -384,10 +396,32 @@ class MarketplaceApiService {
   }
 
   Future<List<EnrollmentSummary>> listEnrollments() async {
-    final response = await _get('/api/enrollments');
-    return _decodeList(
-      response,
-      (json) => EnrollmentSummary.fromJson(json),
+    final result = await listEnrollmentsDelta();
+    return result.items;
+  }
+
+  Future<MarketplaceListResult<EnrollmentSummary>> listEnrollmentsDelta({
+    String? ifNoneMatch,
+  }) async {
+    final response = await _getResponse(
+      '/api/enrollments',
+      ifNoneMatch: ifNoneMatch,
+    );
+    if (response.statusCode == 304) {
+      return MarketplaceListResult<EnrollmentSummary>(
+        items: const <EnrollmentSummary>[],
+        etag: response.headers['etag'],
+        notModified: true,
+      );
+    }
+    final decoded = _decodeResponse(response);
+    return MarketplaceListResult<EnrollmentSummary>(
+      items: _decodeList(
+        decoded,
+        (json) => EnrollmentSummary.fromJson(json),
+      ),
+      etag: response.headers['etag'],
+      notModified: false,
     );
   }
 
@@ -473,10 +507,32 @@ class MarketplaceApiService {
   }
 
   Future<List<TeacherCourseSummary>> listTeacherCourses() async {
-    final response = await _get('/api/teacher/courses');
-    return _decodeList(
-      response,
-      (json) => TeacherCourseSummary.fromJson(json),
+    final result = await listTeacherCoursesDelta();
+    return result.items;
+  }
+
+  Future<MarketplaceListResult<TeacherCourseSummary>> listTeacherCoursesDelta({
+    String? ifNoneMatch,
+  }) async {
+    final response = await _getResponse(
+      '/api/teacher/courses',
+      ifNoneMatch: ifNoneMatch,
+    );
+    if (response.statusCode == 304) {
+      return MarketplaceListResult<TeacherCourseSummary>(
+        items: const <TeacherCourseSummary>[],
+        etag: response.headers['etag'],
+        notModified: true,
+      );
+    }
+    final decoded = _decodeResponse(response);
+    return MarketplaceListResult<TeacherCourseSummary>(
+      items: _decodeList(
+        decoded,
+        (json) => TeacherCourseSummary.fromJson(json),
+      ),
+      etag: response.headers['etag'],
+      notModified: false,
     );
   }
 
@@ -644,18 +700,30 @@ class MarketplaceApiService {
     String path, {
     Map<String, String>? params,
   }) async {
+    final response = await _getResponse(path, params: params);
+    return _decodeResponse(response);
+  }
+
+  Future<http.Response> _getResponse(
+    String path, {
+    Map<String, String>? params,
+    String? ifNoneMatch,
+  }) async {
     final token = await _requireAccessToken();
     final uri = Uri.parse('$_baseUrl$path').replace(queryParameters: params);
-    http.Response response;
+    final headers = _authHeaders(token);
+    final etag = (ifNoneMatch ?? '').trim();
+    if (etag.isNotEmpty) {
+      headers['If-None-Match'] = etag;
+    }
     try {
-      response = await _client.get(
+      return await _client.get(
         uri,
-        headers: _authHeaders(token),
+        headers: headers,
       );
     } on Exception catch (error) {
       throw MarketplaceApiException('Request failed: $error');
     }
-    return _decodeResponse(response);
   }
 
   Future<dynamic> _post(
@@ -694,6 +762,9 @@ class MarketplaceApiService {
   }
 
   dynamic _decodeResponse(http.Response response) {
+    if (response.statusCode == 304) {
+      return const <String, dynamic>{};
+    }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw MarketplaceApiException(
         _extractError(response.body) ?? 'Request failed.',

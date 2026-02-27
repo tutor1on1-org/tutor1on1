@@ -23,6 +23,11 @@ class EnrollmentSyncService {
   final MarketplaceApiService _api;
   bool _syncing = false;
   static final RegExp _versionSuffixPattern = RegExp(r'_(\d{10,})$');
+  static const Duration _syncMinInterval = Duration(seconds: 60);
+  static const String _syncDomainStudentEnrollments = 'enrollment_sync_student';
+  static const String _syncDomainTeacherCourses = 'enrollment_sync_teacher';
+  static const String _syncScopeEnrollments = 'enrollments';
+  static const String _syncScopeTeacherCourses = 'teacher_courses';
 
   Future<void> syncIfReady({required User currentUser}) async {
     if (_syncing) {
@@ -32,6 +37,18 @@ class EnrollmentSyncService {
     if (remoteUserId == null || remoteUserId <= 0) {
       return;
     }
+    final syncDomain = currentUser.role == 'teacher'
+        ? _syncDomainTeacherCourses
+        : _syncDomainStudentEnrollments;
+    final nowUtc = DateTime.now().toUtc();
+    final lastRun = await _secureStorage.readSyncRunAt(
+      remoteUserId: remoteUserId,
+      domain: syncDomain,
+    );
+    if (lastRun != null &&
+        nowUtc.difference(lastRun.toUtc()) < _syncMinInterval) {
+      return;
+    }
     _syncing = true;
     try {
       if (currentUser.role == 'student') {
@@ -39,14 +56,37 @@ class EnrollmentSyncService {
       }
       await _applyDeletionEvents(currentUser, remoteUserId);
       if (currentUser.role == 'teacher') {
-        await _syncTeacherCourses(currentUser);
-        return;
+        await _syncTeacherCourses(
+          currentUser: currentUser,
+          remoteUserId: remoteUserId,
+        );
+      } else {
+        final ifNoneMatch = await _secureStorage.readSyncListEtag(
+          remoteUserId: remoteUserId,
+          domain: _syncDomainStudentEnrollments,
+          scopeKey: _syncScopeEnrollments,
+        );
+        final enrollmentsResult = await _api.listEnrollmentsDelta(
+          ifNoneMatch: ifNoneMatch,
+        );
+        await _writeSyncListEtag(
+          remoteUserId: remoteUserId,
+          domain: _syncDomainStudentEnrollments,
+          scopeKey: _syncScopeEnrollments,
+          etag: enrollmentsResult.etag,
+        );
+        if (!enrollmentsResult.notModified) {
+          await _syncStudentEnrollments(
+            currentUser: currentUser,
+            remoteUserId: remoteUserId,
+            enrollments: enrollmentsResult.items,
+          );
+        }
       }
-      final enrollments = await _api.listEnrollments();
-      await _syncStudentEnrollments(
-        currentUser: currentUser,
+      await _secureStorage.writeSyncRunAt(
         remoteUserId: remoteUserId,
-        enrollments: enrollments,
+        domain: syncDomain,
+        runAt: nowUtc,
       );
     } finally {
       _syncing = false;
@@ -257,8 +297,28 @@ class EnrollmentSyncService {
     await _db.deleteCourseVersion(courseVersionId);
   }
 
-  Future<void> _syncTeacherCourses(User currentUser) async {
-    final remoteCourses = await _api.listTeacherCourses();
+  Future<void> _syncTeacherCourses({
+    required User currentUser,
+    required int remoteUserId,
+  }) async {
+    final ifNoneMatch = await _secureStorage.readSyncListEtag(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainTeacherCourses,
+      scopeKey: _syncScopeTeacherCourses,
+    );
+    final result = await _api.listTeacherCoursesDelta(
+      ifNoneMatch: ifNoneMatch,
+    );
+    await _writeSyncListEtag(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainTeacherCourses,
+      scopeKey: _syncScopeTeacherCourses,
+      etag: result.etag,
+    );
+    if (result.notModified) {
+      return;
+    }
+    final remoteCourses = result.items;
     final localCourses = await _db.getCourseVersionsForTeacher(currentUser.id);
     final localRemoteIdByCourseVersion = <int, int?>{};
     for (final course in localCourses) {
@@ -306,6 +366,24 @@ class EnrollmentSyncService {
     }
 
     await _cleanupTeacherLocalDuplicates(currentUser.id);
+  }
+
+  Future<void> _writeSyncListEtag({
+    required int remoteUserId,
+    required String domain,
+    required String scopeKey,
+    required String? etag,
+  }) async {
+    final normalized = (etag ?? '').trim();
+    if (normalized.isEmpty) {
+      return;
+    }
+    await _secureStorage.writeSyncListEtag(
+      remoteUserId: remoteUserId,
+      domain: domain,
+      scopeKey: scopeKey,
+      etag: normalized,
+    );
   }
 
   CourseVersion? _findLocalCourseCandidate({

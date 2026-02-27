@@ -231,20 +231,20 @@ func (h *ProgressSyncHandler) List(c *fiber.Ctx) error {
 	results := []fiber.Map{}
 	for rows.Next() {
 		var (
-			courseID            int64
-			courseSubject       string
-			teacherUserID       int64
-			studentUserID       int64
-			kpKey               string
-			lit                 bool
-			litPercent          int
-			questionLevel       sql.NullString
-			summaryText         sql.NullString
-			summaryRawResponse  sql.NullString
-			summaryValid        sql.NullBool
-			envelopeBytes       []byte
-			envelopeHash        sql.NullString
-			updatedAt           string
+			courseID           int64
+			courseSubject      string
+			teacherUserID      int64
+			studentUserID      int64
+			kpKey              string
+			lit                bool
+			litPercent         int
+			questionLevel      sql.NullString
+			summaryText        sql.NullString
+			summaryRawResponse sql.NullString
+			summaryValid       sql.NullBool
+			envelopeBytes      []byte
+			envelopeHash       sql.NullString
+			updatedAt          string
 		)
 		var updatedAtTime sql.NullTime
 		if err := rows.Scan(
@@ -278,26 +278,26 @@ func (h *ProgressSyncHandler) List(c *fiber.Ctx) error {
 			hashValue = envelopeHash.String
 		}
 		results = append(results, fiber.Map{
-			"course_id":             courseID,
-			"course_subject":        courseSubject,
-			"teacher_user_id":       teacherUserID,
-			"student_user_id":       studentUserID,
-			"kp_key":                kpKey,
-			"lit":                   lit,
-			"lit_percent":           litPercent,
-			"question_level":        questionLevel.String,
-			"summary_text":          summaryText.String,
-			"summary_raw_response":  summaryRawResponse.String,
-			"summary_valid":         nullableBoolToInterface(summaryValid),
-			"updated_at":            updatedAt,
-			"envelope":              encodedEnvelope,
-			"envelope_hash":         hashValue,
+			"course_id":            courseID,
+			"course_subject":       courseSubject,
+			"teacher_user_id":      teacherUserID,
+			"student_user_id":      studentUserID,
+			"kp_key":               kpKey,
+			"lit":                  lit,
+			"lit_percent":          litPercent,
+			"question_level":       questionLevel.String,
+			"summary_text":         summaryText.String,
+			"summary_raw_response": summaryRawResponse.String,
+			"summary_valid":        nullableBoolToInterface(summaryValid),
+			"updated_at":           updatedAt,
+			"envelope":             encodedEnvelope,
+			"envelope_hash":        hashValue,
 		})
 	}
 	if err := rows.Err(); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "progress sync list failed")
 	}
-	return c.JSON(results)
+	return respondJSONWithETag(c, results)
 }
 
 func nullableBoolToInterface(value sql.NullBool) interface{} {

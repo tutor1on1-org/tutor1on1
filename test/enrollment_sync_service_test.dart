@@ -19,6 +19,8 @@ class _TestSecureStorageService extends SecureStorageService {
   final String? _accessToken;
   int? _deletionCursor;
   final Map<String, int> _installedVersionByKey = <String, int>{};
+  final Map<String, String> _etagByKey = <String, String>{};
+  final Map<String, DateTime> _runAtByDomain = <String, DateTime>{};
 
   @override
   Future<String?> readAuthAccessToken() async => _accessToken;
@@ -52,6 +54,42 @@ class _TestSecureStorageService extends SecureStorageService {
   }) async {
     _installedVersionByKey['$remoteUserId:$remoteCourseId'] = versionId;
   }
+
+  @override
+  Future<String?> readSyncListEtag({
+    required int remoteUserId,
+    required String domain,
+    required String scopeKey,
+  }) async {
+    return _etagByKey['$remoteUserId:$domain:$scopeKey'];
+  }
+
+  @override
+  Future<void> writeSyncListEtag({
+    required int remoteUserId,
+    required String domain,
+    required String scopeKey,
+    required String etag,
+  }) async {
+    _etagByKey['$remoteUserId:$domain:$scopeKey'] = etag;
+  }
+
+  @override
+  Future<DateTime?> readSyncRunAt({
+    required int remoteUserId,
+    required String domain,
+  }) async {
+    return _runAtByDomain['$remoteUserId:$domain'];
+  }
+
+  @override
+  Future<void> writeSyncRunAt({
+    required int remoteUserId,
+    required String domain,
+    required DateTime runAt,
+  }) async {
+    _runAtByDomain['$remoteUserId:$domain'] = runAt.toUtc();
+  }
 }
 
 class _TestMarketplaceApiService extends MarketplaceApiService {
@@ -60,7 +98,12 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
     List<EnrollmentSummary>? enrollments,
     List<EnrollmentDeletionEvent>? deletionEvents,
     List<TeacherCourseSummary>? teacherCourses,
-    List<EnrollmentDeletionEvent> Function(int? sinceId)? deletionEventsProvider,
+    List<EnrollmentDeletionEvent> Function(int? sinceId)?
+        deletionEventsProvider,
+    this.enrollmentsNotModified = false,
+    this.teacherCoursesNotModified = false,
+    this.enrollmentsEtag = 'enrollment-etag',
+    this.teacherCoursesEtag = 'teacher-courses-etag',
   })  : _enrollments = enrollments ?? const <EnrollmentSummary>[],
         _deletionEvents = deletionEvents ?? const <EnrollmentDeletionEvent>[],
         _teacherCourses = teacherCourses ?? const <TeacherCourseSummary>[],
@@ -78,11 +121,33 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   final List<TeacherCourseSummary> _teacherCourses;
   final List<EnrollmentDeletionEvent> Function(int? sinceId)?
       _deletionEventsProvider;
+  final bool enrollmentsNotModified;
+  final bool teacherCoursesNotModified;
+  final String? enrollmentsEtag;
+  final String? teacherCoursesEtag;
   int? lastDeletionSinceId;
+  String? lastEnrollmentsIfNoneMatch;
+  String? lastTeacherCoursesIfNoneMatch;
+  int listEnrollmentsDeltaCalls = 0;
+  int listTeacherCoursesDeltaCalls = 0;
 
   @override
   Future<List<EnrollmentSummary>> listEnrollments() async {
     return _enrollments;
+  }
+
+  @override
+  Future<MarketplaceListResult<EnrollmentSummary>> listEnrollmentsDelta({
+    String? ifNoneMatch,
+  }) async {
+    listEnrollmentsDeltaCalls++;
+    lastEnrollmentsIfNoneMatch = ifNoneMatch;
+    return MarketplaceListResult<EnrollmentSummary>(
+      items:
+          enrollmentsNotModified ? const <EnrollmentSummary>[] : _enrollments,
+      etag: enrollmentsEtag,
+      notModified: enrollmentsNotModified,
+    );
   }
 
   @override
@@ -99,6 +164,21 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   @override
   Future<List<TeacherCourseSummary>> listTeacherCourses() async {
     return _teacherCourses;
+  }
+
+  @override
+  Future<MarketplaceListResult<TeacherCourseSummary>> listTeacherCoursesDelta({
+    String? ifNoneMatch,
+  }) async {
+    listTeacherCoursesDeltaCalls++;
+    lastTeacherCoursesIfNoneMatch = ifNoneMatch;
+    return MarketplaceListResult<TeacherCourseSummary>(
+      items: teacherCoursesNotModified
+          ? const <TeacherCourseSummary>[]
+          : _teacherCourses,
+      etag: teacherCoursesEtag,
+      notModified: teacherCoursesNotModified,
+    );
   }
 }
 
@@ -471,4 +551,81 @@ void main() {
       expect(await secureStorage.readEnrollmentDeletionCursor(812), equals(9));
     },
   );
+
+  test('student sync throttles repeated runs within 60 seconds', () async {
+    final teacherId = await db.createUser(
+      username: 'teacher_e',
+      pinHash: 'hash',
+      role: 'teacher',
+      remoteUserId: 820,
+    );
+    final studentId = await db.createUser(
+      username: 'student_e',
+      pinHash: 'hash',
+      role: 'student',
+      teacherId: teacherId,
+      remoteUserId: 920,
+    );
+    final student = await db.getUserById(studentId);
+    expect(student, isNotNull);
+
+    final secureStorage = _TestSecureStorageService();
+    final api = _TestMarketplaceApiService(
+      secureStorage: secureStorage,
+      enrollments: const <EnrollmentSummary>[],
+      enrollmentsNotModified: true,
+      enrollmentsEtag: 'student-enrollments-etag',
+    );
+    final service = EnrollmentSyncService(
+      db: db,
+      secureStorage: secureStorage,
+      courseService: CourseService(db),
+      marketplaceApi: api,
+    );
+
+    await service.syncIfReady(currentUser: student!);
+    await service.syncIfReady(currentUser: student);
+
+    expect(api.listEnrollmentsDeltaCalls, equals(1));
+  });
+
+  test('teacher sync uses cached ETag for delta list calls', () async {
+    final teacherId = await db.createUser(
+      username: 'teacher_f',
+      pinHash: 'hash',
+      role: 'teacher',
+      remoteUserId: 830,
+    );
+    final teacher = await db.getUserById(teacherId);
+    expect(teacher, isNotNull);
+
+    final secureStorage = _TestSecureStorageService();
+    await secureStorage.writeSyncListEtag(
+      remoteUserId: 830,
+      domain: 'enrollment_sync_teacher',
+      scopeKey: 'teacher_courses',
+      etag: 'cached-teacher-etag',
+    );
+    final api = _TestMarketplaceApiService(
+      secureStorage: secureStorage,
+      teacherCoursesNotModified: true,
+      teacherCoursesEtag: 'cached-teacher-etag',
+    );
+    final service = EnrollmentSyncService(
+      db: db,
+      secureStorage: secureStorage,
+      courseService: CourseService(db),
+      marketplaceApi: api,
+    );
+
+    await service.syncIfReady(currentUser: teacher!);
+
+    expect(api.listTeacherCoursesDeltaCalls, equals(1));
+    expect(api.lastTeacherCoursesIfNoneMatch, equals('cached-teacher-etag'));
+    final runAt = await secureStorage.readSyncRunAt(
+      remoteUserId: 830,
+      domain: 'enrollment_sync_teacher',
+    );
+    expect(runAt, isNotNull);
+  });
 }

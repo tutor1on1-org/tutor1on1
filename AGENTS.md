@@ -61,3 +61,4 @@
 - Adaptive review difficulty should react immediately: promote one level after a single correct `FINISHED` review turn, and also promote one level when student intent signals low challenge (`TOO_EASY`/`BORED`), while keeping level updates capped to `easy/medium/hard`.
 - Keep tutor assistant persistence/logging in a shared path for streaming and non-streaming calls; parity avoids drift bugs, and stream flush timers should be cancelled in `whenComplete` so cancellations/errors do not leak pending timers.
 - Sync efficiency rule: run per-item timestamp gate before hash gate; if timestamp indicates no change, skip immediately, and only compute/apply payload hash when timestamp is newer to avoid unnecessary encryption/decryption/upload/import work.
+- Sync list endpoints should emit stable weak `ETag` values and honor `If-None-Match` with `304` on unchanged payloads (`sessions/progress/enrollments/teacher-courses`) so client sync loops can skip JSON decode/import work.
