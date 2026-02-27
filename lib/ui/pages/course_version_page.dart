@@ -210,7 +210,8 @@ class _CourseVersionPageState extends State<CourseVersionPage> {
     }
   }
 
-  Future<CourseReloadMode?> _resolveReloadMode(CourseLoadPreview preview) async {
+  Future<CourseReloadMode?> _resolveReloadMode(
+      CourseLoadPreview preview) async {
     if (!preview.hasExisting) {
       return CourseReloadMode.fresh;
     }
@@ -259,7 +260,7 @@ class _CourseVersionPageState extends State<CourseVersionPage> {
     }
     setState(() {
       _folderController.text = resolvedPath;
-      _courseName = p.basename(p.normalize(resolvedPath));
+      _courseName = _course?.subject ?? p.basename(p.normalize(resolvedPath));
     });
   }
 
@@ -318,16 +319,23 @@ class _CourseVersionPageState extends State<CourseVersionPage> {
   ) async {
     final l10n = AppLocalizations.of(context)!;
     final size = MediaQuery.of(context).size;
+    final totalSessionDeletes = deletedEntries.fold<int>(
+      0,
+      (sum, entry) => sum + entry.sessionCount,
+    );
     final lines = deletedEntries.map((entry) {
       final raw = entry.rawLine.trim();
+      final sessionSuffix = entry.sessionCount > 0
+          ? ' (sessions deleted: ${entry.sessionCount})'
+          : '';
       if (raw.isNotEmpty) {
-        return raw;
+        return '$raw$sessionSuffix';
       }
       final signature = entry.signature.trim();
       if (signature.isNotEmpty) {
-        return '${entry.id} $signature';
+        return '${entry.id} $signature$sessionSuffix';
       }
-      return entry.id;
+      return '${entry.id}$sessionSuffix';
     }).join('\n');
     final confirmed = await showDialog<bool>(
       context: context,
@@ -352,7 +360,10 @@ class _CourseVersionPageState extends State<CourseVersionPage> {
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(20),
                   child: SelectableText(
-                    '${l10n.courseReloadDeletedMessage}\n\n$lines',
+                    totalSessionDeletes > 0
+                        ? '${l10n.courseReloadDeletedMessage}\n\n'
+                            'This reload will delete $totalSessionDeletes linked sessions.\n\n$lines'
+                        : '${l10n.courseReloadDeletedMessage}\n\n$lines',
                   ),
                 ),
               ),

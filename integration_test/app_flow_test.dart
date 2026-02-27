@@ -6,6 +6,7 @@ import 'package:family_teacher/db/app_database.dart';
 import 'package:family_teacher/l10n/app_localizations.dart';
 import 'package:family_teacher/security/pin_hasher.dart';
 import 'package:family_teacher/services/app_services.dart';
+import 'package:family_teacher/services/log_crypto_service.dart';
 import 'package:family_teacher/services/secure_storage_service.dart';
 import 'package:family_teacher/state/auth_controller.dart';
 import 'package:family_teacher/state/settings_controller.dart';
@@ -42,6 +43,11 @@ class _FakeAuthController extends AuthController {
       return false;
     }
     _fakeCurrentUser = user;
+    await LogCryptoService.instance.activate(
+      userId: user.id,
+      role: user.role,
+      password: password,
+    );
     notifyListeners();
     return true;
   }
@@ -79,6 +85,7 @@ class _FakeAuthController extends AuthController {
 
   @override
   Future<void> logout() async {
+    LogCryptoService.instance.clear();
     _fakeCurrentUser = null;
     _fakeLastError = null;
     notifyListeners();
@@ -114,6 +121,13 @@ class _FakeAuthController extends AuthController {
       remoteUserId: null,
     );
     _fakeCurrentUser = await _db.getUserById(userId);
+    if (_fakeCurrentUser != null) {
+      await LogCryptoService.instance.activate(
+        userId: _fakeCurrentUser!.id,
+        role: _fakeCurrentUser!.role,
+        password: password,
+      );
+    }
     notifyListeners();
     return _fakeCurrentUser;
   }

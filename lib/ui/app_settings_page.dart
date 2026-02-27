@@ -1,4 +1,4 @@
-﻿import 'dart:io';
+import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -242,8 +242,7 @@ class _SettingsPageState extends State<SettingsPage> {
             const SizedBox(width: 8),
             TextButton(
               onPressed: () async {
-                final selected =
-                    await FilePicker.platform.getDirectoryPath();
+                final selected = await FilePicker.platform.getDirectoryPath();
                 if (selected == null) {
                   return;
                 }
@@ -267,8 +266,7 @@ class _SettingsPageState extends State<SettingsPage> {
             const SizedBox(width: 8),
             TextButton(
               onPressed: () async {
-                final selected =
-                    await FilePicker.platform.getDirectoryPath();
+                final selected = await FilePicker.platform.getDirectoryPath();
                 if (selected == null) {
                   return;
                 }
@@ -328,34 +326,32 @@ class _SettingsPageState extends State<SettingsPage> {
                 ? (settings.ttsAudioPath ?? '').trim()
                 : audioPath;
             final logDir = _logDirectoryController.text.trim();
-            final resolvedLogDir = logDir.isEmpty
-                ? (settings.logDirectory ?? '').trim()
-                : logDir;
-                await settingsController.update(
-                  providerId: provider.id,
-                  baseUrl: provider.baseUrl,
-                  model: model,
-                  ttsModel: _resolveTtsModel(settings),
-                  sttModel: _resolveSttModel(settings),
-                  timeoutSeconds:
-                      int.tryParse(_timeoutController.text.trim()) ?? 60,
-                  maxTokens:
-                      int.tryParse(_maxTokensController.text.trim()) ?? 8000,
-                  ttsInitialDelayMs: _parseSecondsMs(
-                    _ttsDelayController,
-                    settings.ttsInitialDelayMs,
-                  ),
-                  ttsTextLeadMs: _parseSecondsMs(
-                    _ttsTextLeadController,
-                    settings.ttsTextLeadMs,
-                  ),
-                  ttsAudioPath: resolvedAudioPath,
-                  logDirectory: resolvedLogDir,
-                  llmMode: _mode,
-                  sttAutoSend: _sttAutoSend,
-                  enterToSend: _enterToSend,
-                  studyModeEnabled: _studyModeEnabled,
-                );
+            final resolvedLogDir =
+                logDir.isEmpty ? (settings.logDirectory ?? '').trim() : logDir;
+            await settingsController.update(
+              providerId: provider.id,
+              baseUrl: provider.baseUrl,
+              model: model,
+              ttsModel: _resolveTtsModel(settings),
+              sttModel: _resolveSttModel(settings),
+              timeoutSeconds:
+                  int.tryParse(_timeoutController.text.trim()) ?? 60,
+              maxTokens: int.tryParse(_maxTokensController.text.trim()) ?? 8000,
+              ttsInitialDelayMs: _parseSecondsMs(
+                _ttsDelayController,
+                settings.ttsInitialDelayMs,
+              ),
+              ttsTextLeadMs: _parseSecondsMs(
+                _ttsTextLeadController,
+                settings.ttsTextLeadMs,
+              ),
+              ttsAudioPath: resolvedAudioPath,
+              logDirectory: resolvedLogDir,
+              llmMode: _mode,
+              sttAutoSend: _sttAutoSend,
+              enterToSend: _enterToSend,
+              studyModeEnabled: _studyModeEnabled,
+            );
             if (context.mounted) {
               _showMessage(context, l10n.settingsSavedMessage);
             }
@@ -1071,8 +1067,7 @@ class _SettingsPageState extends State<SettingsPage> {
           children: [
             TextField(
               controller: currentController,
-              decoration:
-                  InputDecoration(labelText: l10n.currentPasswordLabel),
+              decoration: InputDecoration(labelText: l10n.currentPasswordLabel),
               obscureText: true,
             ),
             TextField(
@@ -1082,8 +1077,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             TextField(
               controller: confirmController,
-              decoration:
-                  InputDecoration(labelText: l10n.confirmPasswordLabel),
+              decoration: InputDecoration(labelText: l10n.confirmPasswordLabel),
               obscureText: true,
             ),
           ],
@@ -1098,9 +1092,7 @@ class _SettingsPageState extends State<SettingsPage> {
               final currentPin = currentController.text.trim();
               final newPin = newController.text.trim();
               final confirmPin = confirmController.text.trim();
-              if (currentPin.isEmpty ||
-                  newPin.isEmpty ||
-                  confirmPin.isEmpty) {
+              if (currentPin.isEmpty || newPin.isEmpty || confirmPin.isEmpty) {
                 return;
               }
               if (newPin != confirmPin) {
@@ -1120,6 +1112,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 userId: user.id,
                 pinHash: PinHasher.hash(newPin),
               );
+              await auth.activateLogAccess(newPin);
               await auth.refreshCurrentUser();
               if (context.mounted) {
                 Navigator.of(dialogContext).pop();
@@ -1159,8 +1152,7 @@ class _SettingsPageState extends State<SettingsPage> {
             children: [
               DropdownButtonFormField<User>(
                 initialValue: selectedStudent,
-                decoration:
-                    InputDecoration(labelText: l10n.selectStudentLabel),
+                decoration: InputDecoration(labelText: l10n.selectStudentLabel),
                 items: students
                     .map(
                       (student) => DropdownMenuItem(
@@ -1340,4 +1332,3 @@ class _SettingsPageState extends State<SettingsPage> {
     exit(0);
   }
 }
-

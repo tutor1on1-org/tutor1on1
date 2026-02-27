@@ -113,7 +113,7 @@ class AppServices {
       userKeyService: userKeyService,
       crypto: cryptoService,
     );
-    final ttsLogRepository = TtsLogRepository(settingsRepository);
+    final ttsLogRepository = TtsLogRepository(settingsRepository, db: db);
     final ttsService =
         TtsService(secureStorage, settingsRepository, ttsLogRepository);
     final sttService =

@@ -3,6 +3,8 @@ import 'package:family_teacher/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
 import '../../db/app_database.dart';
+import '../../services/log_crypto_service.dart';
+import '../../state/auth_controller.dart';
 
 class LlmLogsPage extends StatefulWidget {
   const LlmLogsPage({super.key});
@@ -21,8 +23,79 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
   }
 
   void _load() {
+    _future = _loadEntries();
+  }
+
+  Future<List<LlmLogEntry>> _loadEntries() async {
+    final auth = context.read<AuthController>();
+    final current = auth.currentUser;
+    if (current == null) {
+      return <LlmLogEntry>[];
+    }
     final db = context.read<AppDatabase>();
-    _future = db.getLlmLogEntries();
+    final entries = await db.getLlmLogEntries();
+    final resolved = <LlmLogEntry>[];
+    for (final entry in entries) {
+      if (!_isRelevant(entry, current)) {
+        continue;
+      }
+      final renderedPrompt =
+          await LogCryptoService.instance.decryptForCurrentUser(
+        entry.renderedPrompt,
+      );
+      if (renderedPrompt == null) {
+        continue;
+      }
+      final responseText =
+          await LogCryptoService.instance.decryptForCurrentUser(
+        entry.responseText,
+      );
+      if (entry.responseText != null && responseText == null) {
+        continue;
+      }
+      final parseError = await LogCryptoService.instance.decryptForCurrentUser(
+        entry.parseError,
+      );
+      if (entry.parseError != null && parseError == null) {
+        continue;
+      }
+      resolved.add(
+        LlmLogEntry(
+          id: entry.id,
+          callHash: entry.callHash,
+          promptName: entry.promptName,
+          renderedPrompt: renderedPrompt,
+          model: entry.model,
+          baseUrl: entry.baseUrl,
+          responseText: responseText,
+          responseJson: entry.responseJson,
+          parseValid: entry.parseValid,
+          parseError: parseError,
+          latencyMs: entry.latencyMs,
+          teacherId: entry.teacherId,
+          studentId: entry.studentId,
+          courseVersionId: entry.courseVersionId,
+          sessionId: entry.sessionId,
+          kpKey: entry.kpKey,
+          action: entry.action,
+          createdAt: entry.createdAt,
+          mode: entry.mode,
+          teacherName: entry.teacherName,
+          studentName: entry.studentName,
+        ),
+      );
+    }
+    return resolved;
+  }
+
+  bool _isRelevant(LlmLogEntry entry, User current) {
+    if (current.role == 'teacher') {
+      return entry.teacherId == current.id;
+    }
+    if (current.role == 'student') {
+      return entry.studentId == current.id;
+    }
+    return false;
   }
 
   @override
@@ -180,9 +253,8 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
     if (entry.studentId == null) {
       return l10n.llmStudentNone;
     }
-    final name = entry.studentName?.isNotEmpty == true
-        ? entry.studentName
-        : null;
+    final name =
+        entry.studentName?.isNotEmpty == true ? entry.studentName : null;
     return name != null
         ? l10n.llmStudentLabel(name)
         : l10n.llmStudentIdLabel('${entry.studentId}');

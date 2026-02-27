@@ -13,6 +13,7 @@ import '../llm/llm_models.dart';
 import '../llm/llm_providers.dart';
 import '../models/tutor_action.dart';
 import '../services/app_services.dart';
+import '../services/log_crypto_service.dart';
 import '../services/stt_service.dart';
 import '../services/tts_chunker.dart';
 import '../services/tts_service.dart';
@@ -1602,8 +1603,12 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       sessionId: widget.sessionId,
       promptName: 'summarize',
     );
-    final parseError = llmCall?.parseError;
-    final responseText = llmCall?.responseText;
+    final parseError = await LogCryptoService.instance.decryptForCurrentUser(
+      llmCall?.parseError,
+    );
+    final responseText = await LogCryptoService.instance.decryptForCurrentUser(
+      llmCall?.responseText,
+    );
     final details = responseText?.isNotEmpty == true
         ? responseText
         : (raw.isNotEmpty

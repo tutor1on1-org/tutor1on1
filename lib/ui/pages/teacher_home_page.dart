@@ -554,10 +554,6 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
           courseVersionId: course.id,
           remoteCourseId: remoteCourseId,
         );
-        await db.updateCourseVersionSubject(
-          id: course.id,
-          subject: remoteCourse.subject,
-        );
         break;
       }
     }

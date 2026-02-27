@@ -27,11 +27,13 @@ class CourseReloadEntry {
     required this.id,
     required this.signature,
     required this.rawLine,
+    this.sessionCount = 0,
   });
 
   final String id;
   final String signature;
   final String rawLine;
+  final int sessionCount;
 }
 
 class CourseLoadPreview {
@@ -140,18 +142,31 @@ class CourseService {
       );
     }
 
+    CourseVersion? existingCourse;
+    if (courseVersionId != null) {
+      existingCourse = await _db.getCourseVersionById(courseVersionId);
+      if (existingCourse == null) {
+        return CourseLoadPreview(
+          success: false,
+          message: 'Course version not found: $courseVersionId',
+        );
+      }
+    }
+
     final maxDepth = _maxDepth(parseResult.nodes.values);
     final requestedCourseName = (courseNameOverride ?? '').trim();
-    final courseName = requestedCourseName.isEmpty
-        ? p.basename(normalizedPath)
-        : requestedCourseName;
+    final courseName = existingCourse != null
+        ? existingCourse.subject
+        : (requestedCourseName.isEmpty
+            ? p.basename(normalizedPath)
+            : requestedCourseName);
     final oldIdToNewId = <String, String>{};
-    final deletedEntries = <CourseReloadEntry>[];
+    var deletedEntries = <CourseReloadEntry>[];
     final addedEntries = <CourseReloadEntry>[];
     var hasExisting = false;
 
     final newEntries = _parseLineEntries(contents, parseResult);
-    final newGroups = _groupEntriesBySignature(newEntries);
+    final newById = {for (final entry in newEntries) entry.id: entry};
 
     if (courseVersionId != null) {
       final oldNodes = await _db.getCourseNodes(courseVersionId);
@@ -175,43 +190,85 @@ class CourseService {
           )
           .toList()
         ..sort((a, b) => a.orderIndex.compareTo(b.orderIndex));
-      final oldGroups = _groupEntriesBySignature(oldEntries);
-      final signatures = <String>{
-        ...oldGroups.keys,
-        ...newGroups.keys,
-      };
-      for (final signature in signatures) {
-        final oldList = oldGroups[signature] ?? <_LineEntry>[];
-        final newList = newGroups[signature] ?? <_LineEntry>[];
-        final sharedCount =
-            oldList.length < newList.length ? oldList.length : newList.length;
-        for (var i = 0; i < sharedCount; i++) {
-          oldIdToNewId[oldList[i].id] = newList[i].id;
+      final oldById = {for (final entry in oldEntries) entry.id: entry};
+      final sharedIds = oldById.keys.toSet().intersection(newById.keys.toSet());
+
+      final renamed = <String>[];
+      for (final id in sharedIds) {
+        final oldEntry = oldById[id]!;
+        final newEntry = newById[id]!;
+        oldIdToNewId[id] = id;
+        if (oldEntry.signature != newEntry.signature) {
+          renamed.add(
+            '$id: "${oldEntry.signature}" -> "${newEntry.signature}"',
+          );
         }
-        if (oldList.length > sharedCount) {
-          for (var i = sharedCount; i < oldList.length; i++) {
-            final entry = oldList[i];
-            deletedEntries.add(
-              CourseReloadEntry(
+      }
+      if (renamed.isNotEmpty) {
+        return CourseLoadPreview(
+          success: false,
+          message:
+              'Node names are immutable for existing IDs. Delete and create new nodes to rename.\n'
+              '${renamed.join('\n')}',
+        );
+      }
+
+      final deletedIds =
+          oldById.keys.where((id) => !newById.containsKey(id)).toList()..sort();
+      for (final id in deletedIds) {
+        final entry = oldById[id]!;
+        deletedEntries.add(
+          CourseReloadEntry(
+            id: entry.id,
+            signature: entry.signature,
+            rawLine: entry.rawLine,
+          ),
+        );
+      }
+
+      final addedIds =
+          newById.keys.where((id) => !oldById.containsKey(id)).toList()..sort();
+      for (final id in addedIds) {
+        final entry = newById[id]!;
+        addedEntries.add(
+          CourseReloadEntry(
+            id: entry.id,
+            signature: entry.signature,
+            rawLine: entry.rawLine,
+          ),
+        );
+      }
+
+      if (deletedEntries.isNotEmpty) {
+        final rows = await _db.customSelect(
+          '''
+SELECT kp_key, COUNT(*) AS session_count
+FROM chat_sessions
+WHERE course_version_id = ?
+GROUP BY kp_key
+''',
+          variables: [Variable.withInt(courseVersionId)],
+          readsFrom: {_db.chatSessions},
+        ).get();
+        final counts = <String, int>{};
+        for (final row in rows) {
+          final key = (row.data['kp_key'] as String?) ?? '';
+          final count = (row.data['session_count'] as int?) ?? 0;
+          if (key.isEmpty || count <= 0) {
+            continue;
+          }
+          counts[key] = count;
+        }
+        deletedEntries = deletedEntries
+            .map(
+              (entry) => CourseReloadEntry(
                 id: entry.id,
                 signature: entry.signature,
                 rawLine: entry.rawLine,
+                sessionCount: counts[entry.id] ?? 0,
               ),
-            );
-          }
-        }
-        if (newList.length > sharedCount) {
-          for (var i = sharedCount; i < newList.length; i++) {
-            final entry = newList[i];
-            addedEntries.add(
-              CourseReloadEntry(
-                id: entry.id,
-                signature: entry.signature,
-                rawLine: entry.rawLine,
-              ),
-            );
-          }
-        }
+            )
+            .toList();
       }
     }
 
@@ -258,6 +315,17 @@ class CourseService {
           granularity: preview.maxDepth!,
           textbookText: preview.contents!,
         );
+    var courseSubject = preview.courseName!;
+    if (preview.courseVersionId != null) {
+      final existing = await _db.getCourseVersionById(courseId);
+      if (existing == null) {
+        return CourseLoadResult(
+          success: false,
+          message: 'Course version not found: $courseId',
+        );
+      }
+      courseSubject = existing.subject;
+    }
 
     await _db.transaction(() async {
       List<ProgressEntry> progressEntries = [];
@@ -317,7 +385,7 @@ class CourseService {
             ..where((tbl) => tbl.id.equals(courseId)))
           .write(
         CourseVersionsCompanion(
-          subject: Value(preview.courseName!),
+          subject: Value(courseSubject),
           sourcePath: Value(preview.normalizedPath!),
           granularity: Value(preview.maxDepth!),
           textbookText: Value(preview.contents!),
@@ -330,6 +398,26 @@ class CourseService {
       );
 
       if (mode == CourseReloadMode.override) {
+        final newKpKeys = preview.parseResult!.nodes.values
+            .where((node) => !node.isPlaceholder)
+            .map((node) => node.id)
+            .toSet();
+        final deletedSessionIds = sessions
+            .where((session) => !newKpKeys.contains(session.kpKey))
+            .map((session) => session.id)
+            .toList();
+        if (deletedSessionIds.isNotEmpty) {
+          await (_db.delete(_db.chatMessages)
+                ..where((tbl) => tbl.sessionId.isIn(deletedSessionIds)))
+              .go();
+          await (_db.delete(_db.llmCalls)
+                ..where((tbl) => tbl.sessionId.isIn(deletedSessionIds)))
+              .go();
+          await (_db.delete(_db.chatSessions)
+                ..where((tbl) => tbl.id.isIn(deletedSessionIds)))
+              .go();
+        }
+
         final merged = _mergeProgressEntries(
           progressEntries: progressEntries,
           oldIdToNewId: preview.oldIdToNewId,
@@ -490,16 +578,6 @@ class CourseService {
       );
     }
     return entries;
-  }
-
-  Map<String, List<_LineEntry>> _groupEntriesBySignature(
-    List<_LineEntry> entries,
-  ) {
-    final grouped = <String, List<_LineEntry>>{};
-    for (final entry in entries) {
-      grouped.putIfAbsent(entry.signature, () => <_LineEntry>[]).add(entry);
-    }
-    return grouped;
   }
 
   Map<String, _ProgressMergeState> _mergeProgressEntries({

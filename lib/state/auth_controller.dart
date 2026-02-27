@@ -4,6 +4,7 @@ import '../constants.dart';
 import '../db/app_database.dart';
 import '../security/pin_hasher.dart';
 import '../services/auth_api_service.dart';
+import '../services/log_crypto_service.dart';
 import '../services/secure_storage_service.dart';
 
 class AuthController extends ChangeNotifier {
@@ -115,11 +116,25 @@ class AuthController extends ChangeNotifier {
       );
       _currentUser = await _db.getUserById(existing.id);
     }
+    await activateLogAccess(password);
     notifyListeners();
     return _currentUser;
   }
 
+  Future<void> activateLogAccess(String password) async {
+    final current = _currentUser;
+    if (current == null) {
+      throw StateError('Cannot activate log access without a signed-in user.');
+    }
+    await LogCryptoService.instance.activate(
+      userId: current.id,
+      role: current.role,
+      password: password,
+    );
+  }
+
   Future<void> logout() async {
+    LogCryptoService.instance.clear();
     _currentUser = null;
     _lastError = null;
     await _secureStorage.deleteAuthTokens();
