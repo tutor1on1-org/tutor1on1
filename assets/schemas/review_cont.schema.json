@@ -5,6 +5,8 @@
   "required": [
     "teacher_message",
     "answer_state",
+    "difficulty_action",
+    "recommended_level",
     "turn_state",
     "question",
     "grading",
@@ -21,6 +23,14 @@
     "answer_state": {
       "type": "string",
       "enum": ["HELP_REQUEST", "PARTIAL_ATTEMPT", "FINAL_ANSWER"]
+    },
+    "difficulty_action": {
+      "type": "string",
+      "enum": ["DOWN", "HOLD", "UP"]
+    },
+    "recommended_level": {
+      "type": "string",
+      "enum": ["easy", "medium", "hard"]
     },
     "turn_state": {
       "type": "string",

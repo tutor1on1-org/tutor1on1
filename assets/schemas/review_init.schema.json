@@ -6,6 +6,7 @@
     "teacher_message",
     "turn_state",
     "question",
+    "difficulty_level",
     "grading",
     "error_book_update",
     "evidence",
@@ -35,6 +36,10 @@
         }
       },
       "additionalProperties": true
+    },
+    "difficulty_level": {
+      "type": "string",
+      "enum": ["easy", "medium", "hard"]
     },
     "grading": {
       "type": "null"

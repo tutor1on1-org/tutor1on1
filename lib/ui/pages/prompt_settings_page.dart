@@ -699,6 +699,8 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
       'prev_json': 'Previous model JSON output for the current segment.',
       'last_evidence': 'Last evidence object from REVIEW.',
       'current_mastery_level': 'Current mastery level before SUMMARY decision.',
+      'current_difficulty_level':
+          'Current review difficulty level (easy/medium/hard) before selecting the next question.',
     };
   }
 }

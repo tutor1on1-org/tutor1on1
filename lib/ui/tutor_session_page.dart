@@ -721,6 +721,14 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                 label: 'Final',
                                 intent: _StudentIntent.finalAnswer,
                               ),
+                              _studentIntentChip(
+                                label: 'Too Easy',
+                                intent: _StudentIntent.tooEasy,
+                              ),
+                              _studentIntentChip(
+                                label: 'Boring',
+                                intent: _StudentIntent.bored,
+                              ),
                             ],
                             const SizedBox(width: 12),
                             Row(
@@ -2532,7 +2540,9 @@ enum _StudentIntent {
   auto('AUTO'),
   helpRequest('HELP_REQUEST'),
   partialAttempt('PARTIAL_ATTEMPT'),
-  finalAnswer('FINAL_ANSWER');
+  finalAnswer('FINAL_ANSWER'),
+  tooEasy('TOO_EASY'),
+  bored('BORED');
 
   const _StudentIntent(this.promptValue);
   final String promptValue;

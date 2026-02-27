@@ -262,6 +262,9 @@ class SessionService {
     final masteryFromPrev = _normalizeMasteryLevel(
       promptResolution.prevJson?['mastery_level'],
     );
+    final currentDifficultyLevel = _normalizeLevel(progress?.questionLevel) ??
+        _masteryLevelToQuestionLevel(masteryFromPrev) ??
+        'easy';
     final currentMasteryLevel =
         masteryFromProgress ?? masteryFromPrev ?? 'NOT_PASS';
     final practiceHistorySummary = _buildPracticeHistorySummary(messages);
@@ -301,6 +304,7 @@ class SessionService {
       'session_history': history,
       'student_input': studentInput.trim(),
       'student_intent': resolvedStudentIntent,
+      'current_difficulty_level': currentDifficultyLevel,
       'student_summary': progress?.summaryText ?? session?.summaryText ?? '',
       'student_profile': studentPromptContext.profileText,
       'student_preferences': studentPromptContext.preferencesText,
@@ -402,6 +406,14 @@ class SessionService {
                 action: Value(actionMode),
               ),
             );
+        await _updateReviewDifficultyIfNeeded(
+          actionMode: actionMode,
+          studentId: session?.studentId,
+          courseVersionId: courseVersion.id,
+          kpKey: node.kpKey,
+          studentIntent: resolvedStudentIntent,
+          parsedJsonText: resolution.payload.parsedJson,
+        );
         await _llmLogRepository.appendEntry(
           promptName: promptName,
           model: resolution.result.model ?? '',
@@ -525,6 +537,14 @@ class SessionService {
           content: resolution.payload.displayText,
           rawContent: resolution.payload.rawText,
           parsedJson: resolution.payload.parsedJson,
+        );
+        await _updateReviewDifficultyIfNeeded(
+          actionMode: actionMode,
+          studentId: session?.studentId,
+          courseVersionId: courseVersion.id,
+          kpKey: node.kpKey,
+          studentIntent: resolvedStudentIntent,
+          parsedJsonText: resolution.payload.parsedJson,
         );
         await _llmLogRepository.appendEntry(
           promptName: promptName,
@@ -910,6 +930,13 @@ class SessionService {
           'Response preview: ${_summarizeResponseForError(responseText)}',
         );
       }
+      final difficultyLevel = _normalizeLevel(parsed['difficulty_level']);
+      if (difficultyLevel == null) {
+        throw StateError(
+          'LLM response for "$promptName" has invalid "difficulty_level". '
+          'Response preview: ${_summarizeResponseForError(responseText)}',
+        );
+      }
     }
     if (promptName == 'review_cont') {
       final answerState = (parsed['answer_state'] as String?)?.trim() ?? '';
@@ -921,6 +948,22 @@ class SessionService {
       if (!validAnswerStates.contains(answerState)) {
         throw StateError(
           'LLM response for "$promptName" has invalid "answer_state". '
+          'Response preview: ${_summarizeResponseForError(responseText)}',
+        );
+      }
+      final difficultyAction =
+          (parsed['difficulty_action'] as String?)?.trim().toUpperCase() ?? '';
+      const validActions = {'DOWN', 'HOLD', 'UP'};
+      if (!validActions.contains(difficultyAction)) {
+        throw StateError(
+          'LLM response for "$promptName" has invalid "difficulty_action". '
+          'Response preview: ${_summarizeResponseForError(responseText)}',
+        );
+      }
+      final recommendedLevel = _normalizeLevel(parsed['recommended_level']);
+      if (recommendedLevel == null) {
+        throw StateError(
+          'LLM response for "$promptName" has invalid "recommended_level". '
           'Response preview: ${_summarizeResponseForError(responseText)}',
         );
       }
@@ -956,6 +999,7 @@ class SessionService {
           'teacher_message',
           'turn_state',
           'question',
+          'difficulty_level',
           'grading',
           'error_book_update',
           'evidence',
@@ -967,6 +1011,8 @@ class SessionService {
           'teacher_message',
           'turn_state',
           'answer_state',
+          'difficulty_action',
+          'recommended_level',
           'question',
           'grading',
           'error_book_update',
@@ -1359,7 +1405,9 @@ class SessionService {
     final normalized = (requestedIntent ?? '').trim().toUpperCase();
     if (normalized == 'HELP_REQUEST' ||
         normalized == 'PARTIAL_ATTEMPT' ||
-        normalized == 'FINAL_ANSWER') {
+        normalized == 'FINAL_ANSWER' ||
+        normalized == 'TOO_EASY' ||
+        normalized == 'BORED') {
       return normalized;
     }
     final input = studentInput.trim();
@@ -1379,7 +1427,97 @@ class SessionService {
         lowered.startsWith('answer:')) {
       return 'FINAL_ANSWER';
     }
+    if (lowered.contains('too easy') ||
+        lowered.contains('easy for me') ||
+        lowered.contains('too simple')) {
+      return 'TOO_EASY';
+    }
+    if (lowered.contains('boring') ||
+        lowered.contains('bored') ||
+        lowered.contains('not interesting')) {
+      return 'BORED';
+    }
     return 'PARTIAL_ATTEMPT';
+  }
+
+  Future<void> _updateReviewDifficultyIfNeeded({
+    required String actionMode,
+    required int? studentId,
+    required int courseVersionId,
+    required String kpKey,
+    required String studentIntent,
+    required String? parsedJsonText,
+  }) async {
+    if (actionMode != 'review' || studentId == null || studentId <= 0) {
+      return;
+    }
+    final parsed =
+        parsedJsonText == null ? null : _tryDecodeJsonObject(parsedJsonText);
+    if (parsed == null) {
+      return;
+    }
+    final progress = await _db.getProgress(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+      kpKey: kpKey,
+    );
+    final currentLevel = _normalizeLevel(progress?.questionLevel) ?? 'easy';
+    final turnState = _normalizeTurnState(parsed['turn_state']);
+    final grading = parsed['grading'];
+    final isCorrect = grading is Map<String, dynamic> &&
+        grading['is_correct'] is bool &&
+        grading['is_correct'] == true;
+    final recommendedLevel = _normalizeLevel(parsed['recommended_level']);
+    final difficultyAction =
+        (parsed['difficulty_action'] as String?)?.trim().toUpperCase() ?? '';
+
+    var nextLevel = currentLevel;
+    final studentWantsHarder =
+        studentIntent == 'TOO_EASY' || studentIntent == 'BORED';
+    if (studentWantsHarder) {
+      nextLevel = _nextDifficultyLevel(currentLevel);
+    } else if (turnState == 'FINISHED' && isCorrect) {
+      nextLevel = _nextDifficultyLevel(currentLevel);
+    } else if (difficultyAction == 'DOWN') {
+      nextLevel = _previousDifficultyLevel(currentLevel);
+    } else if (recommendedLevel != null) {
+      nextLevel = recommendedLevel;
+    }
+    if (nextLevel == currentLevel) {
+      return;
+    }
+    await _db.upsertProgressDifficulty(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+      kpKey: kpKey,
+      questionLevel: nextLevel,
+    );
+  }
+
+  String _nextDifficultyLevel(String currentLevel) {
+    switch (_normalizeLevel(currentLevel) ?? 'easy') {
+      case 'easy':
+        return 'medium';
+      case 'medium':
+        return 'hard';
+      case 'hard':
+        return 'hard';
+      default:
+        return 'medium';
+    }
+  }
+
+  String _previousDifficultyLevel(String currentLevel) {
+    switch (_normalizeLevel(currentLevel) ?? 'easy') {
+      case 'hard':
+        return 'medium';
+      case 'medium':
+        return 'easy';
+      case 'easy':
+        return 'easy';
+      default:
+        return 'easy';
+    }
   }
 
   String? _questionLevelToMasteryLevel(String? questionLevel) {

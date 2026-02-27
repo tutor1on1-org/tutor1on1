@@ -17,6 +17,7 @@ INPUTS
 - error_book_summary: {{error_book_summary}}
 - practice_history_summary: {{practice_history_summary}}
 - current_mastery_level: {{current_mastery_level}}
+- current_difficulty_level: {{current_difficulty_level}}
 - presented_questions: {{presented_questions}}
 - types: {{types}}
 - prev_json: {{prev_json}}
@@ -34,6 +35,7 @@ SELECTION GOALS
    - Match difficulty to current_mastery_level and the student's recent understanding.
    - Prefer formats and contexts aligned with student_preferences and student_profile.
    - If student_intent is HELP_REQUEST, prefer a lower-friction starter question.
+   - If student_intent is TOO_EASY or BORED, step up by one difficulty level immediately (unless already hard).
 2) Avoid repetition:
    - If a question (or very similar one) appears to have been used recently, prefer another.
 3) Light modification allowed:
@@ -72,6 +74,10 @@ Return exactly ONE JSON object with ONLY the following keys:
 - question: object (must be non-null)
   - text: the final chosen question text (after any light modification)
   - type_id: chosen type_id (or "OTHER")
+- difficulty_level: "easy" | "medium" | "hard"
+  - Track this closely; default from current_difficulty_level, but:
+    - if student_intent is TOO_EASY/BORED => increase one level immediately (cap at hard)
+    - if student_intent is HELP_REQUEST => keep or decrease one level
 - grading: must be null
 - error_book_update: must be null
 - evidence: object with keys {"a","c","h","t","mt"}
@@ -85,5 +91,6 @@ No extra keys. The JSON must be parseable.
 
 STYLE NOTES
 - Keep teacher_message concise: present one question and minimal setup.
+- Add one short motivation line tied to effort and progress.
 - Keep teacher_message ideally <= 80 words.
 - Do not evaluate anything yet; wait for the student's response in the next turn.

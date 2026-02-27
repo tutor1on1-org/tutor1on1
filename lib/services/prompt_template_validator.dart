@@ -48,6 +48,7 @@ class PromptTemplateValidator {
           'types',
           'error_book_summary',
           'practice_history_summary',
+          'student_intent',
         };
       case 'review_init':
         return {
@@ -56,12 +57,21 @@ class PromptTemplateValidator {
           'error_book_summary',
           'practice_history_summary',
           'presented_questions',
+          'student_intent',
+          'current_difficulty_level',
         };
       case 'learn_cont':
+        return {
+          'recent_dialogue',
+          'prev_json',
+          'student_intent',
+        };
       case 'review_cont':
         return {
           'recent_dialogue',
           'prev_json',
+          'student_intent',
+          'current_difficulty_level',
         };
       case 'summary':
         return {
@@ -103,6 +113,7 @@ class PromptTemplateValidator {
       'prev_json',
       'last_evidence',
       'current_mastery_level',
+      'current_difficulty_level',
     };
     if (_structuredPromptNames.contains(promptName)) {
       return {

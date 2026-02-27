@@ -58,3 +58,4 @@
 - Legacy tutor prompt names (`learn`, `review`, `summarize`) are retired from active UI/managed sync paths; keep prompt/template flow centered on structured prompts (`learn_init`, `learn_cont`, `review_init`, `review_cont`, `summary`).
 - Student-learning flow should pass explicit `student_intent` (AUTO/HELP_REQUEST/PARTIAL_ATTEMPT/FINAL_ANSWER) into prompt context; REVIEW_CONT should emit `answer_state` so app and prompt state stay aligned on grading transitions.
 - Error-book usefulness improves when summaries aggregate historical `error_book_update` signals from review messages (top mistake tags + counts), not only the most recent turn or generic progress summary text.
+- Adaptive review difficulty should react immediately: promote one level after a single correct `FINISHED` review turn, and also promote one level when student intent signals low challenge (`TOO_EASY`/`BORED`), while keeping level updates capped to `easy/medium/hard`.

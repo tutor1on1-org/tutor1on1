@@ -143,6 +143,8 @@ Model output:
     final valid = {
       'teacher_message': 'Please provide your final numeric result.',
       'answer_state': 'PARTIAL_ATTEMPT',
+      'difficulty_action': 'HOLD',
+      'recommended_level': 'easy',
       'turn_state': 'UNFINISHED',
       'question': {
         'text': 'What is 3 + 4?',

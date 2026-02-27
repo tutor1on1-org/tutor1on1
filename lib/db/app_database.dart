@@ -860,6 +860,44 @@ ORDER BY s.started_at DESC
     );
   }
 
+  Future<void> upsertProgressDifficulty({
+    required int studentId,
+    required int courseVersionId,
+    required String kpKey,
+    required String questionLevel,
+  }) async {
+    final normalized = questionLevel.trim().toLowerCase();
+    if (normalized != 'easy' &&
+        normalized != 'medium' &&
+        normalized != 'hard') {
+      throw StateError('Unsupported question level: $questionLevel');
+    }
+    final existing = await getProgress(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+      kpKey: kpKey,
+    );
+    if (existing == null) {
+      await into(progressEntries).insert(
+        ProgressEntriesCompanion.insert(
+          studentId: studentId,
+          courseVersionId: courseVersionId,
+          kpKey: kpKey,
+          questionLevel: Value(normalized),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+      return;
+    }
+    await (update(progressEntries)..where((tbl) => tbl.id.equals(existing.id)))
+        .write(
+      ProgressEntriesCompanion(
+        questionLevel: Value(normalized),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
   Future<void> upsertProgressSummary({
     required int studentId,
     required int courseVersionId,
