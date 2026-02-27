@@ -63,3 +63,4 @@
 - Sync efficiency rule: run per-item timestamp gate before hash gate; if timestamp indicates no change, skip immediately, and only compute/apply payload hash when timestamp is newer to avoid unnecessary encryption/decryption/upload/import work.
 - Sync list endpoints should emit stable weak `ETag` values and honor `If-None-Match` with `304` on unchanged payloads (`sessions/progress/enrollments/teacher-courses`) so client sync loops can skip JSON decode/import work.
 - Secrets handling baseline: keep runtime credentials only in untracked `.env`, commit only sanitized `.env.example`, and prefer a managed secret store for shared/production environments.
+- Delivery automation rule: run `scripts/validate_project.ps1` as the release gate; it validates the project, then executes the post-validation hook to consolidate memory markdown files and push only when validation succeeds.

@@ -1,6 +1,7 @@
 # DONES
 Last updated: 2026-02-27
 
+- Consolidated memory markdown docs with a deterministic formatter (`scripts/consolidate_memory.ps1`) and added release automation (`scripts/validate_project.ps1` + `scripts/post_validate_hook.ps1`) that validates, consolidates memory, and pushes on success.
 - Improved student tutor interaction contract: added explicit student intent controls in chat UI (`Auto`, `Need Hint`, `My Attempt`, `Final`) and passed `student_intent` into prompt rendering for LEARN/REVIEW flows.
 - Upgraded REVIEW continuation schema/prompt contract with required `answer_state` (`HELP_REQUEST` | `PARTIAL_ATTEMPT` | `FINAL_ANSWER`) and added regression tests for schema enforcement.
 - Improved error-book quality by aggregating historical review `error_book_update` signals into prompt context and exposing top mistake tags in a student-visible "Error Book Focus" panel.

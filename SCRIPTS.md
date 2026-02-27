@@ -8,6 +8,28 @@ All commands are expected from repository root (`C:\family_teacher\app`) unless 
 - Use `.env.example` as the sanitized template and never commit real secrets.
 - For shared/production environments, prefer managed secret injection over checked-in files.
 
+## Memory consolidation and publish hooks
+Install tracked git hooks:
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install_githooks.ps1
+```
+
+Consolidate memory markdown files now:
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/consolidate_memory.ps1
+```
+
+Validate project and then run post-validation hook (consolidate memory + push):
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1
+```
+Use this after you commit feature/code changes; the hook auto-commits only memory markdown updates.
+
+Validate only (no push hook):
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1 -NoPostHook
+```
+
 ## Flutter app setup
 ```powershell
 flutter --version

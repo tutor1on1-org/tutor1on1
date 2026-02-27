@@ -1,5 +1,5 @@
-﻿# PLANS
-Last updated: 2026-02-26
+# PLANS
+Last updated: 2026-02-27
 
 ## Goal
 Stabilize and harden the teacher-managed marketplace + enrollment + bundle sync workflow for production usage.
