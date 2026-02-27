@@ -84,6 +84,34 @@ class _StructuredPayloadResolution {
   final bool didRetry;
 }
 
+class _TutorRequestContext {
+  _TutorRequestContext({
+    required this.sessionId,
+    required this.courseVersionId,
+    required this.kpKey,
+    required this.actionMode,
+    required this.promptName,
+    required this.resolvedStudentIntent,
+    required this.renderedPrompt,
+    required this.schemaMap,
+    required this.llmContext,
+    required this.dedupeKey,
+    required this.isStructuredPrompt,
+  });
+
+  final int sessionId;
+  final int courseVersionId;
+  final String kpKey;
+  final String actionMode;
+  final String promptName;
+  final String resolvedStudentIntent;
+  final String renderedPrompt;
+  final Map<String, dynamic>? schemaMap;
+  final LlmCallContext llmContext;
+  final String dedupeKey;
+  final bool isStructuredPrompt;
+}
+
 class SessionService {
   SessionService(
     this._db,
@@ -204,8 +232,8 @@ class SessionService {
     void Function(int assistantMessageId)? onAssistantMessageCreated,
     void Function(int studentMessageId)? onStudentMessageCreated,
   }) async {
-    final actionMode = _resolveActionMode(mode);
     if (studentInput.trim().isNotEmpty) {
+      final actionMode = _resolveActionMode(mode);
       final studentMessageId = await _db.into(_db.chatMessages).insert(
             ChatMessagesCompanion.insert(
               sessionId: sessionId,
@@ -220,6 +248,56 @@ class SessionService {
       }
     }
 
+    final request = await _prepareTutorRequestContext(
+      sessionId: sessionId,
+      mode: mode,
+      studentInput: studentInput,
+      courseVersion: courseVersion,
+      node: node,
+      studentIntent: studentIntent,
+      modelOverride: modelOverride,
+      onPromptWarning: onPromptWarning,
+    );
+    final inflight = _inflightTutorByKey[request.dedupeKey];
+    if (inflight != null) {
+      return inflight;
+    }
+
+    if (!stream) {
+      final handle = _createTutorNonStreamingHandle(
+        request: request,
+        modelOverride: modelOverride,
+      );
+      return _registerInflightTutorHandle(
+        dedupeKey: request.dedupeKey,
+        handle: handle,
+      );
+    }
+
+    final handle = await _createTutorStreamingHandle(
+      request: request,
+      modelOverride: modelOverride,
+      streamToDatabase: streamToDatabase,
+      onChunk: onChunk,
+      onAssistantMessageCreated: onAssistantMessageCreated,
+    );
+    return _registerInflightTutorHandle(
+      dedupeKey: request.dedupeKey,
+      handle: handle,
+    );
+  }
+
+  Future<_TutorRequestContext> _prepareTutorRequestContext({
+    required int sessionId,
+    required String mode,
+    required String studentInput,
+    required CourseVersion courseVersion,
+    required CourseNode node,
+    required String? studentIntent,
+    required String? modelOverride,
+    required void Function()? onPromptWarning,
+  }) async {
+    final actionMode = _resolveActionMode(mode);
     final session = await _db.getSession(sessionId);
     final progress = session == null
         ? null
@@ -286,7 +364,6 @@ class SessionService {
         courseVersionId: courseVersion.id,
       );
     }
-
     final template = await _promptRepository.loadPrompt(
       promptName,
       teacherId: courseVersion.teacherId,
@@ -318,27 +395,21 @@ class SessionService {
       'last_evidence': lastEvidenceText,
       'current_mastery_level': currentMasteryLevel,
     };
-    String? lectureText;
-    String? questionsText;
-    String? questionLevel;
     final needsLessonContent =
         promptName == 'learn_init' || promptName == 'review_init';
     if (needsLessonContent) {
-      lectureText = await _loadLectureTextIfPresent(
+      values['lesson_content'] = await _loadLectureTextIfPresent(
         courseVersion: courseVersion,
         kpKey: node.kpKey,
       );
-      values['lesson_content'] = lectureText;
     }
-    final usesReviewQuestionBank = actionMode == 'review';
-    if (usesReviewQuestionBank) {
-      questionLevel = _normalizeLevel(progress?.questionLevel) ?? 'easy';
-      questionsText = await _loadQuestionsText(
+    if (actionMode == 'review') {
+      final questionLevel = _normalizeLevel(progress?.questionLevel) ?? 'easy';
+      values['presented_questions'] = await _loadQuestionsText(
         courseVersion: courseVersion,
         kpKey: node.kpKey,
         level: questionLevel,
       );
-      values['presented_questions'] = questionsText;
     }
     final renderResult = _renderWithHistoryLimit(
       template: template,
@@ -348,103 +419,93 @@ class SessionService {
     if (renderResult.maxTokensTooSmall && onPromptWarning != null) {
       onPromptWarning();
     }
-    final rendered = renderResult.rendered;
+    final renderedPrompt = renderResult.rendered;
     final schemaMap = await _loadStructuredSchema(promptName);
+    final llmContext = _buildTutorLlmContext(
+      courseVersion: courseVersion,
+      node: node,
+      sessionId: sessionId,
+      studentId: session?.studentId,
+      actionMode: actionMode,
+    );
     final dedupeKey = await _buildTutorDedupeKey(
       sessionId: sessionId,
       promptName: promptName,
-      renderedPrompt: rendered,
+      renderedPrompt: renderedPrompt,
       modelOverride: modelOverride,
     );
-    final inflight = _inflightTutorByKey[dedupeKey];
-    if (inflight != null) {
-      return inflight;
-    }
+    return _TutorRequestContext(
+      sessionId: sessionId,
+      courseVersionId: courseVersion.id,
+      kpKey: node.kpKey,
+      actionMode: actionMode,
+      promptName: promptName,
+      resolvedStudentIntent: resolvedStudentIntent,
+      renderedPrompt: renderedPrompt,
+      schemaMap: schemaMap,
+      llmContext: llmContext,
+      dedupeKey: dedupeKey,
+      isStructuredPrompt: _isStructuredPrompt(promptName),
+    );
+  }
 
-    if (!stream) {
-      final handle = _llmService.startCall(
-        promptName: promptName,
-        renderedPrompt: rendered,
-        schemaMap: schemaMap,
+  LlmCallContext _buildTutorLlmContext({
+    required CourseVersion courseVersion,
+    required CourseNode node,
+    required int sessionId,
+    required int? studentId,
+    required String actionMode,
+  }) {
+    return LlmCallContext(
+      teacherId: courseVersion.teacherId,
+      studentId: studentId,
+      courseVersionId: courseVersion.id,
+      sessionId: sessionId,
+      kpKey: node.kpKey,
+      action: actionMode,
+    );
+  }
+
+  LlmRequestHandle _createTutorNonStreamingHandle({
+    required _TutorRequestContext request,
+    required String? modelOverride,
+  }) {
+    final handle = _llmService.startCall(
+      promptName: request.promptName,
+      renderedPrompt: request.renderedPrompt,
+      schemaMap: request.schemaMap,
+      modelOverride: modelOverride,
+      context: request.llmContext,
+    );
+    final future = handle.future.then((result) async {
+      final resolution = await _resolveTutorPayload(
+        request: request,
         modelOverride: modelOverride,
-        context: LlmCallContext(
-          teacherId: courseVersion.teacherId,
-          studentId: session?.studentId,
-          courseVersionId: courseVersion.id,
-          sessionId: sessionId,
-          kpKey: node.kpKey,
-          action: actionMode,
-        ),
+        result: result,
+        responseText: result.responseText,
       );
-      final future = handle.future.then((result) async {
-        if (result.responseText.trim().isEmpty) {
-          throw StateError('LLM returned an empty response.');
-        }
-        final resolution = await _resolveStructuredPayload(
-          promptName: promptName,
-          renderedPrompt: rendered,
-          modelOverride: modelOverride,
-          context: LlmCallContext(
-            teacherId: courseVersion.teacherId,
-            studentId: session?.studentId,
-            courseVersionId: courseVersion.id,
-            sessionId: sessionId,
-            kpKey: node.kpKey,
-            action: actionMode,
-          ),
-          schemaMap: schemaMap,
-          responseText: result.responseText,
-          result: result,
-        );
-        await _db.into(_db.chatMessages).insert(
-              ChatMessagesCompanion.insert(
-                sessionId: sessionId,
-                role: 'assistant',
-                content: resolution.payload.displayText,
-                rawContent: Value(resolution.payload.rawText),
-                parsedJson: Value(resolution.payload.parsedJson),
-                action: Value(actionMode),
-              ),
-            );
-        await _updateReviewDifficultyIfNeeded(
-          actionMode: actionMode,
-          studentId: session?.studentId,
-          courseVersionId: courseVersion.id,
-          kpKey: node.kpKey,
-          studentIntent: resolvedStudentIntent,
-          parsedJsonText: resolution.payload.parsedJson,
-        );
-        await _llmLogRepository.appendEntry(
-          promptName: promptName,
-          model: resolution.result.model ?? '',
-          baseUrl: resolution.result.baseUrl ?? '',
-          mode: 'APP',
-          status: 'persist',
-          callHash: resolution.result.callHash,
-          responseChars: resolution.payload.displayText.length,
-          dbWriteOk: true,
-          teacherId: courseVersion.teacherId,
-          studentId: session?.studentId,
-          courseVersionId: courseVersion.id,
-          sessionId: sessionId,
-          kpKey: node.kpKey,
-          action: actionMode,
-        );
-        await _touchSessionSync(sessionId);
-        return resolution.result;
-      });
-      return _registerInflightTutorHandle(
-        dedupeKey: dedupeKey,
-        handle: LlmRequestHandle(future: future, cancel: handle.cancel),
+      await _persistTutorAssistantPayload(
+        request: request,
+        resolution: resolution,
       );
-    }
+      return resolution.result;
+    });
+    return LlmRequestHandle(future: future, cancel: handle.cancel);
+  }
 
+  Future<LlmRequestHandle> _createTutorStreamingHandle({
+    required _TutorRequestContext request,
+    required String? modelOverride,
+    required bool streamToDatabase,
+    required void Function(String chunk)? onChunk,
+    required void Function(int assistantMessageId)? onAssistantMessageCreated,
+  }) async {
     final assistantId = await _db.into(_db.chatMessages).insert(
           ChatMessagesCompanion.insert(
-            sessionId: sessionId,
+            sessionId: request.sessionId,
             role: 'assistant',
             content: '',
-            action: Value(actionMode),
+            action: Value(request.actionMode),
           ),
         );
     if (onAssistantMessageCreated != null) {
@@ -464,10 +525,7 @@ class SessionService {
     }
 
     void scheduleFlush() {
-      if (!streamToDatabase) {
-        return;
-      }
-      if (flushTimer?.isActive == true) {
+      if (!streamToDatabase || flushTimer?.isActive == true) {
         return;
       }
       flushTimer = Timer(const Duration(milliseconds: 80), () async {
@@ -477,7 +535,7 @@ class SessionService {
 
     void handleChunk(String chunk) {
       buffer.write(chunk);
-      if (_isStructuredPrompt(promptName)) {
+      if (request.isStructuredPrompt) {
         return;
       }
       scheduleFlush();
@@ -487,88 +545,122 @@ class SessionService {
     }
 
     final handle = _llmService.startStreamingCall(
-      promptName: promptName,
-      renderedPrompt: rendered,
+      promptName: request.promptName,
+      renderedPrompt: request.renderedPrompt,
       modelOverride: modelOverride,
       onChunk: handleChunk,
-      schemaMap: schemaMap,
-      context: LlmCallContext(
-        teacherId: courseVersion.teacherId,
-        studentId: session?.studentId,
-        courseVersionId: courseVersion.id,
-        sessionId: sessionId,
-        kpKey: node.kpKey,
-        action: actionMode,
-      ),
+      schemaMap: request.schemaMap,
+      context: request.llmContext,
     );
     final future = handle.future.then((result) async {
-      flushTimer?.cancel();
       final finalText = result.responseText.trim().isNotEmpty
           ? result.responseText
           : buffer.toString();
-      if (finalText.trim().isEmpty) {
-        throw StateError('LLM returned an empty response.');
-      }
-      final resolution = await _resolveStructuredPayload(
-        promptName: promptName,
-        renderedPrompt: rendered,
+      final resolution = await _resolveTutorPayload(
+        request: request,
         modelOverride: modelOverride,
-        context: LlmCallContext(
-          teacherId: courseVersion.teacherId,
-          studentId: session?.studentId,
-          courseVersionId: courseVersion.id,
-          sessionId: sessionId,
-          kpKey: node.kpKey,
-          action: actionMode,
-        ),
-        schemaMap: schemaMap,
-        responseText: finalText,
         result: result,
+        responseText: finalText,
       );
-      if (_isStructuredPrompt(promptName) && onChunk != null) {
+      if (request.isStructuredPrompt && onChunk != null) {
         onChunk(resolution.payload.displayText);
       }
       final writeDirectly = streamToDatabase ||
           onAssistantMessageCreated == null ||
-          _isStructuredPrompt(promptName);
+          request.isStructuredPrompt;
       if (writeDirectly) {
-        await _db.updateChatMessageAssistantPayload(
-          messageId: assistantId,
-          content: resolution.payload.displayText,
-          rawContent: resolution.payload.rawText,
-          parsedJson: resolution.payload.parsedJson,
+        await _persistTutorAssistantPayload(
+          request: request,
+          resolution: resolution,
+          assistantMessageId: assistantId,
         );
-        await _updateReviewDifficultyIfNeeded(
-          actionMode: actionMode,
-          studentId: session?.studentId,
-          courseVersionId: courseVersion.id,
-          kpKey: node.kpKey,
-          studentIntent: resolvedStudentIntent,
-          parsedJsonText: resolution.payload.parsedJson,
-        );
-        await _llmLogRepository.appendEntry(
-          promptName: promptName,
-          model: resolution.result.model ?? '',
-          baseUrl: resolution.result.baseUrl ?? '',
-          mode: 'APP',
-          status: 'persist',
-          callHash: resolution.result.callHash,
-          responseChars: resolution.payload.displayText.length,
-          dbWriteOk: true,
-          teacherId: courseVersion.teacherId,
-          studentId: session?.studentId,
-          courseVersionId: courseVersion.id,
-          sessionId: sessionId,
-          kpKey: node.kpKey,
-          action: actionMode,
-        );
-        await _touchSessionSync(sessionId);
       }
       return resolution.result;
+    }).whenComplete(() {
+      flushTimer?.cancel();
     });
-    return _registerInflightTutorHandle(
-      dedupeKey: dedupeKey,
-      handle: LlmRequestHandle(future: future, cancel: handle.cancel),
+    return LlmRequestHandle(future: future, cancel: handle.cancel);
+  }
+
+  Future<_StructuredPayloadResolution> _resolveTutorPayload({
+    required _TutorRequestContext request,
+    required String? modelOverride,
+    required LlmCallResult result,
+    required String responseText,
+  }) async {
+    if (responseText.trim().isEmpty) {
+      throw StateError('LLM returned an empty response.');
+    }
+    return _resolveStructuredPayload(
+      promptName: request.promptName,
+      renderedPrompt: request.renderedPrompt,
+      modelOverride: modelOverride,
+      context: request.llmContext,
+      schemaMap: request.schemaMap,
+      responseText: responseText,
+      result: result,
+    );
+  }
+
+  Future<void> _persistTutorAssistantPayload({
+    required _TutorRequestContext request,
+    required _StructuredPayloadResolution resolution,
+    int? assistantMessageId,
+  }) async {
+    if (assistantMessageId == null) {
+      await _db.into(_db.chatMessages).insert(
+            ChatMessagesCompanion.insert(
+              sessionId: request.sessionId,
+              role: 'assistant',
+              content: resolution.payload.displayText,
+              rawContent: Value(resolution.payload.rawText),
+              parsedJson: Value(resolution.payload.parsedJson),
+              action: Value(request.actionMode),
+            ),
+          );
+    } else {
+      await _db.updateChatMessageAssistantPayload(
+        messageId: assistantMessageId,
+        content: resolution.payload.displayText,
+        rawContent: resolution.payload.rawText,
+        parsedJson: resolution.payload.parsedJson,
+      );
+    }
+    await _updateReviewDifficultyIfNeeded(
+      actionMode: request.actionMode,
+      studentId: request.llmContext.studentId,
+      courseVersionId: request.courseVersionId,
+      kpKey: request.kpKey,
+      studentIntent: request.resolvedStudentIntent,
+      parsedJsonText: resolution.payload.parsedJson,
+    );
+    await _appendTutorPersistLog(
+      request: request,
+      resolution: resolution,
+    );
+    await _touchSessionSync(request.sessionId);
+  }
+
+  Future<void> _appendTutorPersistLog({
+    required _TutorRequestContext request,
+    required _StructuredPayloadResolution resolution,
+  }) {
+    final context = request.llmContext;
+    return _llmLogRepository.appendEntry(
+      promptName: request.promptName,
+      model: resolution.result.model ?? '',
+      baseUrl: resolution.result.baseUrl ?? '',
+      mode: 'APP',
+      status: 'persist',
+      callHash: resolution.result.callHash,
+      responseChars: resolution.payload.displayText.length,
+      dbWriteOk: true,
+      teacherId: context.teacherId,
+      studentId: context.studentId,
+      courseVersionId: context.courseVersionId,
+      sessionId: context.sessionId,
+      kpKey: context.kpKey,
+      action: context.action,
     );
   }
 
