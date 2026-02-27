@@ -1,16 +1,15 @@
 {
-    "generated_at":  "2026-02-27T23:51:22.8874555Z",
     "line_counts":  {
-                        "BACKUP_DRILL.md":  79,
-                        "WORKLOG.md":  73,
-                        "TODOS.md":  14,
-                        "BUGS.md":  66,
                         "AGENTS.md":  68,
-                        "WORKFLOW.md":  57,
                         "README.md":  53,
+                        "WORKFLOW.md":  57,
                         "SCRIPTS.md":  173,
+                        "BUGS.md":  66,
+                        "TODOS.md":  14,
                         "LOGBOOK.md":  52,
+                        "WORKLOG.md":  73,
                         "PLANS.md":  25,
-                        "DONEs.md":  43
+                        "DONEs.md":  43,
+                        "BACKUP_DRILL.md":  79
                     }
 }

@@ -88,12 +88,11 @@ function Get-LineCount {
 }
 
 function Get-MemorySnapshot {
-  $lines = @{}
+  $lines = [ordered]@{}
   foreach ($file in $memoryFiles) {
     $lines[$file] = Get-LineCount -RelativePath $file
   }
-  return [PSCustomObject]@{
-    generated_at = (Get-Date).ToUniversalTime().ToString("o")
+  return [ordered]@{
     line_counts = $lines
   }
 }
