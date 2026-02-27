@@ -1,5 +1,5 @@
 # SCRIPTS
-Last updated: 2026-02-27
+Last updated: 2026-02-28
 
 All commands are expected from repository root (`C:\family_teacher\app`) unless stated otherwise.
 

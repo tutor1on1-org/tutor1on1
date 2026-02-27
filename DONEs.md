@@ -1,5 +1,5 @@
 # DONES
-Last updated: 2026-02-27
+Last updated: 2026-02-28
 
 - Consolidated memory markdown docs with a deterministic formatter (`scripts/consolidate_memory.ps1`) and added release automation (`scripts/validate_project.ps1` + `scripts/post_validate_hook.ps1`) that validates, consolidates memory, and pushes on success.
 - Improved student tutor interaction contract: added explicit student intent controls in chat UI (`Auto`, `Need Hint`, `My Attempt`, `Final`) and passed `student_intent` into prompt rendering for LEARN/REVIEW flows.
