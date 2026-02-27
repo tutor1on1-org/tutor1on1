@@ -12,6 +12,7 @@
 - `PLANS.md` - phased roadmap.
 - `DONEs.md` - recent completed items.
 - `SECRETS.md` - temporary credentials (rotate regularly).
+- `BACKUP_DRILL.md` - backup restore verification drill and incident checklist.
 
 ## Experience updates
 - Course sync correctness depends on server-authoritative versioning and deletion events: treat remote bundle version as source of truth, and replay deletion events on login to clean multi-device local state.
@@ -30,6 +31,7 @@
 - Student bundle re-download must reuse the existing local course mapped by `remoteCourseId` and apply `override` mode with server subject as course name; importing from extracted folder basename creates duplicate local courses and splits progress.
 - Progress sync should be uploaded in batch (`/api/progress/sync/upload-batch`) instead of one-by-one requests to avoid per-minute sync rate-limit bursts.
 - Teacher quit/deletion event replay must delete only the affected student assignment/data; never delete the teacher's local course definition based on "no assignments", or teacher course catalogs can silently shrink.
+- Deletion-event replay regression tests should assert cursor behavior (`sinceId` forwarding + cursor advance) and role-specific cleanup outcomes (student login removes local assigned course; teacher login keeps teacher course and removes only affected student assignment/progress).
 - When session sync import cannot resolve `remoteCourseId`, resolve local course by normalized subject (strip `_<timestamp>` suffix) before creating a new placeholder to prevent duplicate local course rows.
 - Teacher upload preflight must run in this order: local course validation, semantic hash compare with latest remote bundle, then KP diff (added/deleted/updated) confirmation before upload when hash differs.
 - Async cleanup rule: in `try/finally`, do not `return` an un-awaited `Future` that still depends on resources deleted in `finally` (use `await` first), or temp files can be removed before downstream read.
@@ -38,3 +40,15 @@
 - Progress sync E2EE must upload/store ciphertext envelopes (`envelope` + `envelope_hash`) and decrypt client-side; keep compatibility by accepting legacy plaintext rows when envelope is absent.
 - User key lifecycle must re-encrypt and upsert an existing local key pair with the current login password during `syncNow`; otherwise password changes can leave server key blobs undecryptable on new devices.
 - Go toolchain is installed at `C:\\Program Files\\Go\\bin\\go.exe` (`go1.26.0`); if `go` is not recognized in PowerShell, invoke the absolute path or prepend `C:\\Program Files\\Go\\bin` to `PATH` for that session.
+- Prompt composition precedence must remain `system override -> course append -> student append`; keep scope-resolution checks scripted so ordering regressions are caught early.
+- Bundle extraction/import regressions should assert the returned extraction path is immediately import-ready (required files present and zero KP diff versus source bundle) to guard missing-await failures.
+- Integration tests for auth-gated UI flows can stay deterministic/offline by using `AuthGate` with in-memory `AppDatabase`, a fake `AuthController`, and mocked `path_provider` channels for app/secure-storage paths.
+- API authorization regressions should cover `/api/enrollment-requests` and `/api/bundles/download` with JWT identities plus DB checks; reject teacher/self-unenrolled access with `403` and assert successful download responses include `X-Accel-Redirect`.
+- `EnsureBundle` stale-link behavior should be regression-tested at API level: stale `course_id` without `course_name` returns `404`, while providing `course_name` must resolve/create and return the effective `course_id` in response.
+- Client upload flow must resolve remote target via `ensureBundle` and use the returned `course_id` for subsequent visibility updates; keep this enforced through `TeacherMarketplaceUploadService` tests.
+- For Windows PowerShell smoke runs, use `curl.exe` for authenticated multipart upload/download paths to avoid inconsistent `HttpClient` behavior across host runtimes.
+- For server sync operations triggered from auth/home screens, use a blocking gray overlay with a bottom progress panel so users see sync phase and cannot trigger conflicting actions during sync.
+- Tutor TTS rendering must never flush an empty display buffer into `chat_messages.content`; empty flush can overwrite a valid assistant payload and make successful LLM replies appear blank.
+- Marketplace enrollment/quit/download workflow feedback should use persistent, manually dismissible messages; transient snackbars are easy to miss during multi-step actions.
+- Teacher progress review should use `(student + course)` filtering and display session-level `chat_sessions.summary_text` / `summary_lit_percent` so server-synced summaries are visible without opening each session.
+- Recovery flow hardening rule: with `RECOVERY_TOKEN_ECHO=false`, `/api/auth/request-recovery` must not leak token in API response and should be validated with SMTP-path regression tests.

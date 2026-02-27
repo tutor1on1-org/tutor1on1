@@ -10,6 +10,7 @@ import '../../db/app_database.dart';
 import '../../services/app_services.dart';
 import '../../services/course_bundle_service.dart';
 import '../../services/marketplace_api_service.dart';
+import '../../services/teacher_marketplace_upload_service.dart';
 import '../../state/auth_controller.dart';
 import '../app_settings_page.dart';
 import 'course_version_page.dart';
@@ -18,6 +19,7 @@ import 'prompt_settings_page.dart';
 import 'skill_tree_page.dart';
 import 'student_sessions_page.dart';
 import 'teacher_enrollment_requests_page.dart';
+import '../widgets/server_sync_overlay.dart';
 
 class TeacherHomePage extends StatefulWidget {
   const TeacherHomePage({super.key});
@@ -28,10 +30,13 @@ class TeacherHomePage extends StatefulWidget {
 
 class _TeacherHomePageState extends State<TeacherHomePage> {
   bool _syncStarted = false;
+  bool _syncingFromServer = false;
+  String _syncProgressMessage = '';
   final Set<int> _uploadingCourseIds = {};
   String? _persistentMessage;
   bool _persistentMessageIsError = false;
   late MarketplaceApiService _marketplaceApi;
+  late TeacherMarketplaceUploadService _uploadService;
 
   @override
   void initState() {
@@ -39,6 +44,10 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     final services = context.read<AppServices>();
     _marketplaceApi =
         MarketplaceApiService(secureStorage: services.secureStorage);
+    _uploadService = TeacherMarketplaceUploadService(
+      db: services.db,
+      marketplaceApi: _marketplaceApi,
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) => _startSync());
   }
 
@@ -47,23 +56,35 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       return;
     }
     _syncStarted = true;
+    _setSyncState(
+      syncing: true,
+      message: 'Syncing enrollments from server...',
+    );
     final l10n = AppLocalizations.of(context)!;
     final auth = context.read<AuthController>();
     final user = auth.currentUser;
     if (user == null) {
+      _setSyncState(syncing: false);
       return;
     }
     final services = context.read<AppServices>();
     try {
       await services.enrollmentSyncService.syncIfReady(currentUser: user);
+      _setSyncState(
+        syncing: true,
+        message: 'Syncing sessions from server...',
+      );
       await services.sessionSyncService.syncIfReady(currentUser: user);
     } catch (error) {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.sessionSyncFailed('$error'))),
+      _setPersistentMessage(
+        l10n.sessionSyncFailed('$error'),
+        isError: true,
       );
+    } finally {
+      _setSyncState(syncing: false);
     }
   }
 
@@ -74,209 +95,247 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     final teacher = auth.currentUser!;
     final db = context.read<AppDatabase>();
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(l10n.teacherTitle(teacher.username)),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.store),
-            tooltip: l10n.marketplaceTitle,
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const MarketplacePage()),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const SettingsPage()),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () => auth.logout(),
-          ),
-        ],
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (_persistentMessage != null) ...[
-              _buildPersistentMessageCard(l10n),
-              const SizedBox(height: 12),
-            ],
-            Wrap(
-              spacing: 12,
-              runSpacing: 8,
-              children: [
-                ElevatedButton(
-                  key: const Key('create_course_button'),
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            CourseVersionPage(teacherId: teacher.id),
-                      ),
-                    );
-                  },
-                  child: Text(l10n.createCourseButton),
-                ),
-                ElevatedButton(
-                  key: const Key('enrollment_requests_button'),
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const TeacherEnrollmentRequestsPage(),
-                      ),
-                    );
-                  },
-                  child: Text(l10n.enrollmentRequestsButton),
-                ),
-                ElevatedButton(
-                  key: const Key('prompt_settings_button'),
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => PromptSettingsPage(
-                          teacherId: teacher.id,
-                        ),
-                      ),
-                    );
-                  },
-                  child: Text(l10n.promptTemplatesButton),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Text(
-              l10n.studentsSection,
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            Expanded(
-              child: StreamBuilder<List<User>>(
-                stream: db.watchStudents(teacher.id),
-                builder: (context, snapshot) {
-                  final students = snapshot.data ?? [];
-                  if (students.isEmpty) {
-                    return Center(child: Text(l10n.noStudents));
-                  }
-                  return ListView.builder(
-                    itemCount: students.length,
-                    itemBuilder: (context, index) {
-                      final student = students[index];
-                      return ListTile(
-                        title: Text(student.username),
-                        trailing: IconButton(
-                          tooltip: l10n.studentSessionsButton,
-                          icon: const Icon(Icons.history),
-                          onPressed: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) =>
-                                    StudentSessionsPage(student: student),
-                              ),
-                            );
-                          },
-                        ),
-                      );
-                    },
+    return Stack(
+      children: [
+        Scaffold(
+          appBar: AppBar(
+            title: Text(l10n.teacherTitle(teacher.username)),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.store),
+                tooltip: l10n.marketplaceTitle,
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const MarketplacePage()),
                   );
                 },
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              l10n.coursesSection,
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            Expanded(
-              child: StreamBuilder<List<CourseVersion>>(
-                stream: db.watchCourseVersions(teacher.id),
-                builder: (context, snapshot) {
-                  final courses = snapshot.data ?? [];
-                  if (courses.isEmpty) {
-                    return Center(child: Text(l10n.noCourses));
-                  }
-                  return ListView.builder(
-                    itemCount: courses.length,
-                    itemBuilder: (context, index) {
-                      final course = courses[index];
-                      final isLoaded = course.sourcePath != null &&
-                          course.sourcePath!.trim().isNotEmpty;
-                      return _CourseTile(
-                        course: course,
-                        isLoaded: isLoaded,
-                        isUploading: _uploadingCourseIds.contains(course.id),
-                        onReload: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => CourseVersionPage(
-                                teacherId: teacher.id,
-                                courseVersionId: course.id,
-                              ),
+              IconButton(
+                icon: const Icon(Icons.settings),
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const SettingsPage()),
+                  );
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.logout),
+                onPressed: () => auth.logout(),
+              ),
+            ],
+          ),
+          body: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (_persistentMessage != null) ...[
+                  _buildPersistentMessageCard(l10n),
+                  const SizedBox(height: 12),
+                ],
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  children: [
+                    ElevatedButton(
+                      key: const Key('create_course_button'),
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                CourseVersionPage(teacherId: teacher.id),
+                          ),
+                        );
+                      },
+                      child: Text(l10n.createCourseButton),
+                    ),
+                    ElevatedButton(
+                      key: const Key('enrollment_requests_button'),
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                const TeacherEnrollmentRequestsPage(),
+                          ),
+                        );
+                      },
+                      child: Text(l10n.enrollmentRequestsButton),
+                    ),
+                    ElevatedButton(
+                      key: const Key('prompt_settings_button'),
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => PromptSettingsPage(
+                              teacherId: teacher.id,
+                            ),
+                          ),
+                        );
+                      },
+                      child: Text(l10n.promptTemplatesButton),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  l10n.studentsSection,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                Expanded(
+                  child: StreamBuilder<List<User>>(
+                    stream: db.watchStudents(teacher.id),
+                    builder: (context, snapshot) {
+                      final students = snapshot.data ?? [];
+                      if (students.isEmpty) {
+                        return Center(child: Text(l10n.noStudents));
+                      }
+                      return ListView.builder(
+                        itemCount: students.length,
+                        itemBuilder: (context, index) {
+                          final student = students[index];
+                          return ListTile(
+                            title: Text(student.username),
+                            trailing: IconButton(
+                              tooltip: l10n.studentSessionsButton,
+                              icon: const Icon(Icons.history),
+                              onPressed: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        StudentSessionsPage(student: student),
+                                  ),
+                                );
+                              },
                             ),
                           );
                         },
-                        onDelete: () => _confirmDeleteCourse(context, course),
-                        onVersions: () => _openBundleVersionsPage(course),
-                        onUpload: isLoaded
-                            ? () => _uploadCourseToMarketplace(teacher, course)
-                            : null,
                       );
                     },
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Course / Student / Tree',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-            Expanded(
-              child: StreamBuilder<List<CourseStudentTreeInfo>>(
-                stream: db.watchCourseStudentTrees(teacher.id),
-                builder: (context, snapshot) {
-                  final rows = snapshot.data ?? [];
-                  if (rows.isEmpty) {
-                    return const Center(child: Text('No rows yet.'));
-                  }
-                  return ListView.builder(
-                    itemCount: rows.length,
-                    itemBuilder: (context, index) {
-                      final row = rows[index];
-                      return ListTile(
-                        title: Text(
-                            '${_stripVersionSuffix(row.courseSubject)} / ${row.studentUsername}'),
-                        trailing: TextButton(
-                          onPressed: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => SkillTreePage(
-                                  courseVersionId: row.courseVersionId,
-                                  isTeacherView: true,
-                                  teacherStudentId: row.studentId,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  l10n.coursesSection,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                Expanded(
+                  child: StreamBuilder<List<CourseVersion>>(
+                    stream: db.watchCourseVersions(teacher.id),
+                    builder: (context, snapshot) {
+                      final courses = snapshot.data ?? [];
+                      if (courses.isEmpty) {
+                        return Center(child: Text(l10n.noCourses));
+                      }
+                      return ListView.builder(
+                        itemCount: courses.length,
+                        itemBuilder: (context, index) {
+                          final course = courses[index];
+                          final isLoaded = course.sourcePath != null &&
+                              course.sourcePath!.trim().isNotEmpty;
+                          return _CourseTile(
+                            course: course,
+                            isLoaded: isLoaded,
+                            isUploading:
+                                _uploadingCourseIds.contains(course.id),
+                            onReload: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => CourseVersionPage(
+                                    teacherId: teacher.id,
+                                    courseVersionId: course.id,
+                                  ),
                                 ),
-                              ),
-                            );
-                          },
-                          child: Text(l10n.treeButton),
-                        ),
+                              );
+                            },
+                            onDelete: () =>
+                                _confirmDeleteCourse(context, course),
+                            onVersions: () => _openBundleVersionsPage(course),
+                            onUpload: isLoaded
+                                ? () =>
+                                    _uploadCourseToMarketplace(teacher, course)
+                                : null,
+                          );
+                        },
                       );
                     },
-                  );
-                },
-              ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Course / Student / Tree',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                Expanded(
+                  child: StreamBuilder<List<CourseStudentTreeInfo>>(
+                    stream: db.watchCourseStudentTrees(teacher.id),
+                    builder: (context, snapshot) {
+                      final rows = snapshot.data ?? [];
+                      if (rows.isEmpty) {
+                        return const Center(child: Text('No rows yet.'));
+                      }
+                      return ListView.builder(
+                        itemCount: rows.length,
+                        itemBuilder: (context, index) {
+                          final row = rows[index];
+                          return ListTile(
+                            onTap: () async {
+                              final student =
+                                  await db.getUserById(row.studentId);
+                              if (!mounted || student == null) {
+                                return;
+                              }
+                              await Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => StudentSessionsPage(
+                                    student: student,
+                                    initialCourseVersionId: row.courseVersionId,
+                                  ),
+                                ),
+                              );
+                            },
+                            title: Text(
+                                '${_stripVersionSuffix(row.courseSubject)} / ${row.studentUsername}'),
+                            trailing: TextButton(
+                              onPressed: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => SkillTreePage(
+                                      courseVersionId: row.courseVersionId,
+                                      isTeacherView: true,
+                                      teacherStudentId: row.studentId,
+                                    ),
+                                  ),
+                                );
+                              },
+                              child: Text(l10n.treeButton),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
-      ),
+        if (_syncingFromServer)
+          ServerSyncOverlay(message: _syncProgressMessage),
+      ],
     );
+  }
+
+  void _setSyncState({
+    required bool syncing,
+    String message = '',
+  }) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _syncingFromServer = syncing;
+      _syncProgressMessage = message;
+    });
   }
 
   Future<void> _uploadCourseToMarketplace(
@@ -286,8 +345,9 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     final l10n = AppLocalizations.of(context)!;
     final sourcePath = (course.sourcePath ?? '').trim();
     if (sourcePath.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.courseFolderRequired)),
+      _setPersistentMessage(
+        l10n.courseFolderRequired,
+        isError: true,
       );
       return;
     }
@@ -296,7 +356,6 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     }
 
     final services = context.read<AppServices>();
-    final db = services.db;
 
     final preview = await services.courseService.previewCourseLoad(
       folderPath: sourcePath,
@@ -316,83 +375,11 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
 
     File? bundleFile;
     try {
-      final storedRemoteCourseId = await db.getRemoteCourseId(course.id);
-      var remoteCourseId = storedRemoteCourseId;
-      final teacherCourses = await _marketplaceApi.listTeacherCourses();
-      final normalizedCourseName = _normalizeCourseName(course.subject);
-      TeacherCourseSummary? sameNameCourse;
-      for (final remoteCourse in teacherCourses) {
-        if (_normalizeCourseName(remoteCourse.subject) ==
-            normalizedCourseName) {
-          sameNameCourse = remoteCourse;
-          break;
-        }
-      }
-      if (sameNameCourse != null) {
-        remoteCourseId = sameNameCourse.courseId;
-        if (storedRemoteCourseId != remoteCourseId) {
-          await db.upsertCourseRemoteLink(
-            courseVersionId: course.id,
-            remoteCourseId: remoteCourseId,
-          );
-        }
-      } else if (remoteCourseId != null && remoteCourseId > 0) {
-        final remoteExists = teacherCourses
-            .any((remoteCourse) => remoteCourse.courseId == remoteCourseId);
-        if (!remoteExists) {
-          remoteCourseId = null;
-        }
-      }
-      if (remoteCourseId == null || remoteCourseId <= 0) {
-        final created = await _marketplaceApi.createTeacherCourse(
-          subject: course.subject,
-          grade: '',
-          description: 'Uploaded from Family Teacher app.',
-        );
-        remoteCourseId = created.courseId;
-        await db.upsertCourseRemoteLink(
-          courseVersionId: course.id,
-          remoteCourseId: remoteCourseId,
-        );
-      }
-
-      var bundleId = 0;
-      try {
-        final ensured = await _marketplaceApi.ensureBundle(
-          remoteCourseId,
-          courseName: course.subject,
-        );
-        bundleId = ensured.bundleId;
-        remoteCourseId = ensured.courseId;
-        await db.upsertCourseRemoteLink(
-          courseVersionId: course.id,
-          remoteCourseId: remoteCourseId,
-        );
-      } on MarketplaceApiException catch (error) {
-        if (error.statusCode != 404) {
-          rethrow;
-        }
-        final created = await _marketplaceApi.createTeacherCourse(
-          subject: course.subject,
-          grade: '',
-          description: 'Uploaded from Family Teacher app.',
-        );
-        remoteCourseId = created.courseId;
-        await db.upsertCourseRemoteLink(
-          courseVersionId: course.id,
-          remoteCourseId: remoteCourseId,
-        );
-        final ensured = await _marketplaceApi.ensureBundle(
-          remoteCourseId,
-          courseName: course.subject,
-        );
-        bundleId = ensured.bundleId;
-        remoteCourseId = ensured.courseId;
-        await db.upsertCourseRemoteLink(
-          courseVersionId: course.id,
-          remoteCourseId: remoteCourseId,
-        );
-      }
+      final target = await _uploadService.resolveUploadTarget(
+        courseVersionId: course.id,
+        courseSubject: course.subject,
+      );
+      final remoteCourseId = target.remoteCourseId;
       final bundleService = CourseBundleService();
       final promptMetadata = await _buildPromptBundleMetadata(
         teacher: teacher,
@@ -441,17 +428,14 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         }
       }
 
-      final uploadResponse = await _marketplaceApi.uploadBundle(
-        bundleId: bundleId,
-        courseName: course.subject,
+      final uploadResponse = await _uploadService.uploadBundleAndPublish(
+        target: target,
+        courseSubject: course.subject,
         bundleFile: bundleFile,
+        visibility: 'public',
       );
       final uploadedStatus =
           (uploadResponse['status'] as String?) ?? 'uploaded';
-      await _marketplaceApi.updateCourseVisibility(
-        courseId: remoteCourseId,
-        visibility: 'public',
-      );
       if (mounted) {
         if (uploadedStatus == 'unchanged') {
           _setPersistentMessage(

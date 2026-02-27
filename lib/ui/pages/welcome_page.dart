@@ -6,6 +6,7 @@ import '../../services/app_services.dart';
 import '../../state/auth_controller.dart';
 import '../../state/settings_controller.dart';
 import '../app_settings_page.dart';
+import '../widgets/server_sync_overlay.dart';
 
 class WelcomePage extends StatefulWidget {
   const WelcomePage({super.key});
@@ -28,6 +29,8 @@ class _WelcomePageState extends State<WelcomePage> {
   final _studentPassword = TextEditingController();
   final _studentRecoveryEmail = TextEditingController();
   bool _teacherContactPublished = false;
+  bool _syncingFromServer = false;
+  String _syncProgressMessage = '';
 
   @override
   void dispose() {
@@ -49,40 +52,46 @@ class _WelcomePageState extends State<WelcomePage> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return DefaultTabController(
-      length: 3,
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(l10n.appTitle),
-          actions: [
-            IconButton(
-              key: const Key('open_settings'),
-              icon: const Icon(Icons.settings),
-              onPressed: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const SettingsPage(),
-                  ),
-                );
-              },
+    return Stack(
+      children: [
+        DefaultTabController(
+          length: 3,
+          child: Scaffold(
+            appBar: AppBar(
+              title: Text(l10n.appTitle),
+              actions: [
+                IconButton(
+                  key: const Key('open_settings'),
+                  icon: const Icon(Icons.settings),
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const SettingsPage(),
+                      ),
+                    );
+                  },
+                ),
+              ],
+              bottom: TabBar(
+                tabs: [
+                  Tab(text: l10n.loginTab),
+                  Tab(text: l10n.registerTeacherTab),
+                  Tab(text: l10n.registerStudentTab),
+                ],
+              ),
             ),
-          ],
-          bottom: TabBar(
-            tabs: [
-              Tab(text: l10n.loginTab),
-              Tab(text: l10n.registerTeacherTab),
-              Tab(text: l10n.registerStudentTab),
-            ],
+            body: TabBarView(
+              children: [
+                _buildLogin(context),
+                _buildRegisterTeacher(context),
+                _buildRegisterStudent(context),
+              ],
+            ),
           ),
         ),
-        body: TabBarView(
-          children: [
-            _buildLogin(context),
-            _buildRegisterTeacher(context),
-            _buildRegisterStudent(context),
-          ],
-        ),
-      ),
+        if (_syncingFromServer)
+          ServerSyncOverlay(message: _syncProgressMessage),
+      ],
     );
   }
 
@@ -342,7 +351,15 @@ class _WelcomePageState extends State<WelcomePage> {
     }
     final services = context.read<AppServices>();
     try {
+      _setSyncState(
+        syncing: true,
+        message: 'Syncing enrollments from server...',
+      );
       await services.enrollmentSyncService.syncIfReady(currentUser: user);
+      _setSyncState(
+        syncing: true,
+        message: 'Syncing sessions from server...',
+      );
       await services.sessionSyncService.syncNow(
         currentUser: user,
         password: password,
@@ -352,6 +369,8 @@ class _WelcomePageState extends State<WelcomePage> {
         return;
       }
       _showMessage(context, l10n.sessionSyncFailed('$error'));
+    } finally {
+      _setSyncState(syncing: false);
     }
   }
 
@@ -390,7 +409,15 @@ class _WelcomePageState extends State<WelcomePage> {
     }
     final services = context.read<AppServices>();
     try {
+      _setSyncState(
+        syncing: true,
+        message: 'Syncing enrollments from server...',
+      );
       await services.enrollmentSyncService.syncIfReady(currentUser: user);
+      _setSyncState(
+        syncing: true,
+        message: 'Syncing sessions from server...',
+      );
       await services.sessionSyncService.syncNow(
         currentUser: user,
         password: password,
@@ -400,6 +427,8 @@ class _WelcomePageState extends State<WelcomePage> {
         return;
       }
       _showMessage(context, l10n.sessionSyncFailed('$error'));
+    } finally {
+      _setSyncState(syncing: false);
     }
   }
 
@@ -428,7 +457,15 @@ class _WelcomePageState extends State<WelcomePage> {
     }
     final services = context.read<AppServices>();
     try {
+      _setSyncState(
+        syncing: true,
+        message: 'Syncing enrollments from server...',
+      );
       await services.enrollmentSyncService.syncIfReady(currentUser: user);
+      _setSyncState(
+        syncing: true,
+        message: 'Syncing sessions from server...',
+      );
       await services.sessionSyncService.syncNow(
         currentUser: user,
         password: password,
@@ -438,6 +475,21 @@ class _WelcomePageState extends State<WelcomePage> {
         return;
       }
       _showMessage(context, l10n.sessionSyncFailed('$error'));
+    } finally {
+      _setSyncState(syncing: false);
     }
+  }
+
+  void _setSyncState({
+    required bool syncing,
+    String message = '',
+  }) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _syncingFromServer = syncing;
+      _syncProgressMessage = message;
+    });
   }
 }

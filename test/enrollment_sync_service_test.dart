@@ -10,7 +10,11 @@ import 'package:family_teacher/services/marketplace_api_service.dart';
 import 'package:family_teacher/services/secure_storage_service.dart';
 
 class _TestSecureStorageService extends SecureStorageService {
-  _TestSecureStorageService({String? accessToken}) : _accessToken = accessToken;
+  _TestSecureStorageService({
+    String? accessToken,
+    int? deletionCursor,
+  })  : _accessToken = accessToken,
+        _deletionCursor = deletionCursor;
 
   final String? _accessToken;
   int? _deletionCursor;
@@ -56,9 +60,11 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
     List<EnrollmentSummary>? enrollments,
     List<EnrollmentDeletionEvent>? deletionEvents,
     List<TeacherCourseSummary>? teacherCourses,
+    List<EnrollmentDeletionEvent> Function(int? sinceId)? deletionEventsProvider,
   })  : _enrollments = enrollments ?? const <EnrollmentSummary>[],
         _deletionEvents = deletionEvents ?? const <EnrollmentDeletionEvent>[],
         _teacherCourses = teacherCourses ?? const <TeacherCourseSummary>[],
+        _deletionEventsProvider = deletionEventsProvider,
         super(
           secureStorage: secureStorage,
           baseUrl: 'https://example.com',
@@ -70,6 +76,9 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   final List<EnrollmentSummary> _enrollments;
   final List<EnrollmentDeletionEvent> _deletionEvents;
   final List<TeacherCourseSummary> _teacherCourses;
+  final List<EnrollmentDeletionEvent> Function(int? sinceId)?
+      _deletionEventsProvider;
+  int? lastDeletionSinceId;
 
   @override
   Future<List<EnrollmentSummary>> listEnrollments() async {
@@ -80,6 +89,10 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   Future<List<EnrollmentDeletionEvent>> listEnrollmentDeletionEvents({
     int? sinceId,
   }) async {
+    lastDeletionSinceId = sinceId;
+    if (_deletionEventsProvider != null) {
+      return _deletionEventsProvider(sinceId);
+    }
     return _deletionEvents;
   }
 
@@ -251,6 +264,211 @@ void main() {
       );
       expect(movedProgress, isNotNull);
       expect(movedProgress!.lit, isTrue);
+    },
+  );
+
+  test(
+    'student login sync replays deletion events and advances cursor',
+    () async {
+      final teacherId = await db.createUser(
+        username: 'teacher_c',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 811,
+      );
+      final studentId = await db.createUser(
+        username: 'student_c',
+        pinHash: 'hash',
+        role: 'student',
+        teacherId: teacherId,
+        remoteUserId: 911,
+      );
+      final courseId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Chemistry',
+        granularity: 1,
+        textbookText: '',
+        sourcePath: r'C:\courses\chemistry',
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseId,
+        remoteCourseId: 6001,
+      );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: courseId,
+      );
+      await db.upsertProgress(
+        studentId: studentId,
+        courseVersionId: courseId,
+        kpKey: '1.1',
+        lit: true,
+      );
+
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+
+      final secureStorage = _TestSecureStorageService(
+        deletionCursor: 3,
+      );
+      final api = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+        enrollments: const <EnrollmentSummary>[],
+        deletionEventsProvider: (sinceId) {
+          expect(sinceId, equals(3));
+          return <EnrollmentDeletionEvent>[
+            EnrollmentDeletionEvent(
+              eventId: 5,
+              studentId: 911,
+              teacherUserId: 811,
+              courseId: 6001,
+              reason: 'quit_approved',
+              createdAt: '2026-02-27T00:00:00Z',
+            ),
+          ];
+        },
+      );
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService: CourseService(db),
+        marketplaceApi: api,
+      );
+
+      await service.syncIfReady(currentUser: student!);
+
+      final assigned = await db.getAssignedCoursesForStudent(studentId);
+      expect(assigned, isEmpty);
+      final removedCourse = await db.getCourseVersionById(courseId);
+      expect(removedCourse, isNull);
+      final movedProgress = await db.getProgress(
+        studentId: studentId,
+        courseVersionId: courseId,
+        kpKey: '1.1',
+      );
+      expect(movedProgress, isNull);
+      expect(await secureStorage.readEnrollmentDeletionCursor(911), equals(5));
+      expect(api.lastDeletionSinceId, equals(3));
+    },
+  );
+
+  test(
+    'teacher login sync replays deletion events but keeps teacher course definition',
+    () async {
+      final teacherId = await db.createUser(
+        username: 'teacher_d',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 812,
+      );
+      final studentAId = await db.createUser(
+        username: 'student_d1',
+        pinHash: 'hash',
+        role: 'student',
+        teacherId: teacherId,
+        remoteUserId: 912,
+      );
+      final studentBId = await db.createUser(
+        username: 'student_d2',
+        pinHash: 'hash',
+        role: 'student',
+        teacherId: teacherId,
+        remoteUserId: 913,
+      );
+      final courseId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Physics',
+        granularity: 1,
+        textbookText: '',
+        sourcePath: r'C:\courses\physics',
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseId,
+        remoteCourseId: 7001,
+      );
+      await db.assignStudent(
+        studentId: studentAId,
+        courseVersionId: courseId,
+      );
+      await db.assignStudent(
+        studentId: studentBId,
+        courseVersionId: courseId,
+      );
+      await db.upsertProgress(
+        studentId: studentAId,
+        courseVersionId: courseId,
+        kpKey: '1.1',
+        lit: true,
+      );
+      await db.upsertProgress(
+        studentId: studentBId,
+        courseVersionId: courseId,
+        kpKey: '1.1',
+        lit: true,
+      );
+
+      final teacher = await db.getUserById(teacherId);
+      expect(teacher, isNotNull);
+
+      final secureStorage = _TestSecureStorageService();
+      final api = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+        teacherCourses: <TeacherCourseSummary>[
+          TeacherCourseSummary(
+            courseId: 7001,
+            subject: 'Physics',
+            grade: '',
+            description: '',
+            visibility: 'private',
+            publishedAt: '',
+            latestBundleVersionId: null,
+            status: 'active',
+          ),
+        ],
+        deletionEvents: <EnrollmentDeletionEvent>[
+          EnrollmentDeletionEvent(
+            eventId: 9,
+            studentId: 912,
+            teacherUserId: 812,
+            courseId: 7001,
+            reason: 'quit_approved',
+            createdAt: '2026-02-27T00:00:00Z',
+          ),
+        ],
+      );
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService: CourseService(db),
+        marketplaceApi: api,
+      );
+
+      await service.syncIfReady(currentUser: teacher!);
+
+      final teacherCourse = await db.getCourseVersionById(courseId);
+      expect(teacherCourse, isNotNull);
+
+      final studentACourses = await db.getAssignedCoursesForStudent(studentAId);
+      expect(studentACourses, isEmpty);
+      final studentAProgress = await db.getProgress(
+        studentId: studentAId,
+        courseVersionId: courseId,
+        kpKey: '1.1',
+      );
+      expect(studentAProgress, isNull);
+
+      final studentBCourses = await db.getAssignedCoursesForStudent(studentBId);
+      expect(studentBCourses.length, equals(1));
+      expect(studentBCourses.first.id, equals(courseId));
+      final studentBProgress = await db.getProgress(
+        studentId: studentBId,
+        courseVersionId: courseId,
+        kpKey: '1.1',
+      );
+      expect(studentBProgress, isNotNull);
+      expect(studentBProgress!.lit, isTrue);
+
+      expect(await secureStorage.readEnrollmentDeletionCursor(812), equals(9));
     },
   );
 }

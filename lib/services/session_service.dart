@@ -95,6 +95,10 @@ class SessionService {
   final SettingsRepository _settingsRepository;
   final PromptRenderer _renderer = PromptRenderer();
   static final Uuid _uuid = Uuid();
+  static const int _structuredRetryLimit = 2;
+  static const Duration _structuredRetryDelay = Duration(
+    milliseconds: 250,
+  );
 
   Future<int> startSession({
     required int studentId,
@@ -657,15 +661,15 @@ class SessionService {
         );
 
         await _db.into(_db.chatMessages).insert(
-          ChatMessagesCompanion.insert(
-            sessionId: sessionId,
-            role: 'assistant',
-            content: summary,
-            rawContent: Value(result.responseText),
-            parsedJson: Value(parsedJson),
-            action: const Value('summary'),
-          ),
-        );
+              ChatMessagesCompanion.insert(
+                sessionId: sessionId,
+                role: 'assistant',
+                content: summary,
+                rawContent: Value(result.responseText),
+                parsedJson: Value(parsedJson),
+                action: const Value('summary'),
+              ),
+            );
       });
       await _touchSessionSync(sessionId);
 
@@ -1273,7 +1277,7 @@ class SessionService {
     var currentResult = result;
     var currentText = responseText;
     var didRetry = false;
-    for (var attempt = 0; attempt < 2; attempt++) {
+    for (var attempt = 0; attempt <= _structuredRetryLimit; attempt++) {
       try {
         final payload = _buildAssistantPayload(
           promptName: promptName,
@@ -1284,11 +1288,17 @@ class SessionService {
           result: currentResult,
           didRetry: didRetry,
         );
-      } catch (_) {
-        if (!_isStructuredPrompt(promptName) || attempt > 0) {
+      } catch (error) {
+        final shouldRetry = _isStructuredPrompt(promptName) &&
+            attempt < _structuredRetryLimit &&
+            !_isCancellationError(error);
+        if (!shouldRetry) {
           rethrow;
         }
         didRetry = true;
+        if (_structuredRetryDelay.inMilliseconds > 0) {
+          await Future<void>.delayed(_structuredRetryDelay);
+        }
         final retryHandle = _llmService.startCall(
           promptName: promptName,
           renderedPrompt: renderedPrompt,
@@ -1303,6 +1313,11 @@ class SessionService {
       }
     }
     throw StateError('Failed to resolve structured response.');
+  }
+
+  bool _isCancellationError(Object error) {
+    final text = error.toString().toLowerCase();
+    return text.contains('request cancelled') || text.contains('cancelled');
   }
 
   String _resolveTeacherDisplayText({

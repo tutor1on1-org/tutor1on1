@@ -10,6 +10,7 @@ import '../../state/auth_controller.dart';
 import '../app_settings_page.dart';
 import 'marketplace_page.dart';
 import 'skill_tree_page.dart';
+import '../widgets/server_sync_overlay.dart';
 
 class StudentHomePage extends StatefulWidget {
   const StudentHomePage({super.key});
@@ -20,6 +21,8 @@ class StudentHomePage extends StatefulWidget {
 
 class _StudentHomePageState extends State<StudentHomePage> {
   bool _syncStarted = false;
+  bool _syncingFromServer = false;
+  String _syncProgressMessage = '';
   late final MarketplaceApiService _marketplaceApi;
   final Map<int, int> _remoteCourseIdByLocalCourseId = {};
   final Map<int, EnrollmentSummary> _enrollmentsByRemoteCourseId = {};
@@ -35,8 +38,6 @@ class _StudentHomePageState extends State<StudentHomePage> {
     _marketplaceApi =
         MarketplaceApiService(secureStorage: services.secureStorage);
     WidgetsBinding.instance.addPostFrameCallback((_) => _startSync());
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) => _refreshRemoteEnrollmentState());
   }
 
   Future<void> _refreshRemoteEnrollmentState() async {
@@ -96,20 +97,34 @@ class _StudentHomePageState extends State<StudentHomePage> {
       return;
     }
     _syncStarted = true;
+    _setSyncState(
+      syncing: true,
+      message: 'Syncing enrollments from server...',
+    );
     final l10n = AppLocalizations.of(context)!;
     final auth = context.read<AuthController>();
     final user = auth.currentUser;
     if (user == null) {
+      _setSyncState(syncing: false);
       return;
     }
     final services = context.read<AppServices>();
     try {
       await services.enrollmentSyncService.syncIfReady(currentUser: user);
+      _setSyncState(
+        syncing: true,
+        message: 'Syncing sessions from server...',
+      );
       await services.sessionSyncService.syncIfReady(currentUser: user);
     } catch (error) {
       _setPersistentMessage(l10n.sessionSyncFailed('$error'));
     } finally {
+      _setSyncState(
+        syncing: true,
+        message: 'Refreshing enrollment status...',
+      );
       await _refreshRemoteEnrollmentState();
+      _setSyncState(syncing: false);
     }
   }
 
@@ -258,91 +273,112 @@ class _StudentHomePageState extends State<StudentHomePage> {
     final student = auth.currentUser!;
     final db = context.read<AppDatabase>();
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(l10n.studentTitle(student.username)),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.store),
-            tooltip: l10n.marketplaceTitle,
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const MarketplacePage()),
-              );
-            },
+    return Stack(
+      children: [
+        Scaffold(
+          appBar: AppBar(
+            title: Text(l10n.studentTitle(student.username)),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.store),
+                tooltip: l10n.marketplaceTitle,
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const MarketplacePage()),
+                  );
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.settings),
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const SettingsPage()),
+                  );
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.logout),
+                onPressed: () => auth.logout(),
+              ),
+            ],
           ),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const SettingsPage()),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () => auth.logout(),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          if (_persistentMessage != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-              child: _buildPersistentMessageCard(l10n),
-            ),
-          Expanded(
-            child: StreamBuilder<List<CourseVersion>>(
-              stream: db.watchAssignedCourses(student.id),
-              builder: (context, snapshot) {
-                final courses = snapshot.data ?? [];
-                if (courses.isEmpty) {
-                  return Center(child: Text(l10n.noAssignedCourses));
-                }
-                return ListView.builder(
-                  itemCount: courses.length,
-                  itemBuilder: (context, index) {
-                    final course = courses[index];
-                    final remoteCourseId =
-                        _remoteCourseIdByLocalCourseId[course.id];
-                    final hasPendingQuit = remoteCourseId != null &&
-                        _pendingQuitRemoteCourseIds.contains(remoteCourseId);
-                    final hasServerEnrollment = remoteCourseId != null &&
-                        _enrollmentsByRemoteCourseId
-                            .containsKey(remoteCourseId);
-                    final isLoaded = course.sourcePath != null &&
-                        course.sourcePath!.trim().isNotEmpty;
-                    return _CourseProgressTile(
-                      course: course,
-                      studentId: student.id,
-                      enabled: isLoaded,
-                      quitPending: hasPendingQuit,
-                      quitBusy: _submittingQuitCourseIds.contains(course.id),
-                      onRequestQuit: hasServerEnrollment
-                          ? () => _requestQuitCourse(course)
-                          : null,
-                      onTap: isLoaded
-                          ? () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) => SkillTreePage(
-                                    courseVersionId: course.id,
-                                    isTeacherView: false,
-                                  ),
-                                ),
-                              );
-                            }
-                          : null,
+          body: Column(
+            children: [
+              if (_persistentMessage != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                  child: _buildPersistentMessageCard(l10n),
+                ),
+              Expanded(
+                child: StreamBuilder<List<CourseVersion>>(
+                  stream: db.watchAssignedCourses(student.id),
+                  builder: (context, snapshot) {
+                    final courses = snapshot.data ?? [];
+                    if (courses.isEmpty) {
+                      return Center(child: Text(l10n.noAssignedCourses));
+                    }
+                    return ListView.builder(
+                      itemCount: courses.length,
+                      itemBuilder: (context, index) {
+                        final course = courses[index];
+                        final remoteCourseId =
+                            _remoteCourseIdByLocalCourseId[course.id];
+                        final hasPendingQuit = remoteCourseId != null &&
+                            _pendingQuitRemoteCourseIds
+                                .contains(remoteCourseId);
+                        final hasServerEnrollment = remoteCourseId != null &&
+                            _enrollmentsByRemoteCourseId
+                                .containsKey(remoteCourseId);
+                        final isLoaded = course.sourcePath != null &&
+                            course.sourcePath!.trim().isNotEmpty;
+                        return _CourseProgressTile(
+                          course: course,
+                          studentId: student.id,
+                          enabled: isLoaded,
+                          quitPending: hasPendingQuit,
+                          quitBusy:
+                              _submittingQuitCourseIds.contains(course.id),
+                          onRequestQuit: hasServerEnrollment
+                              ? () => _requestQuitCourse(course)
+                              : null,
+                          onTap: isLoaded
+                              ? () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) => SkillTreePage(
+                                        courseVersionId: course.id,
+                                        isTeacherView: false,
+                                      ),
+                                    ),
+                                  );
+                                }
+                              : null,
+                        );
+                      },
                     );
                   },
-                );
-              },
-            ),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+        if (_syncingFromServer)
+          ServerSyncOverlay(message: _syncProgressMessage),
+      ],
     );
+  }
+
+  void _setSyncState({
+    required bool syncing,
+    String message = '',
+  }) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _syncingFromServer = syncing;
+      _syncProgressMessage = message;
+    });
   }
 }
 

@@ -37,6 +37,12 @@ Last updated: 2026-02-26
 4. Verify health endpoint and log tails.
 5. Re-check storage permissions and body-size alignment if upload/download behavior changed.
 
+## Backup and incident workflow
+1. Run the restore drill from `BACKUP_DRILL.md` monthly and after schema changes.
+2. Verify restored DB via auth + enrollment/download smoke scripts before marking drill successful.
+3. Keep drill evidence (artifact id, restore duration, smoke outputs, owner).
+4. During incidents, follow the `BACKUP_DRILL.md` incident checklist from declaration through postmortem.
+
 ## Documentation workflow
 - `AGENTS.md` stays minimal and only points to docs.
 - `update memory` means a full markdown pass: review every `.md` file, normalize headings/sections/order to current standards, deduplicate repeated guidance, and keep one source of truth per rule.

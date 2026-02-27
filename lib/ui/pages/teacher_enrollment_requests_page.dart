@@ -18,6 +18,8 @@ class _TeacherEnrollmentRequestsPageState
   late final MarketplaceApiService _api;
   bool _loading = true;
   String? _error;
+  String? _persistentMessage;
+  bool _persistentMessageIsError = false;
   List<TeacherRequestSummary> _requests = [];
   List<TeacherQuitRequestSummary> _quitRequests = [];
 
@@ -77,6 +79,11 @@ class _TeacherEnrollmentRequestsPageState
                   ? Center(child: Text(l10n.enrollmentRequestsEmpty))
                   : ListView(
                       children: [
+                        if (_persistentMessage != null)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+                            child: _buildPersistentMessageCard(context, l10n),
+                          ),
                         if (_requests.isNotEmpty)
                           const Padding(
                             padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
@@ -103,6 +110,43 @@ class _TeacherEnrollmentRequestsPageState
                         ),
                       ],
                     ),
+    );
+  }
+
+  Widget _buildPersistentMessageCard(
+    BuildContext context,
+    AppLocalizations l10n,
+  ) {
+    final message = _persistentMessage!;
+    final color = _persistentMessageIsError
+        ? Theme.of(context).colorScheme.errorContainer
+        : Theme.of(context).colorScheme.secondaryContainer;
+    return Card(
+      color: color,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(top: 2),
+              child: Icon(Icons.info_outline),
+            ),
+            const SizedBox(width: 8),
+            Expanded(child: SelectableText(message)),
+            IconButton(
+              tooltip: l10n.clearButton,
+              icon: const Icon(Icons.close),
+              onPressed: () {
+                setState(() {
+                  _persistentMessage = null;
+                  _persistentMessageIsError = false;
+                });
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -201,16 +245,18 @@ class _TeacherEnrollmentRequestsPageState
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.enrollmentRequestUpdated)),
+      _setPersistentMessage(
+        l10n.enrollmentRequestUpdated,
+        isError: false,
       );
       await _load();
     } catch (error) {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.marketplaceRequestFailed('$error'))),
+      _setPersistentMessage(
+        l10n.marketplaceRequestFailed('$error'),
+        isError: true,
       );
     }
   }
@@ -230,17 +276,32 @@ class _TeacherEnrollmentRequestsPageState
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.enrollmentRequestUpdated)),
+      _setPersistentMessage(
+        l10n.enrollmentRequestUpdated,
+        isError: false,
       );
       await _load();
     } catch (error) {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.marketplaceRequestFailed('$error'))),
+      _setPersistentMessage(
+        l10n.marketplaceRequestFailed('$error'),
+        isError: true,
       );
     }
+  }
+
+  void _setPersistentMessage(
+    String message, {
+    required bool isError,
+  }) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _persistentMessage = message;
+      _persistentMessageIsError = isError;
+    });
   }
 }

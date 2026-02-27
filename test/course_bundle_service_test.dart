@@ -18,7 +18,8 @@ Future<void> _withMockTempDir(
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   messenger.setMockMethodCallHandler(_pathProviderChannel, (call) async {
-    if (call.method == 'getTemporaryDirectory') {
+    if (call.method == 'getTemporaryDirectory' ||
+        call.method == 'getApplicationDocumentsDirectory') {
       return tempDirPath;
     }
     return null;
@@ -76,6 +77,160 @@ void main() {
 
         final service = CourseBundleService();
         await expectLater(service.validateBundleForImport(zipFile), completes);
+      } finally {
+        await tempDir.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'extractBundleFromFile returns an import-ready course root immediately',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'course_bundle_extract_test_',
+      );
+      try {
+        await _withMockTempDir(tempDir.path, () async {
+          final zipFile = File(p.join(tempDir.path, 'nested_bundle.zip'));
+          final archive = Archive();
+
+          final contentsBytes = Uint8List.fromList(
+            utf8.encode('1 Root branch\n1.1 Intro lesson\n'),
+          );
+          final lectureRoot = Uint8List.fromList(utf8.encode('Root lecture'));
+          final lectureChild = Uint8List.fromList(utf8.encode('Child lecture'));
+          archive.addFile(
+            ArchiveFile(
+              'nested_course/contents.txt',
+              contentsBytes.length,
+              contentsBytes,
+            ),
+          );
+          archive.addFile(
+            ArchiveFile(
+              'nested_course/1_lecture.txt',
+              lectureRoot.length,
+              lectureRoot,
+            ),
+          );
+          archive.addFile(
+            ArchiveFile(
+              'nested_course/1.1_lecture.txt',
+              lectureChild.length,
+              lectureChild,
+            ),
+          );
+
+          // Keep extracted payload large so the test catches missing await
+          // behavior in extraction/import ordering.
+          final random = Random(20260227);
+          final filler = Uint8List.fromList(
+            List<int>.generate(
+              2 * 1024 * 1024,
+              (_) => random.nextInt(256),
+            ),
+          );
+          archive.addFile(
+            ArchiveFile(
+                'nested_course/assets/large.bin', filler.length, filler),
+          );
+
+          final encoded = ZipEncoder().encode(archive);
+          expect(encoded, isNotNull);
+          await zipFile.writeAsBytes(encoded!, flush: true);
+
+          final service = CourseBundleService();
+          final extractedPath = await service.extractBundleFromFile(
+            bundleFile: zipFile,
+            courseName: 'Algebra',
+          );
+
+          expect(
+            File(p.join(extractedPath, 'contents.txt')).existsSync(),
+            isTrue,
+          );
+          expect(
+            File(p.join(extractedPath, '1_lecture.txt')).existsSync(),
+            isTrue,
+          );
+          expect(
+            File(p.join(extractedPath, '1.1_lecture.txt')).existsSync(),
+            isTrue,
+          );
+
+          final diff = await service.compareCourseFolderWithBundle(
+            folderPath: extractedPath,
+            bundleFile: zipFile,
+          );
+          expect(diff.addedCount, equals(0));
+          expect(diff.removedCount, equals(0));
+          expect(diff.updatedCount, equals(0));
+        });
+      } finally {
+        await tempDir.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'readPromptMetadataFromBundleFile handles large zip entries without stream-lifecycle errors',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'course_bundle_metadata_test_',
+      );
+      try {
+        final zipFile = File(p.join(tempDir.path, 'metadata_bundle.zip'));
+        final archive = Archive();
+        final contentsBytes = Uint8List.fromList(
+          utf8.encode('1 Root branch\n'),
+        );
+        final lectureBytes = Uint8List.fromList(utf8.encode('Lecture body'));
+        archive.addFile(
+          ArchiveFile('contents.txt', contentsBytes.length, contentsBytes),
+        );
+        archive.addFile(
+          ArchiveFile('1_lecture.txt', lectureBytes.length, lectureBytes),
+        );
+
+        final random = Random(20260227);
+        final filler = Uint8List.fromList(
+          List<int>.generate(
+            2 * 1024 * 1024,
+            (_) => random.nextInt(256),
+          ),
+        );
+        archive.addFile(
+          ArchiveFile('filler/random.bin', filler.length, filler),
+        );
+
+        final metadata = {
+          'schema': 'family_teacher_prompt_bundle_v1',
+          'teacher_username': 'alice',
+          'prompt_templates': [
+            {'prompt_name': 'learn_init', 'content': 'Use examples'}
+          ],
+        };
+        final metadataBytes =
+            Uint8List.fromList(utf8.encode(jsonEncode(metadata)));
+        archive.addFile(
+          ArchiveFile(
+            CourseBundleService.promptMetadataEntryPath,
+            metadataBytes.length,
+            metadataBytes,
+          ),
+        );
+
+        final encoded = ZipEncoder().encode(archive);
+        expect(encoded, isNotNull);
+        await zipFile.writeAsBytes(encoded!, flush: true);
+
+        final service = CourseBundleService();
+        final actual = await service.readPromptMetadataFromBundleFile(zipFile);
+        expect(actual, isNotNull);
+        expect(actual!['schema'], equals('family_teacher_prompt_bundle_v1'));
+        expect(actual['teacher_username'], equals('alice'));
+        final templates = (actual['prompt_templates'] as List?) ?? const [];
+        expect(templates.length, equals(1));
       } finally {
         await tempDir.delete(recursive: true);
       }

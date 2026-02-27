@@ -14,6 +14,9 @@ flutter pub get
 flutter analyze
 flutter test
 flutter test test/migration_test.dart
+flutter test test/prompt_scope_precedence_test.dart
+flutter test test/schema_validator_test.dart
+flutter test test/course_bundle_service_test.dart
 flutter test --plain-name "migrates from v1 to v11"
 ```
 
@@ -21,7 +24,7 @@ flutter test --plain-name "migrates from v1 to v11"
 ```powershell
 flutter test integration_test/app_flow_test.dart
 ```
-Note: current integration file is a placeholder and should be expanded with real scenarios.
+Current integration flow covers deterministic auth-gated register/logout/login path using in-memory DB and mocked path providers.
 
 ## Local app run and release build
 ```powershell
@@ -40,6 +43,20 @@ Optional env inputs:
 - `FT_REMOTE_BASE_URL`
 - `FT_RECOVERY_TOKEN` (needed when server does not echo recovery token)
 
+### Teacher/Student enrollment+bundle smoke flow
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/smoke_teacher_student_flow.ps1
+powershell -ExecutionPolicy Bypass -File scripts/smoke_teacher_student_flow.ps1 -BaseUrl "https://43.99.59.107"
+```
+What it validates:
+- teacher register -> create course -> ensure bundle -> upload -> publish
+- student register -> request enrollment
+- teacher approve request
+- student list enrollments -> download latest bundle
+- local ZIP import-readiness checks (`contents/context` + lecture files)
+Optional flags:
+- `-KeepArtifacts` (preserve temp bundle/download folder for debugging)
+
 ### Remote upload/storage preflight
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/preflight_remote_upload_and_storage.ps1
@@ -52,6 +69,17 @@ Optional env inputs:
 - `FT_REMOTE_HOST`
 - `FT_REMOTE_USER`
 - `FT_REMOTE_KEY_PATH`
+
+### Canonical remote SSH executor
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/remote_exec.ps1 -- "hostname"
+powershell -ExecutionPolicy Bypass -File scripts/remote_exec.ps1 -Tty
+```
+Defaults:
+- `RemoteHost`: `43.99.59.107`
+- `RemoteUser`: `ecs-user`
+- `KeyPath`: `C:\Users\kl\.ssh\id_rsa`
+- SSH options: key-only auth with `IdentitiesOnly=yes`
 
 ### Skill tree parser check
 ```powershell
@@ -74,6 +102,15 @@ Operational notes:
 UPDATE refresh_tokens
 SET revoked_at = NOW()
 WHERE revoked_at IS NULL;
+```
+
+### Backup restore drill
+Runbook: `BACKUP_DRILL.md`
+- Execute restore drill monthly and after schema changes.
+- Validate restored DB with both smoke scripts:
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/test_auth.ps1 -BaseUrl "https://<restore-host>"
+powershell -ExecutionPolicy Bypass -File scripts/smoke_teacher_student_flow.ps1 -BaseUrl "https://<restore-host>"
 ```
 
 ## Remote API (Go) commands

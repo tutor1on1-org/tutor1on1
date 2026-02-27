@@ -2341,10 +2341,14 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     if (_assistantMessageId == null) {
       return;
     }
+    final content = _ttsDisplayBuffer.toString();
+    if (content.isEmpty) {
+      return;
+    }
     final db = context.read<AppDatabase>();
     await db.updateChatMessageContent(
       messageId: _assistantMessageId!,
-      content: _ttsDisplayBuffer.toString(),
+      content: content,
     );
   }
 

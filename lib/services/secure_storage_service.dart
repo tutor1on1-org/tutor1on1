@@ -19,6 +19,7 @@ class SecureStorageService {
       'course_prompt_bundle_version:';
   static const _installedCourseBundleVersionPrefix =
       'installed_course_bundle_version:';
+  static const _promptMetadataAppliedAtPrefix = 'prompt_metadata_applied_at:';
   final FlutterSecureStorage _storage;
 
   Future<String?> readApiKey() => _storage.read(key: _apiKeyKey);
@@ -163,6 +164,34 @@ class SecureStorageService {
     return _storage.write(
       key: '$_installedCourseBundleVersionPrefix$remoteUserId:$remoteCourseId',
       value: versionId.toString(),
+    );
+  }
+
+  Future<DateTime?> readPromptMetadataAppliedAt({
+    required int remoteUserId,
+    required int remoteCourseId,
+  }) async {
+    final value = await _storage.read(
+      key: '$_promptMetadataAppliedAtPrefix$remoteUserId:$remoteCourseId',
+    );
+    if (value == null || value.trim().isEmpty) {
+      return null;
+    }
+    final millis = int.tryParse(value.trim());
+    if (millis == null || millis <= 0) {
+      return null;
+    }
+    return DateTime.fromMillisecondsSinceEpoch(millis);
+  }
+
+  Future<void> writePromptMetadataAppliedAt({
+    required int remoteUserId,
+    required int remoteCourseId,
+    required DateTime appliedAt,
+  }) {
+    return _storage.write(
+      key: '$_promptMetadataAppliedAtPrefix$remoteUserId:$remoteCourseId',
+      value: appliedAt.millisecondsSinceEpoch.toString(),
     );
   }
 

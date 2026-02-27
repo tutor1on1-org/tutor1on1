@@ -38,3 +38,7 @@ Historical timeline. Keep active runbook details in `WORKLOG.md`.
 - Added P0 regression tests for normalized-subject reconciliation (`_<timestamp>` stripping) in enrollment sync for both teacher and student paths.
 - Added compatibility coverage for older servers where `/api/enrollments/quit-requests` returns `404` (now asserted to resolve as empty list).
 - Updated local `packages/record_linux` override to match `record_platform_interface` permission method signature and restored Windows release build success.
+- Added marketplace prompt metadata re-download conflict handling to preserve local prompt/profile edits when newer remote metadata arrives.
+- Added auth recovery SMTP-path regression tests with fake SMTP server; enforced no token leak in response when `RECOVERY_TOKEN_ECHO=false`.
+- Added `scripts/remote_exec.ps1` for canonical key-only SSH defaults and added `BACKUP_DRILL.md` restore/incident runbook.
+- Rotated temporary local secrets in `SECRETS.md` and updated operational docs for rotation/revocation and drill workflow.

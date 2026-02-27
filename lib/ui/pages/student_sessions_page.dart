@@ -5,9 +5,14 @@ import 'package:provider/provider.dart';
 import '../../db/app_database.dart';
 
 class StudentSessionsPage extends StatefulWidget {
-  const StudentSessionsPage({super.key, required this.student});
+  const StudentSessionsPage({
+    super.key,
+    required this.student,
+    this.initialCourseVersionId,
+  });
 
   final User student;
+  final int? initialCourseVersionId;
 
   @override
   State<StudentSessionsPage> createState() => _StudentSessionsPageState();
@@ -15,10 +20,12 @@ class StudentSessionsPage extends StatefulWidget {
 
 class _StudentSessionsPageState extends State<StudentSessionsPage> {
   late Future<List<StudentSessionInfo>> _sessionsFuture;
+  int? _selectedCourseVersionId;
 
   @override
   void initState() {
     super.initState();
+    _selectedCourseVersionId = widget.initialCourseVersionId;
     _sessionsFuture = _loadSessions();
   }
 
@@ -44,34 +51,154 @@ class _StudentSessionsPageState extends State<StudentSessionsPage> {
           if (sessions.isEmpty) {
             return Center(child: Text(l10n.noStudentSessions));
           }
-          return ListView.builder(
-            itemCount: sessions.length,
-            itemBuilder: (context, index) {
-              final session = sessions[index];
-              final title = (session.sessionTitle ?? '').trim().isNotEmpty
-                  ? session.sessionTitle!.trim()
-                  : l10n.sessionLabel(session.sessionId);
-              final subtitleParts = <String>[
-                if ((session.courseSubject ?? '').trim().isNotEmpty)
-                  l10n.sessionCourseLabel(session.courseSubject!.trim()),
-                if ((session.nodeTitle ?? '').trim().isNotEmpty)
-                  l10n.sessionNodeLabel(session.nodeTitle!.trim()),
-                l10n.sessionStartedLabel(_formatDate(session.startedAt)),
-              ];
-              return ListTile(
-                title: Text(title),
-                subtitle: Text(subtitleParts.join(' • ')),
-                trailing: IconButton(
-                  tooltip: l10n.deleteSessionButton,
-                  icon: const Icon(Icons.delete),
-                  onPressed: () => _confirmDelete(session),
+          final courseOptions = _buildCourseOptions(sessions);
+          final selectedCourseVersionId =
+              _resolveSelectedCourseVersionId(courseOptions);
+          final filteredSessions = selectedCourseVersionId == null
+              ? sessions
+              : sessions
+                  .where((session) =>
+                      session.courseVersionId == selectedCourseVersionId)
+                  .toList();
+
+          return Column(
+            children: [
+              _buildFilterBar(
+                courseOptions: courseOptions,
+                filteredCount: filteredSessions.length,
+              ),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: filteredSessions.length,
+                  itemBuilder: (context, index) {
+                    final session = filteredSessions[index];
+                    final title = (session.sessionTitle ?? '').trim().isNotEmpty
+                        ? session.sessionTitle!.trim()
+                        : l10n.sessionLabel(session.sessionId);
+                    final subtitleParts = <String>[
+                      if ((session.courseSubject ?? '').trim().isNotEmpty)
+                        l10n.sessionCourseLabel(session.courseSubject!.trim()),
+                      if ((session.nodeTitle ?? '').trim().isNotEmpty)
+                        l10n.sessionNodeLabel(session.nodeTitle!.trim()),
+                      l10n.sessionStartedLabel(_formatDate(session.startedAt)),
+                    ];
+                    final summaryPreview = _summaryPreview(session.summaryText);
+                    return ListTile(
+                      title: Text(title),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(subtitleParts.join(' | ')),
+                          if (session.summaryLitPercent != null)
+                            Text('Summary LIT: ${session.summaryLitPercent}%'),
+                          if (summaryPreview.isNotEmpty)
+                            Text(
+                              'Summary: $summaryPreview',
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                        ],
+                      ),
+                      trailing: IconButton(
+                        tooltip: l10n.deleteSessionButton,
+                        icon: const Icon(Icons.delete),
+                        onPressed: () => _confirmDelete(session),
+                      ),
+                    );
+                  },
                 ),
-              );
-            },
+              ),
+            ],
           );
         },
       ),
     );
+  }
+
+  List<_CourseFilterOption> _buildCourseOptions(
+    List<StudentSessionInfo> sessions,
+  ) {
+    final byId = <int, _CourseFilterOption>{};
+    for (final session in sessions) {
+      byId.putIfAbsent(
+        session.courseVersionId,
+        () => _CourseFilterOption(
+          courseVersionId: session.courseVersionId,
+          courseSubject: (session.courseSubject ?? '').trim().isEmpty
+              ? 'Course ${session.courseVersionId}'
+              : session.courseSubject!.trim(),
+        ),
+      );
+    }
+    final options = byId.values.toList()
+      ..sort((a, b) => a.courseSubject
+          .toLowerCase()
+          .compareTo(b.courseSubject.toLowerCase()));
+    return options;
+  }
+
+  int? _resolveSelectedCourseVersionId(
+      List<_CourseFilterOption> courseOptions) {
+    if (_selectedCourseVersionId == null) {
+      return null;
+    }
+    final exists = courseOptions.any(
+      (option) => option.courseVersionId == _selectedCourseVersionId,
+    );
+    return exists ? _selectedCourseVersionId : null;
+  }
+
+  Widget _buildFilterBar({
+    required List<_CourseFilterOption> courseOptions,
+    required int filteredCount,
+  }) {
+    final selectedCourseVersionId =
+        _resolveSelectedCourseVersionId(courseOptions);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      child: Row(
+        children: [
+          const Text('Course'),
+          const SizedBox(width: 8),
+          Expanded(
+            child: DropdownButton<int?>(
+              isExpanded: true,
+              value: selectedCourseVersionId,
+              items: [
+                const DropdownMenuItem<int?>(
+                  value: null,
+                  child: Text('All courses'),
+                ),
+                ...courseOptions.map(
+                  (option) => DropdownMenuItem<int?>(
+                    value: option.courseVersionId,
+                    child: Text(option.courseSubject),
+                  ),
+                ),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  _selectedCourseVersionId = value;
+                });
+              },
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text('$filteredCount'),
+        ],
+      ),
+    );
+  }
+
+  String _summaryPreview(String? value) {
+    final trimmed = (value ?? '').trim();
+    if (trimmed.isEmpty) {
+      return '';
+    }
+    if (trimmed.length <= 220) {
+      return trimmed;
+    }
+    return '${trimmed.substring(0, 220)}...';
   }
 
   Future<void> _confirmDelete(StudentSessionInfo session) async {
@@ -117,4 +244,14 @@ class _StudentSessionsPageState extends State<StudentSessionsPage> {
         '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
     return '$date $time';
   }
+}
+
+class _CourseFilterOption {
+  _CourseFilterOption({
+    required this.courseVersionId,
+    required this.courseSubject,
+  });
+
+  final int courseVersionId;
+  final String courseSubject;
 }

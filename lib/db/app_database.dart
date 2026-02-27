@@ -758,6 +758,8 @@ SELECT s.id AS session_id,
        s.started_at AS started_at,
        s.course_version_id AS course_version_id,
        s.kp_key AS kp_key,
+       s.summary_text AS summary_text,
+       s.summary_lit_percent AS summary_lit_percent,
        c.subject AS course_subject,
        n.title AS node_title
 FROM chat_sessions s
@@ -2010,6 +2012,8 @@ class StudentSessionInfo {
     required this.courseSubject,
     required this.kpKey,
     required this.nodeTitle,
+    required this.summaryText,
+    required this.summaryLitPercent,
   });
 
   final int sessionId;
@@ -2019,6 +2023,8 @@ class StudentSessionInfo {
   final String? courseSubject;
   final String kpKey;
   final String? nodeTitle;
+  final String? summaryText;
+  final int? summaryLitPercent;
 
   factory StudentSessionInfo.fromRow(Map<String, Object?> row) {
     final startedRaw = row['started_at'];
@@ -2038,6 +2044,8 @@ class StudentSessionInfo {
       courseSubject: row['course_subject'] as String?,
       kpKey: row['kp_key'] as String,
       nodeTitle: row['node_title'] as String?,
+      summaryText: row['summary_text'] as String?,
+      summaryLitPercent: (row['summary_lit_percent'] as num?)?.toInt(),
     );
   }
 }

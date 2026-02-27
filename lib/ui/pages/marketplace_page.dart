@@ -19,6 +19,9 @@ class MarketplacePage extends StatefulWidget {
 }
 
 class _MarketplacePageState extends State<MarketplacePage> {
+  static const int _pageSize = 10;
+  static const _promptConflictPolicy =
+      _PromptConflictPolicy.preserveLocalOnRedownload;
   static const List<String> _promptNames = [
     'learn_init',
     'learn_cont',
@@ -34,8 +37,13 @@ class _MarketplacePageState extends State<MarketplacePage> {
   bool _studentActionsEnabled = false;
   bool _loading = true;
   String? _error;
-  String? _stickyError;
+  String? _persistentMessage;
+  bool _persistentMessageIsError = false;
   List<CatalogCourse> _courses = [];
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+  String _gradeFilter = '';
+  int _currentPage = 1;
   final Map<int, EnrollmentRequestSummary> _requestsByCourse = {};
   final Map<int, EnrollmentSummary> _enrollmentsByCourse = {};
   final Set<int> _enrolledCourseIds = {};
@@ -47,6 +55,12 @@ class _MarketplacePageState extends State<MarketplacePage> {
     final services = context.read<AppServices>();
     _api = MarketplaceApiService(secureStorage: services.secureStorage);
     _load();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -104,6 +118,7 @@ class _MarketplacePageState extends State<MarketplacePage> {
       setState(() {
         _courses = courses;
         _studentActionsEnabled = isStudent;
+        _currentPage = 1;
         _requestsByCourse
           ..clear()
           ..addAll(requestMap);
@@ -155,9 +170,90 @@ class _MarketplacePageState extends State<MarketplacePage> {
     return value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
   }
 
+  List<String> _gradeFilterOptions(List<CatalogCourse> courses) {
+    final grades = <String>{};
+    for (final course in courses) {
+      final grade = course.grade.trim();
+      if (grade.isNotEmpty) {
+        grades.add(grade);
+      }
+    }
+    final sorted = grades.toList()..sort();
+    return sorted;
+  }
+
+  List<CatalogCourse> _applySearchAndFilters(List<CatalogCourse> courses) {
+    final query = _searchQuery.trim().toLowerCase();
+    final gradeFilter = _gradeFilter.trim().toLowerCase();
+    final filtered = <CatalogCourse>[];
+    for (final course in courses) {
+      final grade = course.grade.trim().toLowerCase();
+      if (gradeFilter.isNotEmpty && grade != gradeFilter) {
+        continue;
+      }
+      if (query.isNotEmpty) {
+        final haystack =
+            '${course.subject}\n${course.teacherName}\n${course.description}\n${course.grade}'
+                .toLowerCase();
+        if (!haystack.contains(query)) {
+          continue;
+        }
+      }
+      filtered.add(course);
+    }
+    filtered.sort((a, b) {
+      final subject =
+          a.subject.toLowerCase().compareTo(b.subject.toLowerCase());
+      if (subject != 0) {
+        return subject;
+      }
+      return a.teacherName.toLowerCase().compareTo(b.teacherName.toLowerCase());
+    });
+    return filtered;
+  }
+
+  void _updateSearchQuery(String value) {
+    if (_searchQuery == value) {
+      return;
+    }
+    setState(() {
+      _searchQuery = value;
+      _currentPage = 1;
+    });
+  }
+
+  void _updateGradeFilter(String value) {
+    if (_gradeFilter == value) {
+      return;
+    }
+    setState(() {
+      _gradeFilter = value;
+      _currentPage = 1;
+    });
+  }
+
+  void _clearSearchAndFilters() {
+    _searchController.clear();
+    setState(() {
+      _searchQuery = '';
+      _gradeFilter = '';
+      _currentPage = 1;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final filteredCourses = _applySearchAndFilters(_courses);
+    final totalPages = filteredCourses.isEmpty
+        ? 1
+        : ((filteredCourses.length - 1) ~/ _pageSize) + 1;
+    final currentPage = _currentPage.clamp(1, totalPages);
+    final start = (currentPage - 1) * _pageSize;
+    final end = (start + _pageSize).clamp(0, filteredCourses.length);
+    final pageCourses = start >= filteredCourses.length
+        ? <CatalogCourse>[]
+        : filteredCourses.sublist(start, end);
     return Scaffold(
       appBar: AppBar(
         title: Text(l10n.marketplaceTitle),
@@ -170,22 +266,40 @@ class _MarketplacePageState extends State<MarketplacePage> {
       ),
       body: Column(
         children: [
-          if (_stickyError != null) _buildStickyError(context, l10n),
+          _buildSearchAndFilterControls(
+            l10n: l10n,
+            courses: _courses,
+            filteredCount: filteredCourses.length,
+          ),
+          if (_persistentMessage != null)
+            _buildPersistentMessage(context, l10n),
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _error != null
                     ? _buildError(context, l10n)
-                    : _courses.isEmpty
-                        ? Center(child: Text(l10n.marketplaceNoCourses))
+                    : filteredCourses.isEmpty
+                        ? Center(
+                            child: Text(
+                              _courses.isEmpty
+                                  ? l10n.marketplaceNoCourses
+                                  : 'No courses match the current filters.',
+                            ),
+                          )
                         : ListView.builder(
-                            itemCount: _courses.length,
+                            itemCount: pageCourses.length,
                             itemBuilder: (context, index) {
-                              final course = _courses[index];
+                              final course = pageCourses[index];
                               return _buildCourseTile(context, l10n, course);
                             },
                           ),
           ),
+          if (!_loading && _error == null && filteredCourses.isNotEmpty)
+            _buildPaginationBar(
+              currentPage: currentPage,
+              totalPages: totalPages,
+              totalItems: filteredCourses.length,
+            ),
         ],
       ),
     );
@@ -221,12 +335,15 @@ class _MarketplacePageState extends State<MarketplacePage> {
     );
   }
 
-  Widget _buildStickyError(BuildContext context, AppLocalizations l10n) {
-    final message = _stickyError!;
+  Widget _buildPersistentMessage(BuildContext context, AppLocalizations l10n) {
+    final message = _persistentMessage!;
+    final color = _persistentMessageIsError
+        ? Theme.of(context).colorScheme.errorContainer
+        : Theme.of(context).colorScheme.primaryContainer;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
       child: Card(
-        color: Theme.of(context).colorScheme.errorContainer,
+        color: color,
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Row(
@@ -256,13 +373,143 @@ class _MarketplacePageState extends State<MarketplacePage> {
                 icon: const Icon(Icons.close),
                 onPressed: () {
                   setState(() {
-                    _stickyError = null;
+                    _persistentMessage = null;
+                    _persistentMessageIsError = false;
                   });
                 },
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildSearchAndFilterControls({
+    required AppLocalizations l10n,
+    required List<CatalogCourse> courses,
+    required int filteredCount,
+  }) {
+    final gradeOptions = _gradeFilterOptions(courses);
+    final selectedGrade = gradeOptions.any(
+            (grade) => grade.toLowerCase() == _gradeFilter.trim().toLowerCase())
+        ? _gradeFilter
+        : '';
+    final hasFilters =
+        _searchQuery.trim().isNotEmpty || _gradeFilter.trim().isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _searchController,
+                  onChanged: _updateSearchQuery,
+                  decoration: const InputDecoration(
+                    labelText: 'Search marketplace',
+                    hintText: 'Subject / teacher / description',
+                    prefixIcon: Icon(Icons.search),
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 180,
+                child: InputDecorator(
+                  decoration: InputDecoration(
+                    labelText: l10n.gradeLabel,
+                    border: const OutlineInputBorder(),
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      isExpanded: true,
+                      value: selectedGrade.isEmpty ? '' : selectedGrade,
+                      items: [
+                        const DropdownMenuItem<String>(
+                          value: '',
+                          child: Text('All grades'),
+                        ),
+                        ...gradeOptions.map(
+                          (grade) => DropdownMenuItem<String>(
+                            value: grade.toLowerCase(),
+                            child: Text(grade),
+                          ),
+                        ),
+                      ],
+                      onChanged: (value) => _updateGradeFilter(value ?? ''),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton(
+                onPressed: hasFilters ? _clearSearchAndFilters : null,
+                child: Text(l10n.clearButton),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '$filteredCount result(s)',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPaginationBar({
+    required int currentPage,
+    required int totalPages,
+    required int totalItems,
+  }) {
+    final pageStart = ((currentPage - 1) * _pageSize) + 1;
+    final pageEnd = (pageStart + _pageSize - 1).clamp(1, totalItems);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      child: Row(
+        children: [
+          Text(
+            'Showing $pageStart-$pageEnd of $totalItems',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const Spacer(),
+          IconButton(
+            tooltip: 'Previous page',
+            onPressed: currentPage > 1
+                ? () {
+                    setState(() {
+                      _currentPage = currentPage - 1;
+                    });
+                  }
+                : null,
+            icon: const Icon(Icons.chevron_left),
+          ),
+          Text('Page $currentPage / $totalPages'),
+          IconButton(
+            tooltip: 'Next page',
+            onPressed: currentPage < totalPages
+                ? () {
+                    setState(() {
+                      _currentPage = currentPage + 1;
+                    });
+                  }
+                : null,
+            icon: const Icon(Icons.chevron_right),
+          ),
+        ],
       ),
     );
   }
@@ -408,13 +655,12 @@ class _MarketplacePageState extends State<MarketplacePage> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('Quit request sent. Waiting for teacher approval.')),
+      _setPersistentMessage(
+        'Quit request sent. Waiting for teacher approval.',
       );
       await _load();
     } catch (error) {
-      _setStickyError('Quit request failed: $error');
+      _setPersistentMessage('Quit request failed: $error', isError: true);
     }
   }
 
@@ -456,12 +702,13 @@ class _MarketplacePageState extends State<MarketplacePage> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.marketplaceRequestSent)),
-      );
+      _setPersistentMessage(l10n.marketplaceRequestSent);
       await _load();
     } catch (error) {
-      _setStickyError(l10n.marketplaceRequestFailed('$error'));
+      _setPersistentMessage(
+        l10n.marketplaceRequestFailed('$error'),
+        isError: true,
+      );
     }
   }
 
@@ -472,13 +719,13 @@ class _MarketplacePageState extends State<MarketplacePage> {
     final l10n = AppLocalizations.of(context)!;
     final bundleVersionId = course.latestBundleVersionId;
     if (bundleVersionId == null || bundleVersionId <= 0) {
-      _setStickyError(l10n.marketplaceBundleMissing);
+      _setPersistentMessage(l10n.marketplaceBundleMissing, isError: true);
       return;
     }
     final auth = context.read<AuthController>();
     final user = auth.currentUser;
     if (user == null) {
-      _setStickyError(l10n.notLoggedInMessage);
+      _setPersistentMessage(l10n.notLoggedInMessage, isError: true);
       return;
     }
 
@@ -516,7 +763,10 @@ class _MarketplacePageState extends State<MarketplacePage> {
           details =
               '$details\nThe course bundle is incomplete. Ask the teacher to reload and upload the course again.';
         }
-        _setStickyError(l10n.marketplaceDownloadFailed(details));
+        _setPersistentMessage(
+          l10n.marketplaceDownloadFailed(details),
+          isError: true,
+        );
         return;
       }
       await services.db.upsertCourseRemoteLink(
@@ -527,8 +777,9 @@ class _MarketplacePageState extends State<MarketplacePage> {
         studentId: user.id,
         courseVersionId: loadResult.course!.id,
       );
+      var successMessage = l10n.marketplaceDownloadSuccess;
       if (promptMetadata != null) {
-        await _applyPromptMetadata(
+        final metadataApplyResult = await _applyPromptMetadata(
           services: services,
           metadata: promptMetadata,
           course: loadResult.course!,
@@ -536,6 +787,10 @@ class _MarketplacePageState extends State<MarketplacePage> {
           remoteCourseId: course.courseId,
           bundleVersionId: bundleVersionId,
         );
+        if (metadataApplyResult.skippedDueToLocalConflict) {
+          successMessage =
+              'Course downloaded. Local prompt/profile changes were preserved; remote prompt metadata was not applied.';
+        }
       }
       final remoteUserId = user.remoteUserId;
       if (remoteUserId != null && remoteUserId > 0) {
@@ -548,14 +803,12 @@ class _MarketplacePageState extends State<MarketplacePage> {
       if (!mounted) {
         return;
       }
-      setState(() {
-        _stickyError = null;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.marketplaceDownloadSuccess)),
-      );
+      _setPersistentMessage(successMessage);
     } catch (error) {
-      _setStickyError(l10n.marketplaceDownloadFailed('$error'));
+      _setPersistentMessage(
+        l10n.marketplaceDownloadFailed('$error'),
+        isError: true,
+      );
     } finally {
       if (bundleFile != null && bundleFile.existsSync()) {
         await bundleFile.delete();
@@ -568,16 +821,20 @@ class _MarketplacePageState extends State<MarketplacePage> {
     }
   }
 
-  void _setStickyError(String message) {
+  void _setPersistentMessage(
+    String message, {
+    bool isError = false,
+  }) {
     if (!mounted) {
       return;
     }
     setState(() {
-      _stickyError = message;
+      _persistentMessage = message;
+      _persistentMessageIsError = isError;
     });
   }
 
-  Future<void> _applyPromptMetadata({
+  Future<_PromptMetadataApplyResult> _applyPromptMetadata({
     required AppServices services,
     required Map<String, dynamic> metadata,
     required CourseVersion course,
@@ -587,17 +844,18 @@ class _MarketplacePageState extends State<MarketplacePage> {
   }) async {
     final schema = (metadata['schema'] as String?)?.trim() ?? '';
     if (schema != 'family_teacher_prompt_bundle_v1') {
-      return;
+      return const _PromptMetadataApplyResult.noop();
     }
     final remoteUserId = user.remoteUserId;
+    int? existingVersion;
     if (remoteUserId != null && remoteUserId > 0 && remoteCourseId > 0) {
-      final existingVersion =
+      existingVersion =
           await services.secureStorage.readInstalledCourseBundleVersion(
         remoteUserId: remoteUserId,
         remoteCourseId: remoteCourseId,
       );
       if (existingVersion != null && bundleVersionId <= existingVersion) {
-        return;
+        return const _PromptMetadataApplyResult.noop();
       }
     }
 
@@ -605,7 +863,35 @@ class _MarketplacePageState extends State<MarketplacePage> {
     final teacherId = course.teacherId;
     final courseKey = course.sourcePath?.trim();
     if (courseKey == null || courseKey.isEmpty) {
-      return;
+      return const _PromptMetadataApplyResult.noop();
+    }
+    if (remoteUserId != null &&
+        remoteUserId > 0 &&
+        remoteCourseId > 0 &&
+        existingVersion != null &&
+        existingVersion > 0 &&
+        _promptConflictPolicy ==
+            _PromptConflictPolicy.preserveLocalOnRedownload) {
+      final appliedAt =
+          await services.secureStorage.readPromptMetadataAppliedAt(
+        remoteUserId: remoteUserId,
+        remoteCourseId: remoteCourseId,
+      );
+      final hasLocalEdits = await _hasManagedPromptLocalEditsSinceLastApply(
+        db: db,
+        teacherId: teacherId,
+        courseKey: courseKey,
+        studentId: user.id,
+        appliedAt: appliedAt,
+      );
+      if (hasLocalEdits) {
+        await services.secureStorage.writeInstalledCourseBundleVersion(
+          remoteUserId: remoteUserId,
+          remoteCourseId: remoteCourseId,
+          versionId: bundleVersionId,
+        );
+        return const _PromptMetadataApplyResult.skippedDueToLocalConflict();
+      }
     }
 
     for (final promptName in _promptNames) {
@@ -760,8 +1046,126 @@ class _MarketplacePageState extends State<MarketplacePage> {
         remoteCourseId: remoteCourseId,
         versionId: bundleVersionId,
       );
+      await services.secureStorage.writePromptMetadataAppliedAt(
+        remoteUserId: remoteUserId,
+        remoteCourseId: remoteCourseId,
+        appliedAt: DateTime.now(),
+      );
     }
 
     services.promptRepository.invalidatePromptCache();
+    return const _PromptMetadataApplyResult.applied();
   }
+
+  Future<bool> _hasManagedPromptLocalEditsSinceLastApply({
+    required AppDatabase db,
+    required int teacherId,
+    required String courseKey,
+    required int studentId,
+    required DateTime? appliedAt,
+  }) async {
+    if (appliedAt == null) {
+      return false;
+    }
+    final templates = await (db.select(db.promptTemplates)
+          ..where((tbl) => tbl.teacherId.equals(teacherId)))
+        .get();
+    for (final template in templates) {
+      if (!_isManagedPromptTemplateScope(
+        template: template,
+        courseKey: courseKey,
+        studentId: studentId,
+      )) {
+        continue;
+      }
+      if (template.createdAt.isAfter(appliedAt)) {
+        return true;
+      }
+    }
+    final profiles = await (db.select(db.studentPromptProfiles)
+          ..where((tbl) => tbl.teacherId.equals(teacherId)))
+        .get();
+    for (final profile in profiles) {
+      if (!_isManagedProfileScope(
+        profile: profile,
+        courseKey: courseKey,
+        studentId: studentId,
+      )) {
+        continue;
+      }
+      final changedAt = profile.updatedAt ?? profile.createdAt;
+      if (changedAt.isAfter(appliedAt)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool _isManagedPromptTemplateScope({
+    required PromptTemplate template,
+    required String courseKey,
+    required int studentId,
+  }) {
+    final normalizedKey = (template.courseKey ?? '').trim();
+    if (template.courseKey == null && template.studentId == null) {
+      return true;
+    }
+    if (normalizedKey == courseKey && template.studentId == null) {
+      return true;
+    }
+    if (normalizedKey == courseKey && template.studentId == studentId) {
+      return true;
+    }
+    return false;
+  }
+
+  bool _isManagedProfileScope({
+    required StudentPromptProfile profile,
+    required String courseKey,
+    required int studentId,
+  }) {
+    final normalizedKey = (profile.courseKey ?? '').trim();
+    if (profile.courseKey == null && profile.studentId == null) {
+      return true;
+    }
+    if (normalizedKey == courseKey && profile.studentId == null) {
+      return true;
+    }
+    if (normalizedKey == courseKey && profile.studentId == studentId) {
+      return true;
+    }
+    return false;
+  }
+}
+
+enum _PromptConflictPolicy {
+  preserveLocalOnRedownload,
+}
+
+class _PromptMetadataApplyResult {
+  const _PromptMetadataApplyResult._({
+    required this.applied,
+    required this.skippedDueToLocalConflict,
+  });
+
+  const _PromptMetadataApplyResult.noop()
+      : this._(
+          applied: false,
+          skippedDueToLocalConflict: false,
+        );
+
+  const _PromptMetadataApplyResult.applied()
+      : this._(
+          applied: true,
+          skippedDueToLocalConflict: false,
+        );
+
+  const _PromptMetadataApplyResult.skippedDueToLocalConflict()
+      : this._(
+          applied: false,
+          skippedDueToLocalConflict: true,
+        );
+
+  final bool applied;
+  final bool skippedDueToLocalConflict;
 }
