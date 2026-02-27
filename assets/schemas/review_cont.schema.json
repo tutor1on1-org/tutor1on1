@@ -4,6 +4,7 @@
   "type": "object",
   "required": [
     "teacher_message",
+    "answer_state",
     "turn_state",
     "question",
     "grading",
@@ -16,6 +17,10 @@
     "teacher_message": {
       "type": "string",
       "minLength": 1
+    },
+    "answer_state": {
+      "type": "string",
+      "enum": ["HELP_REQUEST", "PARTIAL_ATTEMPT", "FINAL_ANSWER"]
     },
     "turn_state": {
       "type": "string",

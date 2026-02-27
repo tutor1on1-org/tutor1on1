@@ -8,6 +8,7 @@ INPUTS
   (The recent conversation turns since the current LEARN_INIT began. This may be truncated due to token limits.)
 - prev_json: {{prev_json}}
   (The exact JSON output from the previous turn, including understanding, next_mode, and turn_state.)
+- student_intent: {{student_intent}}
 - student_profile: {{student_profile}}
 - student_preferences: {{student_preferences}}
 
@@ -20,6 +21,7 @@ GOALS
    - If the student shows confusion, rephrase more simply, add intuition, or reduce abstraction.
    - If the student shows clearer understanding, consolidate, summarize briefly, and prepare to close the segment.
    - Align vocabulary, tone, and examples with student_profile and student_preferences.
+   - If student_intent is HELP_REQUEST, lead with one practical hint/scaffold before explanation.
    - If confusion persists for two consecutive student turns, explicitly switch explanation style
      (for example: analogy -> step list, or abstract -> concrete example) instead of rephrasing the same pattern.
 3) Respect prior state:

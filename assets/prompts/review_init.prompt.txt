@@ -9,6 +9,7 @@ INPUTS
 - kp_title: {{kp_title}}
 - kp_description: {{kp_description}}
 - student_input: {{student_input}}
+- student_intent: {{student_intent}}
 - student_summary: {{student_summary}}
 - student_profile: {{student_profile}}
 - student_preferences: {{student_preferences}}
@@ -32,6 +33,7 @@ SELECTION GOALS
    - Prioritize weak spots indicated by error_book_summary/practice_history_summary.
    - Match difficulty to current_mastery_level and the student's recent understanding.
    - Prefer formats and contexts aligned with student_preferences and student_profile.
+   - If student_intent is HELP_REQUEST, prefer a lower-friction starter question.
 2) Avoid repetition:
    - If a question (or very similar one) appears to have been used recently, prefer another.
 3) Light modification allowed:

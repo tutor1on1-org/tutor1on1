@@ -195,6 +195,7 @@ class SessionService {
     required String studentInput,
     required CourseVersion courseVersion,
     required CourseNode node,
+    String? studentIntent,
     String? modelOverride,
     bool stream = false,
     void Function(String chunk)? onChunk,
@@ -233,6 +234,10 @@ class SessionService {
       messages: messages,
     );
     final promptName = promptResolution.promptName;
+    final resolvedStudentIntent = _resolveStudentIntent(
+      requestedIntent: studentIntent,
+      studentInput: studentInput,
+    );
     final history = _buildHistory(messages);
     final recentDialogue = _buildRecentDialogue(
       messages,
@@ -261,6 +266,7 @@ class SessionService {
         masteryFromProgress ?? masteryFromPrev ?? 'NOT_PASS';
     final practiceHistorySummary = _buildPracticeHistorySummary(messages);
     final errorBookSummary = _buildErrorBookSummary(
+      messages: messages,
       progress: progress,
       previousJson: promptResolution.prevJson,
     );
@@ -294,6 +300,7 @@ class SessionService {
       'conversation_history': history,
       'session_history': history,
       'student_input': studentInput.trim(),
+      'student_intent': resolvedStudentIntent,
       'student_summary': progress?.summaryText ?? session?.summaryText ?? '',
       'student_profile': studentPromptContext.profileText,
       'student_preferences': studentPromptContext.preferencesText,
@@ -617,11 +624,15 @@ class SessionService {
       'kp_description': node.description,
       'conversation_history': history,
       'session_history': history,
+      'student_intent': 'AUTO',
       'student_summary': progress?.summaryText ?? session?.summaryText ?? '',
       'student_profile': studentPromptContext.profileText,
       'student_preferences': studentPromptContext.preferencesText,
       'practice_history_summary': _buildPracticeHistorySummary(messages),
-      'error_book_summary': _buildErrorBookSummary(progress: progress),
+      'error_book_summary': _buildErrorBookSummary(
+        messages: messages,
+        progress: progress,
+      ),
       'last_evidence': jsonEncode(
         lastEvidence ??
             {
@@ -901,10 +912,29 @@ class SessionService {
       }
     }
     if (promptName == 'review_cont') {
+      final answerState = (parsed['answer_state'] as String?)?.trim() ?? '';
+      const validAnswerStates = {
+        'HELP_REQUEST',
+        'PARTIAL_ATTEMPT',
+        'FINAL_ANSWER',
+      };
+      if (!validAnswerStates.contains(answerState)) {
+        throw StateError(
+          'LLM response for "$promptName" has invalid "answer_state". '
+          'Response preview: ${_summarizeResponseForError(responseText)}',
+        );
+      }
       final question = parsed['question'];
       if (question != null && question is! Map) {
         throw StateError(
           'LLM response for "$promptName" has invalid "question". '
+          'Response preview: ${_summarizeResponseForError(responseText)}',
+        );
+      }
+      final turnState = _normalizeTurnState(parsed['turn_state']);
+      if (answerState == 'FINAL_ANSWER' && turnState != 'FINISHED') {
+        throw StateError(
+          'LLM response for "$promptName" requires turn_state=FINISHED when answer_state=FINAL_ANSWER. '
           'Response preview: ${_summarizeResponseForError(responseText)}',
         );
       }
@@ -936,6 +966,7 @@ class SessionService {
         return {
           'teacher_message',
           'turn_state',
+          'answer_state',
           'question',
           'grading',
           'error_book_update',
@@ -1196,9 +1227,14 @@ class SessionService {
   }
 
   String _buildErrorBookSummary({
+    required List<ChatMessage> messages,
     ProgressEntry? progress,
     Map<String, dynamic>? previousJson,
   }) {
+    final aggregated = _aggregateErrorBook(messages);
+    if (aggregated != null && aggregated.isNotEmpty) {
+      return jsonEncode(aggregated);
+    }
     final errorBookUpdate = previousJson?['error_book_update'];
     if (errorBookUpdate is Map<String, dynamic> && errorBookUpdate.isNotEmpty) {
       return jsonEncode(errorBookUpdate);
@@ -1207,6 +1243,87 @@ class SessionService {
       return progress!.summaryText!.trim();
     }
     return 'No error book records yet.';
+  }
+
+  Map<String, dynamic>? _aggregateErrorBook(List<ChatMessage> messages) {
+    final counts = <String, _ErrorBookAggregate>{};
+    var totalUpdates = 0;
+    for (final message in messages) {
+      if (message.role != 'assistant') {
+        continue;
+      }
+      final action = _resolveActionMode(message.action ?? '');
+      if (action != 'review') {
+        continue;
+      }
+      final parsed = _extractMessageJson(message);
+      final update = parsed?['error_book_update'];
+      if (update is! Map<String, dynamic>) {
+        continue;
+      }
+      final mistakeTag = (update['mistake_tag'] as String?)?.trim() ?? '';
+      if (mistakeTag.isEmpty) {
+        continue;
+      }
+      final typeId = _resolveErrorBookTypeId(
+        parsed: parsed,
+        update: update,
+      );
+      final key = '$typeId::$mistakeTag';
+      final note = (update['mistake_note'] as String?)?.trim() ?? '';
+      final existing = counts[key];
+      if (existing == null) {
+        counts[key] = _ErrorBookAggregate(
+          typeId: typeId,
+          mistakeTag: mistakeTag,
+          count: 1,
+          lastNote: note,
+        );
+      } else {
+        existing.count += 1;
+        if (note.isNotEmpty) {
+          existing.lastNote = note;
+        }
+      }
+      totalUpdates += 1;
+    }
+    if (counts.isEmpty) {
+      return null;
+    }
+    final sorted = counts.values.toList()
+      ..sort((left, right) => right.count.compareTo(left.count));
+    final top = sorted
+        .take(5)
+        .map((item) => <String, dynamic>{
+              'type_id': item.typeId,
+              'mistake_tag': item.mistakeTag,
+              'count': item.count,
+              'last_note': item.lastNote,
+            })
+        .toList(growable: false);
+    return <String, dynamic>{
+      'source': 'review_history',
+      'total_updates': totalUpdates,
+      'top_mistakes': top,
+    };
+  }
+
+  String _resolveErrorBookTypeId({
+    required Map<String, dynamic>? parsed,
+    required Map<String, dynamic> update,
+  }) {
+    final updateType = (update['type_id'] as String?)?.trim() ?? '';
+    if (updateType.isNotEmpty) {
+      return updateType;
+    }
+    final question = parsed?['question'];
+    if (question is Map<String, dynamic>) {
+      final questionType = (question['type_id'] as String?)?.trim() ?? '';
+      if (questionType.isNotEmpty) {
+        return questionType;
+      }
+    }
+    return 'OTHER';
   }
 
   Map<String, dynamic>? _extractLatestEvidence(List<ChatMessage> messages) {
@@ -1233,6 +1350,36 @@ class SessionService {
       return normalized;
     }
     return null;
+  }
+
+  String _resolveStudentIntent({
+    required String? requestedIntent,
+    required String studentInput,
+  }) {
+    final normalized = (requestedIntent ?? '').trim().toUpperCase();
+    if (normalized == 'HELP_REQUEST' ||
+        normalized == 'PARTIAL_ATTEMPT' ||
+        normalized == 'FINAL_ANSWER') {
+      return normalized;
+    }
+    final input = studentInput.trim();
+    if (input.isEmpty) {
+      return 'AUTO';
+    }
+    final lowered = input.toLowerCase();
+    if (lowered.contains('hint') ||
+        lowered.contains('help') ||
+        lowered.contains("don't know") ||
+        lowered.contains('dont know') ||
+        lowered.contains('stuck')) {
+      return 'HELP_REQUEST';
+    }
+    if (lowered.contains('final answer') ||
+        lowered.contains('my answer is') ||
+        lowered.startsWith('answer:')) {
+      return 'FINAL_ANSWER';
+    }
+    return 'PARTIAL_ATTEMPT';
   }
 
   String? _questionLevelToMasteryLevel(String? questionLevel) {
@@ -1580,4 +1727,18 @@ class _AssistantJsonRef {
 
   final int index;
   final Map<String, dynamic>? json;
+}
+
+class _ErrorBookAggregate {
+  _ErrorBookAggregate({
+    required this.typeId,
+    required this.mistakeTag,
+    required this.count,
+    required this.lastNote,
+  });
+
+  final String typeId;
+  final String mistakeTag;
+  int count;
+  String lastNote;
 }

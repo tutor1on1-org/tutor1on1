@@ -49,6 +49,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   bool _loadingSession = true;
   bool _autoStartAttempted = false;
   TutorMode _mode = TutorMode.learn;
+  _StudentIntent _studentIntent = _StudentIntent.auto;
   String? _sessionModel;
   String? _sessionTitle;
   RequestHandle<dynamic>? _pending;
@@ -508,6 +509,55 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                           ],
                         ),
                       ),
+                    if (canInteract)
+                      StreamBuilder<List<ChatMessage>>(
+                        stream: db.watchMessagesForSession(widget.sessionId),
+                        builder: (context, snapshot) {
+                          final preview = _buildErrorBookPreview(
+                            snapshot.data ?? const <ChatMessage>[],
+                          );
+                          if (preview.isEmpty) {
+                            return const SizedBox.shrink();
+                          }
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            child: Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .surfaceContainerHighest,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  const Text(
+                                    'Error Book Focus:',
+                                    style:
+                                        TextStyle(fontWeight: FontWeight.w600),
+                                  ),
+                                  ...preview.map(
+                                    (item) => Tooltip(
+                                      message: item.lastNote,
+                                      child: Chip(
+                                        label: Text(
+                                          '${item.mistakeTag} x${item.count}',
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
                     if (_sending) const LinearProgressIndicator(minHeight: 2),
                     if (canInteract)
                       Padding(
@@ -617,6 +667,21 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                   ? l10n.stopTooltip
                                   : l10n.sendTooltip,
                             ),
+                            if (_mode == TutorMode.review) ...[
+                              const SizedBox(width: 4),
+                              TextButton(
+                                onPressed: (_sending || sttBusy)
+                                    ? null
+                                    : () {
+                                        setState(() {
+                                          _studentIntent =
+                                              _StudentIntent.finalAnswer;
+                                        });
+                                        _sendMessage();
+                                      },
+                                child: const Text('Final Answer'),
+                              ),
+                            ],
                           ],
                         ),
                       ),
@@ -639,6 +704,24 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                             ),
                             _modeChip(TutorMode.learn, l10n),
                             _modeChip(TutorMode.review, l10n),
+                            if (_mode == TutorMode.review) ...[
+                              _studentIntentChip(
+                                label: 'Auto',
+                                intent: _StudentIntent.auto,
+                              ),
+                              _studentIntentChip(
+                                label: 'Need Hint',
+                                intent: _StudentIntent.helpRequest,
+                              ),
+                              _studentIntentChip(
+                                label: 'My Attempt',
+                                intent: _StudentIntent.partialAttempt,
+                              ),
+                              _studentIntentChip(
+                                label: 'Final',
+                                intent: _StudentIntent.finalAnswer,
+                              ),
+                            ],
                             const SizedBox(width: 12),
                             Row(
                               mainAxisSize: MainAxisSize.min,
@@ -804,6 +887,24 @@ class _ChatSessionPageState extends State<ChatSessionPage>
               if (selected) {
                 setState(() => _mode = mode);
               }
+            },
+    );
+  }
+
+  Widget _studentIntentChip({
+    required String label,
+    required _StudentIntent intent,
+  }) {
+    return ChoiceChip(
+      label: Text(label),
+      selected: _studentIntent == intent,
+      onSelected: _sending
+          ? null
+          : (selected) {
+              if (!selected) {
+                return;
+              }
+              setState(() => _studentIntent = intent);
             },
     );
   }
@@ -1053,6 +1154,8 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     final db = context.read<AppDatabase>();
     final sessionService = context.read<AppServices>().sessionService;
     final sttService = context.read<AppServices>().sttService;
+    final selectedIntent =
+        _mode == TutorMode.review ? _studentIntent : _StudentIntent.auto;
     final modelOverride = _resolveModelOverride();
     _prepareTts();
     final pendingAudioPath = _pendingSttAudioPath;
@@ -1081,6 +1184,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         sessionId: widget.sessionId,
         mode: _mode.promptName,
         studentInput: trimmedInput,
+        studentIntent: selectedIntent.promptValue,
         courseVersion: widget.courseVersion,
         node: widget.node,
         modelOverride: modelOverride,
@@ -1102,6 +1206,9 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       }
       await _applySuggestedModeFromSession(db);
       _inputController.clear();
+      if (mounted) {
+        setState(() => _studentIntent = _StudentIntent.auto);
+      }
       _inputFocus.requestFocus();
     } catch (e) {
       await _showErrorDialog(
@@ -1316,6 +1423,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         sessionId: widget.sessionId,
         mode: action,
         studentInput: '',
+        studentIntent: _StudentIntent.auto.promptValue,
         courseVersion: widget.courseVersion,
         node: widget.node,
         modelOverride: modelOverride,
@@ -1392,6 +1500,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         sessionId: widget.sessionId,
         mode: mode,
         studentInput: updated.trim(),
+        studentIntent: _StudentIntent.auto.promptValue,
         courseVersion: widget.courseVersion,
         node: widget.node,
         modelOverride: modelOverride,
@@ -1776,6 +1885,46 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       return TutorMode.review;
     }
     return null;
+  }
+
+  List<_ErrorBookPreviewItem> _buildErrorBookPreview(
+    List<ChatMessage> messages,
+  ) {
+    final aggregates = <String, _ErrorBookPreviewItem>{};
+    for (final message in messages) {
+      if (message.role != 'assistant' || message.action != 'review') {
+        continue;
+      }
+      final parsed = _extractMessageJson(message);
+      final update = parsed?['error_book_update'];
+      if (update is! Map<String, dynamic>) {
+        continue;
+      }
+      final mistakeTag = (update['mistake_tag'] as String?)?.trim() ?? '';
+      if (mistakeTag.isEmpty) {
+        continue;
+      }
+      final note = (update['mistake_note'] as String?)?.trim() ?? '';
+      final existing = aggregates[mistakeTag];
+      if (existing == null) {
+        aggregates[mistakeTag] = _ErrorBookPreviewItem(
+          mistakeTag: mistakeTag,
+          count: 1,
+          lastNote: note.isEmpty ? 'No note.' : note,
+        );
+      } else {
+        existing.count += 1;
+        if (note.isNotEmpty) {
+          existing.lastNote = note;
+        }
+      }
+    }
+    if (aggregates.isEmpty) {
+      return const <_ErrorBookPreviewItem>[];
+    }
+    final sorted = aggregates.values.toList()
+      ..sort((left, right) => right.count.compareTo(left.count));
+    return sorted.take(3).toList(growable: false);
   }
 
   void _handleAssistantMessageCreated(int messageId) {
@@ -2379,6 +2528,16 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   }
 }
 
+enum _StudentIntent {
+  auto('AUTO'),
+  helpRequest('HELP_REQUEST'),
+  partialAttempt('PARTIAL_ATTEMPT'),
+  finalAnswer('FINAL_ANSWER');
+
+  const _StudentIntent(this.promptValue);
+  final String promptValue;
+}
+
 class _SendIntent extends Intent {
   const _SendIntent();
 }
@@ -2391,4 +2550,16 @@ class _TtsQueuedChunk {
 
   final String raw;
   final String spoken;
+}
+
+class _ErrorBookPreviewItem {
+  _ErrorBookPreviewItem({
+    required this.mistakeTag,
+    required this.count,
+    required this.lastNote,
+  });
+
+  final String mistakeTag;
+  int count;
+  String lastNote;
 }

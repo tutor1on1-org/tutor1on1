@@ -677,6 +677,8 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
       'session_history':
           'Alias for conversation_history (same session chat history).',
       'student_input': 'Latest student input text in this session.',
+      'student_intent':
+          'Student-declared message intent: AUTO | HELP_REQUEST | PARTIAL_ATTEMPT | FINAL_ANSWER.',
       'student_summary':
           'Saved summary for this student/course/kp (falls back to the session summary).',
       'student_profile':

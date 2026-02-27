@@ -104,4 +104,66 @@ Model output:
     expect(result.isValid, isFalse);
     expect(result.error, isNotNull);
   });
+
+  test('review_cont schema validation requires answer_state', () async {
+    final repo = PromptRepository();
+    final schema = await repo.loadSchema('review_cont');
+    final validator = SchemaValidator();
+    final invalid = {
+      'teacher_message': 'Try one more step.',
+      'turn_state': 'UNFINISHED',
+      'question': {
+        'text': 'What is 3 + 4?',
+        'type_id': 'OTHER',
+      },
+      'grading': null,
+      'error_book_update': null,
+      'evidence': {
+        'a': 0,
+        'c': 0,
+        'h': 0,
+        't': 'OTHER',
+        'mt': <String>[],
+      },
+      'mastery_level': 'NOT_PASS',
+      'next_mode': 'REVIEW',
+    };
+    final result = await validator.validateJson(
+      schemaMap: schema,
+      responseText: jsonEncode(invalid),
+    );
+    expect(result.isValid, isFalse);
+    expect(result.error, isNotNull);
+  });
+
+  test('review_cont schema validation accepts answer_state field', () async {
+    final repo = PromptRepository();
+    final schema = await repo.loadSchema('review_cont');
+    final validator = SchemaValidator();
+    final valid = {
+      'teacher_message': 'Please provide your final numeric result.',
+      'answer_state': 'PARTIAL_ATTEMPT',
+      'turn_state': 'UNFINISHED',
+      'question': {
+        'text': 'What is 3 + 4?',
+        'type_id': 'OTHER',
+      },
+      'grading': null,
+      'error_book_update': null,
+      'evidence': {
+        'a': 0,
+        'c': 0,
+        'h': 0,
+        't': 'OTHER',
+        'mt': <String>[],
+      },
+      'mastery_level': 'NOT_PASS',
+      'next_mode': 'REVIEW',
+    };
+    final result = await validator.validateJson(
+      schemaMap: schema,
+      responseText: jsonEncode(valid),
+    );
+    expect(result.isValid, isTrue);
+  });
 }

@@ -8,6 +8,7 @@ INPUTS
   (Recent conversation turns since this question was started; may be truncated.)
 - prev_json: {{prev_json}}
   (The exact JSON output from the previous turn. It contains the active question, evidence, mastery_level, and turn_state.)
+- student_intent: {{student_intent}}
 - student_profile: {{student_profile}}
 - student_preferences: {{student_preferences}}
 
@@ -17,6 +18,10 @@ ACTIVE QUESTION RULE
 
 FINAL-ANSWER DECISION
 You must decide whether the student has provided a final answer.
+Also output `answer_state` explicitly as one of:
+- HELP_REQUEST
+- PARTIAL_ATTEMPT
+- FINAL_ANSWER
 
 Treat as NOT a final answer if any of the following holds:
 - The student asks for help or expresses confusion (e.g., "I don't know", "hint please", "I'm stuck").
@@ -26,8 +31,11 @@ Treat as NOT a final answer if any of the following holds:
 
 Treat as a final answer if:
 - The student provides a clear final result/choice/conclusion for the question.
+- If student_intent is HELP_REQUEST, default to NOT final unless the dialogue clearly contains a final answer.
+- If student_intent is FINAL_ANSWER, treat as final when the answer content is sufficient to grade.
 
 WHEN NOT FINAL (ONGOING QUESTION)
+- answer_state must be "HELP_REQUEST" or "PARTIAL_ATTEMPT"
 - turn_state must be "UNFINISHED"
 - grading must be null
 - error_book_update must be null
@@ -40,6 +48,7 @@ Your teacher_message should guide the student forward. You may provide hints or 
 If the student seems stuck for multiple turns or repeatedly asks for help, you may set next_mode="LEARN" and give a short concept repair aligned with student_profile and student_preferences.
 
 WHEN FINAL (FINISH QUESTION)
+- answer_state must be "FINAL_ANSWER"
 - turn_state must be "FINISHED"
 - grading must be a non-null object with:
   - is_correct: true | false
@@ -94,6 +103,7 @@ Set next_mode to one of:
 OUTPUT FORMAT (STRICT)
 Return exactly ONE JSON object with ONLY the following keys:
 - teacher_message: string (rich text allowed)
+- answer_state: "HELP_REQUEST" | "PARTIAL_ATTEMPT" | "FINAL_ANSWER"
 - turn_state: "UNFINISHED" | "FINISHED"
 - question: object or null
   - If ongoing, keep it exactly as prev_json.question

@@ -1,6 +1,9 @@
 # DONES
 Last updated: 2026-02-27
 
+- Improved student tutor interaction contract: added explicit student intent controls in chat UI (`Auto`, `Need Hint`, `My Attempt`, `Final`) and passed `student_intent` into prompt rendering for LEARN/REVIEW flows.
+- Upgraded REVIEW continuation schema/prompt contract with required `answer_state` (`HELP_REQUEST` | `PARTIAL_ATTEMPT` | `FINAL_ANSWER`) and added regression tests for schema enforcement.
+- Improved error-book quality by aggregating historical review `error_book_update` signals into prompt context and exposing top mistake tags in a student-visible "Error Book Focus" panel.
 - Removed legacy prompt surface and dead paths: retired `learn/review/summarize` from prompt settings and marketplace managed metadata list, removed unreachable legacy prompt rendering branch in `SessionService`, and dropped unused bundled legacy prompt assets from `pubspec.yaml`.
 - Completed static-cleanup pass to zero analyzer issues (`flutter analyze` now clean): migrated deprecated dropdown `value` usage to `initialValue`, removed redundant null-check patterns, and cleaned debug-tool imports/casts.
 - Hardened student tutor chat reliability: added structured JSON schema validation for `learn_init`, `learn_cont`, `review_init`, and `review_cont`; added single-flight dedupe by `(session + prompt + call_hash)`; added structured-retry telemetry fields (`attempt`, `retry_reason`, `backoff_ms`, `rendered_chars`, `response_chars`, `db_write_ok`, `ui_commit_ok`) to LLM logs; and enabled summary cache reuse when no new evidence was added since the latest summary.

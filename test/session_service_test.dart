@@ -113,7 +113,8 @@ class _FakeLlmService implements LlmService {
     LlmCallContext? context,
   }) {
     if (_plannedStreams.isEmpty) {
-      throw StateError('No planned startStreamingCall response for $promptName');
+      throw StateError(
+          'No planned startStreamingCall response for $promptName');
     }
     streamInvocations.add(
       _LlmCallInvocation(
@@ -152,7 +153,7 @@ class _FakePromptRepository extends PromptRepository {
       case 'summary':
         return 'Summary prompt {{conversation_history}} {{student_summary}}';
       default:
-        return 'Tutor prompt {{student_input}} {{conversation_history}}';
+        return 'Tutor prompt intent={{student_intent}} error_book={{error_book_summary}} input={{student_input}} history={{conversation_history}}';
     }
   }
 
@@ -457,6 +458,96 @@ void main() {
     expect(persistLogs.single.dbWriteOk, isTrue);
     expect(persistLogs.single.callHash, equals('call_learn_1'));
   });
+
+  test(
+    'startTutorAction injects student_intent and aggregated error book summary',
+    () async {
+      final fixture = await _createTutorFixture(
+        db: db,
+        service: service,
+      );
+      final session = await db.getSession(fixture.sessionId);
+      if (session == null) {
+        throw StateError('Missing session fixture.');
+      }
+      await db.into(db.chatMessages).insert(
+            ChatMessagesCompanion.insert(
+              sessionId: fixture.sessionId,
+              role: 'assistant',
+              content: 'Review feedback',
+              parsedJson: Value(
+                jsonEncode(<String, Object?>{
+                  'teacher_message': 'Check your sign handling.',
+                  'turn_state': 'FINISHED',
+                  'answer_state': 'FINAL_ANSWER',
+                  'question': {
+                    'text': 'Solve x + 2 = 5',
+                    'type_id': 'ALGEBRA',
+                  },
+                  'grading': {
+                    'is_correct': false,
+                    'mistake_summary': 'Sign error',
+                    'hint_level': 1,
+                  },
+                  'error_book_update': {
+                    'type_id': 'ALGEBRA',
+                    'delta_wrong': 1,
+                    'mistake_tag': 'sign_error',
+                    'mistake_note': 'Moved term to wrong side.',
+                  },
+                  'evidence': {
+                    'a': 1,
+                    'c': 0,
+                    'h': 1,
+                    't': 'ALGEBRA',
+                    'mt': <String>['sign_error'],
+                  },
+                  'mastery_level': 'NOT_PASS',
+                  'next_mode': 'REVIEW',
+                }),
+              ),
+              action: const Value('review'),
+            ),
+          );
+      await db.upsertProgressSummary(
+        studentId: session.studentId,
+        courseVersionId: fixture.courseVersion.id,
+        kpKey: fixture.node.kpKey,
+        summaryText: 'Prior summary',
+        summaryRawResponse: null,
+        summaryValid: true,
+      );
+      llmService.queueCall(
+        Future<LlmCallResult>.value(
+          _llmOk(
+            responseText: jsonEncode(<String, Object?>{
+              'teacher_message': 'Let us fix the sign rule together.',
+              'understanding': 'PARTIAL',
+              'next_mode': 'LEARN',
+              'turn_state': 'UNFINISHED',
+            }),
+            callHash: 'intent_error_book_call',
+          ),
+        ),
+      );
+
+      final handle = await service.startTutorAction(
+        sessionId: fixture.sessionId,
+        mode: 'learn_init',
+        studentInput: 'hint please',
+        studentIntent: 'HELP_REQUEST',
+        courseVersion: fixture.courseVersion,
+        node: fixture.node,
+      );
+      await handle.future;
+
+      expect(llmService.callInvocations.length, equals(1));
+      final rendered = llmService.callInvocations.single.renderedPrompt;
+      expect(rendered, contains('intent=HELP_REQUEST'));
+      expect(rendered, contains('sign_error'));
+      expect(rendered, contains('ALGEBRA'));
+    },
+  );
 
   test('startTutorAction dedupes identical in-flight calls', () async {
     final fixture = await _createTutorFixture(

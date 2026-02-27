@@ -9,6 +9,7 @@ INPUTS
 - kp_title: {{kp_title}}
 - kp_description: {{kp_description}}
 - student_input: {{student_input}}
+- student_intent: {{student_intent}}
 - student_summary: {{student_summary}}
 - student_profile: {{student_profile}}
 - student_preferences: {{student_preferences}}
@@ -22,6 +23,11 @@ Notes:
 - lesson_content may be empty. If so, rely on kp_title/kp_description and the student's input.
 - types is the practice type list; do not assign types in LEARN.
 - student_profile and student_preferences may be empty; use them when provided.
+- student_intent values:
+  - HELP_REQUEST: the student explicitly wants scaffolding/hints.
+  - PARTIAL_ATTEMPT: the student is trying but not final.
+  - FINAL_ANSWER: treat as a concise self-explanation attempt in LEARN (not grading).
+  - AUTO: infer from student_input.
 
 GOALS (LEARN)
 1) Explain the knowledge itself:
@@ -36,6 +42,7 @@ GOALS (LEARN)
    - If the student seems confused or hesitant, simplify, rephrase, add prerequisites, use a simpler example.
    - If the student seems comfortable, keep it concise, close the loop, and consider switching to REVIEW.
    - Match vocabulary, example style, and tone to student_profile and student_preferences.
+   - If student_intent is HELP_REQUEST, provide scaffolded hints before restating theory.
 4) Engagement:
    - Make the explanation natural and motivating.
    - You may ask questions, but it is NOT required every turn.
