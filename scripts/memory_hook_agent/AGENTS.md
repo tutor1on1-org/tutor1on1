@@ -1,18 +1,22 @@
 You are the memory-update sub-agent for this repository.
 
+Runtime context:
+- This system prompt file is a template.
+- The hook appends the full root `AGENTS.md` text below this template on every run.
+
 You must:
 1. Consolidate only the provided target markdown files.
-2. Use AGENTS.md and the listed memory docs as context and references.
+2. Use the appended root `AGENTS.md` and the provided inputs as context and references.
 3. Keep content factual and aligned with repository context; do not invent.
 4. Keep docs concise, deduplicated, and clean.
 5. Preserve existing intent and project conventions unless clearly outdated/conflicting.
 6. Use English only.
 
 Input contract:
-- `targets`: markdown files with significant line-count deltas.
-- `agents_md`: full AGENTS.md content.
+- `targets`: markdown file paths selected for this run.
+- `agents_md`: full root `AGENTS.md` content.
 - `target_files`: map of `{ path: full_content }` for each target.
-- `other_memory_files`: map of `{ path: full_content }` for other memory docs.
+- `other_memory_files`: array of non-target memory markdown file names only.
 
 Output contract:
 - Return strict JSON only (no markdown, no backticks):
@@ -30,11 +34,81 @@ Rules:
 - `updated_files` must include only files listed in `targets`.
 - `updated_files.content` must be full file content.
 - Omit unchanged targets.
-- `append_suggestions` must include only non-target memory files.
+- `append_suggestions` must include only file names listed in `other_memory_files`.
 - Append suggestions must be concise and non-duplicative.
 - If no append suggestions, return an empty list.
 
 Validate before returning:
 - JSON parses.
-- Paths are valid memory file paths from the input.
+- Paths are valid file names from input.
 - No duplicate entries per path.
+
+## Root AGENTS.md (Full Text)
+# family_teacher Docs Index
+
+`AGENTS.md` is the entry point only. Use the following documents:
+
+- `README.md` - project description, logical flow, architecture, and final aim.
+- `WORKFLOW.md` - standard way to execute work from diagnosis to release.
+- `SCRIPTS.md` - commands for setup, tests, validation, and builds.
+- `BUGS.md` - durable lessons learned and active bug watch items.
+- `TODOS.md` - prioritized backlog.
+- `LOGBOOK.md` - historical operations timeline.
+- `WORKLOG.md` - active remote runbook and host details.
+- `PLANS.md` - phased roadmap.
+- `DONEs.md` - recent completed items.
+- `.env.example` - sanitized local secrets template (`.env` is local and untracked).
+- `BACKUP_DRILL.md` - backup restore verification drill and incident checklist.
+
+## Experience updates
+- Course sync correctness depends on server-authoritative versioning and deletion events: treat remote bundle version as source of truth, and replay deletion events on login to clean multi-device local state.
+- UI feedback preference: use persistent, manually dismissible messages for workflow-critical status (no auto-fade snackbars).
+- Marketplace course identity must be normalized and enforced server-side as `(teacher_id + course_name_key)` to prevent duplicate course rows across repeated uploads.
+- Marketplace visibility must require at least one bundle version; deleting the last bundle version should auto-unpublish the course to avoid stale/duplicate listings.
+- JWT secret exposure is critical: with HS256 auth, anyone holding the secret can mint bearer tokens for arbitrary `sub`; rotate secrets immediately if exposed and minimize distribution.
+- JWT rotation rollout must keep signing and verification separated: sign with current `JWT_SECRET`, verify with `[JWT_SECRET + JWT_PREVIOUS_SECRETS]` during cutover, and enforce `RECOVERY_TOKEN_ECHO=false` when `APP_ENV=production`.
+- Stale local `remoteCourseId` links after server deletions can trigger bundle ensure failures; server must return `404 course not found` (not 500), and client upload flow must re-resolve/create remote course before `ensureBundle`.
+- SSH key path for remote ops in this environment is `C:\\Users\\kl\\.ssh\\id_rsa`; use `-i` and `-o IdentitiesOnly=yes` explicitly.
+- Canonical remote login tuple for this project: `ecs-user@43.99.59.107` with key `C:\\Users\\kl\\.ssh\\id_rsa` (key-only auth; do not do password/no-key retries).
+- Bundle ensure recovery: when stale `course_id` is sent, server `EnsureBundle` should accept `course_name` fallback to resolve/create course and catalog row, preventing teacher upload failures after server-side deletions.
+- After `EnsureBundle` fallback, client must use the returned `course_id` (not stale local ID) for subsequent calls like publish/update visibility, or upload flow can still fail with `course not found`.
+- Student login sync must tolerate older servers missing `/api/enrollments/quit-requests` (treat 404 as empty) and auto-remove legacy assigned courses whose local teacher record is missing (equivalent to auto-approved quit cleanup).
+- Archive stream lifecycle rule: when decoding ZIPs via `InputFileStream` + `ZipDecoder`, do not close the stream until all lazy entry reads are complete (validation/extraction/metadata read); close in `finally` after these steps.
+- Student bundle re-download must reuse the existing local course mapped by `remoteCourseId` and apply `override` mode with server subject as course name; importing from extracted folder basename creates duplicate local courses and splits progress.
+- Progress sync should be uploaded in batch (`/api/progress/sync/upload-batch`) instead of one-by-one requests to avoid per-minute sync rate-limit bursts.
+- Teacher quit/deletion event replay must delete only the affected student assignment/data; never delete the teacher's local course definition based on "no assignments", or teacher course catalogs can silently shrink.
+- Deletion-event replay regression tests should assert cursor behavior (`sinceId` forwarding + cursor advance) and role-specific cleanup outcomes (student login removes local assigned course; teacher login keeps teacher course and removes only affected student assignment/progress).
+- When session sync import cannot resolve `remoteCourseId`, resolve local course by normalized subject (strip `_<timestamp>` suffix) before creating a new placeholder to prevent duplicate local course rows.
+- Teacher upload preflight must run in this order: local course validation, semantic hash compare with latest remote bundle, then KP diff (added/deleted/updated) confirmation before upload when hash differs.
+- Async cleanup rule: in `try/finally`, do not `return` an un-awaited `Future` that still depends on resources deleted in `finally` (use `await` first), or temp files can be removed before downstream read.
+- Bundle creation must include only required course assets (`contents/context`, referenced lecture `.txt`, and prompt `.txt` files plus prompt metadata payload), excluding unrelated files to keep semantic hash stable.
+- Local plugin path overrides must stay signature-compatible with upstream platform interfaces (for example, `record_platform_interface` permission API changes), or release builds can fail unexpectedly.
+- Progress sync E2EE must upload/store ciphertext envelopes (`envelope` + `envelope_hash`) and decrypt client-side; keep compatibility by accepting legacy plaintext rows when envelope is absent.
+- User key lifecycle must re-encrypt and upsert an existing local key pair with the current login password during `syncNow`; otherwise password changes can leave server key blobs undecryptable on new devices.
+- Go toolchain is installed at `C:\\Program Files\\Go\\bin\\go.exe` (`go1.26.0`); if `go` is not recognized in PowerShell, invoke the absolute path or prepend `C:\\Program Files\\Go\\bin` to `PATH` for that session.
+- Prompt composition precedence must remain `system override -> course append -> student append`; keep scope-resolution checks scripted so ordering regressions are caught early.
+- Bundle extraction/import regressions should assert the returned extraction path is immediately import-ready (required files present and zero KP diff versus source bundle) to guard missing-await failures.
+- Integration tests for auth-gated UI flows can stay deterministic/offline by using `AuthGate` with in-memory `AppDatabase`, a fake `AuthController`, and mocked `path_provider` channels for app/secure-storage paths.
+- API authorization regressions should cover `/api/enrollment-requests` and `/api/bundles/download` with JWT identities plus DB checks; reject teacher/self-unenrolled access with `403` and assert successful download responses include `X-Accel-Redirect`.
+- `EnsureBundle` stale-link behavior should be regression-tested at API level: stale `course_id` without `course_name` returns `404`, while providing `course_name` must resolve/create and return the effective `course_id` in response.
+- Client upload flow must resolve remote target via `ensureBundle` and use the returned `course_id` for subsequent visibility updates; keep this enforced through `TeacherMarketplaceUploadService` tests.
+- For Windows PowerShell smoke runs, use `curl.exe` for authenticated multipart upload/download paths to avoid inconsistent `HttpClient` behavior across host runtimes.
+- For server sync operations triggered from auth/home screens, use a blocking gray overlay with a bottom progress panel so users see sync phase and cannot trigger conflicting actions during sync.
+- Tutor TTS rendering must never flush an empty display buffer into `chat_messages.content`; empty flush can overwrite a valid assistant payload and make successful LLM replies appear blank.
+- Marketplace enrollment/quit/download workflow feedback should use persistent, manually dismissible messages; transient snackbars are easy to miss during multi-step actions.
+- Teacher progress review should use `(student + course)` filtering and display session-level `chat_sessions.summary_text` / `summary_lit_percent` so server-synced summaries are visible without opening each session.
+- Recovery flow hardening rule: with `RECOVERY_TOKEN_ECHO=false`, `/api/auth/request-recovery` must not leak token in API response and should be validated with SMTP-path regression tests.
+- Delivery discipline: after code changes pass validation, commit and push in the same turn unless the user explicitly says not to push.
+- Student tutor chat reliability should enforce structured-output schemas for `learn_*`/`review_*`, single-flight dedupe by `(session + prompt + call_hash)`, explicit retry telemetry (`attempt/reason/backoff`), and summary cache reuse when no new evidence exists.
+- Desktop integration tests in this workspace can fail with "More than one device connected"; run with an explicit target (for example `flutter test integration_test/app_flow_test.dart -d windows`).
+- Legacy tutor prompt names (`learn`, `review`, `summarize`) are retired from active UI/managed sync paths; keep prompt/template flow centered on structured prompts (`learn_init`, `learn_cont`, `review_init`, `review_cont`, `summary`).
+- Student-learning flow should pass explicit `student_intent` (AUTO/HELP_REQUEST/PARTIAL_ATTEMPT/FINAL_ANSWER) into prompt context; REVIEW_CONT should emit `answer_state` so app and prompt state stay aligned on grading transitions.
+- Error-book usefulness improves when summaries aggregate historical `error_book_update` signals from review messages (top mistake tags + counts), not only the most recent turn or generic progress summary text.
+- Adaptive review difficulty should react immediately: promote one level after a single correct `FINISHED` review turn, and also promote one level when student intent signals low challenge (`TOO_EASY`/`BORED`), while keeping level updates capped to `easy/medium/hard`.
+- Keep tutor assistant persistence/logging in a shared path for streaming and non-streaming calls; parity avoids drift bugs, and stream flush timers should be cancelled in `whenComplete` so cancellations/errors do not leak pending timers.
+- Sync efficiency rule: run per-item timestamp gate before hash gate; if timestamp indicates no change, skip immediately, and only compute/apply payload hash when timestamp is newer to avoid unnecessary encryption/decryption/upload/import work.
+- Sync list endpoints should emit stable weak `ETag` values and honor `If-None-Match` with `304` on unchanged payloads (`sessions/progress/enrollments/teacher-courses`) so client sync loops can skip JSON decode/import work.
+- Secrets handling baseline: keep runtime credentials only in untracked `.env`, commit only sanitized `.env.example`, and prefer a managed secret store for shared/production environments.
+- Delivery automation rule: run `scripts/hook_memory_update.ps1` after memory markdown edits (line-delta trigger `>10` with snapshot `scripts/memory_line_snapshot.json`), and keep sub-agent prompt/session state under `scripts/memory_hook_agent/` tracked; pre-push runs only `scripts/validate_project.ps1 -NoPostHook`.
+- Course reload immutability rule: for existing IDs, node names are immutable and must not be edited in place; renames must be modeled as delete + create new ID, and any deleted KP IDs must cascade-delete linked sessions/messages/LLM rows with explicit teacher confirmation when affected session count is non-zero.
+- Log privacy rule: treat LLM/TTS logs as credential-protected data by encrypting sensitive log payload fields with an app-layer key derived from the active login credentials, and only surface entries relevant to the signed-in teacher/student scope.

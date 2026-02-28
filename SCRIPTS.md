@@ -22,10 +22,10 @@ powershell -ExecutionPolicy Bypass -File scripts/hook_memory_update.ps1
 Hook behavior:
 - Track line counts in `scripts/memory_line_snapshot.json` (tracked file).
 - Trigger Codex memory update only for memory markdown files whose line count changed by more than `10` since last hook run.
-- Reuse a dedicated memory-hook Codex session from `.git/memory_hook_state.json` (local-only state).
+- Reuse a dedicated memory-hook Codex session from tracked file `scripts/memory_hook_agent/memory_hook_state.json`.
+- Build sub-agent system prompt in `scripts/memory_hook_agent/AGENTS.md` each run by combining `scripts/memory_hook_agent/AGENTS.template.md` + full root `AGENTS.md`.
 - Direct hook runs auto-commit and auto-push memory updates when changes are applied.
-- Pre-push runs this hook with git publish disabled, then validation.
-- If hook updates memory files, pre-push blocks push until those files are committed.
+- Pre-push does not run this hook.
 
 Validate project only:
 ```powershell

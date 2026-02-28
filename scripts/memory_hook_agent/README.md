@@ -1,20 +1,23 @@
 # Memory Hook Sub-Agent (Layman Steps)
 
 1. Triggered by
-- Usually before push: `.githooks/pre-push` runs `scripts/hook_memory_update.ps1 -SkipGitOps`.
-- Can also be run manually: `powershell -File scripts/hook_memory_update.ps1`.
+- Run this hook after memory markdown files change: `powershell -File scripts/hook_memory_update.ps1`.
 - It starts only when a memory markdown file changed by more than 10 lines since the last snapshot, or when you force a target (for example `-ForceTargets workflows.md`).
+- Pre-push does not run this hook.
 
 2. Read files as variables
 - Reads main rules file: `C:\family_teacher\app\AGENTS.md` as `{agents_md}`.
 - Reads changed target memory files as `{target_files}` (full content per file).
-- Reads other memory files as `{other_memory_files}` (full content per file).
+- Reads other memory files as `{other_memory_files}` (file names only, no content).
 - Reads target list as `{targets}`.
 
 3. Call Codex with arguments + session_id handling
-- System prompt comes from `C:\family_teacher\app\scripts\memory_hook_agent\AGENTS.md`.
+- Hook builds sub-agent prompt file `C:\family_teacher\app\scripts\memory_hook_agent\AGENTS.md` every run by combining:
+  - template: `C:\family_teacher\app\scripts\memory_hook_agent\AGENTS.template.md`
+  - full text of root: `C:\family_teacher\app\AGENTS.md`
+- Codex runs from sub-agent project folder: `C:\family_teacher\app\scripts\memory_hook_agent`.
 - The script sends `{targets}`, `{agents_md}`, `{target_files}`, `{other_memory_files}` to Codex as one JSON input message.
-- Session id is stored in `C:\family_teacher\app\.git\memory_hook_state.json`.
+- Session id is stored in tracked file `C:\family_teacher\app\scripts\memory_hook_agent\memory_hook_state.json`.
 - If session id exists, script calls `codex exec --json resume {session_id}`.
 - If no session id (or resume fails), script starts a new session with `codex exec --json --output-schema ...`.
 - When Codex returns a new thread id, script saves it for next run.
@@ -36,4 +39,3 @@
 7. Git behavior
 - The hook updates `scripts/memory_line_snapshot.json` after a real apply run.
 - Manual/direct run (default): auto `git add`, `git commit`, and `git push` memory changes.
-- Pre-push run uses `-SkipGitOps`, so it does not auto-commit/push there.

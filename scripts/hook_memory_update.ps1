@@ -1,7 +1,7 @@
 param(
   [string]$SnapshotPath = "scripts/memory_line_snapshot.json",
-  [string]$SessionStatePath = ".git/memory_hook_state.json",
-  [string]$PromptPath = "scripts/memory_hook_agent/AGENTS.md",
+  [string]$SessionStatePath = "scripts/memory_hook_agent/memory_hook_state.json",
+  [string]$PromptPath = "scripts/memory_hook_agent/AGENTS.template.md",
   [int]$LineDeltaThreshold = 10,
   [string]$CodexCommand = "codex",
   [string[]]$ForceTargets = @(),
@@ -48,7 +48,9 @@ $memoryTrackedFiles = @(
   "PLANS.md",
   "DONEs.md",
   "BACKUP_DRILL.md",
-  "scripts/memory_line_snapshot.json"
+  "scripts/memory_line_snapshot.json",
+  "scripts/memory_hook_agent/AGENTS.md",
+  "scripts/memory_hook_agent/memory_hook_state.json"
 )
 
 function Ensure-FileExists {
@@ -202,16 +204,21 @@ function Try-GetMapValue {
 function Build-SubAgentWorkspace {
   Ensure-Directory -Path $subAgentDir
   Ensure-FileExists -Path $promptFile -Label "Hook prompt"
-  $prompt = [System.IO.File]::ReadAllText($promptFile)
-  $promptPathFull = [System.IO.Path]::GetFullPath($promptFile)
-  $agentsPathFull = [System.IO.Path]::GetFullPath($subAgentAgentsPath)
-  if ($promptPathFull -ne $agentsPathFull) {
-    [System.IO.File]::WriteAllText(
-      $subAgentAgentsPath,
-      $prompt.TrimEnd() + "`n",
-      [System.Text.UTF8Encoding]::new($false)
-    )
-  }
+  $templatePrompt = [System.IO.File]::ReadAllText($promptFile).TrimEnd()
+  $rootAgentsPath = Join-Path $repoRoot "AGENTS.md"
+  Ensure-FileExists -Path $rootAgentsPath -Label "Root AGENTS.md"
+  $rootAgentsContent = [System.IO.File]::ReadAllText($rootAgentsPath).TrimEnd()
+  $fullPrompt = @"
+$templatePrompt
+
+## Root AGENTS.md (Full Text)
+$rootAgentsContent
+"@
+  [System.IO.File]::WriteAllText(
+    $subAgentAgentsPath,
+    $fullPrompt.TrimEnd() + "`n",
+    [System.Text.UTF8Encoding]::new($false)
+  )
   $schema = @'
 {
   "type": "object",
@@ -304,12 +311,16 @@ function Read-SessionId {
 
 function Write-SessionId {
   param([string]$SessionId)
-  if ([string]::IsNullOrWhiteSpace($SessionId)) {
+  $normalized = $SessionId.Trim()
+  if ([string]::IsNullOrWhiteSpace($normalized)) {
+    return
+  }
+  $existingId = Read-SessionId
+  if ($existingId -eq $normalized) {
     return
   }
   Write-JsonFile -Path $sessionStateFile -Object ([PSCustomObject]@{
-      session_id = $SessionId.Trim()
-      updated_at = (Get-Date).ToUniversalTime().ToString("o")
+      session_id = $normalized
     })
 }
 
@@ -404,10 +415,12 @@ function Invoke-CodexMemoryAgent {
       $message = Get-CodexFinalMessage -JsonlOutput ($output | Out-String) -ThreadIdRef $threadRef
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($threadRef.Value)) {
-      Write-SessionId -SessionId $threadRef.Value
-    } elseif ($usedResume -and -not [string]::IsNullOrWhiteSpace($savedThreadId)) {
-      Write-SessionId -SessionId $savedThreadId
+    if (-not $SimulateOnly) {
+      if (-not [string]::IsNullOrWhiteSpace($threadRef.Value)) {
+        Write-SessionId -SessionId $threadRef.Value
+      } elseif ($usedResume -and -not [string]::IsNullOrWhiteSpace($savedThreadId)) {
+        Write-SessionId -SessionId $savedThreadId
+      }
     }
     return $message
   } finally {
@@ -420,14 +433,14 @@ function Build-Payload {
     [string[]]$Targets
   )
   $targetMap = @{}
-  $otherMap = @{}
+  $otherNames = New-Object System.Collections.Generic.List[string]
   foreach ($path in $memoryFiles) {
     $full = Join-Path $repoRoot $path
     $content = [System.IO.File]::ReadAllText($full)
     if ($Targets -contains $path) {
       $targetMap[$path] = $content
     } elseif ($path -ne "AGENTS.md") {
-      $otherMap[$path] = $content
+      $otherNames.Add($path)
     }
   }
   $agentsContent = [System.IO.File]::ReadAllText((Join-Path $repoRoot "AGENTS.md"))
@@ -435,7 +448,7 @@ function Build-Payload {
     targets = $Targets
     agents_md = $agentsContent
     target_files = $targetMap
-    other_memory_files = $otherMap
+    other_memory_files = $otherNames.ToArray()
   }
   return ($payload | ConvertTo-Json -Depth 20)
 }

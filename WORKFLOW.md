@@ -50,14 +50,15 @@ Last updated: 2026-02-28
 
 ## Documentation workflow
 - `AGENTS.md` stays minimal and only points to docs.
-- `update memory` should focus on docs that changed meaningfully; pre-push memory hook targets only memory markdown files with line-count delta `>10`.
+- `update memory` should focus on docs that changed meaningfully; memory hook targets only memory markdown files with line-count delta `>10`.
 - Keep `README.md` aligned with current architecture and final product aim.
 - Keep `SCRIPTS.md` command-accurate; remove stale commands immediately.
 - Keep `LOGBOOK.md` chronological (history), and `WORKLOG.md` operational (active runbook).
+- When memory-hook behavior changes, update `scripts/memory_hook_agent/README.md` in the same change.
 
 ## Hooks workflow
 - Install tracked hooks once per clone: `powershell -ExecutionPolicy Bypass -File scripts/install_githooks.ps1`.
-- Tracked pre-push runs `scripts/hook_memory_update.ps1 -SkipGitOps`, then `scripts/validate_project.ps1 -NoPostHook`, and blocks push on failures.
-- If memory hook writes updates, pre-push blocks push until those memory files plus snapshot are committed.
+- Tracked pre-push runs `scripts/validate_project.ps1 -NoPostHook` and blocks push on failures.
+- Run `scripts/hook_memory_update.ps1` after memory markdown edits (or force targets manually) to consolidate memory docs.
 - Direct runs of `scripts/hook_memory_update.ps1` auto-commit and auto-push memory updates when changes are applied.
 - `scripts/post_validate_hook.ps1` remains an optional manual path.
