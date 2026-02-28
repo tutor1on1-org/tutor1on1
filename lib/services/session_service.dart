@@ -395,8 +395,7 @@ class SessionService {
       'last_evidence': lastEvidenceText,
       'current_mastery_level': currentMasteryLevel,
     };
-    final needsLessonContent =
-        promptName == 'learn_init' || promptName == 'review_init';
+    final needsLessonContent = promptName == 'learn_init';
     if (needsLessonContent) {
       values['lesson_content'] = await _loadLectureTextIfPresent(
         courseVersion: courseVersion,

@@ -44,19 +44,21 @@ class PromptTemplateValidator {
     switch (promptName) {
       case 'learn_init':
         return {
+          'kp_title',
+          'kp_description',
           'lesson_content',
-          'types',
-          'error_book_summary',
-          'practice_history_summary',
-          'student_intent',
         };
       case 'review_init':
         return {
-          'lesson_content',
+          'kp_title',
+          'kp_description',
           'types',
+          'presented_questions',
           'error_book_summary',
           'practice_history_summary',
-          'presented_questions',
+          'current_mastery_level',
+          'prev_json',
+          'last_evidence',
           'student_intent',
           'current_difficulty_level',
         };
@@ -64,7 +66,9 @@ class PromptTemplateValidator {
         return {
           'recent_dialogue',
           'prev_json',
-          'student_intent',
+          'kp_title',
+          'kp_description',
+          'lesson_content',
         };
       case 'review_cont':
         return {
