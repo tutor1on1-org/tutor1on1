@@ -1,18 +1,25 @@
 param(
   [string]$SnapshotPath = "scripts/memory_line_snapshot.json",
   [string]$SessionStatePath = ".git/memory_hook_state.json",
-  [string]$PromptPath = "scripts/hook_memory_update_prompt.txt",
+  [string]$PromptPath = "scripts/memory_hook_agent/AGENTS.md",
   [int]$LineDeltaThreshold = 10,
-  [string]$CodexCommand = "codex"
+  [string]$CodexCommand = "codex",
+  [string[]]$ForceTargets = @(),
+  [switch]$SimulateOnly
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$subAgentDir = Join-Path $repoRoot "scripts\memory_hook_agent"
+$subAgentAgentsPath = Join-Path $subAgentDir "AGENTS.md"
+$schemaFile = Join-Path $subAgentDir "memory_hook_output_schema.json"
 $promptFile = Join-Path $repoRoot $PromptPath
 $snapshotFile = Join-Path $repoRoot $SnapshotPath
 $sessionStateFile = Join-Path $repoRoot $SessionStatePath
+$convertFromJsonCommand = Get-Command ConvertFrom-Json -ErrorAction Stop
+$supportsConvertFromJsonDepth = $convertFromJsonCommand.Parameters.ContainsKey("Depth")
 
 $memoryFiles = @(
   "AGENTS.md",
@@ -27,10 +34,6 @@ $memoryFiles = @(
   "DONEs.md",
   "BACKUP_DRILL.md"
 )
-
-$subAgentDir = Join-Path $repoRoot ".git\memory_hook_agent"
-$subAgentAgentsPath = Join-Path $subAgentDir "AGENTS.md"
-$schemaFile = Join-Path $subAgentDir "memory_hook_output_schema.json"
 
 function Ensure-FileExists {
   param([string]$Path, [string]$Label)
@@ -63,7 +66,19 @@ function Read-JsonFile {
   if ([string]::IsNullOrWhiteSpace($raw)) {
     return $null
   }
-  return $raw | ConvertFrom-Json
+  return ConvertFrom-JsonCompat -Json $raw -Depth 20
+}
+
+function ConvertFrom-JsonCompat {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Json,
+    [int]$Depth = 20
+  )
+  if ($supportsConvertFromJsonDepth) {
+    return $Json | ConvertFrom-Json -Depth $Depth
+  }
+  return $Json | ConvertFrom-Json
 }
 
 function Write-JsonFile {
@@ -102,6 +117,48 @@ function Normalize-PathKey {
   return $Value.Trim().Replace("/", "\")
 }
 
+function Write-Info {
+  param([string]$Message)
+  if (-not $SimulateOnly) {
+    Write-Output $Message
+  }
+}
+
+function Resolve-Targets {
+  param([string[]]$RequestedTargets)
+  $resolved = New-Object System.Collections.Generic.List[string]
+  $seen = @{}
+  foreach ($requested in $RequestedTargets) {
+    $requestedKey = (Normalize-PathKey -Value $requested).ToLowerInvariant()
+    $match = $null
+    foreach ($candidate in $memoryFiles) {
+      $candidateKey = (Normalize-PathKey -Value $candidate).ToLowerInvariant()
+      if ($candidateKey -eq $requestedKey) {
+        $match = $candidate
+        break
+      }
+    }
+    if ($null -eq $match -and $requestedKey.EndsWith("s.md")) {
+      $singularKey = $requestedKey.Substring(0, $requestedKey.Length - 4) + ".md"
+      foreach ($candidate in $memoryFiles) {
+        $candidateKey = (Normalize-PathKey -Value $candidate).ToLowerInvariant()
+        if ($candidateKey -eq $singularKey) {
+          $match = $candidate
+          break
+        }
+      }
+    }
+    if ($null -eq $match) {
+      throw "Unknown memory target: $requested"
+    }
+    if (-not $seen.ContainsKey($match)) {
+      $seen[$match] = $true
+      $resolved.Add($match)
+    }
+  }
+  return $resolved
+}
+
 function Try-GetMapValue {
   param(
     [object]$Map,
@@ -130,11 +187,15 @@ function Build-SubAgentWorkspace {
   Ensure-Directory -Path $subAgentDir
   Ensure-FileExists -Path $promptFile -Label "Hook prompt"
   $prompt = [System.IO.File]::ReadAllText($promptFile)
-  [System.IO.File]::WriteAllText(
-    $subAgentAgentsPath,
-    $prompt.TrimEnd() + "`n",
-    [System.Text.UTF8Encoding]::new($false)
-  )
+  $promptPathFull = [System.IO.Path]::GetFullPath($promptFile)
+  $agentsPathFull = [System.IO.Path]::GetFullPath($subAgentAgentsPath)
+  if ($promptPathFull -ne $agentsPathFull) {
+    [System.IO.File]::WriteAllText(
+      $subAgentAgentsPath,
+      $prompt.TrimEnd() + "`n",
+      [System.Text.UTF8Encoding]::new($false)
+    )
+  }
   $schema = @'
 {
   "type": "object",
@@ -223,7 +284,7 @@ function Get-CodexFinalMessage {
       continue
     }
     try {
-      $obj = $trim | ConvertFrom-Json -Depth 20
+      $obj = ConvertFrom-JsonCompat -Json $trim -Depth 20
     } catch {
       continue
     }
@@ -290,15 +351,18 @@ function Invoke-CodexMemoryAgent {
     try {
       $usedResume = $true
       $output = $PromptPayloadJson | & $CodexCommand @resumeArgs
+      $message = Get-CodexFinalMessage -JsonlOutput ($output | Out-String) -ThreadIdRef $threadRef
     } catch {
       $usedResume = $false
+      $threadRef = [ref]$null
       $output = $PromptPayloadJson | & $CodexCommand @newArgs
+      $message = Get-CodexFinalMessage -JsonlOutput ($output | Out-String) -ThreadIdRef $threadRef
     }
   } else {
     $output = $PromptPayloadJson | & $CodexCommand @newArgs
+    $message = Get-CodexFinalMessage -JsonlOutput ($output | Out-String) -ThreadIdRef $threadRef
   }
 
-  $message = Get-CodexFinalMessage -JsonlOutput ($output | Out-String) -ThreadIdRef $threadRef
   if (-not [string]::IsNullOrWhiteSpace($threadRef.Value)) {
     Write-SessionId -SessionId $threadRef.Value
   } elseif ($usedResume -and -not [string]::IsNullOrWhiteSpace($savedThreadId)) {
@@ -406,41 +470,54 @@ Push-Location $repoRoot
 try {
   Build-SubAgentWorkspace
 
-  $currentSnapshot = Get-MemorySnapshot
-  $previous = Read-JsonFile -Path $snapshotFile
-  if ($null -eq $previous -or $null -eq $previous.line_counts) {
-    Write-Output "Memory snapshot missing. Initializing and skipping LLM update."
-    Write-JsonFile -Path $snapshotFile -Object $currentSnapshot
-    exit 0
-  }
-
-  $prevCounts = $previous.line_counts
   $targets = New-Object System.Collections.Generic.List[string]
-  foreach ($path in $memoryFiles) {
-    $prevValue = $null
-    $prevRef = [ref]$null
-    if (Try-GetMapValue -Map $prevCounts -Key $path -ValueRef $prevRef) {
-      $prevValue = [int]$prevRef.Value
-    } else {
-      $prevValue = [int](Get-LineCount -RelativePath $path)
+  if ($ForceTargets.Count -gt 0) {
+    $resolved = Resolve-Targets -RequestedTargets $ForceTargets
+    foreach ($item in $resolved) {
+      $targets.Add($item)
     }
-    $nowValue = [int]$currentSnapshot.line_counts.$path
-    $delta = [Math]::Abs($nowValue - $prevValue)
-    if ($delta -gt $LineDeltaThreshold) {
-      $targets.Add($path)
+  } else {
+    $currentSnapshot = Get-MemorySnapshot
+    $previous = Read-JsonFile -Path $snapshotFile
+    if ($null -eq $previous -or $null -eq $previous.line_counts) {
+      Write-Info "Memory snapshot missing. Initializing and skipping LLM update."
+      Write-JsonFile -Path $snapshotFile -Object $currentSnapshot
+      exit 0
+    }
+
+    $prevCounts = $previous.line_counts
+    foreach ($path in $memoryFiles) {
+      $prevValue = $null
+      $prevRef = [ref]$null
+      if (Try-GetMapValue -Map $prevCounts -Key $path -ValueRef $prevRef) {
+        $prevValue = [int]$prevRef.Value
+      } else {
+        $prevValue = [int](Get-LineCount -RelativePath $path)
+      }
+      $nowValue = [int]$currentSnapshot.line_counts.$path
+      $delta = [Math]::Abs($nowValue - $prevValue)
+      if ($delta -gt $LineDeltaThreshold) {
+        $targets.Add($path)
+      }
+    }
+
+    if ($targets.Count -eq 0) {
+      Write-Info "No markdown files exceeded line delta threshold."
+      Write-JsonFile -Path $snapshotFile -Object $currentSnapshot
+      exit 0
     }
   }
 
-  if ($targets.Count -eq 0) {
-    Write-Output "No markdown files exceeded line delta threshold."
-    Write-JsonFile -Path $snapshotFile -Object $currentSnapshot
+  $targetArray = $targets.ToArray()
+  Write-Info ("Memory update targets: " + ($targetArray -join ", "))
+  $payload = Build-Payload -Targets $targetArray
+  $rawResponse = Invoke-CodexMemoryAgent -PromptPayloadJson $payload
+  $responseObj = ConvertFrom-JsonCompat -Json $rawResponse -Depth 40
+
+  if ($SimulateOnly) {
+    $responseObj | ConvertTo-Json -Depth 40
     exit 0
   }
-
-  Write-Output ("Memory update targets: " + ($targets -join ", "))
-  $payload = Build-Payload -Targets $targets.ToArray()
-  $rawResponse = Invoke-CodexMemoryAgent -PromptPayloadJson $payload
-  $responseObj = $rawResponse | ConvertFrom-Json -Depth 40
 
   $updatedFiles = @()
   if ($responseObj.updated_files) {
@@ -451,12 +528,12 @@ try {
     $appendSuggestions = @($responseObj.append_suggestions)
   }
 
-  Apply-UpdatedFiles -UpdatedFiles $updatedFiles -Targets $targets.ToArray()
-  Apply-AppendSuggestions -Suggestions $appendSuggestions -Targets $targets.ToArray()
+  Apply-UpdatedFiles -UpdatedFiles $updatedFiles -Targets $targetArray
+  Apply-AppendSuggestions -Suggestions $appendSuggestions -Targets $targetArray
 
   $newSnapshot = Get-MemorySnapshot
   Write-JsonFile -Path $snapshotFile -Object $newSnapshot
-  Write-Output "Memory hook update applied."
+  Write-Info "Memory hook update applied."
 } finally {
   Pop-Location
 }

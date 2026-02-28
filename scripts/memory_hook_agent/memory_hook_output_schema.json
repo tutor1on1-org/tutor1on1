@@ -1,0 +1,32 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["updated_files", "append_suggestions", "notes"],
+  "properties": {
+    "updated_files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "content"],
+        "properties": {
+          "path": { "type": "string" },
+          "content": { "type": "string" }
+        }
+      }
+    },
+    "append_suggestions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "content_to_append"],
+        "properties": {
+          "path": { "type": "string" },
+          "content_to_append": { "type": "string" }
+        }
+      }
+    },
+    "notes": { "type": "string" }
+  }
+}
