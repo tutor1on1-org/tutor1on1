@@ -1,15 +1,17 @@
 # WORKFLOW
-Last updated: 2026-02-27
+Last updated: 2026-02-28
 
 ## Standard workflow
 1. Understand scope and locate the true failing/target layer.
-2. Implement minimal, correct change at root cause.
-3. Validate directly on changed layer, then run adjacent-layer regression checks.
-4. Run `flutter build windows --release` before updating `DONEs.md`.
-5. If backend under `remote/` changed, rebuild binary and restart service before reporting done.
-6. Update memory docs intentionally; memory hook will auto-consolidate only files whose line count delta is greater than `10` since its last snapshot.
-7. Update docs (`BUGS.md`, `LOGBOOK.md`, `TODOS.md`, `DONEs.md`) as applicable.
-8. After feature changes are committed, run `powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1 -NoPostHook` as the validation gate.
+2. For bugs, reproduce with evidence first (logs, repro script, or minimal failing test).
+3. Implement the minimal correct root-cause change.
+4. Validate changed path first, then adjacent regressions, then end-to-end path when feasible.
+5. Run `flutter build windows --release` before updating `DONEs.md`.
+6. If backend under `remote/` changed, rebuild binary and restart service before reporting done.
+7. Update memory docs intentionally; the memory hook auto-consolidates only memory markdown files whose line-count delta is `>10` from `scripts/memory_line_snapshot.json`.
+8. Update docs (`BUGS.md`, `LOGBOOK.md`, `TODOS.md`, `DONEs.md`) as applicable.
+9. Run `powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1 -NoPostHook`.
+10. Commit and push in the same turn after validation unless the user explicitly says not to push.
 
 ## Bug-fix discipline
 1. Reproduce with evidence (logs, script, or minimal failing test).
@@ -25,6 +27,8 @@ Last updated: 2026-02-27
 
 ## Validation baseline
 - Prefer automated checks (`flutter test`, `go test`, scripted API checks).
+- In this workspace, run desktop integration tests with an explicit target (example: `flutter test integration_test/app_flow_test.dart -d windows`).
+- For authenticated multipart API smoke paths on Windows PowerShell, prefer `curl.exe`.
 - Keep user-facing errors persistent and copyable for important failures.
 - Do not silently swallow errors; fail fast and fix root issue.
 - For teacher bundle upload: validate local folder first, compare local semantic hash with latest remote hash, and require explicit confirmation after showing KP added/deleted/updated counts when hash differs.
@@ -36,6 +40,7 @@ Last updated: 2026-02-27
 3. Restart `family-teacher-api.service`.
 4. Verify health endpoint and log tails.
 5. Re-check storage permissions and body-size alignment if upload/download behavior changed.
+6. Use key-only SSH for remote ops (`-i C:\\Users\\kl\\.ssh\\id_rsa -o IdentitiesOnly=yes`).
 
 ## Backup and incident workflow
 1. Run the restore drill from `BACKUP_DRILL.md` monthly and after schema changes.
@@ -52,7 +57,7 @@ Last updated: 2026-02-27
 
 ## Hooks workflow
 - Install tracked hooks once per clone: `powershell -ExecutionPolicy Bypass -File scripts/install_githooks.ps1`.
-- Pre-push hook runs `scripts/hook_memory_update.ps1` first, then project validation gate, and blocks push on failures.
+- Tracked pre-push runs `scripts/hook_memory_update.ps1 -SkipGitOps`, then `scripts/validate_project.ps1 -NoPostHook`, and blocks push on failures.
 - If memory hook writes updates, pre-push blocks push until those memory files plus snapshot are committed.
 - Direct runs of `scripts/hook_memory_update.ps1` auto-commit and auto-push memory updates when changes are applied.
 - `scripts/post_validate_hook.ps1` remains an optional manual path.
