@@ -23,7 +23,8 @@ Hook behavior:
 - Track line counts in `scripts/memory_line_snapshot.json` (tracked file).
 - Trigger Codex memory update only for memory markdown files whose line count changed by more than `10` since last hook run.
 - Reuse a dedicated memory-hook Codex session from `.git/memory_hook_state.json` (local-only state).
-- Pre-push runs this hook first, then validation.
+- Direct hook runs auto-commit and auto-push memory updates when changes are applied.
+- Pre-push runs this hook with git publish disabled, then validation.
 - If hook updates memory files, pre-push blocks push until those files are committed.
 
 Validate project only:

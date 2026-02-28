@@ -31,7 +31,7 @@ memory_files=(
   "scripts/memory_line_snapshot.json"
 )
 
-"${ps_cmd}" -NoProfile -ExecutionPolicy Bypass -File "${repo_root}/scripts/hook_memory_update.ps1"
+"${ps_cmd}" -NoProfile -ExecutionPolicy Bypass -File "${repo_root}/scripts/hook_memory_update.ps1" -SkipGitOps
 
 memory_status="$(git status --porcelain -- "${memory_files[@]}")"
 if [[ -n "${memory_status}" ]]; then

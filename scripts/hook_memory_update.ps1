@@ -5,7 +5,9 @@ param(
   [int]$LineDeltaThreshold = 10,
   [string]$CodexCommand = "codex",
   [string[]]$ForceTargets = @(),
-  [switch]$SimulateOnly
+  [switch]$SimulateOnly,
+  [switch]$SkipGitOps,
+  [string]$MemoryCommitMessage = "docs: memory hook update"
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,6 +35,20 @@ $memoryFiles = @(
   "PLANS.md",
   "DONEs.md",
   "BACKUP_DRILL.md"
+)
+$memoryTrackedFiles = @(
+  "AGENTS.md",
+  "README.md",
+  "WORKFLOW.md",
+  "SCRIPTS.md",
+  "BUGS.md",
+  "TODOS.md",
+  "LOGBOOK.md",
+  "WORKLOG.md",
+  "PLANS.md",
+  "DONEs.md",
+  "BACKUP_DRILL.md",
+  "scripts/memory_line_snapshot.json"
 )
 
 function Ensure-FileExists {
@@ -242,6 +258,35 @@ function Ensure-CodexCommand {
   $cmd = Get-Command $CommandName -ErrorAction SilentlyContinue
   if (-not $cmd) {
     throw "Codex command not found: $CommandName"
+  }
+}
+
+function Publish-MemoryChanges {
+  if ($SimulateOnly -or $SkipGitOps) {
+    return
+  }
+  $status = @(& git status --porcelain -- $memoryTrackedFiles)
+  if ($status.Count -eq 0) {
+    Write-Info "No memory changes to commit or push."
+    return
+  }
+
+  Write-Info "Committing memory hook changes."
+  & git add -- $memoryTrackedFiles
+  $cachedDiff = @(& git diff --cached --name-only -- $memoryTrackedFiles)
+  if ($cachedDiff.Count -eq 0) {
+    Write-Info "No staged memory changes after git add."
+    return
+  }
+
+  & git commit -m $MemoryCommitMessage
+
+  Write-Info "Pushing branch from memory hook."
+  $env:FT_SKIP_PRE_PUSH_VALIDATE = "1"
+  try {
+    & git push
+  } finally {
+    Remove-Item Env:FT_SKIP_PRE_PUSH_VALIDATE -ErrorAction SilentlyContinue
   }
 }
 
@@ -534,6 +579,7 @@ try {
   $newSnapshot = Get-MemorySnapshot
   Write-JsonFile -Path $snapshotFile -Object $newSnapshot
   Write-Info "Memory hook update applied."
+  Publish-MemoryChanges
 } finally {
   Pop-Location
 }

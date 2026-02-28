@@ -54,4 +54,5 @@ Last updated: 2026-02-27
 - Install tracked hooks once per clone: `powershell -ExecutionPolicy Bypass -File scripts/install_githooks.ps1`.
 - Pre-push hook runs `scripts/hook_memory_update.ps1` first, then project validation gate, and blocks push on failures.
 - If memory hook writes updates, pre-push blocks push until those memory files plus snapshot are committed.
+- Direct runs of `scripts/hook_memory_update.ps1` auto-commit and auto-push memory updates when changes are applied.
 - `scripts/post_validate_hook.ps1` remains an optional manual path.
