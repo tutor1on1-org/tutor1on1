@@ -375,45 +375,44 @@ function Invoke-CodexMemoryAgent {
     "exec",
     "--json",
     "--output-schema",
-    $schemaFile,
-    "-C",
-    $subAgentDir
+    $schemaFile
   )
   $resumeArgs = @(
     "exec",
     "--json",
     "resume",
-    $savedThreadId,
-    "--output-schema",
-    $schemaFile,
-    "-C",
-    $subAgentDir
+    $savedThreadId
   )
 
-  $output = $null
-  $usedResume = $false
-  if (-not [string]::IsNullOrWhiteSpace($savedThreadId)) {
-    try {
-      $usedResume = $true
-      $output = $PromptPayloadJson | & $CodexCommand @resumeArgs
-      $message = Get-CodexFinalMessage -JsonlOutput ($output | Out-String) -ThreadIdRef $threadRef
-    } catch {
-      $usedResume = $false
-      $threadRef = [ref]$null
+  Push-Location $subAgentDir
+  try {
+    $output = $null
+    $usedResume = $false
+    if (-not [string]::IsNullOrWhiteSpace($savedThreadId)) {
+      try {
+        $usedResume = $true
+        $output = $PromptPayloadJson | & $CodexCommand @resumeArgs
+        $message = Get-CodexFinalMessage -JsonlOutput ($output | Out-String) -ThreadIdRef $threadRef
+      } catch {
+        $usedResume = $false
+        $threadRef = [ref]$null
+        $output = $PromptPayloadJson | & $CodexCommand @newArgs
+        $message = Get-CodexFinalMessage -JsonlOutput ($output | Out-String) -ThreadIdRef $threadRef
+      }
+    } else {
       $output = $PromptPayloadJson | & $CodexCommand @newArgs
       $message = Get-CodexFinalMessage -JsonlOutput ($output | Out-String) -ThreadIdRef $threadRef
     }
-  } else {
-    $output = $PromptPayloadJson | & $CodexCommand @newArgs
-    $message = Get-CodexFinalMessage -JsonlOutput ($output | Out-String) -ThreadIdRef $threadRef
-  }
 
-  if (-not [string]::IsNullOrWhiteSpace($threadRef.Value)) {
-    Write-SessionId -SessionId $threadRef.Value
-  } elseif ($usedResume -and -not [string]::IsNullOrWhiteSpace($savedThreadId)) {
-    Write-SessionId -SessionId $savedThreadId
+    if (-not [string]::IsNullOrWhiteSpace($threadRef.Value)) {
+      Write-SessionId -SessionId $threadRef.Value
+    } elseif ($usedResume -and -not [string]::IsNullOrWhiteSpace($savedThreadId)) {
+      Write-SessionId -SessionId $savedThreadId
+    }
+    return $message
+  } finally {
+    Pop-Location
   }
-  return $message
 }
 
 function Build-Payload {
