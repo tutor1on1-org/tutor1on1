@@ -190,6 +190,7 @@ class SessionSyncService {
       return;
     }
     final keysByCourse = <int, CourseKeyBundle>{};
+    final courseSubjectsByVersion = <int, String>{};
     final pendingUploads = <_PendingProgressUpload>[];
     for (final entry in entries) {
       if (entry.kpKey == kTreeViewStateKpKey) {
@@ -231,8 +232,14 @@ class SessionSyncService {
         studentUserId: remoteUserId,
       );
       keysByCourse[remoteCourseId] = resolvedKeys;
+      var courseSubject = courseSubjectsByVersion[entry.courseVersionId];
+      if (courseSubject == null) {
+        courseSubject = await _resolveCourseSubject(entry.courseVersionId);
+        courseSubjectsByVersion[entry.courseVersionId] = courseSubject;
+      }
       final payload = _buildProgressPayload(
         entry: entry,
+        courseSubject: courseSubject,
         remoteCourseId: remoteCourseId,
         teacherUserId: resolvedKeys.teacherUserId,
         studentUserId: resolvedKeys.studentUserId,
@@ -1091,6 +1098,7 @@ class SessionSyncService {
 
   Map<String, dynamic> _buildProgressPayload({
     required ProgressEntry entry,
+    required String courseSubject,
     required int remoteCourseId,
     required int teacherUserId,
     required int studentUserId,
@@ -1098,6 +1106,7 @@ class SessionSyncService {
     return {
       'version': 1,
       'course_id': remoteCourseId,
+      'course_subject': courseSubject,
       'kp_key': entry.kpKey,
       'lit': entry.lit,
       'lit_percent': entry.litPercent,
@@ -1368,11 +1377,16 @@ class SessionSyncService {
       payload['lit_percent'],
       field: 'lit_percent',
     );
+    final payloadCourseSubject = _parsePayloadString(
+      payload['course_subject'],
+      field: 'course_subject',
+      isRequired: false,
+    ).trim();
     return _ResolvedProgressPayload(
       courseId: _parsePayloadInt(payload['course_id'], field: 'course_id'),
-      courseSubject: _parsePayloadString(payload['course_subject'],
-              field: 'course_subject')
-          .trim(),
+      courseSubject: payloadCourseSubject.isNotEmpty
+          ? payloadCourseSubject
+          : item.courseSubject.trim(),
       kpKey: _parsePayloadString(payload['kp_key'], field: 'kp_key').trim(),
       lit: _parsePayloadBool(payload['lit'], field: 'lit'),
       litPercent: litPercentRaw.clamp(0, 100).toInt(),
@@ -1505,11 +1519,25 @@ class SessionSyncService {
   String _parsePayloadString(
     Object? value, {
     required String field,
+    bool isRequired = true,
   }) {
     if (value is String) {
       return value;
     }
+    if (!isRequired && value == null) {
+      return '';
+    }
     throw StateError('Progress payload field "$field" invalid.');
+  }
+
+  Future<String> _resolveCourseSubject(int courseVersionId) async {
+    final course = await (_db.select(_db.courseVersions)
+          ..where((tbl) => tbl.id.equals(courseVersionId)))
+        .getSingleOrNull();
+    if (course == null) {
+      return '';
+    }
+    return course.subject.trim();
   }
 
   Future<int?> _findLocalCourseVersionBySubject({
