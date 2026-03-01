@@ -9,6 +9,7 @@ import '../../l10n/app_localizations.dart';
 import '../../services/app_services.dart';
 import '../../services/course_bundle_service.dart';
 import '../../services/marketplace_api_service.dart';
+import '../../services/remote_teacher_identity_service.dart';
 import '../../state/auth_controller.dart';
 
 class MarketplacePage extends StatefulWidget {
@@ -45,6 +46,8 @@ class _MarketplacePageState extends State<MarketplacePage> {
   final Map<int, EnrollmentSummary> _enrollmentsByCourse = {};
   final Set<int> _enrolledCourseIds = {};
   final Set<int> _downloadingCourseIds = {};
+  final RemoteTeacherIdentityService _remoteTeacherIdentity =
+      const RemoteTeacherIdentityService();
 
   @override
   void initState() {
@@ -731,8 +734,28 @@ class _MarketplacePageState extends State<MarketplacePage> {
     });
     final services = context.read<AppServices>();
     final bundleService = CourseBundleService();
+    final enrollment = _enrollmentsByCourse[course.courseId];
+    if (enrollment == null) {
+      _setPersistentMessage(
+        'Cannot download course: enrollment metadata not found. Refresh marketplace and try again.',
+        isError: true,
+      );
+      return;
+    }
+    if (enrollment.teacherId <= 0) {
+      _setPersistentMessage(
+        'Cannot download course: enrollment is missing teacher identity.',
+        isError: true,
+      );
+      return;
+    }
     File? bundleFile;
     try {
+      final localTeacherId =
+          await _remoteTeacherIdentity.resolveOrCreateLocalTeacherId(
+        db: services.db,
+        remoteTeacherId: enrollment.teacherId,
+      );
       final targetPath =
           await bundleService.createTempBundlePath(label: course.subject);
       bundleFile = await _api.downloadBundleToFile(
@@ -749,7 +772,7 @@ class _MarketplacePageState extends State<MarketplacePage> {
       final existingCourseVersionId =
           await services.db.getCourseVersionIdForRemoteCourse(course.courseId);
       final loadResult = await services.courseService.loadCourseFromFolder(
-        teacherId: user.id,
+        teacherId: localTeacherId,
         folderPath: folderPath,
         courseVersionId: existingCourseVersionId,
         courseNameOverride: course.subject,
@@ -766,6 +789,10 @@ class _MarketplacePageState extends State<MarketplacePage> {
         );
         return;
       }
+      await services.db.updateCourseVersionTeacherId(
+        id: loadResult.course!.id,
+        teacherId: localTeacherId,
+      );
       await services.db.upsertCourseRemoteLink(
         courseVersionId: loadResult.course!.id,
         remoteCourseId: course.courseId,

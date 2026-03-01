@@ -4,6 +4,7 @@ import '../db/app_database.dart';
 import 'course_bundle_service.dart';
 import 'course_service.dart';
 import 'marketplace_api_service.dart';
+import 'remote_teacher_identity_service.dart';
 import 'secure_storage_service.dart';
 
 class EnrollmentSyncService {
@@ -21,6 +22,8 @@ class EnrollmentSyncService {
   final SecureStorageService _secureStorage;
   final CourseService _courseService;
   final MarketplaceApiService _api;
+  final RemoteTeacherIdentityService _remoteTeacherIdentity =
+      const RemoteTeacherIdentityService();
   bool _syncing = false;
   static final RegExp _versionSuffixPattern = RegExp(r'_(\d{10,})$');
   static const Duration _syncMinInterval = Duration(seconds: 60);
@@ -124,6 +127,10 @@ class EnrollmentSyncService {
       if (teacher != null && teacher.role == 'teacher') {
         continue;
       }
+      final remoteCourseId = await _db.getRemoteCourseId(course.id);
+      if (remoteCourseId != null && remoteCourseId > 0) {
+        continue;
+      }
       await _db.deleteStudentCourseData(
         studentId: studentId,
         courseVersionId: course.id,
@@ -188,9 +195,22 @@ class EnrollmentSyncService {
       if (enrollment.courseId <= 0) {
         continue;
       }
+      final localTeacherId =
+          await _remoteTeacherIdentity.resolveOrCreateLocalTeacherId(
+        db: _db,
+        remoteTeacherId: enrollment.teacherId,
+      );
       activeRemoteCourseIds.add(enrollment.courseId);
       final latestBundleVersionId = enrollment.latestBundleVersionId;
       if (latestBundleVersionId == null || latestBundleVersionId <= 0) {
+        final existingCourseVersionId =
+            await _db.getCourseVersionIdForRemoteCourse(enrollment.courseId);
+        if (existingCourseVersionId != null) {
+          await _ensureCourseTeacher(
+            courseVersionId: existingCourseVersionId,
+            expectedTeacherId: localTeacherId,
+          );
+        }
         continue;
       }
       final existingInstalledVersion =
@@ -200,18 +220,34 @@ class EnrollmentSyncService {
       );
       var existingCourseVersionId =
           await _db.getCourseVersionIdForRemoteCourse(enrollment.courseId);
+      if (existingCourseVersionId != null) {
+        await _ensureCourseTeacher(
+          courseVersionId: existingCourseVersionId,
+          expectedTeacherId: localTeacherId,
+        );
+      }
       final shouldDownload = existingCourseVersionId == null ||
           existingInstalledVersion == null ||
           latestBundleVersionId > existingInstalledVersion;
       if (shouldDownload) {
         final imported = await _downloadAndImportCourse(
-          currentUser: currentUser,
           enrollment: enrollment,
           bundleVersionId: latestBundleVersionId,
           existingCourseVersionId: existingCourseVersionId,
+          localTeacherId: localTeacherId,
         );
         existingCourseVersionId = imported.id;
       }
+      if (existingCourseVersionId == null) {
+        throw StateError(
+          'Enrollment sync failed to resolve local course for remote course '
+          '${enrollment.courseId}.',
+        );
+      }
+      await _ensureCourseTeacher(
+        courseVersionId: existingCourseVersionId,
+        expectedTeacherId: localTeacherId,
+      );
       await _db.upsertCourseRemoteLink(
         courseVersionId: existingCourseVersionId,
         remoteCourseId: enrollment.courseId,
@@ -249,10 +285,10 @@ class EnrollmentSyncService {
   }
 
   Future<CourseVersion> _downloadAndImportCourse({
-    required User currentUser,
     required EnrollmentSummary enrollment,
     required int bundleVersionId,
     required int? existingCourseVersionId,
+    required int localTeacherId,
   }) async {
     final bundleService = CourseBundleService();
     File? bundleFile;
@@ -281,7 +317,7 @@ class EnrollmentSyncService {
           ? CourseReloadMode.fresh
           : CourseReloadMode.override;
       final result = await _courseService.applyCourseLoad(
-        teacherId: currentUser.id,
+        teacherId: localTeacherId,
         preview: preview,
         mode: mode,
       );
@@ -552,6 +588,23 @@ class EnrollmentSyncService {
     await _db.updateCourseVersionSubject(
       id: courseVersionId,
       subject: normalizedExpected,
+    );
+  }
+
+  Future<void> _ensureCourseTeacher({
+    required int courseVersionId,
+    required int expectedTeacherId,
+  }) async {
+    final existing = await _db.getCourseVersionById(courseVersionId);
+    if (existing == null) {
+      return;
+    }
+    if (existing.teacherId == expectedTeacherId) {
+      return;
+    }
+    await _db.updateCourseVersionTeacherId(
+      id: courseVersionId,
+      teacherId: expectedTeacherId,
     );
   }
 

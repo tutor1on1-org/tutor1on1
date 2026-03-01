@@ -350,6 +350,141 @@ void main() {
   );
 
   test(
+    'student sync rebinds remote-linked course ownership to remote teacher user',
+    () async {
+      final studentId = await db.createUser(
+        username: 'student_owner_fix',
+        pinHash: 'hash',
+        role: 'student',
+        remoteUserId: 951,
+      );
+      final corruptedCourseId = await db.createCourseVersion(
+        teacherId: studentId,
+        subject: 'Geometry',
+        granularity: 1,
+        textbookText: '',
+        sourcePath: r'C:\courses\geometry',
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: corruptedCourseId,
+        remoteCourseId: 8101,
+      );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: corruptedCourseId,
+      );
+
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+
+      final secureStorage = _TestSecureStorageService();
+      final api = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+        enrollments: <EnrollmentSummary>[
+          EnrollmentSummary(
+            enrollmentId: 11,
+            courseId: 8101,
+            teacherId: 9101,
+            status: 'approved',
+            assignedAt: '2026-02-28T00:00:00Z',
+            courseSubject: 'Geometry',
+            teacherName: 'remote_teacher',
+            latestBundleVersionId: null,
+          ),
+        ],
+      );
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService: CourseService(db),
+        marketplaceApi: api,
+      );
+
+      await service.syncIfReady(currentUser: student!);
+
+      final repaired = await db.getCourseVersionById(corruptedCourseId);
+      expect(repaired, isNotNull);
+      expect(repaired!.teacherId, isNot(studentId));
+
+      final localTeacher = await db.findUserByRemoteId(9101);
+      expect(localTeacher, isNotNull);
+      expect(localTeacher!.role, equals('teacher'));
+      expect(repaired.teacherId, equals(localTeacher.id));
+    },
+  );
+
+  test(
+    'student legacy cleanup keeps remote-linked assigned course during throttled relogin sync',
+    () async {
+      final studentId = await db.createUser(
+        username: 'student_throttle_keep',
+        pinHash: 'hash',
+        role: 'student',
+        remoteUserId: 952,
+      );
+      final corruptedCourseId = await db.createCourseVersion(
+        teacherId: studentId,
+        subject: 'History',
+        granularity: 1,
+        textbookText: '',
+        sourcePath: r'C:\courses\history',
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: corruptedCourseId,
+        remoteCourseId: 8201,
+      );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: corruptedCourseId,
+      );
+      await db.upsertProgress(
+        studentId: studentId,
+        courseVersionId: corruptedCourseId,
+        kpKey: '1.1',
+        lit: true,
+      );
+
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+
+      final secureStorage = _TestSecureStorageService();
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: 952,
+        domain: 'enrollment_sync_deletions',
+        runAt: DateTime.now().toUtc(),
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: 952,
+        domain: 'enrollment_sync_student',
+        runAt: DateTime.now().toUtc(),
+      );
+      final api = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+        enrollments: const <EnrollmentSummary>[],
+      );
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService: CourseService(db),
+        marketplaceApi: api,
+      );
+
+      await service.syncIfReady(currentUser: student!);
+
+      final assigned = await db.getAssignedCoursesForStudent(studentId);
+      expect(assigned.length, equals(1));
+      expect(assigned.first.id, equals(corruptedCourseId));
+      final progress = await db.getProgress(
+        studentId: studentId,
+        courseVersionId: corruptedCourseId,
+        kpKey: '1.1',
+      );
+      expect(progress, isNotNull);
+      expect(progress!.lit, isTrue);
+    },
+  );
+
+  test(
     'student login sync replays deletion events and advances cursor',
     () async {
       final teacherId = await db.createUser(

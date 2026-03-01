@@ -27,6 +27,7 @@
 - Bundle ensure recovery: when stale `course_id` is sent, server `EnsureBundle` should accept `course_name` fallback to resolve/create course and catalog row, preventing teacher upload failures after server-side deletions.
 - After `EnsureBundle` fallback, client must use the returned `course_id` (not stale local ID) for subsequent calls like publish/update visibility, or upload flow can still fail with `course not found`.
 - Student login sync must tolerate older servers missing `/api/enrollments/quit-requests` (treat 404 as empty) and auto-remove legacy assigned courses whose local teacher record is missing (equivalent to auto-approved quit cleanup).
+- Student marketplace download/enrollment import must resolve server `teacher_id` to a local teacher user and persist that on `course_versions.teacher_id`; using student ownership can trigger legacy cleanup on relogin and hide still-enrolled courses.
 - Archive stream lifecycle rule: when decoding ZIPs via `InputFileStream` + `ZipDecoder`, do not close the stream until all lazy entry reads are complete (validation/extraction/metadata read); close in `finally` after these steps.
 - Student bundle re-download must reuse the existing local course mapped by `remoteCourseId` and apply `override` mode with server subject as course name; importing from extracted folder basename creates duplicate local courses and splits progress.
 - Progress sync should be uploaded in batch (`/api/progress/sync/upload-batch`) instead of one-by-one requests to avoid per-minute sync rate-limit bursts.

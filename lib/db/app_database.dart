@@ -514,6 +514,18 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
+  Future<void> updateCourseVersionTeacherId({
+    required int id,
+    required int teacherId,
+  }) {
+    return (update(courseVersions)..where((tbl) => tbl.id.equals(id))).write(
+      CourseVersionsCompanion(
+        teacherId: Value(teacherId),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
   Future<void> assignStudent({
     required int studentId,
     required int courseVersionId,
