@@ -48,6 +48,8 @@ class SessionSyncService {
       'session_sync_run_session_download';
   static const String _syncRunDomainProgressDownload =
       'session_sync_run_progress_download';
+  static const int _progressUploadBatchSize = 200;
+  static const int _progressUploadIsolationMaxSplits = 24;
   bool _syncing = false;
 
   Future<void> prepareForAutoSync({
@@ -188,8 +190,7 @@ class SessionSyncService {
       return;
     }
     final keysByCourse = <int, CourseKeyBundle>{};
-    final uploads = <ProgressUploadEntry>[];
-    final pendingStateWrites = <_SyncStateWrite>[];
+    final pendingUploads = <_PendingProgressUpload>[];
     for (final entry in entries) {
       if (entry.kpKey == kTreeViewStateKpKey) {
         continue;
@@ -250,39 +251,147 @@ class SessionSyncService {
         ],
       );
       final envelopeJson = jsonEncode(envelope.toJson());
-      uploads.add(
-        ProgressUploadEntry(
-          courseId: remoteCourseId,
-          kpKey: entry.kpKey,
-          updatedAt: entry.updatedAt.toUtc().toIso8601String(),
-          envelope: base64Encode(utf8.encode(envelopeJson)),
-          envelopeHash: _hashEnvelope(envelopeJson),
-        ),
-      );
-      pendingStateWrites.add(
-        _SyncStateWrite(
-          domain: _syncDomainProgressUpload,
-          scopeKey: scopeKey,
-          contentHash: payloadHash,
-          lastChangedAt: entryUpdatedAt,
-          lastSyncedAt: entryUpdatedAt,
+      pendingUploads.add(
+        _PendingProgressUpload(
+          upload: ProgressUploadEntry(
+            courseId: remoteCourseId,
+            kpKey: entry.kpKey,
+            updatedAt: entry.updatedAt.toUtc().toIso8601String(),
+            envelope: base64Encode(utf8.encode(envelopeJson)),
+            envelopeHash: _hashEnvelope(envelopeJson),
+          ),
+          stateWrite: _SyncStateWrite(
+            domain: _syncDomainProgressUpload,
+            scopeKey: scopeKey,
+            contentHash: payloadHash,
+            lastChangedAt: entryUpdatedAt,
+            lastSyncedAt: entryUpdatedAt,
+          ),
         ),
       );
     }
-    if (uploads.isEmpty) {
+    if (pendingUploads.isEmpty) {
       return;
     }
-    await _api.uploadProgressBatch(uploads);
-    for (final stateWrite in pendingStateWrites) {
-      await _secureStorage.writeSyncItemState(
+    await _uploadProgressInChunksWithIsolation(
+      remoteUserId: remoteUserId,
+      pendingUploads: pendingUploads,
+    );
+  }
+
+  Future<void> _uploadProgressInChunksWithIsolation({
+    required int remoteUserId,
+    required List<_PendingProgressUpload> pendingUploads,
+  }) async {
+    final failures = <_FailedProgressUpload>[];
+    final splitBudget = _ProgressIsolationBudget(
+      remaining: _progressUploadIsolationMaxSplits,
+    );
+    for (var index = 0;
+        index < pendingUploads.length;
+        index += _progressUploadBatchSize) {
+      final endExclusive = index + _progressUploadBatchSize;
+      final chunk = pendingUploads.sublist(
+        index,
+        endExclusive > pendingUploads.length
+            ? pendingUploads.length
+            : endExclusive,
+      );
+      await _uploadProgressChunkWithIsolation(
         remoteUserId: remoteUserId,
-        domain: stateWrite.domain,
-        scopeKey: stateWrite.scopeKey,
-        contentHash: stateWrite.contentHash,
-        lastChangedAt: stateWrite.lastChangedAt,
-        lastSyncedAt: stateWrite.lastSyncedAt,
+        chunk: chunk,
+        splitBudget: splitBudget,
+        failures: failures,
       );
     }
+    if (failures.isEmpty) {
+      return;
+    }
+    final firstFailure = failures.first;
+    final status = firstFailure.error.statusCode;
+    final statusSuffix = status == null ? '' : ' (status $status)';
+    throw SessionSyncApiException(
+      'Progress sync failed for ${failures.length} item(s). '
+      'First failure: course_id=${firstFailure.upload.courseId}, '
+      'kp_key=${firstFailure.upload.kpKey}$statusSuffix: '
+      '${firstFailure.error.message}',
+      statusCode: status,
+    );
+  }
+
+  Future<void> _uploadProgressChunkWithIsolation({
+    required int remoteUserId,
+    required List<_PendingProgressUpload> chunk,
+    required _ProgressIsolationBudget splitBudget,
+    required List<_FailedProgressUpload> failures,
+  }) async {
+    if (chunk.isEmpty) {
+      return;
+    }
+    try {
+      await _api.uploadProgressBatch(
+        chunk.map((pending) => pending.upload).toList(growable: false),
+      );
+      for (final pending in chunk) {
+        final stateWrite = pending.stateWrite;
+        await _secureStorage.writeSyncItemState(
+          remoteUserId: remoteUserId,
+          domain: stateWrite.domain,
+          scopeKey: stateWrite.scopeKey,
+          contentHash: stateWrite.contentHash,
+          lastChangedAt: stateWrite.lastChangedAt,
+          lastSyncedAt: stateWrite.lastSyncedAt,
+        );
+      }
+      return;
+    } on SessionSyncApiException catch (error) {
+      if (!_shouldIsolateProgressUploadError(error)) {
+        rethrow;
+      }
+      if (chunk.length == 1) {
+        failures.add(
+          _FailedProgressUpload(
+            upload: chunk.single.upload,
+            error: error,
+          ),
+        );
+        return;
+      }
+      if (splitBudget.remaining <= 0) {
+        throw SessionSyncApiException(
+          'Progress sync isolation budget exhausted. '
+          'Remaining failures=${failures.length}. Last error: ${error.message}',
+          statusCode: error.statusCode,
+        );
+      }
+      splitBudget.remaining--;
+      final mid = chunk.length ~/ 2;
+      await _uploadProgressChunkWithIsolation(
+        remoteUserId: remoteUserId,
+        chunk: chunk.sublist(0, mid),
+        splitBudget: splitBudget,
+        failures: failures,
+      );
+      await _uploadProgressChunkWithIsolation(
+        remoteUserId: remoteUserId,
+        chunk: chunk.sublist(mid),
+        splitBudget: splitBudget,
+        failures: failures,
+      );
+    }
+  }
+
+  bool _shouldIsolateProgressUploadError(SessionSyncApiException error) {
+    final status = error.statusCode ?? 0;
+    if (status == 400) {
+      return true;
+    }
+    if (status != 500) {
+      return false;
+    }
+    final message = error.message.toLowerCase();
+    return message.contains('progress sync save failed') ||
+        message.contains('progress sync payload');
   }
 
   Future<void> _uploadPendingSessions(
@@ -1502,6 +1611,34 @@ class _PendingSessionUpload {
   final String syncId;
   final DateTime syncUpdatedAt;
   final int remoteCourseId;
+}
+
+class _PendingProgressUpload {
+  _PendingProgressUpload({
+    required this.upload,
+    required this.stateWrite,
+  });
+
+  final ProgressUploadEntry upload;
+  final _SyncStateWrite stateWrite;
+}
+
+class _FailedProgressUpload {
+  _FailedProgressUpload({
+    required this.upload,
+    required this.error,
+  });
+
+  final ProgressUploadEntry upload;
+  final SessionSyncApiException error;
+}
+
+class _ProgressIsolationBudget {
+  _ProgressIsolationBudget({
+    required this.remaining,
+  });
+
+  int remaining;
 }
 
 class _SyncStateWrite {

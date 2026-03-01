@@ -72,3 +72,4 @@
 - Letta OSS local bootstrap on Windows needs Python 3.11+, and OpenAI handles are unavailable until `OPENAI_API_KEY` is set in the process environment even when local `/v1/health` is already `ok`.
 - Auto sync should run from home screens (startup + periodic), welcome/login should only prepare session key material, sync throttling should be tracked per category with timestamp keys scoped by hashed device identity, and progress sync should call batch upload only.
 - Windows secure-storage startup rule: run a bootstrap integrity check on secure storage, and if DPAPI decrypt fails (`CryptUnprotectData`), reset secure storage then continue (forcing fresh login) instead of hard-crashing app startup.
+- Progress sync resilience rule: use chunked upload with bad-item isolation so one malformed progress row does not block all pending rows, and classify/log SQL save errors server-side so payload issues return `400` while unknown failures stay `500`.

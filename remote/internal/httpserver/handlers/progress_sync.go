@@ -4,10 +4,12 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"errors"
+	"log"
 	"strconv"
 	"strings"
 	"time"
 
+	mysqlDriver "github.com/go-sql-driver/mysql"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -110,7 +112,14 @@ func (h *ProgressSyncHandler) saveUploads(
 		   envelope_hash = VALUES(envelope_hash)`,
 	)
 	if err != nil {
-		return 0, fiber.NewError(fiber.StatusInternalServerError, "progress sync save failed")
+		log.Printf(
+			"progress sync statement prepare failed: user_id=%d items=%d error=%v",
+			userID,
+			len(items),
+			err,
+		)
+		status, message := classifyProgressSyncSaveError(err)
+		return 0, fiber.NewError(status, message)
 	}
 	defer stmt.Close()
 
@@ -184,7 +193,16 @@ func (h *ProgressSyncHandler) saveUploads(
 			envelopeBytes,
 			nullableString(item.EnvelopeHash),
 		); err != nil {
-			return 0, fiber.NewError(fiber.StatusInternalServerError, "progress sync save failed")
+			log.Printf(
+				"progress sync save failed: user_id=%d course_id=%d kp_key=%q updated_at=%q error=%v",
+				userID,
+				item.CourseID,
+				kpKey,
+				item.UpdatedAt,
+				err,
+			)
+			status, message := classifyProgressSyncSaveError(err)
+			return 0, fiber.NewError(status, message)
 		}
 		savedCount++
 	}
@@ -331,4 +349,19 @@ func nullableBoolToInterface(value sql.NullBool) interface{} {
 		return nil
 	}
 	return value.Bool
+}
+
+func classifyProgressSyncSaveError(err error) (int, string) {
+	var mysqlErr *mysqlDriver.MySQLError
+	if errors.As(err, &mysqlErr) {
+		switch mysqlErr.Number {
+		case 1048:
+			return fiber.StatusBadRequest, "progress sync required field missing"
+		case 1265, 1366:
+			return fiber.StatusBadRequest, "progress sync payload invalid"
+		case 1406:
+			return fiber.StatusBadRequest, "progress sync payload too large"
+		}
+	}
+	return fiber.StatusInternalServerError, "progress sync save failed"
 }
