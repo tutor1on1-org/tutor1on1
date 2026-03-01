@@ -33,6 +33,73 @@ class EnrollmentSyncService {
   static const String _syncScopeEnrollments = 'enrollments';
   static const String _syncScopeTeacherCourses = 'teacher_courses';
 
+  Future<void> forcePullFromServer({required User currentUser}) async {
+    if (_syncing) {
+      return;
+    }
+    final remoteUserId = currentUser.remoteUserId;
+    if (remoteUserId == null || remoteUserId <= 0) {
+      return;
+    }
+    final nowUtc = DateTime.now().toUtc();
+    _syncing = true;
+    try {
+      await _resetForcePullState(
+        remoteUserId: remoteUserId,
+        role: currentUser.role,
+      );
+      if (currentUser.role == 'student') {
+        await _autoApproveLegacyCoursesWithoutTeacher(currentUser.id);
+      }
+      await _runCategoryIfDue(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainDeletionEvents,
+        nowUtc: nowUtc,
+        force: true,
+        action: () => _applyDeletionEvents(currentUser, remoteUserId),
+      );
+      if (currentUser.role == 'teacher') {
+        await _runCategoryIfDue(
+          remoteUserId: remoteUserId,
+          domain: _syncDomainTeacherCourses,
+          nowUtc: nowUtc,
+          force: true,
+          action: () => _syncTeacherCourses(
+            currentUser: currentUser,
+            remoteUserId: remoteUserId,
+          ),
+        );
+      } else {
+        await _runCategoryIfDue(
+          remoteUserId: remoteUserId,
+          domain: _syncDomainStudentEnrollments,
+          nowUtc: nowUtc,
+          force: true,
+          action: () async {
+            final enrollmentsResult = await _api.listEnrollmentsDelta(
+              ifNoneMatch: null,
+            );
+            await _writeSyncListEtag(
+              remoteUserId: remoteUserId,
+              domain: _syncDomainStudentEnrollments,
+              scopeKey: _syncScopeEnrollments,
+              etag: enrollmentsResult.etag,
+            );
+            if (!enrollmentsResult.notModified) {
+              await _syncStudentEnrollments(
+                currentUser: currentUser,
+                remoteUserId: remoteUserId,
+                enrollments: enrollmentsResult.items,
+              );
+            }
+          },
+        );
+      }
+    } finally {
+      _syncing = false;
+    }
+  }
+
   Future<void> syncIfReady({required User currentUser}) async {
     if (_syncing) {
       return;
@@ -51,6 +118,7 @@ class EnrollmentSyncService {
         remoteUserId: remoteUserId,
         domain: _syncDomainDeletionEvents,
         nowUtc: nowUtc,
+        force: false,
         action: () => _applyDeletionEvents(currentUser, remoteUserId),
       );
       if (currentUser.role == 'teacher') {
@@ -58,6 +126,7 @@ class EnrollmentSyncService {
           remoteUserId: remoteUserId,
           domain: _syncDomainTeacherCourses,
           nowUtc: nowUtc,
+          force: false,
           action: () => _syncTeacherCourses(
             currentUser: currentUser,
             remoteUserId: remoteUserId,
@@ -68,6 +137,7 @@ class EnrollmentSyncService {
           remoteUserId: remoteUserId,
           domain: _syncDomainStudentEnrollments,
           nowUtc: nowUtc,
+          force: false,
           action: () async {
             final ifNoneMatch = await _secureStorage.readSyncListEtag(
               remoteUserId: remoteUserId,
@@ -102,21 +172,49 @@ class EnrollmentSyncService {
     required int remoteUserId,
     required String domain,
     required DateTime nowUtc,
+    required bool force,
     required Future<void> Function() action,
   }) async {
-    final lastRun = await _secureStorage.readSyncRunAt(
-      remoteUserId: remoteUserId,
-      domain: domain,
-    );
-    if (lastRun != null &&
-        nowUtc.difference(lastRun.toUtc()) < _syncMinInterval) {
-      return;
+    if (!force) {
+      final lastRun = await _secureStorage.readSyncRunAt(
+        remoteUserId: remoteUserId,
+        domain: domain,
+      );
+      if (lastRun != null &&
+          nowUtc.difference(lastRun.toUtc()) < _syncMinInterval) {
+        return;
+      }
     }
     await action();
     await _secureStorage.writeSyncRunAt(
       remoteUserId: remoteUserId,
       domain: domain,
       runAt: nowUtc,
+    );
+  }
+
+  Future<void> _resetForcePullState({
+    required int remoteUserId,
+    required String role,
+  }) async {
+    await _secureStorage.clearSyncDomainState(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainDeletionEvents,
+      clearItemStates: false,
+      clearListEtags: false,
+    );
+    if (role == 'teacher') {
+      await _secureStorage.clearSyncDomainState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainTeacherCourses,
+        clearItemStates: false,
+      );
+      return;
+    }
+    await _secureStorage.clearSyncDomainState(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainStudentEnrollments,
+      clearItemStates: false,
     );
   }
 

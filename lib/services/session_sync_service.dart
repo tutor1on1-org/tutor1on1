@@ -115,6 +115,49 @@ class SessionSyncService {
     }
   }
 
+  Future<void> forcePullFromServer({
+    required User currentUser,
+    bool wipeLocalStudentData = true,
+  }) async {
+    if (_syncing) {
+      return;
+    }
+    final remoteUserId = _requireRemoteUserId(currentUser);
+    final keyPair = await _userKeyService.tryLoadLocalKeyPair(remoteUserId);
+    if (keyPair == null) {
+      throw StateError(
+        'Session sync key is not ready. Log out and log in again first.',
+      );
+    }
+    _syncing = true;
+    try {
+      if (currentUser.role == 'student' && wipeLocalStudentData) {
+        await _clearLocalStudentSessionAndProgressData(
+          studentId: currentUser.id,
+        );
+      }
+      await _resetDownloadSyncState(remoteUserId: remoteUserId);
+      await _prepareDownloadBootstrapState(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+      );
+      await _runCategoryIfDue(
+        remoteUserId: remoteUserId,
+        runDomain: _syncRunDomainSessionDownload,
+        force: true,
+        action: () => _downloadSessions(currentUser, remoteUserId, keyPair),
+      );
+      await _runCategoryIfDue(
+        remoteUserId: remoteUserId,
+        runDomain: _syncRunDomainProgressDownload,
+        force: true,
+        action: () => _downloadProgress(currentUser, remoteUserId, keyPair),
+      );
+    } finally {
+      _syncing = false;
+    }
+  }
+
   Future<void> _syncInternal(
       User currentUser, int remoteUserId, SimpleKeyPair keyPair,
       {bool force = false}) async {
@@ -217,6 +260,59 @@ class SessionSyncService {
         clearListEtags: false,
       );
     }
+  }
+
+  Future<void> _resetDownloadSyncState({required int remoteUserId}) async {
+    await _secureStorage.deleteSessionSyncCursor(remoteUserId);
+    await _secureStorage.deleteProgressSyncCursor(remoteUserId);
+    await _secureStorage.clearSyncDomainState(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainSessionDownload,
+    );
+    await _secureStorage.clearSyncDomainState(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainProgressDownload,
+    );
+    await _secureStorage.clearSyncDomainState(
+      remoteUserId: remoteUserId,
+      domain: _syncRunDomainSessionDownload,
+      clearItemStates: false,
+      clearListEtags: false,
+    );
+    await _secureStorage.clearSyncDomainState(
+      remoteUserId: remoteUserId,
+      domain: _syncRunDomainProgressDownload,
+      clearItemStates: false,
+      clearListEtags: false,
+    );
+  }
+
+  Future<void> _clearLocalStudentSessionAndProgressData({
+    required int studentId,
+  }) async {
+    await _db.transaction(() async {
+      final sessions = await (_db.select(_db.chatSessions)
+            ..where((tbl) => tbl.studentId.equals(studentId)))
+          .get();
+      final sessionIds = sessions.map((session) => session.id).toList();
+      if (sessionIds.isNotEmpty) {
+        await (_db.delete(_db.chatMessages)
+              ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+            .go();
+        await (_db.delete(_db.llmCalls)
+              ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+            .go();
+        await (_db.delete(_db.chatSessions)
+              ..where((tbl) => tbl.id.isIn(sessionIds)))
+            .go();
+      }
+      await (_db.delete(_db.progressEntries)
+            ..where((tbl) => tbl.studentId.equals(studentId)))
+          .go();
+      await (_db.delete(_db.llmCalls)
+            ..where((tbl) => tbl.studentId.equals(studentId)))
+          .go();
+    });
   }
 
   Future<SimpleKeyPair> _ensureKeyPairWithPassword({

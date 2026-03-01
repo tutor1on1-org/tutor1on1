@@ -159,6 +159,70 @@ class _StudentHomePageState extends State<StudentHomePage> {
     }
   }
 
+  Future<void> _takeServerCopy() async {
+    if (!mounted || _syncInProgress) {
+      return;
+    }
+    final auth = context.read<AuthController>();
+    final user = auth.currentUser;
+    if (user == null || user.role != 'student') {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Take server copy'),
+        content: const Text(
+          'This will replace this device\'s local session/progress data '
+          'with a forced server download. Continue?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Take server copy'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    final services = context.read<AppServices>();
+    _syncInProgress = true;
+    _setSyncState(
+      syncing: true,
+      message: 'Taking server copy: syncing enrollments...',
+    );
+    try {
+      await services.enrollmentSyncService.forcePullFromServer(
+        currentUser: user,
+      );
+      _setSyncState(
+        syncing: true,
+        message: 'Taking server copy: downloading sessions/progress...',
+      );
+      await services.sessionSyncService.forcePullFromServer(
+        currentUser: user,
+        wipeLocalStudentData: true,
+      );
+      await _refreshRemoteEnrollmentState();
+      _setPersistentMessage(
+        'Server copy completed. Local session/progress now matches server data.',
+        isError: false,
+      );
+    } catch (error) {
+      _setPersistentMessage('Take server copy failed: $error');
+    } finally {
+      _setSyncState(syncing: false, message: '');
+      _syncInProgress = false;
+    }
+  }
+
   Future<void> _requestQuitCourse(CourseVersion course) async {
     if (_submittingQuitCourseIds.contains(course.id)) {
       return;
@@ -340,6 +404,17 @@ class _StudentHomePageState extends State<StudentHomePage> {
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                   child: _buildPersistentMessageCard(l10n),
                 ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                    onPressed: _syncInProgress ? null : _takeServerCopy,
+                    icon: const Icon(Icons.cloud_download_outlined),
+                    label: const Text('Take Server Copy'),
+                  ),
+                ),
+              ),
               Expanded(
                 child: StreamBuilder<List<CourseVersion>>(
                   stream: db.watchAssignedCourses(student.id),

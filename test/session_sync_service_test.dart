@@ -1125,4 +1125,211 @@ void main() {
       expect(byKey['1.2']!.litPercent, equals(75));
     },
   );
+
+  test(
+    'force pull from server replaces local student data without uploads',
+    () async {
+      final crypto = SessionCryptoService();
+      final secureStorage = _MemorySecureStorage(accessToken: 'token');
+
+      final teacherId = await db.createUser(
+        username: 'teacher_force_pull',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 904,
+      );
+      final studentId = await db.createUser(
+        username: 'student_force_pull',
+        pinHash: 'hash',
+        role: 'student',
+        remoteUserId: 3004,
+      );
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Biology',
+        granularity: 1,
+        textbookText: '',
+        sourcePath: r'C:\courses\biology',
+      );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 130,
+      );
+
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+      final remoteStudentId = student!.remoteUserId!;
+
+      final studentKeyPair = await crypto.generateKeyPair();
+      final studentPublicKey = await crypto.extractPublicKey(studentKeyPair);
+      await secureStorage.writeUserPrivateKey(
+        remoteStudentId,
+        await crypto.encodePrivateKey(studentKeyPair),
+      );
+      await secureStorage.writeUserPublicKey(
+        remoteStudentId,
+        crypto.encodePublicKey(studentPublicKey),
+      );
+
+      final localSessionId = await db.into(db.chatSessions).insert(
+            ChatSessionsCompanion.insert(
+              studentId: studentId,
+              courseVersionId: courseVersionId,
+              kpKey: '1.1',
+              title: const Value('Local Session'),
+              status: const Value('active'),
+              startedAt: Value(DateTime.parse('2026-03-02T09:00:00Z')),
+              syncId: const Value('local-force-session'),
+              syncUpdatedAt: Value(DateTime.parse('2026-03-02T09:00:00Z')),
+              syncUploadedAt: Value(DateTime.parse('2026-03-02T09:00:00Z')),
+            ),
+          );
+      await db.into(db.chatMessages).insert(
+            ChatMessagesCompanion.insert(
+              sessionId: localSessionId,
+              role: 'assistant',
+              content: 'LOCAL_MESSAGE',
+              createdAt: Value(DateTime.parse('2026-03-02T09:00:10Z')),
+            ),
+          );
+      await db.upsertProgressFromSync(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+        kpKey: '1.1',
+        lit: true,
+        litPercent: 100,
+        questionLevel: 'hard',
+        summaryText: 'local progress',
+        summaryRawResponse: '',
+        summaryValid: true,
+        updatedAt: DateTime.parse('2026-03-02T09:10:00Z'),
+      );
+
+      final remoteSessionPayload = <String, dynamic>{
+        'version': 1,
+        'session_sync_id': 'server-force-session',
+        'course_id': 130,
+        'course_subject': 'Biology',
+        'kp_key': '1.1',
+        'kp_title': 'Cell',
+        'session_title': 'Server Session',
+        'started_at': '2026-03-01T08:00:00Z',
+        'ended_at': null,
+        'summary_text': 'server summary',
+        'student_remote_user_id': remoteStudentId,
+        'student_username': student.username,
+        'teacher_remote_user_id': 904,
+        'updated_at': '2026-03-01T08:05:00Z',
+        'messages': <Map<String, String>>[
+          <String, String>{
+            'role': 'assistant',
+            'content': 'SERVER_MESSAGE',
+            'created_at': '2026-03-01T08:00:10Z',
+          },
+        ],
+      };
+      final remoteSessionEnvelope = await _encryptForUser(
+        crypto: crypto,
+        payload: remoteSessionPayload,
+        recipientUserId: remoteStudentId,
+        recipientPublicKey: studentPublicKey,
+      );
+      final remoteSessionItem = SessionSyncItem(
+        cursorId: 51,
+        sessionSyncId: 'server-force-session',
+        courseId: 130,
+        teacherUserId: 904,
+        studentUserId: remoteStudentId,
+        senderUserId: remoteStudentId,
+        updatedAt: '2026-03-01T08:05:00Z',
+        envelope: remoteSessionEnvelope.base64Envelope,
+        envelopeHash: remoteSessionEnvelope.hash,
+      );
+
+      final remoteProgressPayload = <String, dynamic>{
+        'version': 1,
+        'course_id': 130,
+        'course_subject': 'Biology',
+        'kp_key': '1.1',
+        'lit': true,
+        'lit_percent': 66,
+        'question_level': 'medium',
+        'summary_text': 'server progress',
+        'summary_raw_response': '',
+        'summary_valid': true,
+        'teacher_remote_user_id': 904,
+        'student_remote_user_id': remoteStudentId,
+        'updated_at': '2026-03-01T08:06:00Z',
+      };
+      final remoteProgressEnvelope = await _encryptForUser(
+        crypto: crypto,
+        payload: remoteProgressPayload,
+        recipientUserId: remoteStudentId,
+        recipientPublicKey: studentPublicKey,
+      );
+      final remoteProgressItem = ProgressSyncItem(
+        cursorId: 61,
+        courseId: 130,
+        courseSubject: 'Biology',
+        teacherUserId: 904,
+        studentUserId: remoteStudentId,
+        kpKey: '1.1',
+        lit: true,
+        litPercent: 66,
+        questionLevel: 'medium',
+        summaryText: 'server progress',
+        summaryRawResponse: '',
+        summaryValid: true,
+        updatedAt: '2026-03-01T08:06:00Z',
+        envelope: remoteProgressEnvelope.base64Envelope,
+        envelopeHash: remoteProgressEnvelope.hash,
+      );
+
+      final api = _TestSessionSyncApiService(
+        secureStorage: secureStorage,
+        sessionItems: <SessionSyncItem>[remoteSessionItem],
+        progressItems: <ProgressSyncItem>[remoteProgressItem],
+      );
+      final userKeyService = UserKeyService(
+        secureStorage: secureStorage,
+        api: api,
+        crypto: crypto,
+      );
+      final syncService = SessionSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        api: api,
+        userKeyService: userKeyService,
+        crypto: crypto,
+      );
+
+      await syncService.forcePullFromServer(
+        currentUser: student,
+        wipeLocalStudentData: true,
+      );
+
+      final sessions = await db.getSessionsForStudent(studentId);
+      expect(sessions, hasLength(1));
+      final imported = await db.getSession(sessions.single.sessionId);
+      expect(imported, isNotNull);
+      expect(imported!.syncId, equals('server-force-session'));
+      final messages = await db.getMessagesForSession(imported.id);
+      expect(messages, hasLength(1));
+      expect(messages.single.content, equals('SERVER_MESSAGE'));
+
+      final progressRows = await db.getProgressForCourse(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+      );
+      expect(progressRows, hasLength(1));
+      expect(progressRows.single.litPercent, equals(66));
+
+      expect(api.uploadedProgressEntries, isEmpty);
+      expect(api.uploadedSessions, isEmpty);
+    },
+  );
 }
