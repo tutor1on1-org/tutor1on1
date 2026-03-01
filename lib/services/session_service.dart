@@ -307,15 +307,17 @@ class SessionService {
             kpKey: node.kpKey,
           );
     final messages = await _db.getMessagesForSession(sessionId);
-    final promptResolution = _resolveTutorPrompt(
-      mode: mode,
-      messages: messages,
-    );
-    final promptName = promptResolution.promptName;
     final resolvedStudentIntent = _resolveStudentIntent(
       requestedIntent: studentIntent,
       studentInput: studentInput,
     );
+    final promptResolution = _resolveTutorPrompt(
+      mode: mode,
+      messages: messages,
+      studentInput: studentInput,
+      studentIntent: resolvedStudentIntent,
+    );
+    final promptName = promptResolution.promptName;
     final history = _buildHistory(messages);
     final recentDialogue = _buildRecentDialogue(
       messages,
@@ -739,7 +741,11 @@ class SessionService {
       'student_summary': progress?.summaryText ?? session?.summaryText ?? '',
       'student_profile': studentPromptContext.profileText,
       'student_preferences': studentPromptContext.preferencesText,
-      'practice_history_summary': _buildPracticeHistorySummary(messages),
+      'practice_history_summary': _buildPracticeHistorySummary(
+        messages,
+        reviewOnly: true,
+        maxMessages: 20,
+      ),
       'error_book_summary': _buildErrorBookSummary(
         messages: messages,
         progress: progress,
@@ -793,7 +799,14 @@ class SessionService {
       final masteryLevel = _normalizeMasteryLevel(parsed?['mastery_level']);
       final masterLevel = _normalizeLevel(parsed?['master_level']);
       final nextStep = _normalizeNextStep(parsed?['next_step']);
-      final litPercent = _masteryLevelToPercent(masteryLevel) ??
+      final currentMasteryLevel =
+          _questionLevelToMasteryLevel(progress?.questionLevel);
+      final stabilizedMasteryLevel = _stabilizeSummaryMastery(
+        parsedMasteryLevel: masteryLevel,
+        currentMasteryLevel: currentMasteryLevel,
+        lastEvidence: lastEvidence,
+      );
+      final litPercent = _masteryLevelToPercent(stabilizedMasteryLevel) ??
           _masterLevelToPercent(masterLevel);
       final resolvedLit =
           lit is bool ? lit : (litPercent == null ? null : litPercent >= 100);
@@ -811,10 +824,12 @@ class SessionService {
               masterLevel != null) ||
           (teacherMessage is String &&
               teacherMessage.trim().isNotEmpty &&
-              masteryLevel != null);
+              stabilizedMasteryLevel != null);
       final rawResponse = summaryValid ? null : result.responseText;
       final questionLevel =
-          masterLevel ?? _masteryLevelToQuestionLevel(masteryLevel);
+          _masteryLevelToQuestionLevel(stabilizedMasteryLevel) ??
+              masterLevel ??
+              _masteryLevelToQuestionLevel(masteryLevel);
 
       await _db.transaction(() async {
         final studentId = session?.studentId;
@@ -865,7 +880,7 @@ class SessionService {
         litPercent: litPercent,
         summaryText: summary,
         masterLevel: masterLevel ?? questionLevel,
-        masteryLevel: masteryLevel,
+        masteryLevel: stabilizedMasteryLevel,
         nextStep: nextStep,
       );
     });
@@ -1177,6 +1192,80 @@ class SessionService {
     }
   }
 
+  String? _stabilizeSummaryMastery({
+    required String? parsedMasteryLevel,
+    required String? currentMasteryLevel,
+    required Map<String, dynamic>? lastEvidence,
+  }) {
+    if (currentMasteryLevel == null) {
+      return parsedMasteryLevel;
+    }
+    if (parsedMasteryLevel == null) {
+      return currentMasteryLevel;
+    }
+    final attempts = _nonNegativeInt(lastEvidence?['a']);
+    if (attempts <= 0) {
+      return currentMasteryLevel;
+    }
+    final currentRank = _masteryRank(currentMasteryLevel);
+    final parsedRank = _masteryRank(parsedMasteryLevel);
+    if (currentRank == null || parsedRank == null) {
+      return parsedMasteryLevel;
+    }
+    if (attempts <= 1) {
+      return currentMasteryLevel;
+    }
+    if (attempts <= 3 && parsedRank < currentRank - 1) {
+      return _masteryFromRank(currentRank - 1) ?? parsedMasteryLevel;
+    }
+    return parsedMasteryLevel;
+  }
+
+  int _nonNegativeInt(Object? value) {
+    if (value is int) {
+      return value < 0 ? 0 : value;
+    }
+    if (value is num) {
+      final asInt = value.toInt();
+      return asInt < 0 ? 0 : asInt;
+    }
+    if (value is String) {
+      final parsed = int.tryParse(value.trim()) ?? 0;
+      return parsed < 0 ? 0 : parsed;
+    }
+    return 0;
+  }
+
+  int? _masteryRank(String masteryLevel) {
+    switch (masteryLevel) {
+      case 'NOT_PASS':
+        return 0;
+      case 'PASS_EASY':
+        return 1;
+      case 'PASS_MEDIUM':
+        return 2;
+      case 'PASS_HARD':
+        return 3;
+      default:
+        return null;
+    }
+  }
+
+  String? _masteryFromRank(int rank) {
+    switch (rank) {
+      case 0:
+        return 'NOT_PASS';
+      case 1:
+        return 'PASS_EASY';
+      case 2:
+        return 'PASS_MEDIUM';
+      case 3:
+        return 'PASS_HARD';
+      default:
+        return null;
+    }
+  }
+
   int? _masteryLevelToPercent(String? masteryLevel) {
     switch (masteryLevel) {
       case 'NOT_PASS':
@@ -1276,6 +1365,8 @@ class SessionService {
   _TutorPromptResolution _resolveTutorPrompt({
     required String mode,
     required List<ChatMessage> messages,
+    required String studentInput,
+    required String studentIntent,
   }) {
     final normalized = mode.trim().toLowerCase();
     if (normalized == 'learn_init' ||
@@ -1302,9 +1393,22 @@ class SessionService {
       );
       final previousTurnState =
           _normalizeTurnState(previous?.json?['turn_state']);
-      final promptName = actionMode == 'learn'
-          ? (previousTurnState == 'UNFINISHED' ? 'learn_cont' : 'learn_init')
-          : (previousTurnState == 'UNFINISHED' ? 'review_cont' : 'review_init');
+      String promptName;
+      if (actionMode == 'learn') {
+        promptName =
+            previousTurnState == 'UNFINISHED' ? 'learn_cont' : 'learn_init';
+      } else if (previousTurnState == 'UNFINISHED') {
+        promptName = 'review_cont';
+      } else if (_isExplicitAnotherQuestionRequest(
+        studentInput: studentInput,
+        studentIntent: studentIntent,
+      )) {
+        promptName = 'review_init';
+      } else {
+        // After a finished review question, stay in REVIEW_CONT until the
+        // student explicitly asks for another question.
+        promptName = 'review_cont';
+      }
       return _TutorPromptResolution(
         promptName: promptName,
         lastAssistantIndex: previous?.index,
@@ -1317,6 +1421,35 @@ class SessionService {
       lastAssistantIndex: null,
       prevJson: null,
     );
+  }
+
+  bool _isExplicitAnotherQuestionRequest({
+    required String studentInput,
+    required String studentIntent,
+  }) {
+    if (studentIntent == 'TOO_EASY' || studentIntent == 'BORED') {
+      return true;
+    }
+    final text = studentInput.trim().toLowerCase();
+    if (text.isEmpty) {
+      return false;
+    }
+    if (_isSummaryRequest(text)) {
+      return false;
+    }
+    return text.contains('another question') ||
+        text.contains('one more question') ||
+        text.contains('next question') ||
+        text.contains('new question') ||
+        text.contains('give me another') ||
+        text.contains('start next');
+  }
+
+  bool _isSummaryRequest(String textLower) {
+    return textLower.contains('summarize') ||
+        textLower.contains('summary') ||
+        textLower.contains('score session') ||
+        textLower.contains('session score');
   }
 
   _AssistantJsonRef? _findLastAssistantForActionMode({
@@ -1354,9 +1487,20 @@ class SessionService {
     return _buildHistory(messages.sublist(from));
   }
 
-  String _buildPracticeHistorySummary(List<ChatMessage> messages) {
-    final tail =
-        messages.length > 6 ? messages.sublist(messages.length - 6) : messages;
+  String _buildPracticeHistorySummary(
+    List<ChatMessage> messages, {
+    bool reviewOnly = false,
+    int maxMessages = 6,
+  }) {
+    final source = reviewOnly
+        ? messages
+            .where((message) =>
+                _resolveActionMode(message.action ?? '') == 'review')
+            .toList(growable: false)
+        : messages;
+    final tail = source.length > maxMessages
+        ? source.sublist(source.length - maxMessages)
+        : source;
     if (tail.isEmpty) {
       return 'No practice history yet.';
     }
@@ -1804,9 +1948,14 @@ class SessionService {
     if (messages.isEmpty || session == null) {
       return null;
     }
-    final lastMessage = messages.last;
-    if (lastMessage.role != 'assistant' ||
-        _resolveActionMode(lastMessage.action ?? '') != 'summary') {
+    final lastSummaryIndex = _findLastSummaryAssistantIndex(messages);
+    if (lastSummaryIndex == null) {
+      return null;
+    }
+    if (_hasGradedReviewAfter(
+      messages: messages,
+      summaryIndex: lastSummaryIndex,
+    )) {
       return null;
     }
     final summaryText =
@@ -1829,6 +1978,47 @@ class SessionService {
       masterLevel: _normalizeLevel(progress?.questionLevel),
       nextStep: lit == true ? 'MOVE_ON' : 'CONTINUE_REVIEW',
     );
+  }
+
+  int? _findLastSummaryAssistantIndex(List<ChatMessage> messages) {
+    for (var i = messages.length - 1; i >= 0; i--) {
+      final message = messages[i];
+      if (message.role != 'assistant') {
+        continue;
+      }
+      if (_resolveActionMode(message.action ?? '') == 'summary') {
+        return i;
+      }
+    }
+    return null;
+  }
+
+  bool _hasGradedReviewAfter({
+    required List<ChatMessage> messages,
+    required int summaryIndex,
+  }) {
+    if (summaryIndex >= messages.length - 1) {
+      return false;
+    }
+    for (var i = summaryIndex + 1; i < messages.length; i++) {
+      final message = messages[i];
+      if (message.role != 'assistant') {
+        continue;
+      }
+      if (_resolveActionMode(message.action ?? '') != 'review') {
+        continue;
+      }
+      final parsed = _extractMessageJson(message);
+      if (parsed == null) {
+        continue;
+      }
+      final turnState = _normalizeTurnState(parsed['turn_state']);
+      final grading = parsed['grading'];
+      if (turnState == 'FINISHED' && grading is Map<String, dynamic>) {
+        return true;
+      }
+    }
+    return false;
   }
 
   Future<Map<String, dynamic>?> _loadStructuredSchema(String promptName) async {

@@ -23,7 +23,29 @@ Decision policy:
 - Use last_evidence and practice_history_summary as primary signals.
 - Use current_mastery_level as baseline prior.
 - Use error_book_summary as supporting signal for persistent weakness.
-- If there is no material new evidence, keep mastery stable.
+- If there is no material new evidence, keep mastery stable (do not drift).
+
+Stability and determinism rules (strict):
+- Be conservative: avoid large mastery jumps without clear new evidence.
+- If last_evidence.a is 0 or missing, keep mastery_level = current_mastery_level.
+- If there is weak/limited evidence (a <= 1), do not downgrade from current_mastery_level.
+- Only downgrade by more than one level when evidence is strong and consistently poor.
+- Prefer consistency with prior result when evidence is mixed or ambiguous.
+
+Mastery mapping anchor (use as default unless strong contradiction):
+- Compute attempts a = last_evidence.a, correct c = last_evidence.c, hint h = last_evidence.h.
+- Accuracy = c / max(a,1).
+- Suggested baseline:
+  - a >= 3 and accuracy >= 0.80 and h <= 1 -> PASS_HARD
+  - a >= 2 and accuracy >= 0.70 -> PASS_MEDIUM
+  - a >= 1 and accuracy >= 0.50 -> PASS_EASY
+  - otherwise -> NOT_PASS
+- Then compare with current_mastery_level and apply the stability rules above.
+
+next_step policy:
+- mastery_level == NOT_PASS -> RELEARN
+- mastery_level == PASS_EASY or PASS_MEDIUM -> CONTINUE_REVIEW
+- mastery_level == PASS_HARD -> MOVE_ON
 
 Output tone:
 - Keep feedback brief and useful.

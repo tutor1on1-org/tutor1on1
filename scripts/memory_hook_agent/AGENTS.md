@@ -64,6 +64,8 @@ Validate before returning:
 - `skills/windows_release_publish/SKILL.md` - build Windows release, package `family_teacher.zip`, upload to server, remove old versioned ZIP artifacts, and verify public download URL/hash.
 
 ## Experience updates
+- Review flow control rule: after a `review_cont` turn reaches `FINISHED`, do not auto-start `review_init`; keep post-finish turns in `review_cont` unless student explicitly asks for another question, and use that gate turn to ask "another question or summarize".
+- Summary stability rule: cache/reuse summary when no new graded review result exists after last summary, and clamp weak-evidence re-summarize downgrades (for example `a<=1`) to avoid large mastery swings.
 - New-device recovery rule: provide an explicit one-way "Take Server Copy" path for students that clears local session/progress data, resets session/progress download cursors + list ETags/run-state, and runs forced server->client pull without upload.
 - Empty-local bootstrap rule: if local student `chat_sessions`/`progress_entries` are empty but secure-storage sync cursor/etag state exists, clear session/progress download cursor + domain sync state before delta pull; stale cursors can force `since` pagination past history and yield a false "no server data" empty import.
 - Session/progress conflict rule: apply last-modified arbitration on both download and upload paths (compare local `syncUpdatedAt`/`updatedAt` vs remote `updated_at`) so the newer record wins and stale-side updates are skipped.
