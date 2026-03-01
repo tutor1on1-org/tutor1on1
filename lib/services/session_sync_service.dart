@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import '../constants.dart';
 import '../db/app_database.dart';
 import '../security/pin_hasher.dart';
+import 'remote_teacher_identity_service.dart';
 import 'secure_storage_service.dart';
 import 'session_crypto_service.dart';
 import 'session_sync_api_service.dart';
@@ -31,6 +32,8 @@ class SessionSyncService {
   final SessionSyncApiService _api;
   final UserKeyService _userKeyService;
   final SessionCryptoService _crypto;
+  final RemoteTeacherIdentityService _remoteTeacherIdentity =
+      const RemoteTeacherIdentityService();
   static final Uuid _uuid = Uuid();
   static final RegExp _versionSuffixPattern = RegExp(r'_(\d{10,})$');
   static final RegExp _secondLevelChapterPattern = RegExp(r'^(\d+\.\d+)');
@@ -681,7 +684,11 @@ class SessionSyncService {
         continue;
       }
       final payload = await _decryptItem(item, remoteUserId, keyPair);
-      await _importPayload(currentUser, payload);
+      await _importPayload(
+        currentUser,
+        payload,
+        teacherRemoteIdHint: item.teacherUserId,
+      );
       final updatedAt =
           DateTime.tryParse(payload['updated_at'] as String? ?? '')?.toUtc() ??
               itemUpdatedAt;
@@ -782,11 +789,27 @@ class SessionSyncService {
         remoteUserId: remoteUserId,
         keyPair: keyPair,
       );
+      final localTeacherId = await _resolveLocalTeacherId(
+        currentUser: currentUser,
+        teacherRemoteId: item.teacherUserId,
+      );
       var courseVersionId =
           await _db.getCourseVersionIdForRemoteCourse(resolved.courseId);
+      if (courseVersionId == null && localTeacherId != null) {
+        courseVersionId = await _findLocalCourseVersionBySubject(
+          teacherId: localTeacherId,
+          subject: resolved.courseSubject,
+        );
+      }
+      if (courseVersionId == null && currentUser.role == 'student') {
+        courseVersionId = await _findAssignedCourseVersionBySubject(
+          studentId: currentUser.id,
+          subject: resolved.courseSubject,
+        );
+      }
       if (courseVersionId == null) {
         courseVersionId = await _db.createCourseVersion(
-          teacherId: currentUser.id,
+          teacherId: localTeacherId ?? currentUser.id,
           subject: resolved.courseSubject.trim().isEmpty
               ? 'Course'
               : resolved.courseSubject.trim(),
@@ -794,11 +817,17 @@ class SessionSyncService {
           textbookText: '',
           sourcePath: null,
         );
-        await _db.upsertCourseRemoteLink(
+      }
+      if (localTeacherId != null) {
+        await _ensureCourseTeacher(
           courseVersionId: courseVersionId,
-          remoteCourseId: resolved.courseId,
+          expectedTeacherId: localTeacherId,
         );
       }
+      await _bindRemoteCourseLinkIfNeeded(
+        courseVersionId: courseVersionId,
+        remoteCourseId: resolved.courseId,
+      );
       await _db.assignStudent(
         studentId: currentUser.id,
         courseVersionId: courseVersionId,
@@ -870,7 +899,9 @@ class SessionSyncService {
   Future<void> _importPayload(
     User currentUser,
     Map<String, dynamic> payload,
-  ) async {
+    {
+    required int teacherRemoteIdHint,
+  }) async {
     final sessionSyncId = (payload['session_sync_id'] as String?) ?? '';
     if (sessionSyncId.trim().isEmpty) {
       throw StateError('Session sync id missing.');
@@ -878,6 +909,9 @@ class SessionSyncService {
     final courseId = (payload['course_id'] as num?)?.toInt() ?? 0;
     final studentRemoteId =
         (payload['student_remote_user_id'] as num?)?.toInt() ?? 0;
+    final teacherRemoteId =
+        (payload['teacher_remote_user_id'] as num?)?.toInt() ??
+            teacherRemoteIdHint;
     final studentUsername = (payload['student_username'] as String?)?.trim();
     final courseSubject = (payload['course_subject'] as String?)?.trim() ?? '';
     final kpKey = (payload['kp_key'] as String?)?.trim() ?? '';
@@ -899,24 +933,40 @@ class SessionSyncService {
       studentRemoteId: studentRemoteId,
       studentUsername: studentUsername,
     );
+    final localTeacherId = await _resolveLocalTeacherId(
+      currentUser: currentUser,
+      teacherRemoteId: teacherRemoteId,
+    );
 
     var courseVersionId = await _db.getCourseVersionIdForRemoteCourse(courseId);
-    if (courseVersionId == null) {
+    if (courseVersionId == null && localTeacherId != null) {
       courseVersionId = await _findLocalCourseVersionBySubject(
-        teacherId: currentUser.id,
+        teacherId: localTeacherId,
+        subject: courseSubject,
+      );
+    }
+    if (courseVersionId == null && currentUser.role == 'student') {
+      courseVersionId = await _findAssignedCourseVersionBySubject(
+        studentId: currentUser.id,
         subject: courseSubject,
       );
     }
     if (courseVersionId == null) {
       courseVersionId = await _db.createCourseVersion(
-        teacherId: currentUser.id,
+        teacherId: localTeacherId ?? currentUser.id,
         subject: courseSubject.isNotEmpty ? courseSubject : 'Course',
         granularity: 1,
         textbookText: '',
         sourcePath: null,
       );
     }
-    await _db.upsertCourseRemoteLink(
+    if (localTeacherId != null) {
+      await _ensureCourseTeacher(
+        courseVersionId: courseVersionId,
+        expectedTeacherId: localTeacherId,
+      );
+    }
+    await _bindRemoteCourseLinkIfNeeded(
       courseVersionId: courseVersionId,
       remoteCourseId: courseId,
     );
@@ -1026,6 +1076,25 @@ class SessionSyncService {
       role: 'student',
       teacherId: currentUser.role == 'teacher' ? currentUser.id : null,
       remoteUserId: studentRemoteId,
+    );
+  }
+
+  Future<int?> _resolveLocalTeacherId({
+    required User currentUser,
+    required int teacherRemoteId,
+  }) async {
+    if (teacherRemoteId <= 0) {
+      return null;
+    }
+    if (currentUser.remoteUserId == teacherRemoteId) {
+      if (currentUser.role != 'teacher') {
+        throw StateError('Teacher remote id maps to non-teacher current user.');
+      }
+      return currentUser.id;
+    }
+    return _remoteTeacherIdentity.resolveOrCreateLocalTeacherId(
+      db: _db,
+      remoteTeacherId: teacherRemoteId,
     );
   }
 
@@ -1557,6 +1626,54 @@ class SessionSyncService {
       }
     }
     return null;
+  }
+
+  Future<int?> _findAssignedCourseVersionBySubject({
+    required int studentId,
+    required String subject,
+  }) async {
+    final normalizedTarget = _normalizeCourseName(_stripVersionSuffix(subject));
+    if (normalizedTarget.isEmpty) {
+      return null;
+    }
+    final assignedCourses = await _db.getAssignedCoursesForStudent(studentId);
+    for (final course in assignedCourses) {
+      final normalizedCourse =
+          _normalizeCourseName(_stripVersionSuffix(course.subject));
+      if (normalizedCourse == normalizedTarget) {
+        return course.id;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _ensureCourseTeacher({
+    required int courseVersionId,
+    required int expectedTeacherId,
+  }) async {
+    final existing = await _db.getCourseVersionById(courseVersionId);
+    if (existing == null || existing.teacherId == expectedTeacherId) {
+      return;
+    }
+    await _db.updateCourseVersionTeacherId(
+      id: courseVersionId,
+      teacherId: expectedTeacherId,
+    );
+  }
+
+  Future<void> _bindRemoteCourseLinkIfNeeded({
+    required int courseVersionId,
+    required int remoteCourseId,
+  }) async {
+    final existingRemoteCourseId = await _db.getRemoteCourseId(courseVersionId);
+    if (existingRemoteCourseId == null ||
+        existingRemoteCourseId <= 0 ||
+        existingRemoteCourseId == remoteCourseId) {
+      await _db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: remoteCourseId,
+      );
+    }
   }
 
   Future<void> _ensureCourseSubject({

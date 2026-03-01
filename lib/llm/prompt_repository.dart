@@ -1,18 +1,88 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
 import '../db/app_database.dart';
 
 class PromptRepository {
-  PromptRepository({AppDatabase? db}) : _db = db;
+  PromptRepository({AppDatabase? db, AssetBundle? assetBundle})
+      : _db = db,
+        _assetBundle = assetBundle ?? rootBundle;
 
   final AppDatabase? _db;
+  final AssetBundle _assetBundle;
   final Map<String, String> _promptCache = {};
   final Map<String, String> _systemPromptCache = {};
   final Map<String, Map<String, dynamic>> _schemaCache = {};
   final Map<String, String> _textbookCache = {};
+  static const Map<String, String> _emergencyPromptFallbacks =
+      <String, String>{
+    'learn_init': '''
+You are a one-on-one teacher. Task: LEARN_INIT.
+
+Use this context:
+- subject: {{subject}}
+- knowledge point: {{kp_key}} / {{kp_title}}
+- student_input: {{student_input}}
+- student_intent: {{student_intent}}
+- conversation_history: {{conversation_history}}
+- lesson_content: {{lesson_content}}
+- error_book_summary: {{error_book_summary}}
+
+Teach clearly and adapt to the student's level. Explain first, then guide with one focused check question if helpful.
+Return a valid response following the LEARN_INIT output schema.
+''',
+    'learn_cont': '''
+You are a one-on-one teacher. Task: LEARN_CONT.
+
+Continue teaching the same knowledge point using:
+- student_input: {{student_input}}
+- student_intent: {{student_intent}}
+- conversation_history: {{conversation_history}}
+- recent_dialogue: {{recent_dialogue}}
+- lesson_content: {{lesson_content}}
+
+Prioritize clarification of mistakes and concise next steps.
+Return a valid response following the LEARN_CONT output schema.
+''',
+    'review_init': '''
+You are a one-on-one teacher. Task: REVIEW_INIT.
+
+Choose one appropriate practice question for the same knowledge point using:
+- presented_questions: {{presented_questions}}
+- current_difficulty_level: {{current_difficulty_level}}
+- error_book_summary: {{error_book_summary}}
+- practice_history_summary: {{practice_history_summary}}
+
+Ask exactly one clear question and include enough detail for grading.
+Return a valid response following the REVIEW_INIT output schema.
+''',
+    'review_cont': '''
+You are a one-on-one teacher. Task: REVIEW_CONT.
+
+Evaluate the student's latest response using:
+- student_input: {{student_input}}
+- prev_json: {{prev_json}}
+- conversation_history: {{conversation_history}}
+- current_difficulty_level: {{current_difficulty_level}}
+
+State correctness, give concise correction/explanation, and set answer_state accurately.
+Return a valid response following the REVIEW_CONT output schema.
+''',
+    'summary': '''
+You are a one-on-one teacher. Task: SUMMARY.
+
+Summarize learning progress from:
+- conversation_history: {{conversation_history}}
+- error_book_summary: {{error_book_summary}}
+- practice_history_summary: {{practice_history_summary}}
+
+Produce a concise factual summary and mastery estimate.
+Return a valid response following the SUMMARY output schema.
+''',
+  };
 
   Future<String> loadPrompt(
     String name, {
@@ -155,12 +225,21 @@ class PromptRepository {
     Object? lastError;
     for (final path in candidates) {
       try {
-        final content = await rootBundle.loadString(path);
+        final content = await _assetBundle.loadString(path);
         _systemPromptCache[name] = content;
         return content;
       } catch (error) {
         lastError = error;
       }
+    }
+    final fallback = _emergencyPromptFallbacks[name];
+    if (fallback != null) {
+      debugPrint(
+        'PromptRepository: missing bundled asset for "$name". '
+        'Using emergency fallback prompt. lastError=$lastError',
+      );
+      _systemPromptCache[name] = fallback;
+      return fallback;
     }
     throw StateError(
       'Prompt not found for "$name". Last error: $lastError',
@@ -228,7 +307,7 @@ class PromptRepository {
       return _schemaCache[name]!;
     }
     final content =
-        await rootBundle.loadString('assets/schemas/$name.schema.json');
+        await _assetBundle.loadString('assets/schemas/$name.schema.json');
     final jsonMap = jsonDecode(content) as Map<String, dynamic>;
     _schemaCache[name] = jsonMap;
     return jsonMap;
@@ -238,7 +317,7 @@ class PromptRepository {
     if (_textbookCache.containsKey(filename)) {
       return _textbookCache[filename]!;
     }
-    final content = await rootBundle.loadString('assets/textbooks/$filename');
+    final content = await _assetBundle.loadString('assets/textbooks/$filename');
     _textbookCache[filename] = content;
     return content;
   }
