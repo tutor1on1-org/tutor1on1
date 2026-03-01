@@ -159,6 +159,10 @@ class SecureStorageService {
     );
   }
 
+  Future<void> deleteSessionSyncCursor(int remoteUserId) {
+    return _storage.delete(key: '$_sessionSyncCursorPrefix$remoteUserId');
+  }
+
   Future<String?> readProgressSyncCursor(int remoteUserId) {
     return _storage.read(key: '$_progressSyncCursorPrefix$remoteUserId');
   }
@@ -168,6 +172,10 @@ class SecureStorageService {
       key: '$_progressSyncCursorPrefix$remoteUserId',
       value: value.trim(),
     );
+  }
+
+  Future<void> deleteProgressSyncCursor(int remoteUserId) {
+    return _storage.delete(key: '$_progressSyncCursorPrefix$remoteUserId');
   }
 
   Future<int?> readEnrollmentDeletionCursor(int remoteUserId) async {
@@ -333,6 +341,31 @@ class SecureStorageService {
       ),
       value: runAt.toUtc().toIso8601String(),
     );
+  }
+
+  Future<void> clearSyncDomainState({
+    required int remoteUserId,
+    required String domain,
+    bool clearItemStates = true,
+    bool clearListEtags = true,
+    bool clearRunAt = true,
+  }) async {
+    final normalizedDomain = domain.trim().toLowerCase();
+    final all = await _storage.readAll();
+    final itemStatePrefix =
+        '$_syncItemStatePrefix$remoteUserId:$normalizedDomain:';
+    final etagPrefix = '$_syncListEtagPrefix$remoteUserId:$normalizedDomain:';
+    final runAtPrefix = '$_syncRunAtPrefix$remoteUserId:$normalizedDomain:';
+
+    for (final key in all.keys) {
+      if (clearItemStates && key.startsWith(itemStatePrefix)) {
+        await _storage.delete(key: key);
+      } else if (clearListEtags && key.startsWith(etagPrefix)) {
+        await _storage.delete(key: key);
+      } else if (clearRunAt && key.startsWith(runAtPrefix)) {
+        await _storage.delete(key: key);
+      }
+    }
   }
 
   Future<DateTime?> readPromptMetadataAppliedAt({

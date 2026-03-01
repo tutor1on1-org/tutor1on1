@@ -64,6 +64,8 @@ Validate before returning:
 - `skills/windows_release_publish/SKILL.md` - build Windows release, package `family_teacher.zip`, upload to server, remove old versioned ZIP artifacts, and verify public download URL/hash.
 
 ## Experience updates
+- Empty-local bootstrap rule: if local student `chat_sessions`/`progress_entries` are empty but secure-storage sync cursor/etag state exists, clear session/progress download cursor + domain sync state before delta pull; stale cursors can force `since` pagination past history and yield a false "no server data" empty import.
+- Session/progress conflict rule: apply last-modified arbitration on both download and upload paths (compare local `syncUpdatedAt`/`updatedAt` vs remote `updated_at`) so the newer record wins and stale-side updates are skipped.
 - Course sync correctness depends on server-authoritative versioning and deletion events: treat remote bundle version as source of truth, and replay deletion events on login to clean multi-device local state.
 - UI feedback preference: use persistent, manually dismissible messages for workflow-critical status (no auto-fade snackbars).
 - Marketplace course identity must be normalized and enforced server-side as `(teacher_id + course_name_key)` to prevent duplicate course rows across repeated uploads.

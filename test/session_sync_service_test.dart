@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 import 'package:cryptography/cryptography.dart';
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -84,6 +85,11 @@ class _MemorySecureStorage extends SecureStorageService {
   }
 
   @override
+  Future<void> deleteSessionSyncCursor(int remoteUserId) async {
+    _sessionCursorByRemote.remove(remoteUserId);
+  }
+
+  @override
   Future<String?> readProgressSyncCursor(int remoteUserId) async {
     return _progressCursorByRemote[remoteUserId];
   }
@@ -91,6 +97,11 @@ class _MemorySecureStorage extends SecureStorageService {
   @override
   Future<void> writeProgressSyncCursor(int remoteUserId, String value) async {
     _progressCursorByRemote[remoteUserId] = value.trim();
+  }
+
+  @override
+  Future<void> deleteProgressSyncCursor(int remoteUserId) async {
+    _progressCursorByRemote.remove(remoteUserId);
   }
 
   @override
@@ -175,6 +186,29 @@ class _MemorySecureStorage extends SecureStorageService {
       domain: domain,
     )] = runAt.toUtc();
   }
+
+  @override
+  Future<void> clearSyncDomainState({
+    required int remoteUserId,
+    required String domain,
+    bool clearItemStates = true,
+    bool clearListEtags = true,
+    bool clearRunAt = true,
+  }) async {
+    final normalizedDomain = domain.trim().toLowerCase();
+    if (clearItemStates) {
+      _syncItemStateByKey.removeWhere(
+          (key, _) => key.startsWith('$remoteUserId::$normalizedDomain::'));
+    }
+    if (clearListEtags) {
+      _etagByKey.removeWhere(
+          (key, _) => key.startsWith('$remoteUserId::$normalizedDomain::'));
+    }
+    if (clearRunAt) {
+      _runAtByKey
+          .removeWhere((key, _) => key == '$remoteUserId::$normalizedDomain');
+    }
+  }
 }
 
 class _TestSessionSyncApiService extends SessionSyncApiService {
@@ -182,6 +216,8 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
     required SecureStorageService secureStorage,
     required this.sessionItems,
     required this.progressItems,
+    this.listSessionsDeltaHandler,
+    this.listProgressDeltaHandler,
   }) : super(
           secureStorage: secureStorage,
           baseUrl: 'https://example.com',
@@ -192,6 +228,21 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
 
   final List<SessionSyncItem> sessionItems;
   final List<ProgressSyncItem> progressItems;
+  final SyncListResult<SessionSyncItem> Function({
+    String? since,
+    int? sinceId,
+    int? limit,
+    String? ifNoneMatch,
+  })? listSessionsDeltaHandler;
+  final SyncListResult<ProgressSyncItem> Function({
+    String? since,
+    int? sinceId,
+    int? limit,
+    String? ifNoneMatch,
+  })? listProgressDeltaHandler;
+  final List<ProgressUploadEntry> uploadedProgressEntries =
+      <ProgressUploadEntry>[];
+  final List<Map<String, dynamic>> uploadedSessions = <Map<String, dynamic>>[];
 
   @override
   Future<SyncListResult<SessionSyncItem>> listSessionsDelta({
@@ -200,6 +251,14 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
     int? limit,
     String? ifNoneMatch,
   }) async {
+    if (listSessionsDeltaHandler != null) {
+      return listSessionsDeltaHandler!(
+        since: since,
+        sinceId: sinceId,
+        limit: limit,
+        ifNoneMatch: ifNoneMatch,
+      );
+    }
     return SyncListResult<SessionSyncItem>(
       items: sessionItems,
       etag: 'sessions-etag',
@@ -214,6 +273,14 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
     int? limit,
     String? ifNoneMatch,
   }) async {
+    if (listProgressDeltaHandler != null) {
+      return listProgressDeltaHandler!(
+        since: since,
+        sinceId: sinceId,
+        limit: limit,
+        ifNoneMatch: ifNoneMatch,
+      );
+    }
     return SyncListResult<ProgressSyncItem>(
       items: progressItems,
       etag: 'progress-etag',
@@ -223,7 +290,7 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
 
   @override
   Future<void> uploadProgressBatch(List<ProgressUploadEntry> entries) async {
-    throw StateError('Unexpected uploadProgressBatch call in this test.');
+    uploadedProgressEntries.addAll(entries);
   }
 
   @override
@@ -235,7 +302,14 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
     required String envelope,
     String? envelopeHash,
   }) async {
-    throw StateError('Unexpected uploadSession call in this test.');
+    uploadedSessions.add(<String, dynamic>{
+      'session_sync_id': sessionSyncId,
+      'course_id': courseId,
+      'student_user_id': studentUserId,
+      'updated_at': updatedAt,
+      'envelope': envelope,
+      'envelope_hash': envelopeHash ?? '',
+    });
   }
 
   @override
@@ -338,6 +412,16 @@ void main() {
       await secureStorage.writeUserPublicKey(
         remoteStudentId,
         crypto.encodePublicKey(studentPublicKey),
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_progress_upload',
+        runAt: DateTime.now().toUtc(),
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_session_upload',
+        runAt: DateTime.now().toUtc(),
       );
 
       final sessionPayload = <String, dynamic>{
@@ -464,6 +548,581 @@ void main() {
         localStudentId,
       );
       expect(studentOwnedCourses, isEmpty);
+    },
+  );
+
+  test(
+    'empty local state clears stale cursors and re-downloads full session/progress history',
+    () async {
+      final crypto = SessionCryptoService();
+      final secureStorage = _MemorySecureStorage(accessToken: 'token');
+
+      final localTeacherId = await db.createUser(
+        username: 'teacher_bootstrap',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 902,
+      );
+      final localStudentId = await db.createUser(
+        username: 'student_bootstrap',
+        pinHash: 'hash',
+        role: 'student',
+        remoteUserId: 3002,
+      );
+      final localCourseVersionId = await db.createCourseVersion(
+        teacherId: localTeacherId,
+        subject: 'Geometry',
+        granularity: 1,
+        textbookText: '',
+        sourcePath: r'C:\courses\geometry',
+      );
+      await db.assignStudent(
+        studentId: localStudentId,
+        courseVersionId: localCourseVersionId,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: localCourseVersionId,
+        remoteCourseId: 110,
+      );
+
+      final student = await db.getUserById(localStudentId);
+      expect(student, isNotNull);
+      final remoteStudentId = student!.remoteUserId!;
+
+      final studentKeyPair = await crypto.generateKeyPair();
+      final studentPublicKey = await crypto.extractPublicKey(studentKeyPair);
+      await secureStorage.writeUserPrivateKey(
+        remoteStudentId,
+        await crypto.encodePrivateKey(studentKeyPair),
+      );
+      await secureStorage.writeUserPublicKey(
+        remoteStudentId,
+        crypto.encodePublicKey(studentPublicKey),
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_progress_upload',
+        runAt: DateTime.now().toUtc(),
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_session_upload',
+        runAt: DateTime.now().toUtc(),
+      );
+
+      await secureStorage.writeSessionSyncCursor(
+        remoteStudentId,
+        '2026-03-05T00:00:00Z|999',
+      );
+      await secureStorage.writeProgressSyncCursor(
+        remoteStudentId,
+        '2026-03-05T00:00:00Z|999',
+      );
+      await secureStorage.writeSyncListEtag(
+        remoteUserId: remoteStudentId,
+        domain: 'session_download',
+        scopeKey: 'since:2026-03-05T00:00:00Z|999',
+        etag: 'stale-session-etag',
+      );
+      await secureStorage.writeSyncListEtag(
+        remoteUserId: remoteStudentId,
+        domain: 'progress_download',
+        scopeKey: 'since:2026-03-05T00:00:00Z|999',
+        etag: 'stale-progress-etag',
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_session_download',
+        runAt: DateTime.now().toUtc(),
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_progress_download',
+        runAt: DateTime.now().toUtc(),
+      );
+
+      final sessionPayload = <String, dynamic>{
+        'version': 1,
+        'session_sync_id': 'bootstrap-session-1',
+        'course_id': 110,
+        'course_subject': 'Geometry',
+        'kp_key': '1.1',
+        'kp_title': 'Angles',
+        'session_title': 'Angles Warmup',
+        'started_at': '2026-03-01T08:00:00Z',
+        'ended_at': null,
+        'summary_text': 'Bootstrap summary',
+        'student_remote_user_id': remoteStudentId,
+        'student_username': student.username,
+        'teacher_remote_user_id': 902,
+        'updated_at': '2026-03-01T08:10:00Z',
+        'messages': <Map<String, String>>[
+          <String, String>{
+            'role': 'assistant',
+            'content': 'Angle basics',
+            'created_at': '2026-03-01T08:00:10Z',
+          },
+        ],
+      };
+      final sessionEnvelope = await _encryptForUser(
+        crypto: crypto,
+        payload: sessionPayload,
+        recipientUserId: remoteStudentId,
+        recipientPublicKey: studentPublicKey,
+      );
+      final sessionItem = SessionSyncItem(
+        cursorId: 10,
+        sessionSyncId: 'bootstrap-session-1',
+        courseId: 110,
+        teacherUserId: 902,
+        studentUserId: remoteStudentId,
+        senderUserId: remoteStudentId,
+        updatedAt: '2026-03-01T08:10:00Z',
+        envelope: sessionEnvelope.base64Envelope,
+        envelopeHash: sessionEnvelope.hash,
+      );
+
+      final progressPayload = <String, dynamic>{
+        'version': 1,
+        'course_id': 110,
+        'course_subject': 'Geometry',
+        'kp_key': '1.1',
+        'lit': true,
+        'lit_percent': 70,
+        'question_level': 'medium',
+        'summary_text': 'Bootstrap progress',
+        'summary_raw_response': '',
+        'summary_valid': true,
+        'teacher_remote_user_id': 902,
+        'student_remote_user_id': remoteStudentId,
+        'updated_at': '2026-03-01T08:20:00Z',
+      };
+      final progressEnvelope = await _encryptForUser(
+        crypto: crypto,
+        payload: progressPayload,
+        recipientUserId: remoteStudentId,
+        recipientPublicKey: studentPublicKey,
+      );
+      final progressItem = ProgressSyncItem(
+        cursorId: 11,
+        courseId: 110,
+        courseSubject: 'Geometry',
+        teacherUserId: 902,
+        studentUserId: remoteStudentId,
+        kpKey: '1.1',
+        lit: false,
+        litPercent: 0,
+        questionLevel: '',
+        summaryText: '',
+        summaryRawResponse: '',
+        summaryValid: null,
+        updatedAt: '2026-03-01T08:20:00Z',
+        envelope: progressEnvelope.base64Envelope,
+        envelopeHash: progressEnvelope.hash,
+      );
+
+      String? observedSessionSince;
+      int? observedSessionSinceId;
+      String? observedProgressSince;
+      int? observedProgressSinceId;
+
+      bool _isAfterCursor({
+        required String value,
+        required String? since,
+        required int? sinceId,
+        required int cursorId,
+      }) {
+        if ((since ?? '').trim().isEmpty) {
+          return true;
+        }
+        final sinceTime = DateTime.parse(since!).toUtc();
+        final valueTime = DateTime.parse(value).toUtc();
+        if (valueTime.isAfter(sinceTime)) {
+          return true;
+        }
+        if (valueTime.isAtSameMomentAs(sinceTime)) {
+          return cursorId > (sinceId ?? 0);
+        }
+        return false;
+      }
+
+      final api = _TestSessionSyncApiService(
+        secureStorage: secureStorage,
+        sessionItems: <SessionSyncItem>[sessionItem],
+        progressItems: <ProgressSyncItem>[progressItem],
+        listSessionsDeltaHandler: ({
+          String? since,
+          int? sinceId,
+          int? limit,
+          String? ifNoneMatch,
+        }) {
+          observedSessionSince = since;
+          observedSessionSinceId = sinceId;
+          final include = _isAfterCursor(
+            value: sessionItem.updatedAt,
+            since: since,
+            sinceId: sinceId,
+            cursorId: sessionItem.cursorId,
+          );
+          return SyncListResult<SessionSyncItem>(
+            items:
+                include ? <SessionSyncItem>[sessionItem] : <SessionSyncItem>[],
+            etag: 'sessions-etag-bootstrap',
+            notModified: false,
+          );
+        },
+        listProgressDeltaHandler: ({
+          String? since,
+          int? sinceId,
+          int? limit,
+          String? ifNoneMatch,
+        }) {
+          observedProgressSince = since;
+          observedProgressSinceId = sinceId;
+          final include = _isAfterCursor(
+            value: progressItem.updatedAt,
+            since: since,
+            sinceId: sinceId,
+            cursorId: progressItem.cursorId,
+          );
+          return SyncListResult<ProgressSyncItem>(
+            items: include
+                ? <ProgressSyncItem>[progressItem]
+                : <ProgressSyncItem>[],
+            etag: 'progress-etag-bootstrap',
+            notModified: false,
+          );
+        },
+      );
+
+      final userKeyService = UserKeyService(
+        secureStorage: secureStorage,
+        api: api,
+        crypto: crypto,
+      );
+      final syncService = SessionSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        api: api,
+        userKeyService: userKeyService,
+        crypto: crypto,
+      );
+
+      await syncService.syncIfReady(currentUser: student);
+
+      expect((observedSessionSince ?? '').trim(), isEmpty);
+      expect(observedSessionSinceId == null || observedSessionSinceId == 0,
+          isTrue);
+      expect((observedProgressSince ?? '').trim(), isEmpty);
+      expect(observedProgressSinceId == null || observedProgressSinceId == 0,
+          isTrue);
+
+      final sessions = await db.getSessionsForStudent(localStudentId);
+      expect(sessions, hasLength(1));
+      final importedSession = await db.getSession(sessions.single.sessionId);
+      expect(importedSession, isNotNull);
+      expect(importedSession!.syncId, equals('bootstrap-session-1'));
+
+      final progressRows = await db.getProgressForCourse(
+        studentId: localStudentId,
+        courseVersionId: localCourseVersionId,
+      );
+      expect(progressRows, hasLength(1));
+      expect(progressRows.single.kpKey, equals('1.1'));
+      expect(progressRows.single.litPercent, equals(70));
+    },
+  );
+
+  test(
+    'session/progress conflict resolution uses last-modified winner',
+    () async {
+      final crypto = SessionCryptoService();
+      final secureStorage = _MemorySecureStorage(accessToken: 'token');
+
+      final teacherId = await db.createUser(
+        username: 'teacher_conflict',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 903,
+      );
+      final studentId = await db.createUser(
+        username: 'student_conflict',
+        pinHash: 'hash',
+        role: 'student',
+        remoteUserId: 3003,
+      );
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Chemistry',
+        granularity: 1,
+        textbookText: '',
+        sourcePath: r'C:\courses\chemistry',
+      );
+      await db.assignStudent(
+          studentId: studentId, courseVersionId: courseVersionId);
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 120,
+      );
+
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+      final remoteStudentId = student!.remoteUserId!;
+
+      final studentKeyPair = await crypto.generateKeyPair();
+      final studentPublicKey = await crypto.extractPublicKey(studentKeyPair);
+      await secureStorage.writeUserPrivateKey(
+        remoteStudentId,
+        await crypto.encodePrivateKey(studentKeyPair),
+      );
+      await secureStorage.writeUserPublicKey(
+        remoteStudentId,
+        crypto.encodePublicKey(studentPublicKey),
+      );
+
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_progress_upload',
+        runAt: DateTime.now().toUtc(),
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_session_upload',
+        runAt: DateTime.now().toUtc(),
+      );
+
+      final localSessionNewerId = await db.into(db.chatSessions).insert(
+            ChatSessionsCompanion.insert(
+              studentId: studentId,
+              courseVersionId: courseVersionId,
+              kpKey: '1.1',
+              title: const Value('Local Newer'),
+              status: const Value('active'),
+              startedAt: Value(DateTime.parse('2026-03-02T09:00:00Z')),
+              syncId: const Value('conflict-session-local-newer'),
+              syncUpdatedAt: Value(DateTime.parse('2026-03-02T09:05:00Z')),
+              syncUploadedAt: Value(DateTime.parse('2026-03-02T09:05:00Z')),
+            ),
+          );
+      await db.into(db.chatMessages).insert(
+            ChatMessagesCompanion.insert(
+              sessionId: localSessionNewerId,
+              role: 'assistant',
+              content: 'LOCAL_NEWER_MESSAGE',
+              createdAt: Value(DateTime.parse('2026-03-02T09:00:10Z')),
+            ),
+          );
+
+      final localSessionOlderId = await db.into(db.chatSessions).insert(
+            ChatSessionsCompanion.insert(
+              studentId: studentId,
+              courseVersionId: courseVersionId,
+              kpKey: '1.2',
+              title: const Value('Local Older'),
+              status: const Value('active'),
+              startedAt: Value(DateTime.parse('2026-03-01T09:00:00Z')),
+              syncId: const Value('conflict-session-local-older'),
+              syncUpdatedAt: Value(DateTime.parse('2026-03-01T09:05:00Z')),
+              syncUploadedAt: Value(DateTime.parse('2026-03-01T09:05:00Z')),
+            ),
+          );
+      await db.into(db.chatMessages).insert(
+            ChatMessagesCompanion.insert(
+              sessionId: localSessionOlderId,
+              role: 'assistant',
+              content: 'LOCAL_OLDER_MESSAGE',
+              createdAt: Value(DateTime.parse('2026-03-01T09:00:10Z')),
+            ),
+          );
+
+      await db.upsertProgressFromSync(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+        kpKey: '1.1',
+        lit: true,
+        litPercent: 95,
+        questionLevel: 'hard',
+        summaryText: 'local newer progress',
+        summaryRawResponse: '',
+        summaryValid: true,
+        updatedAt: DateTime.parse('2026-03-02T10:00:00Z'),
+      );
+      await db.upsertProgressFromSync(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+        kpKey: '1.2',
+        lit: false,
+        litPercent: 20,
+        questionLevel: 'easy',
+        summaryText: 'local older progress',
+        summaryRawResponse: '',
+        summaryValid: false,
+        updatedAt: DateTime.parse('2026-03-01T10:00:00Z'),
+      );
+
+      Future<SessionSyncItem> buildSessionItem({
+        required String syncId,
+        required String kpKey,
+        required String updatedAt,
+        required String messageContent,
+        required int cursorId,
+      }) async {
+        final payload = <String, dynamic>{
+          'version': 1,
+          'session_sync_id': syncId,
+          'course_id': 120,
+          'course_subject': 'Chemistry',
+          'kp_key': kpKey,
+          'kp_title': kpKey,
+          'session_title': 'Remote $kpKey',
+          'started_at': updatedAt,
+          'ended_at': null,
+          'summary_text': 'remote',
+          'student_remote_user_id': remoteStudentId,
+          'student_username': student.username,
+          'teacher_remote_user_id': 903,
+          'updated_at': updatedAt,
+          'messages': <Map<String, String>>[
+            <String, String>{
+              'role': 'assistant',
+              'content': messageContent,
+              'created_at': updatedAt,
+            },
+          ],
+        };
+        final envelope = await _encryptForUser(
+          crypto: crypto,
+          payload: payload,
+          recipientUserId: remoteStudentId,
+          recipientPublicKey: studentPublicKey,
+        );
+        return SessionSyncItem(
+          cursorId: cursorId,
+          sessionSyncId: syncId,
+          courseId: 120,
+          teacherUserId: 903,
+          studentUserId: remoteStudentId,
+          senderUserId: remoteStudentId,
+          updatedAt: updatedAt,
+          envelope: envelope.base64Envelope,
+          envelopeHash: envelope.hash,
+        );
+      }
+
+      Future<ProgressSyncItem> buildProgressItem({
+        required String kpKey,
+        required String updatedAt,
+        required int litPercent,
+        required int cursorId,
+      }) async {
+        final payload = <String, dynamic>{
+          'version': 1,
+          'course_id': 120,
+          'course_subject': 'Chemistry',
+          'kp_key': kpKey,
+          'lit': litPercent >= 60,
+          'lit_percent': litPercent,
+          'question_level': 'medium',
+          'summary_text': 'remote $kpKey',
+          'summary_raw_response': '',
+          'summary_valid': true,
+          'teacher_remote_user_id': 903,
+          'student_remote_user_id': remoteStudentId,
+          'updated_at': updatedAt,
+        };
+        final envelope = await _encryptForUser(
+          crypto: crypto,
+          payload: payload,
+          recipientUserId: remoteStudentId,
+          recipientPublicKey: studentPublicKey,
+        );
+        return ProgressSyncItem(
+          cursorId: cursorId,
+          courseId: 120,
+          courseSubject: 'Chemistry',
+          teacherUserId: 903,
+          studentUserId: remoteStudentId,
+          kpKey: kpKey,
+          lit: litPercent >= 60,
+          litPercent: litPercent,
+          questionLevel: 'medium',
+          summaryText: 'remote $kpKey',
+          summaryRawResponse: '',
+          summaryValid: true,
+          updatedAt: updatedAt,
+          envelope: envelope.base64Envelope,
+          envelopeHash: envelope.hash,
+        );
+      }
+
+      final api = _TestSessionSyncApiService(
+        secureStorage: secureStorage,
+        sessionItems: <SessionSyncItem>[
+          await buildSessionItem(
+            syncId: 'conflict-session-local-newer',
+            kpKey: '1.1',
+            updatedAt: '2026-03-01T08:00:00Z',
+            messageContent: 'REMOTE_OLDER_MESSAGE',
+            cursorId: 21,
+          ),
+          await buildSessionItem(
+            syncId: 'conflict-session-local-older',
+            kpKey: '1.2',
+            updatedAt: '2026-03-02T08:00:00Z',
+            messageContent: 'REMOTE_NEWER_MESSAGE',
+            cursorId: 22,
+          ),
+        ],
+        progressItems: <ProgressSyncItem>[
+          await buildProgressItem(
+            kpKey: '1.1',
+            updatedAt: '2026-03-01T08:10:00Z',
+            litPercent: 40,
+            cursorId: 31,
+          ),
+          await buildProgressItem(
+            kpKey: '1.2',
+            updatedAt: '2026-03-02T08:10:00Z',
+            litPercent: 75,
+            cursorId: 32,
+          ),
+        ],
+      );
+
+      final userKeyService = UserKeyService(
+        secureStorage: secureStorage,
+        api: api,
+        crypto: crypto,
+      );
+      final syncService = SessionSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        api: api,
+        userKeyService: userKeyService,
+        crypto: crypto,
+      );
+
+      await syncService.syncIfReady(currentUser: student);
+
+      final refreshedNewer = await db.getSession(localSessionNewerId);
+      expect(refreshedNewer, isNotNull);
+      final newerMessages = await db.getMessagesForSession(localSessionNewerId);
+      expect(newerMessages.single.content, equals('LOCAL_NEWER_MESSAGE'));
+
+      final refreshedOlder = await db.getSession(localSessionOlderId);
+      expect(refreshedOlder, isNotNull);
+      final olderMessages = await db.getMessagesForSession(localSessionOlderId);
+      expect(olderMessages.single.content, equals('REMOTE_NEWER_MESSAGE'));
+
+      final progressRows = await db.getProgressForCourse(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+      );
+      final byKey = <String, ProgressEntry>{
+        for (final row in progressRows) row.kpKey: row,
+      };
+      expect(byKey['1.1']!.litPercent, equals(95));
+      expect(byKey['1.2']!.litPercent, equals(75));
     },
   );
 }

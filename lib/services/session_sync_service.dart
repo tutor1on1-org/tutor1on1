@@ -118,17 +118,9 @@ class SessionSyncService {
   Future<void> _syncInternal(
       User currentUser, int remoteUserId, SimpleKeyPair keyPair,
       {bool force = false}) async {
-    await _runCategoryIfDue(
+    await _prepareDownloadBootstrapState(
+      currentUser: currentUser,
       remoteUserId: remoteUserId,
-      runDomain: _syncRunDomainProgressUpload,
-      force: force,
-      action: () => _uploadPendingProgress(currentUser, remoteUserId),
-    );
-    await _runCategoryIfDue(
-      remoteUserId: remoteUserId,
-      runDomain: _syncRunDomainSessionUpload,
-      force: force,
-      action: () => _uploadPendingSessions(currentUser, remoteUserId),
     );
     await _runCategoryIfDue(
       remoteUserId: remoteUserId,
@@ -142,6 +134,89 @@ class SessionSyncService {
       force: force,
       action: () => _downloadProgress(currentUser, remoteUserId, keyPair),
     );
+    await _runCategoryIfDue(
+      remoteUserId: remoteUserId,
+      runDomain: _syncRunDomainProgressUpload,
+      force: force,
+      action: () => _uploadPendingProgress(currentUser, remoteUserId),
+    );
+    await _runCategoryIfDue(
+      remoteUserId: remoteUserId,
+      runDomain: _syncRunDomainSessionUpload,
+      force: force,
+      action: () => _uploadPendingSessions(currentUser, remoteUserId),
+    );
+  }
+
+  Future<void> _prepareDownloadBootstrapState({
+    required User currentUser,
+    required int remoteUserId,
+  }) async {
+    if (currentUser.role != 'student') {
+      return;
+    }
+
+    final hasLocalSessions = await ((_db.select(_db.chatSessions)
+              ..where((tbl) => tbl.studentId.equals(currentUser.id))
+              ..limit(1))
+            .get())
+        .then((rows) => rows.isNotEmpty);
+    final hasLocalProgress = await ((_db.select(_db.progressEntries)
+              ..where((tbl) => tbl.studentId.equals(currentUser.id))
+              ..limit(1))
+            .get())
+        .then((rows) => rows.isNotEmpty);
+
+    final sessionCursorRaw =
+        (await _secureStorage.readSessionSyncCursor(remoteUserId) ?? '').trim();
+    final sessionListScopeKey = _syncListScopeKey(sessionCursorRaw);
+    final sessionEtagRaw = (await _secureStorage.readSyncListEtag(
+              remoteUserId: remoteUserId,
+              domain: _syncDomainSessionDownload,
+              scopeKey: sessionListScopeKey,
+            ) ??
+            '')
+        .trim();
+    if (!hasLocalSessions &&
+        (sessionCursorRaw.isNotEmpty || sessionEtagRaw.isNotEmpty)) {
+      await _secureStorage.deleteSessionSyncCursor(remoteUserId);
+      await _secureStorage.clearSyncDomainState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainSessionDownload,
+      );
+      await _secureStorage.clearSyncDomainState(
+        remoteUserId: remoteUserId,
+        domain: _syncRunDomainSessionDownload,
+        clearItemStates: false,
+        clearListEtags: false,
+      );
+    }
+
+    final progressCursorRaw =
+        (await _secureStorage.readProgressSyncCursor(remoteUserId) ?? '')
+            .trim();
+    final progressListScopeKey = _syncListScopeKey(progressCursorRaw);
+    final progressEtagRaw = (await _secureStorage.readSyncListEtag(
+              remoteUserId: remoteUserId,
+              domain: _syncDomainProgressDownload,
+              scopeKey: progressListScopeKey,
+            ) ??
+            '')
+        .trim();
+    if (!hasLocalProgress &&
+        (progressCursorRaw.isNotEmpty || progressEtagRaw.isNotEmpty)) {
+      await _secureStorage.deleteProgressSyncCursor(remoteUserId);
+      await _secureStorage.clearSyncDomainState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainProgressDownload,
+      );
+      await _secureStorage.clearSyncDomainState(
+        remoteUserId: remoteUserId,
+        domain: _syncRunDomainProgressDownload,
+        clearItemStates: false,
+        clearListEtags: false,
+      );
+    }
   }
 
   Future<SimpleKeyPair> _ensureKeyPairWithPassword({
@@ -210,6 +285,15 @@ class SessionSyncService {
         domain: _syncDomainProgressUpload,
         scopeKey: scopeKey,
       );
+      final downloadedState = await _secureStorage.readSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainProgressDownload,
+        scopeKey: scopeKey,
+      );
+      if (downloadedState != null &&
+          downloadedState.lastChangedAt.toUtc().isAfter(entryUpdatedAt)) {
+        continue;
+      }
       if (!_isTimestampNewer(entryUpdatedAt, syncState?.lastSyncedAt)) {
         continue;
       }
@@ -524,6 +608,15 @@ class SessionSyncService {
         domain: _syncDomainSessionUpload,
         scopeKey: syncId,
       );
+      final downloadedState = await _secureStorage.readSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainSessionDownload,
+        scopeKey: syncId,
+      );
+      if (downloadedState != null &&
+          downloadedState.lastChangedAt.toUtc().isAfter(syncUpdatedAt)) {
+        continue;
+      }
       if (!_isTimestampNewer(syncUpdatedAt, syncState?.lastSyncedAt)) {
         await _markSessionUploaded(
           sessionId: syncSession.id,
@@ -683,6 +776,27 @@ class SessionSyncService {
         latestCursor = _latestSyncCursor(latestCursor, itemCursor);
         continue;
       }
+      final existingLocalSession = await (_db.select(_db.chatSessions)
+            ..where((tbl) => tbl.syncId.equals(sessionSyncId))
+            ..limit(1))
+          .getSingleOrNull();
+      if (existingLocalSession != null) {
+        final localUpdatedAt = (existingLocalSession.syncUpdatedAt ??
+                existingLocalSession.startedAt)
+            .toUtc();
+        if (localUpdatedAt.isAfter(itemUpdatedAt)) {
+          await _secureStorage.writeSyncItemState(
+            remoteUserId: remoteUserId,
+            domain: _syncDomainSessionDownload,
+            scopeKey: sessionSyncId,
+            contentHash: remoteHash,
+            lastChangedAt: itemUpdatedAt,
+            lastSyncedAt: itemUpdatedAt,
+          );
+          latestCursor = _latestSyncCursor(latestCursor, itemCursor);
+          continue;
+        }
+      }
       final payload = await _decryptItem(item, remoteUserId, keyPair);
       await _importPayload(
         currentUser,
@@ -832,7 +946,29 @@ class SessionSyncService {
         studentId: currentUser.id,
         courseVersionId: courseVersionId,
       );
-      final updatedAt = DateTime.tryParse(resolved.updatedAt) ?? DateTime.now();
+      final updatedAt =
+          DateTime.tryParse(resolved.updatedAt)?.toUtc() ?? itemUpdatedAt;
+      final existingLocalProgress = await _db.getProgress(
+        studentId: currentUser.id,
+        courseVersionId: courseVersionId,
+        kpKey: resolved.kpKey,
+      );
+      if (existingLocalProgress != null &&
+          existingLocalProgress.updatedAt.toUtc().isAfter(updatedAt)) {
+        final resolvedHash = remoteHash.isNotEmpty
+            ? remoteHash
+            : _hashResolvedProgress(resolved);
+        await _secureStorage.writeSyncItemState(
+          remoteUserId: remoteUserId,
+          domain: _syncDomainProgressDownload,
+          scopeKey: scopeKey,
+          contentHash: resolvedHash,
+          lastChangedAt: itemUpdatedAt,
+          lastSyncedAt: itemUpdatedAt,
+        );
+        latestCursor = _latestSyncCursor(latestCursor, itemCursor);
+        continue;
+      }
       await _db.upsertProgressFromSync(
         studentId: currentUser.id,
         courseVersionId: courseVersionId,
@@ -898,8 +1034,7 @@ class SessionSyncService {
 
   Future<void> _importPayload(
     User currentUser,
-    Map<String, dynamic> payload,
-    {
+    Map<String, dynamic> payload, {
     required int teacherRemoteIdHint,
   }) async {
     final sessionSyncId = (payload['session_sync_id'] as String?) ?? '';
@@ -1002,6 +1137,13 @@ class SessionSyncService {
     final existing = await (_db.select(_db.chatSessions)
           ..where((tbl) => tbl.syncId.equals(sessionSyncId)))
         .getSingleOrNull();
+    if (existing != null) {
+      final localUpdatedAt =
+          (existing.syncUpdatedAt ?? existing.startedAt).toUtc();
+      if (localUpdatedAt.isAfter(updatedAt.toUtc())) {
+        return;
+      }
+    }
     await _db.transaction(() async {
       int sessionId;
       if (existing == null) {
