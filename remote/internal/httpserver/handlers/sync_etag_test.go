@@ -24,6 +24,7 @@ func TestSessionSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 	userID := int64(3001)
 	updatedAt := time.Date(2026, 2, 27, 9, 0, 0, 0, time.UTC)
 	rows := sqlmock.NewRows([]string{
+		"id",
 		"session_sync_id",
 		"course_id",
 		"teacher_user_id",
@@ -33,6 +34,7 @@ func TestSessionSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"envelope",
 		"envelope_hash",
 	}).AddRow(
+		int64(1),
 		"s1",
 		int64(44),
 		int64(901),
@@ -42,10 +44,11 @@ func TestSessionSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		[]byte("session_payload"),
 		"session_hash",
 	)
-	mock.ExpectQuery(`SELECT session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, updated_at, envelope, envelope_hash`).
+	mock.ExpectQuery(`SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, updated_at, envelope, envelope_hash`).
 		WithArgs(userID, userID, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(rows)
 	rows2 := sqlmock.NewRows([]string{
+		"id",
 		"session_sync_id",
 		"course_id",
 		"teacher_user_id",
@@ -55,6 +58,7 @@ func TestSessionSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"envelope",
 		"envelope_hash",
 	}).AddRow(
+		int64(1),
 		"s1",
 		int64(44),
 		int64(901),
@@ -64,7 +68,7 @@ func TestSessionSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		[]byte("session_payload"),
 		"session_hash",
 	)
-	mock.ExpectQuery(`SELECT session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, updated_at, envelope, envelope_hash`).
+	mock.ExpectQuery(`SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, updated_at, envelope, envelope_hash`).
 		WithArgs(userID, userID, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(rows2)
 
@@ -112,6 +116,7 @@ func TestProgressSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 	userID := int64(3002)
 	updatedAt := time.Date(2026, 2, 27, 9, 10, 0, 0, time.UTC)
 	rows := sqlmock.NewRows([]string{
+		"id",
 		"course_id",
 		"subject",
 		"teacher_user_id",
@@ -127,6 +132,7 @@ func TestProgressSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"envelope",
 		"envelope_hash",
 	}).AddRow(
+		int64(1),
 		int64(55),
 		"Biology",
 		int64(901),
@@ -142,10 +148,11 @@ func TestProgressSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		[]byte("progress_payload"),
 		"progress_hash",
 	)
-	mock.ExpectQuery(`SELECT p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.kp_key, p.lit, p.lit_percent`).
+	mock.ExpectQuery(`SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.kp_key, p.lit, p.lit_percent`).
 		WithArgs(userID, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(rows)
 	rows2 := sqlmock.NewRows([]string{
+		"id",
 		"course_id",
 		"subject",
 		"teacher_user_id",
@@ -161,6 +168,7 @@ func TestProgressSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"envelope",
 		"envelope_hash",
 	}).AddRow(
+		int64(1),
 		int64(55),
 		"Biology",
 		int64(901),
@@ -176,7 +184,7 @@ func TestProgressSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		[]byte("progress_payload"),
 		"progress_hash",
 	)
-	mock.ExpectQuery(`SELECT p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.kp_key, p.lit, p.lit_percent`).
+	mock.ExpectQuery(`SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.kp_key, p.lit, p.lit_percent`).
 		WithArgs(userID, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(rows2)
 
@@ -212,6 +220,128 @@ func TestProgressSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 	)
 	if status != http.StatusNotModified {
 		t.Fatalf("status = %d, want %d", status, http.StatusNotModified)
+	}
+
+	assertSQLMockExpectations(t, mock)
+}
+
+func TestSessionSyncListSinceIDIncludesEqualTimestampRows(t *testing.T) {
+	db, mock := newHandlerSQLMock(t)
+	defer db.Close()
+
+	userID := int64(3101)
+	since := time.Date(2026, 2, 27, 9, 0, 0, 0, time.UTC)
+	rows := sqlmock.NewRows([]string{
+		"id",
+		"session_sync_id",
+		"course_id",
+		"teacher_user_id",
+		"student_user_id",
+		"sender_user_id",
+		"updated_at",
+		"envelope",
+		"envelope_hash",
+	}).AddRow(
+		int64(11),
+		"s-next",
+		int64(44),
+		int64(901),
+		userID,
+		userID,
+		since,
+		[]byte("payload"),
+		"hash",
+	)
+	mock.ExpectQuery(`SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, updated_at, envelope, envelope_hash`).
+		WithArgs(userID, userID, since, since, int64(10), 5).
+		WillReturnRows(rows)
+
+	app := buildSyncETagTestApp(db, []string{"test-secret"})
+	token := signTestJWT(t, "test-secret", userID, true)
+
+	status, body, _ := callAPI(
+		t,
+		app,
+		http.MethodGet,
+		"/api/sessions/sync/list?since=2026-02-27T09:00:00Z&since_id=10&limit=5",
+		token,
+		"",
+	)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d", status, http.StatusOK)
+	}
+	if !strings.Contains(body, `"cursor_id":11`) {
+		t.Fatalf("response missing cursor row: %s", body)
+	}
+	if !strings.Contains(body, `"session_sync_id":"s-next"`) {
+		t.Fatalf("response missing expected item: %s", body)
+	}
+
+	assertSQLMockExpectations(t, mock)
+}
+
+func TestProgressSyncListSinceIDIncludesEqualTimestampRows(t *testing.T) {
+	db, mock := newHandlerSQLMock(t)
+	defer db.Close()
+
+	userID := int64(3102)
+	since := time.Date(2026, 2, 27, 9, 10, 0, 0, time.UTC)
+	rows := sqlmock.NewRows([]string{
+		"id",
+		"course_id",
+		"subject",
+		"teacher_user_id",
+		"student_user_id",
+		"kp_key",
+		"lit",
+		"lit_percent",
+		"question_level",
+		"summary_text",
+		"summary_raw_response",
+		"summary_valid",
+		"updated_at",
+		"envelope",
+		"envelope_hash",
+	}).AddRow(
+		int64(22),
+		int64(55),
+		"Biology",
+		int64(901),
+		userID,
+		"1.1",
+		true,
+		80,
+		"easy",
+		"summary",
+		"raw",
+		true,
+		since,
+		[]byte("progress_payload"),
+		"progress_hash",
+	)
+	mock.ExpectQuery(`SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.kp_key, p.lit, p.lit_percent`).
+		WithArgs(userID, since, since, int64(21), 5).
+		WillReturnRows(rows)
+
+	app := buildSyncETagTestApp(db, []string{"test-secret"})
+	token := signTestJWT(t, "test-secret", userID, true)
+
+	status, body, _ := callAPI(
+		t,
+		app,
+		http.MethodGet,
+		"/api/progress/sync/list?since=2026-02-27T09:10:00Z&since_id=21&limit=5",
+		token,
+		"",
+	)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d", status, http.StatusOK)
+	}
+	if !strings.Contains(body, `"cursor_id":22`) {
+		t.Fatalf("response missing cursor row: %s", body)
+	}
+	if !strings.Contains(body, `"kp_key":"1.1"`) {
+		t.Fatalf("response missing expected item: %s", body)
 	}
 
 	assertSQLMockExpectations(t, mock)

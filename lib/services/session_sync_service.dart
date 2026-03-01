@@ -498,15 +498,17 @@ class SessionSyncService {
     int remoteUserId,
     SimpleKeyPair keyPair,
   ) async {
-    final cursor = await _secureStorage.readSessionSyncCursor(remoteUserId);
-    final listScopeKey = _syncListScopeKey(cursor);
+    final cursorRaw = await _secureStorage.readSessionSyncCursor(remoteUserId);
+    final cursor = _parseSyncListCursor(cursorRaw);
+    final listScopeKey = _syncListScopeKey(cursorRaw);
     final ifNoneMatch = await _secureStorage.readSyncListEtag(
       remoteUserId: remoteUserId,
       domain: _syncDomainSessionDownload,
       scopeKey: listScopeKey,
     );
     final listResult = await _api.listSessionsDelta(
-      since: cursor,
+      since: cursor?.updatedAt.toUtc().toIso8601String(),
+      sinceId: cursor?.cursorId,
       ifNoneMatch: ifNoneMatch,
     );
     await _writeSyncListEtag(
@@ -522,13 +524,17 @@ class SessionSyncService {
     if (items.isEmpty) {
       return;
     }
-    DateTime? latest;
+    _SyncListCursor? latestCursor;
     for (final item in items) {
       final itemUpdatedAt =
           DateTime.tryParse(item.updatedAt)?.toUtc() ?? DateTime.now().toUtc();
+      final itemCursor = _SyncListCursor(
+        updatedAt: itemUpdatedAt,
+        cursorId: item.cursorId < 0 ? 0 : item.cursorId,
+      );
       final sessionSyncId = item.sessionSyncId.trim();
       if (sessionSyncId.isEmpty) {
-        latest = _latestTimestamp(latest, itemUpdatedAt);
+        latestCursor = _latestSyncCursor(latestCursor, itemCursor);
         continue;
       }
       final syncState = await _secureStorage.readSyncItemState(
@@ -537,7 +543,7 @@ class SessionSyncService {
         scopeKey: sessionSyncId,
       );
       if (!_isTimestampNewer(itemUpdatedAt, syncState?.lastChangedAt)) {
-        latest = _latestTimestamp(latest, itemUpdatedAt);
+        latestCursor = _latestSyncCursor(latestCursor, itemCursor);
         continue;
       }
       final remoteHash = _resolveSyncHash(
@@ -555,7 +561,7 @@ class SessionSyncService {
           lastChangedAt: itemUpdatedAt,
           lastSyncedAt: itemUpdatedAt,
         );
-        latest = _latestTimestamp(latest, itemUpdatedAt);
+        latestCursor = _latestSyncCursor(latestCursor, itemCursor);
         continue;
       }
       final payload = await _decryptItem(item, remoteUserId, keyPair);
@@ -573,12 +579,12 @@ class SessionSyncService {
         lastChangedAt: updatedAt,
         lastSyncedAt: updatedAt,
       );
-      latest = _latestTimestamp(latest, updatedAt);
+      latestCursor = _latestSyncCursor(latestCursor, itemCursor);
     }
-    if (latest != null) {
+    if (latestCursor != null) {
       await _secureStorage.writeSessionSyncCursor(
         remoteUserId,
-        latest.toUtc().toIso8601String(),
+        _serializeSyncListCursor(latestCursor),
       );
     }
   }
@@ -591,15 +597,17 @@ class SessionSyncService {
     if (currentUser.role != 'student') {
       return;
     }
-    final cursor = await _secureStorage.readProgressSyncCursor(remoteUserId);
-    final listScopeKey = _syncListScopeKey(cursor);
+    final cursorRaw = await _secureStorage.readProgressSyncCursor(remoteUserId);
+    final cursor = _parseSyncListCursor(cursorRaw);
+    final listScopeKey = _syncListScopeKey(cursorRaw);
     final ifNoneMatch = await _secureStorage.readSyncListEtag(
       remoteUserId: remoteUserId,
       domain: _syncDomainProgressDownload,
       scopeKey: listScopeKey,
     );
     final listResult = await _api.listProgressDelta(
-      since: cursor,
+      since: cursor?.updatedAt.toUtc().toIso8601String(),
+      sinceId: cursor?.cursorId,
       ifNoneMatch: ifNoneMatch,
     );
     await _writeSyncListEtag(
@@ -615,10 +623,14 @@ class SessionSyncService {
     if (items.isEmpty) {
       return;
     }
-    DateTime? latest;
+    _SyncListCursor? latestCursor;
     for (final item in items) {
       final itemUpdatedAt =
           DateTime.tryParse(item.updatedAt)?.toUtc() ?? DateTime.now().toUtc();
+      final itemCursor = _SyncListCursor(
+        updatedAt: itemUpdatedAt,
+        cursorId: item.cursorId < 0 ? 0 : item.cursorId,
+      );
       final scopeKey = '${item.courseId}:${item.kpKey.trim()}';
       final syncState = await _secureStorage.readSyncItemState(
         remoteUserId: remoteUserId,
@@ -626,7 +638,7 @@ class SessionSyncService {
         scopeKey: scopeKey,
       );
       if (!_isTimestampNewer(itemUpdatedAt, syncState?.lastChangedAt)) {
-        latest = _latestTimestamp(latest, itemUpdatedAt);
+        latestCursor = _latestSyncCursor(latestCursor, itemCursor);
         continue;
       }
       final fallbackHash = _hashProgressSyncItem(item);
@@ -646,7 +658,7 @@ class SessionSyncService {
           lastChangedAt: itemUpdatedAt,
           lastSyncedAt: itemUpdatedAt,
         );
-        latest = _latestTimestamp(latest, itemUpdatedAt);
+        latestCursor = _latestSyncCursor(latestCursor, itemCursor);
         continue;
       }
       final resolved = await _resolveProgressPayload(
@@ -702,12 +714,12 @@ class SessionSyncService {
         lastChangedAt: updatedAtUtc,
         lastSyncedAt: updatedAtUtc,
       );
-      latest = _latestTimestamp(latest, updatedAtUtc);
+      latestCursor = _latestSyncCursor(latestCursor, itemCursor);
     }
-    if (latest != null) {
+    if (latestCursor != null) {
       await _secureStorage.writeProgressSyncCursor(
         remoteUserId,
-        latest.toUtc().toIso8601String(),
+        _serializeSyncListCursor(latestCursor),
       );
     }
   }
@@ -1090,6 +1102,60 @@ class SessionSyncService {
     return 'since:$normalized';
   }
 
+  _SyncListCursor? _parseSyncListCursor(String? raw) {
+    final normalized = (raw ?? '').trim();
+    if (normalized.isEmpty) {
+      return null;
+    }
+    final parts = normalized.split('|');
+    if (parts.length == 2) {
+      final timestamp = DateTime.tryParse(parts[0].trim())?.toUtc();
+      final cursorId = int.tryParse(parts[1].trim()) ?? 0;
+      if (timestamp == null) {
+        return null;
+      }
+      return _SyncListCursor(
+        updatedAt: timestamp,
+        cursorId: cursorId < 0 ? 0 : cursorId,
+      );
+    }
+    final timestamp = DateTime.tryParse(normalized)?.toUtc();
+    if (timestamp == null) {
+      return null;
+    }
+    return _SyncListCursor(updatedAt: timestamp, cursorId: 0);
+  }
+
+  String _serializeSyncListCursor(_SyncListCursor cursor) {
+    final normalizedTime = cursor.updatedAt.toUtc().toIso8601String();
+    if (cursor.cursorId <= 0) {
+      return normalizedTime;
+    }
+    return '$normalizedTime|${cursor.cursorId}';
+  }
+
+  _SyncListCursor _latestSyncCursor(
+    _SyncListCursor? current,
+    _SyncListCursor candidate,
+  ) {
+    if (current == null) {
+      return candidate;
+    }
+    return _compareSyncCursor(candidate, current) > 0 ? candidate : current;
+  }
+
+  int _compareSyncCursor(_SyncListCursor left, _SyncListCursor right) {
+    final leftTime = left.updatedAt.toUtc();
+    final rightTime = right.updatedAt.toUtc();
+    if (leftTime.isAfter(rightTime)) {
+      return 1;
+    }
+    if (leftTime.isBefore(rightTime)) {
+      return -1;
+    }
+    return left.cursorId.compareTo(right.cursorId);
+  }
+
   Future<void> _writeSyncListEtag({
     required int remoteUserId,
     required String domain,
@@ -1452,4 +1518,14 @@ class _SyncStateWrite {
   final String contentHash;
   final DateTime lastChangedAt;
   final DateTime lastSyncedAt;
+}
+
+class _SyncListCursor {
+  _SyncListCursor({
+    required this.updatedAt,
+    required this.cursorId,
+  });
+
+  final DateTime updatedAt;
+  final int cursorId;
 }

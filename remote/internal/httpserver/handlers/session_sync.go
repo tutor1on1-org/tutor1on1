@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -125,14 +126,34 @@ func (h *SessionSyncHandler) List(c *fiber.Ctx) error {
 		}
 		sinceTime = parsed
 	}
-	rows, err := h.cfg.Store.DB.Query(
-		`SELECT session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, updated_at, envelope, envelope_hash
+	sinceIDRaw := strings.TrimSpace(c.Query("since_id"))
+	var sinceID int64
+	if sinceIDRaw != "" {
+		parsed, err := strconv.ParseInt(sinceIDRaw, 10, 64)
+		if err != nil || parsed < 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "since_id invalid")
+		}
+		if since == "" && parsed > 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "since_id requires since")
+		}
+		sinceID = parsed
+	}
+	query := `SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, updated_at, envelope, envelope_hash
 		 FROM session_text_sync
 		 WHERE (teacher_user_id = ? OR student_user_id = ?) AND updated_at > ?
-		 ORDER BY updated_at ASC
-		 LIMIT ?`,
-		userID, userID, sinceTime, limit,
-	)
+		 ORDER BY updated_at ASC, id ASC
+		 LIMIT ?`
+	args := []any{userID, userID, sinceTime, limit}
+	if sinceID > 0 {
+		query = `SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, updated_at, envelope, envelope_hash
+		 FROM session_text_sync
+		 WHERE (teacher_user_id = ? OR student_user_id = ?)
+		   AND (updated_at > ? OR (updated_at = ? AND id > ?))
+		 ORDER BY updated_at ASC, id ASC
+		 LIMIT ?`
+		args = []any{userID, userID, sinceTime, sinceTime, sinceID, limit}
+	}
+	rows, err := h.cfg.Store.DB.Query(query, args...)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "session sync list failed")
 	}
@@ -141,6 +162,7 @@ func (h *SessionSyncHandler) List(c *fiber.Ctx) error {
 	results := []fiber.Map{}
 	for rows.Next() {
 		var (
+			id            int64
 			sessionSyncID string
 			courseID      int64
 			teacherUserID int64
@@ -151,6 +173,7 @@ func (h *SessionSyncHandler) List(c *fiber.Ctx) error {
 			envelopeHash  sql.NullString
 		)
 		if err := rows.Scan(
+			&id,
 			&sessionSyncID,
 			&courseID,
 			&teacherUserID,
@@ -167,6 +190,7 @@ func (h *SessionSyncHandler) List(c *fiber.Ctx) error {
 			hashValue = envelopeHash.String
 		}
 		results = append(results, fiber.Map{
+			"cursor_id":       id,
 			"session_sync_id": sessionSyncID,
 			"course_id":       courseID,
 			"teacher_user_id": teacherUserID,

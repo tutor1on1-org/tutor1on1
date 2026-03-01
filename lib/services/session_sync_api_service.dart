@@ -91,6 +91,7 @@ class CourseKeyBundle {
 
 class SessionSyncItem {
   SessionSyncItem({
+    required this.cursorId,
     required this.sessionSyncId,
     required this.courseId,
     required this.teacherUserId,
@@ -101,6 +102,7 @@ class SessionSyncItem {
     required this.envelopeHash,
   });
 
+  final int cursorId;
   final String sessionSyncId;
   final int courseId;
   final int teacherUserId;
@@ -112,6 +114,7 @@ class SessionSyncItem {
 
   factory SessionSyncItem.fromJson(Map<String, dynamic> json) {
     return SessionSyncItem(
+      cursorId: (json['cursor_id'] as num?)?.toInt() ?? 0,
       sessionSyncId: (json['session_sync_id'] as String?) ?? '',
       courseId: (json['course_id'] as num?)?.toInt() ?? 0,
       teacherUserId: (json['teacher_user_id'] as num?)?.toInt() ?? 0,
@@ -126,6 +129,7 @@ class SessionSyncItem {
 
 class ProgressSyncItem {
   ProgressSyncItem({
+    required this.cursorId,
     required this.courseId,
     required this.courseSubject,
     required this.teacherUserId,
@@ -142,6 +146,7 @@ class ProgressSyncItem {
     required this.envelopeHash,
   });
 
+  final int cursorId;
   final int courseId;
   final String courseSubject;
   final int teacherUserId;
@@ -159,6 +164,7 @@ class ProgressSyncItem {
 
   factory ProgressSyncItem.fromJson(Map<String, dynamic> json) {
     return ProgressSyncItem(
+      cursorId: (json['cursor_id'] as num?)?.toInt() ?? 0,
       courseId: (json['course_id'] as num?)?.toInt() ?? 0,
       courseSubject: (json['course_subject'] as String?) ?? '',
       teacherUserId: (json['teacher_user_id'] as num?)?.toInt() ?? 0,
@@ -271,12 +277,21 @@ class SessionSyncApiService {
 
   Future<SyncListResult<SessionSyncItem>> listSessionsDelta({
     String? since,
+    int? sinceId,
     int? limit,
     String? ifNoneMatch,
   }) async {
     final params = <String, String>{};
-    if ((since ?? '').trim().isNotEmpty) {
-      params['since'] = since!.trim();
+    final normalizedSince = (since ?? '').trim();
+    final normalizedSinceId = sinceId ?? 0;
+    if (normalizedSince.isNotEmpty) {
+      params['since'] = normalizedSince;
+    }
+    if (normalizedSinceId > 0) {
+      if (normalizedSince.isEmpty) {
+        throw SessionSyncApiException('since_id requires since.');
+      }
+      params['since_id'] = normalizedSinceId.toString();
     }
     if ((limit ?? 0) > 0) {
       params['limit'] = limit!.toString();
@@ -342,12 +357,21 @@ class SessionSyncApiService {
 
   Future<SyncListResult<ProgressSyncItem>> listProgressDelta({
     String? since,
+    int? sinceId,
     int? limit,
     String? ifNoneMatch,
   }) async {
     final params = <String, String>{};
-    if ((since ?? '').trim().isNotEmpty) {
-      params['since'] = since!.trim();
+    final normalizedSince = (since ?? '').trim();
+    final normalizedSinceId = sinceId ?? 0;
+    if (normalizedSince.isNotEmpty) {
+      params['since'] = normalizedSince;
+    }
+    if (normalizedSinceId > 0) {
+      if (normalizedSince.isEmpty) {
+        throw SessionSyncApiException('since_id requires since.');
+      }
+      params['since_id'] = normalizedSinceId.toString();
     }
     if ((limit ?? 0) > 0) {
       params['limit'] = limit!.toString();

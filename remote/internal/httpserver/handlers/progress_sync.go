@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -213,16 +214,38 @@ func (h *ProgressSyncHandler) List(c *fiber.Ctx) error {
 		}
 		sinceTime = parsed
 	}
-	rows, err := h.cfg.Store.DB.Query(
-		`SELECT p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.kp_key, p.lit, p.lit_percent,
+	sinceIDRaw := strings.TrimSpace(c.Query("since_id"))
+	var sinceID int64
+	if sinceIDRaw != "" {
+		parsed, err := strconv.ParseInt(sinceIDRaw, 10, 64)
+		if err != nil || parsed < 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "since_id invalid")
+		}
+		if since == "" && parsed > 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "since_id requires since")
+		}
+		sinceID = parsed
+	}
+	query := `SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.kp_key, p.lit, p.lit_percent,
 		        p.question_level, p.summary_text, p.summary_raw_response, p.summary_valid, p.updated_at, p.envelope, p.envelope_hash
 		 FROM progress_sync p
 		 JOIN courses c ON c.id = p.course_id
 		 WHERE p.student_user_id = ? AND p.updated_at > ?
 		 ORDER BY p.updated_at ASC, p.id ASC
-		 LIMIT ?`,
-		userID, sinceTime, limit,
-	)
+		 LIMIT ?`
+	args := []any{userID, sinceTime, limit}
+	if sinceID > 0 {
+		query = `SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.kp_key, p.lit, p.lit_percent,
+		        p.question_level, p.summary_text, p.summary_raw_response, p.summary_valid, p.updated_at, p.envelope, p.envelope_hash
+		 FROM progress_sync p
+		 JOIN courses c ON c.id = p.course_id
+		 WHERE p.student_user_id = ?
+		   AND (p.updated_at > ? OR (p.updated_at = ? AND p.id > ?))
+		 ORDER BY p.updated_at ASC, p.id ASC
+		 LIMIT ?`
+		args = []any{userID, sinceTime, sinceTime, sinceID, limit}
+	}
+	rows, err := h.cfg.Store.DB.Query(query, args...)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "progress sync list failed")
 	}
@@ -231,6 +254,7 @@ func (h *ProgressSyncHandler) List(c *fiber.Ctx) error {
 	results := []fiber.Map{}
 	for rows.Next() {
 		var (
+			id                 int64
 			courseID           int64
 			courseSubject      string
 			teacherUserID      int64
@@ -248,6 +272,7 @@ func (h *ProgressSyncHandler) List(c *fiber.Ctx) error {
 		)
 		var updatedAtTime sql.NullTime
 		if err := rows.Scan(
+			&id,
 			&courseID,
 			&courseSubject,
 			&teacherUserID,
@@ -278,6 +303,7 @@ func (h *ProgressSyncHandler) List(c *fiber.Ctx) error {
 			hashValue = envelopeHash.String
 		}
 		results = append(results, fiber.Map{
+			"cursor_id":            id,
 			"course_id":            courseID,
 			"course_subject":       courseSubject,
 			"teacher_user_id":      teacherUserID,
