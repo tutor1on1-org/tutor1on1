@@ -11,14 +11,16 @@ Build the Windows app, package it as `family_teacher.zip`, upload it to the remo
 - `scripts/publish_windows_release.ps1`
 
 ## Default behavior
-1. Run `flutter build windows --release`.
-2. Package `build/windows/x64/runner/Release` into `build/family_teacher.zip`.
-3. Upload ZIP to remote `/tmp/family_teacher.zip`.
-4. Install to `/var/lib/family_teacher_remote/public/family_teacher.zip`.
-5. Delete old versioned ZIP files that match `family_teacher*.zip` except `family_teacher.zip`.
-6. Verify:
-   - remote SHA-256 equals local SHA-256
-   - `https://43.99.59.107/downloads/family_teacher.zip` returns `HTTP 200`.
+1. Run prompt-asset gate: `flutter test test/prompt_assets_integrity_test.dart`.
+2. Run `flutter build windows --release`.
+3. Package `build/windows/x64/runner/Release` into `build/family_teacher.zip`.
+4. Validate ZIP artifact entries and prompt asset decoding using `scripts/validate_windows_release_zip.ps1`.
+5. Upload ZIP to remote `/tmp/family_teacher.zip`.
+6. Install candidate ZIP to `/var/lib/family_teacher_remote/public/family_teacher_candidate.zip`.
+7. Verify candidate SHA-256 and candidate URL (`/downloads/family_teacher_candidate.zip`) before promotion.
+8. Promote candidate to canonical `/var/lib/family_teacher_remote/public/family_teacher.zip`.
+9. Delete old versioned ZIP files that match `family_teacher*.zip` except the canonical file.
+10. Verify canonical SHA-256 and URL (`https://43.99.59.107/downloads/family_teacher.zip`).
 
 ## Run
 ```powershell
@@ -32,6 +34,12 @@ powershell -ExecutionPolicy Bypass -File skills/windows_release_publish/scripts/
 
 # Build + zip only (no upload)
 powershell -ExecutionPolicy Bypass -File skills/windows_release_publish/scripts/publish_windows_release.ps1 -SkipUpload
+
+# Skip prompt-asset gate (only for emergency diagnostics)
+powershell -ExecutionPolicy Bypass -File skills/windows_release_publish/scripts/publish_windows_release.ps1 -SkipPromptAssetTests
+
+# Skip ZIP artifact validation (only for emergency diagnostics)
+powershell -ExecutionPolicy Bypass -File skills/windows_release_publish/scripts/publish_windows_release.ps1 -SkipZipValidation
 ```
 
 ## Required environment/tooling
@@ -46,3 +54,4 @@ powershell -ExecutionPolicy Bypass -File skills/windows_release_publish/scripts/
 ## Notes
 - The script is intentionally fail-fast. It throws on any mismatch or non-200 link check.
 - It uses absolute command paths on remote host because remote `PATH` may be empty.
+- Candidate-first promotion avoids publishing a broken canonical ZIP when upload content is malformed.

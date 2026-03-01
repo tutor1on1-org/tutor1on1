@@ -7,7 +7,9 @@ param(
   [string]$DownloadBaseUrl = 'https://43.99.59.107/downloads',
   [string]$ZipName = 'family_teacher.zip',
   [switch]$SkipBuild,
-  [switch]$SkipUpload
+  [switch]$SkipUpload,
+  [switch]$SkipPromptAssetTests,
+  [switch]$SkipZipValidation
 )
 
 Set-StrictMode -Version Latest
@@ -27,6 +29,38 @@ function Invoke-Checked {
   }
 }
 
+function Get-FirstSha256FromOutput {
+  param(
+    [Parameter(Mandatory = $true)]
+    [object[]]$Lines,
+    [Parameter(Mandatory = $true)]
+    [string]$Context
+  )
+  $match = ($Lines | Select-String -Pattern '(?<hash>[0-9a-fA-F]{64})').Matches | Select-Object -First 1
+  if ($null -eq $match) {
+    throw "Could not parse SHA256 output for $Context."
+  }
+  return $match.Groups['hash'].Value.ToLowerInvariant()
+}
+
+function Assert-Http200 {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Url,
+    [Parameter(Mandatory = $true)]
+    [string]$Label
+  )
+  Write-Host "==> Verify URL ($Label): $Url"
+  $headers = & curl.exe -k -I --max-time 20 $Url
+  if ($LASTEXITCODE -ne 0) {
+    throw "curl header check failed for $Label with exit code $LASTEXITCODE."
+  }
+  $headers | ForEach-Object { Write-Host $_ }
+  if (-not ($headers -match 'HTTP/\d\.\d 200 OK')) {
+    throw "URL check failed for $Label. Expected HTTP 200: $Url"
+  }
+}
+
 $repoRoot = (Resolve-Path $ProjectRoot).Path
 if (-not (Test-Path -LiteralPath $repoRoot)) {
   throw "Project root not found: $ProjectRoot"
@@ -40,10 +74,21 @@ $zipPath = Join-Path $repoRoot ("build\" + $ZipName)
 $downloadUrl = "$($DownloadBaseUrl.TrimEnd('/'))/$ZipName"
 $tmpRemoteZip = "/tmp/$ZipName"
 $zipBaseName = [System.IO.Path]::GetFileNameWithoutExtension($ZipName)
+$candidateZipName = "${zipBaseName}_candidate.zip"
+$candidateDownloadUrl = "$($DownloadBaseUrl.TrimEnd('/'))/$candidateZipName"
 $cleanupPattern = "$zipBaseName*.zip"
+$zipValidatorScript = Join-Path $repoRoot 'skills\windows_release_publish\scripts\validate_windows_release_zip.ps1'
 
 Push-Location $repoRoot
 try {
+  if (-not $SkipPromptAssetTests.IsPresent) {
+    Invoke-Checked -Label 'flutter test test/prompt_assets_integrity_test.dart' -Action {
+      flutter test test/prompt_assets_integrity_test.dart
+    }
+  } else {
+    Write-Host '==> Skip prompt asset tests requested'
+  }
+
   if (-not $SkipBuild.IsPresent) {
     Invoke-Checked -Label 'flutter build windows --release' -Action {
       flutter build windows --release
@@ -71,6 +116,14 @@ try {
   Write-Host "Local ZIP size: $($zipItem.Length) bytes"
   Write-Host "Local SHA256: $localHash"
 
+  if (-not $SkipZipValidation.IsPresent) {
+    Invoke-Checked -Label 'Validate packaged ZIP artifact' -Action {
+      powershell -ExecutionPolicy Bypass -File $zipValidatorScript -ZipPath $zipPath
+    }
+  } else {
+    Write-Host '==> Skip ZIP artifact validation requested'
+  }
+
   if ($SkipUpload.IsPresent) {
     Write-Host '==> Skip upload requested'
     Write-Host "ZIP ready: $zipPath"
@@ -87,47 +140,63 @@ try {
       "${RemoteUser}@${RemoteHost}:$tmpRemoteZip"
   }
 
-  $remoteCommand = @(
+  $remoteCanaryCommand = @(
     "/usr/bin/ls -la '$tmpRemoteZip'",
-    "/usr/bin/sudo /usr/bin/install -m 0644 -o root -g root '$tmpRemoteZip' '$RemotePublicDir/$ZipName'",
-    "/usr/bin/sudo /usr/bin/find '$RemotePublicDir' -maxdepth 1 -type f -name '$cleanupPattern' ! -name '$ZipName' -print -delete",
-    "/usr/bin/sudo /usr/bin/sha256sum '$RemotePublicDir/$ZipName'",
+    "/usr/bin/sudo /usr/bin/install -m 0644 -o root -g root '$tmpRemoteZip' '$RemotePublicDir/$candidateZipName'",
+    "/usr/bin/sudo /usr/bin/sha256sum '$RemotePublicDir/$candidateZipName'",
     "/usr/bin/sudo /usr/bin/ls -la '$RemotePublicDir'",
     "/usr/bin/rm -f '$tmpRemoteZip'"
   ) -join '; '
 
-  Write-Host '==> Install on remote + cleanup old ZIPs'
-  $remoteOutput = & ssh `
+  Write-Host '==> Install candidate ZIP on remote'
+  $remoteCanaryOutput = & ssh `
     -i $KeyPath `
     -o 'IdentitiesOnly=yes' `
     -o 'BatchMode=yes' `
     -o 'StrictHostKeyChecking=accept-new' `
     "$RemoteUser@$RemoteHost" `
-    $remoteCommand
+    $remoteCanaryCommand
   if ($LASTEXITCODE -ne 0) {
-    throw "Remote install command failed with exit code $LASTEXITCODE."
+    throw "Remote candidate install command failed with exit code $LASTEXITCODE."
   }
-  $remoteOutput | ForEach-Object { Write-Host $_ }
+  $remoteCanaryOutput | ForEach-Object { Write-Host $_ }
 
-  $remoteHashMatch = ($remoteOutput | Select-String -Pattern '(?<hash>[0-9a-fA-F]{64})\s+.+').Matches | Select-Object -First 1
-  if ($null -eq $remoteHashMatch) {
-    throw 'Could not parse remote SHA256 output.'
+  $remoteCanaryHash = Get-FirstSha256FromOutput -Lines $remoteCanaryOutput -Context 'remote canary'
+  if ($remoteCanaryHash -ne $localHash) {
+    throw "Remote canary SHA256 mismatch. local=$localHash remote=$remoteCanaryHash"
   }
-  $remoteHash = $remoteHashMatch.Groups['hash'].Value.ToLowerInvariant()
+  Write-Host "Remote canary SHA256 matches local: $remoteCanaryHash"
+
+  Assert-Http200 -Url $candidateDownloadUrl -Label 'candidate'
+
+  $remotePromoteCommand = @(
+    "/usr/bin/sudo /usr/bin/install -m 0644 -o root -g root '$RemotePublicDir/$candidateZipName' '$RemotePublicDir/$ZipName'",
+    "/usr/bin/sudo /usr/bin/find '$RemotePublicDir' -maxdepth 1 -type f -name '$cleanupPattern' ! -name '$ZipName' ! -name '$candidateZipName' -print -delete",
+    "/usr/bin/sudo /usr/bin/rm -f '$RemotePublicDir/$candidateZipName'",
+    "/usr/bin/sudo /usr/bin/sha256sum '$RemotePublicDir/$ZipName'",
+    "/usr/bin/sudo /usr/bin/ls -la '$RemotePublicDir'"
+  ) -join '; '
+
+  Write-Host '==> Promote candidate to canonical ZIP + cleanup old ZIPs'
+  $remotePromoteOutput = & ssh `
+    -i $KeyPath `
+    -o 'IdentitiesOnly=yes' `
+    -o 'BatchMode=yes' `
+    -o 'StrictHostKeyChecking=accept-new' `
+    "$RemoteUser@$RemoteHost" `
+    $remotePromoteCommand
+  if ($LASTEXITCODE -ne 0) {
+    throw "Remote promote command failed with exit code $LASTEXITCODE."
+  }
+  $remotePromoteOutput | ForEach-Object { Write-Host $_ }
+
+  $remoteHash = Get-FirstSha256FromOutput -Lines $remotePromoteOutput -Context 'remote canonical'
   if ($remoteHash -ne $localHash) {
-    throw "SHA256 mismatch. local=$localHash remote=$remoteHash"
+    throw "Remote canonical SHA256 mismatch. local=$localHash remote=$remoteHash"
   }
-  Write-Host "Remote SHA256 matches local: $remoteHash"
+  Write-Host "Remote canonical SHA256 matches local: $remoteHash"
 
-  Write-Host "==> Verify download URL: $downloadUrl"
-  $headers = & curl.exe -k -I --max-time 20 $downloadUrl
-  if ($LASTEXITCODE -ne 0) {
-    throw "curl header check failed with exit code $LASTEXITCODE."
-  }
-  $headers | ForEach-Object { Write-Host $_ }
-  if (-not ($headers -match 'HTTP/1\.1 200 OK')) {
-    throw "Download URL check failed. Expected HTTP 200 for $downloadUrl"
-  }
+  Assert-Http200 -Url $downloadUrl -Label 'canonical'
 
   Write-Host '==> Publish completed'
   Write-Host "Download URL: $downloadUrl"

@@ -75,6 +75,13 @@ powershell -ExecutionPolicy Bypass -File skills/windows_release_publish/scripts/
 Optional flags:
 - `-SkipBuild` (reuse existing `build/windows/x64/runner/Release`)
 - `-SkipUpload` (build + zip only)
+- `-SkipPromptAssetTests` (skip `test/prompt_assets_integrity_test.dart`)
+- `-SkipZipValidation` (skip `skills/windows_release_publish/scripts/validate_windows_release_zip.ps1`)
+
+Default safeguards:
+- Prompt asset test gate runs before build.
+- ZIP validator checks required runtime files and prompt asset UTF-8 readability.
+- Remote publish uses candidate-first promotion before replacing canonical `family_teacher.zip`.
 
 ### Auth API smoke test
 ```powershell

@@ -80,3 +80,4 @@
 - Release packaging rule: ship only minimal runtime artifacts (app binary + required assets/deps) and explicitly exclude local user/runtime data, secure-storage blobs, `.env`, API keys, and host-specific config files.
 - Windows app distribution on the current host should publish a single canonical file `/var/lib/family_teacher_remote/public/family_teacher.zip` (served as `https://43.99.59.107/downloads/family_teacher.zip`) and remove older versioned `family_teacher*.zip` artifacts.
 - Progress payload compatibility rule: encrypted progress envelopes may not include `course_subject` in legacy rows; client import must fallback to list-row `course_subject` instead of throwing, while new uploads should include `course_subject`.
+- Release prompt-asset integrity gate: before publishing Windows ZIP, run `flutter test test/prompt_assets_integrity_test.dart` and validate packaged prompt files from ZIP to catch binary/corrupted prompt assets before canonical promotion.
