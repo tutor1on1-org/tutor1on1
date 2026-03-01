@@ -34,12 +34,32 @@ class SessionSyncService {
   static final Uuid _uuid = Uuid();
   static final RegExp _versionSuffixPattern = RegExp(r'_(\d{10,})$');
   static final RegExp _secondLevelChapterPattern = RegExp(r'^(\d+\.\d+)');
+  static const Duration _syncMinInterval = Duration(seconds: 60);
   static const String _syncDomainSessionUpload = 'session_upload';
   static const String _syncDomainSessionGroupUpload = 'session_group_upload';
   static const String _syncDomainProgressUpload = 'progress_upload';
   static const String _syncDomainSessionDownload = 'session_download';
   static const String _syncDomainProgressDownload = 'progress_download';
+  static const String _syncRunDomainProgressUpload =
+      'session_sync_run_progress_upload';
+  static const String _syncRunDomainSessionUpload =
+      'session_sync_run_session_upload';
+  static const String _syncRunDomainSessionDownload =
+      'session_sync_run_session_download';
+  static const String _syncRunDomainProgressDownload =
+      'session_sync_run_progress_download';
   bool _syncing = false;
+
+  Future<void> prepareForAutoSync({
+    required User currentUser,
+    required String password,
+  }) async {
+    final remoteUserId = _requireRemoteUserId(currentUser);
+    await _ensureKeyPairWithPassword(
+      remoteUserId: remoteUserId,
+      password: password,
+    );
+  }
 
   Future<void> syncNow({
     required User currentUser,
@@ -51,11 +71,16 @@ class SessionSyncService {
     _syncing = true;
     try {
       final remoteUserId = _requireRemoteUserId(currentUser);
-      final keyPair = await _userKeyService.ensureUserKeyPair(
+      final keyPair = await _ensureKeyPairWithPassword(
         remoteUserId: remoteUserId,
         password: password,
       );
-      await _syncInternal(currentUser, remoteUserId, keyPair);
+      await _syncInternal(
+        currentUser,
+        remoteUserId,
+        keyPair,
+        force: true,
+      );
     } finally {
       _syncing = false;
     }
@@ -75,21 +100,78 @@ class SessionSyncService {
     }
     _syncing = true;
     try {
-      await _syncInternal(currentUser, remoteUserId, keyPair);
+      await _syncInternal(
+        currentUser,
+        remoteUserId,
+        keyPair,
+      );
     } finally {
       _syncing = false;
     }
   }
 
   Future<void> _syncInternal(
-    User currentUser,
-    int remoteUserId,
-    SimpleKeyPair keyPair,
-  ) async {
-    await _uploadPendingProgress(currentUser, remoteUserId);
-    await _uploadPendingSessions(currentUser, remoteUserId);
-    await _downloadSessions(currentUser, remoteUserId, keyPair);
-    await _downloadProgress(currentUser, remoteUserId, keyPair);
+      User currentUser, int remoteUserId, SimpleKeyPair keyPair,
+      {bool force = false}) async {
+    await _runCategoryIfDue(
+      remoteUserId: remoteUserId,
+      runDomain: _syncRunDomainProgressUpload,
+      force: force,
+      action: () => _uploadPendingProgress(currentUser, remoteUserId),
+    );
+    await _runCategoryIfDue(
+      remoteUserId: remoteUserId,
+      runDomain: _syncRunDomainSessionUpload,
+      force: force,
+      action: () => _uploadPendingSessions(currentUser, remoteUserId),
+    );
+    await _runCategoryIfDue(
+      remoteUserId: remoteUserId,
+      runDomain: _syncRunDomainSessionDownload,
+      force: force,
+      action: () => _downloadSessions(currentUser, remoteUserId, keyPair),
+    );
+    await _runCategoryIfDue(
+      remoteUserId: remoteUserId,
+      runDomain: _syncRunDomainProgressDownload,
+      force: force,
+      action: () => _downloadProgress(currentUser, remoteUserId, keyPair),
+    );
+  }
+
+  Future<SimpleKeyPair> _ensureKeyPairWithPassword({
+    required int remoteUserId,
+    required String password,
+  }) {
+    return _userKeyService.ensureUserKeyPair(
+      remoteUserId: remoteUserId,
+      password: password,
+    );
+  }
+
+  Future<void> _runCategoryIfDue({
+    required int remoteUserId,
+    required String runDomain,
+    required Future<void> Function() action,
+    required bool force,
+  }) async {
+    final nowUtc = DateTime.now().toUtc();
+    if (!force) {
+      final lastRun = await _secureStorage.readSyncRunAt(
+        remoteUserId: remoteUserId,
+        domain: runDomain,
+      );
+      if (lastRun != null &&
+          nowUtc.difference(lastRun.toUtc()) < _syncMinInterval) {
+        return;
+      }
+    }
+    await action();
+    await _secureStorage.writeSyncRunAt(
+      remoteUserId: remoteUserId,
+      domain: runDomain,
+      runAt: nowUtc,
+    );
   }
 
   Future<void> _uploadPendingProgress(

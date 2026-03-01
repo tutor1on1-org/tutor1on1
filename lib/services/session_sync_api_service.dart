@@ -327,29 +327,12 @@ class SessionSyncApiService {
     if (entries.isEmpty) {
       return;
     }
-    try {
-      await _post(
-        '/api/progress/sync/upload-batch',
-        {
-          'items':
-              entries.map((entry) => entry.toJson()).toList(growable: false),
-        },
-      );
-      return;
-    } on SessionSyncApiException catch (error) {
-      if (error.statusCode != 404) {
-        rethrow;
-      }
-    }
-    for (final entry in entries) {
-      await uploadProgress(
-        courseId: entry.courseId,
-        kpKey: entry.kpKey,
-        updatedAt: entry.updatedAt,
-        envelope: entry.envelope,
-        envelopeHash: entry.envelopeHash,
-      );
-    }
+    await _post(
+      '/api/progress/sync/upload-batch',
+      {
+        'items': entries.map((entry) => entry.toJson()).toList(growable: false),
+      },
+    );
   }
 
   Future<List<ProgressSyncItem>> listProgress({String? since}) async {

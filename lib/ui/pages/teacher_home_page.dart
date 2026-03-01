@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:drift/drift.dart' hide Column;
@@ -29,9 +30,12 @@ class TeacherHomePage extends StatefulWidget {
 }
 
 class _TeacherHomePageState extends State<TeacherHomePage> {
+  static const Duration _autoSyncInterval = Duration(seconds: 60);
   bool _syncStarted = false;
+  bool _syncInProgress = false;
   bool _syncingFromServer = false;
   String _syncProgressMessage = '';
+  Timer? _autoSyncTimer;
   final Set<int> _uploadingCourseIds = {};
   String? _persistentMessage;
   bool _persistentMessageIsError = false;
@@ -48,7 +52,16 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       db: services.db,
       marketplaceApi: _marketplaceApi,
     );
-    WidgetsBinding.instance.addPostFrameCallback((_) => _startSync());
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _startSync();
+      _startAutoSync();
+    });
+  }
+
+  @override
+  void dispose() {
+    _autoSyncTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _startSync() async {
@@ -56,23 +69,39 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       return;
     }
     _syncStarted = true;
+    await _runSyncCycle(showOverlay: true);
+  }
+
+  void _startAutoSync() {
+    _autoSyncTimer?.cancel();
+    _autoSyncTimer = Timer.periodic(_autoSyncInterval, (_) async {
+      await _runSyncCycle(showOverlay: false);
+    });
+  }
+
+  Future<void> _runSyncCycle({required bool showOverlay}) async {
+    if (!mounted || _syncInProgress) {
+      return;
+    }
+    _syncInProgress = true;
     _setSyncState(
-      syncing: true,
-      message: 'Syncing enrollments from server...',
+      syncing: showOverlay,
+      message: showOverlay ? 'Syncing enrollments from server...' : '',
     );
     final l10n = AppLocalizations.of(context)!;
     final auth = context.read<AuthController>();
     final user = auth.currentUser;
     if (user == null) {
-      _setSyncState(syncing: false);
+      _setSyncState(syncing: false, message: '');
+      _syncInProgress = false;
       return;
     }
     final services = context.read<AppServices>();
     try {
       await services.enrollmentSyncService.syncIfReady(currentUser: user);
       _setSyncState(
-        syncing: true,
-        message: 'Syncing sessions from server...',
+        syncing: showOverlay,
+        message: showOverlay ? 'Syncing sessions from server...' : '',
       );
       await services.sessionSyncService.syncIfReady(currentUser: user);
     } catch (error) {
@@ -84,7 +113,8 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         isError: true,
       );
     } finally {
-      _setSyncState(syncing: false);
+      _setSyncState(syncing: false, message: '');
+      _syncInProgress = false;
     }
   }
 

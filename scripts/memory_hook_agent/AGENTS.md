@@ -46,7 +46,7 @@ Validate before returning:
 ## Root AGENTS.md (Full Text)
 # family_teacher Docs Index
 
-`AGENTS.md` is the entry point only. Use the following documents:
+`AGENTS.md` is the entry point only. Only keep it as a reference to the other documents:
 
 - `README.md` - project description, logical flow, architecture, and final aim.
 - `WORKFLOW.md` - standard way to execute work from diagnosis to release.
@@ -112,3 +112,5 @@ Validate before returning:
 - Delivery automation rule: run `scripts/hook_memory_update.ps1` after memory markdown edits (line-delta trigger `>10` with snapshot `scripts/memory_line_snapshot.json`), and keep sub-agent prompt/session state under `scripts/memory_hook_agent/` tracked; pre-push runs only `scripts/validate_project.ps1 -NoPostHook`.
 - Course reload immutability rule: for existing IDs, node names are immutable and must not be edited in place; renames must be modeled as delete + create new ID, and any deleted KP IDs must cascade-delete linked sessions/messages/LLM rows with explicit teacher confirmation when affected session count is non-zero.
 - Log privacy rule: treat LLM/TTS logs as credential-protected data by encrypting sensitive log payload fields with an app-layer key derived from the active login credentials, and only surface entries relevant to the signed-in teacher/student scope.
+- Letta OSS local bootstrap on Windows needs Python 3.11+, and OpenAI handles are unavailable until `OPENAI_API_KEY` is set in the process environment even when local `/v1/health` is already `ok`.
+- Auto sync should run from home screens (startup + periodic), welcome/login should only prepare session key material, sync throttling should be tracked per category with timestamp keys scoped by hashed device identity, and progress sync should call batch upload only.

@@ -129,6 +129,7 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   String? lastEnrollmentsIfNoneMatch;
   String? lastTeacherCoursesIfNoneMatch;
   int listEnrollmentsDeltaCalls = 0;
+  int listDeletionEventsCalls = 0;
   int listTeacherCoursesDeltaCalls = 0;
 
   @override
@@ -154,6 +155,7 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   Future<List<EnrollmentDeletionEvent>> listEnrollmentDeletionEvents({
     int? sinceId,
   }) async {
+    listDeletionEventsCalls++;
     lastDeletionSinceId = sinceId;
     if (_deletionEventsProvider != null) {
       return _deletionEventsProvider(sinceId);
@@ -588,6 +590,50 @@ void main() {
 
     expect(api.listEnrollmentsDeltaCalls, equals(1));
   });
+
+  test(
+    'student sync timestamps are category-scoped and still run deletion replay',
+    () async {
+      final teacherId = await db.createUser(
+        username: 'teacher_g',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 840,
+      );
+      final studentId = await db.createUser(
+        username: 'student_g',
+        pinHash: 'hash',
+        role: 'student',
+        teacherId: teacherId,
+        remoteUserId: 940,
+      );
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+
+      final secureStorage = _TestSecureStorageService();
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: 940,
+        domain: 'enrollment_sync_student',
+        runAt: DateTime.now().toUtc(),
+      );
+      final api = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+        enrollments: const <EnrollmentSummary>[],
+        enrollmentsNotModified: true,
+      );
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService: CourseService(db),
+        marketplaceApi: api,
+      );
+
+      await service.syncIfReady(currentUser: student!);
+
+      expect(api.listEnrollmentsDeltaCalls, equals(0));
+      expect(api.listDeletionEventsCalls, equals(1));
+    },
+  );
 
   test('teacher sync uses cached ETag for delta list calls', () async {
     final teacherId = await db.createUser(

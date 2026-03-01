@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -37,6 +38,7 @@ class SecureStorageService {
   static const _syncItemStatePrefix = 'sync_item_state:';
   static const _syncListEtagPrefix = 'sync_list_etag:';
   static const _syncRunAtPrefix = 'sync_run_at:';
+  static final String _syncRunDeviceHash = _buildSyncRunDeviceHash();
   final FlutterSecureStorage _storage;
 
   Future<String?> readApiKey() => _storage.read(key: _apiKeyKey);
@@ -404,6 +406,17 @@ class SecureStorageService {
     required String domain,
   }) {
     final normalizedDomain = domain.trim().toLowerCase();
-    return '$_syncRunAtPrefix$remoteUserId:$normalizedDomain';
+    return '$_syncRunAtPrefix$remoteUserId:$normalizedDomain:$_syncRunDeviceHash';
+  }
+
+  static String _buildSyncRunDeviceHash() {
+    final seed = [
+      Platform.operatingSystem,
+      Platform.operatingSystemVersion,
+      Platform.localHostname,
+      Platform.numberOfProcessors.toString(),
+      Platform.pathSeparator,
+    ].join('|');
+    return sha256Hex(seed);
   }
 }

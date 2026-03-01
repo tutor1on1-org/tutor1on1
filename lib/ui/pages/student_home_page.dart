@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:family_teacher/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
@@ -20,9 +22,12 @@ class StudentHomePage extends StatefulWidget {
 }
 
 class _StudentHomePageState extends State<StudentHomePage> {
+  static const Duration _autoSyncInterval = Duration(seconds: 60);
   bool _syncStarted = false;
+  bool _syncInProgress = false;
   bool _syncingFromServer = false;
   String _syncProgressMessage = '';
+  Timer? _autoSyncTimer;
   late final MarketplaceApiService _marketplaceApi;
   final Map<int, int> _remoteCourseIdByLocalCourseId = {};
   final Map<int, EnrollmentSummary> _enrollmentsByRemoteCourseId = {};
@@ -37,7 +42,16 @@ class _StudentHomePageState extends State<StudentHomePage> {
     final services = context.read<AppServices>();
     _marketplaceApi =
         MarketplaceApiService(secureStorage: services.secureStorage);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _startSync());
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _startSync();
+      _startAutoSync();
+    });
+  }
+
+  @override
+  void dispose() {
+    _autoSyncTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _refreshRemoteEnrollmentState() async {
@@ -97,34 +111,51 @@ class _StudentHomePageState extends State<StudentHomePage> {
       return;
     }
     _syncStarted = true;
+    await _runSyncCycle(showOverlay: true);
+  }
+
+  void _startAutoSync() {
+    _autoSyncTimer?.cancel();
+    _autoSyncTimer = Timer.periodic(_autoSyncInterval, (_) async {
+      await _runSyncCycle(showOverlay: false);
+    });
+  }
+
+  Future<void> _runSyncCycle({required bool showOverlay}) async {
+    if (!mounted || _syncInProgress) {
+      return;
+    }
+    _syncInProgress = true;
     _setSyncState(
-      syncing: true,
-      message: 'Syncing enrollments from server...',
+      syncing: showOverlay,
+      message: showOverlay ? 'Syncing enrollments from server...' : '',
     );
     final l10n = AppLocalizations.of(context)!;
     final auth = context.read<AuthController>();
     final user = auth.currentUser;
     if (user == null) {
-      _setSyncState(syncing: false);
+      _setSyncState(syncing: false, message: '');
+      _syncInProgress = false;
       return;
     }
     final services = context.read<AppServices>();
     try {
       await services.enrollmentSyncService.syncIfReady(currentUser: user);
       _setSyncState(
-        syncing: true,
-        message: 'Syncing sessions from server...',
+        syncing: showOverlay,
+        message: showOverlay ? 'Syncing sessions from server...' : '',
       );
       await services.sessionSyncService.syncIfReady(currentUser: user);
     } catch (error) {
       _setPersistentMessage(l10n.sessionSyncFailed('$error'));
     } finally {
       _setSyncState(
-        syncing: true,
-        message: 'Refreshing enrollment status...',
+        syncing: showOverlay,
+        message: showOverlay ? 'Refreshing enrollment status...' : '',
       );
       await _refreshRemoteEnrollmentState();
-      _setSyncState(syncing: false);
+      _setSyncState(syncing: false, message: '');
+      _syncInProgress = false;
     }
   }
 

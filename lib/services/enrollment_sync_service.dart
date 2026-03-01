@@ -24,6 +24,7 @@ class EnrollmentSyncService {
   bool _syncing = false;
   static final RegExp _versionSuffixPattern = RegExp(r'_(\d{10,})$');
   static const Duration _syncMinInterval = Duration(seconds: 60);
+  static const String _syncDomainDeletionEvents = 'enrollment_sync_deletions';
   static const String _syncDomainStudentEnrollments = 'enrollment_sync_student';
   static const String _syncDomainTeacherCourses = 'enrollment_sync_teacher';
   static const String _syncScopeEnrollments = 'enrollments';
@@ -37,60 +38,83 @@ class EnrollmentSyncService {
     if (remoteUserId == null || remoteUserId <= 0) {
       return;
     }
-    final syncDomain = currentUser.role == 'teacher'
-        ? _syncDomainTeacherCourses
-        : _syncDomainStudentEnrollments;
     final nowUtc = DateTime.now().toUtc();
-    final lastRun = await _secureStorage.readSyncRunAt(
-      remoteUserId: remoteUserId,
-      domain: syncDomain,
-    );
-    if (lastRun != null &&
-        nowUtc.difference(lastRun.toUtc()) < _syncMinInterval) {
-      return;
-    }
     _syncing = true;
     try {
       if (currentUser.role == 'student') {
         await _autoApproveLegacyCoursesWithoutTeacher(currentUser.id);
       }
-      await _applyDeletionEvents(currentUser, remoteUserId);
+      await _runCategoryIfDue(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainDeletionEvents,
+        nowUtc: nowUtc,
+        action: () => _applyDeletionEvents(currentUser, remoteUserId),
+      );
       if (currentUser.role == 'teacher') {
-        await _syncTeacherCourses(
-          currentUser: currentUser,
+        await _runCategoryIfDue(
           remoteUserId: remoteUserId,
-        );
-      } else {
-        final ifNoneMatch = await _secureStorage.readSyncListEtag(
-          remoteUserId: remoteUserId,
-          domain: _syncDomainStudentEnrollments,
-          scopeKey: _syncScopeEnrollments,
-        );
-        final enrollmentsResult = await _api.listEnrollmentsDelta(
-          ifNoneMatch: ifNoneMatch,
-        );
-        await _writeSyncListEtag(
-          remoteUserId: remoteUserId,
-          domain: _syncDomainStudentEnrollments,
-          scopeKey: _syncScopeEnrollments,
-          etag: enrollmentsResult.etag,
-        );
-        if (!enrollmentsResult.notModified) {
-          await _syncStudentEnrollments(
+          domain: _syncDomainTeacherCourses,
+          nowUtc: nowUtc,
+          action: () => _syncTeacherCourses(
             currentUser: currentUser,
             remoteUserId: remoteUserId,
-            enrollments: enrollmentsResult.items,
-          );
-        }
+          ),
+        );
+      } else {
+        await _runCategoryIfDue(
+          remoteUserId: remoteUserId,
+          domain: _syncDomainStudentEnrollments,
+          nowUtc: nowUtc,
+          action: () async {
+            final ifNoneMatch = await _secureStorage.readSyncListEtag(
+              remoteUserId: remoteUserId,
+              domain: _syncDomainStudentEnrollments,
+              scopeKey: _syncScopeEnrollments,
+            );
+            final enrollmentsResult = await _api.listEnrollmentsDelta(
+              ifNoneMatch: ifNoneMatch,
+            );
+            await _writeSyncListEtag(
+              remoteUserId: remoteUserId,
+              domain: _syncDomainStudentEnrollments,
+              scopeKey: _syncScopeEnrollments,
+              etag: enrollmentsResult.etag,
+            );
+            if (!enrollmentsResult.notModified) {
+              await _syncStudentEnrollments(
+                currentUser: currentUser,
+                remoteUserId: remoteUserId,
+                enrollments: enrollmentsResult.items,
+              );
+            }
+          },
+        );
       }
-      await _secureStorage.writeSyncRunAt(
-        remoteUserId: remoteUserId,
-        domain: syncDomain,
-        runAt: nowUtc,
-      );
     } finally {
       _syncing = false;
     }
+  }
+
+  Future<void> _runCategoryIfDue({
+    required int remoteUserId,
+    required String domain,
+    required DateTime nowUtc,
+    required Future<void> Function() action,
+  }) async {
+    final lastRun = await _secureStorage.readSyncRunAt(
+      remoteUserId: remoteUserId,
+      domain: domain,
+    );
+    if (lastRun != null &&
+        nowUtc.difference(lastRun.toUtc()) < _syncMinInterval) {
+      return;
+    }
+    await action();
+    await _secureStorage.writeSyncRunAt(
+      remoteUserId: remoteUserId,
+      domain: domain,
+      runAt: nowUtc,
+    );
   }
 
   Future<void> _autoApproveLegacyCoursesWithoutTeacher(int studentId) async {
