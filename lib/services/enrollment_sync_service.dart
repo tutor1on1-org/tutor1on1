@@ -238,12 +238,6 @@ class EnrollmentSyncService {
         );
         existingCourseVersionId = imported.id;
       }
-      if (existingCourseVersionId == null) {
-        throw StateError(
-          'Enrollment sync failed to resolve local course for remote course '
-          '${enrollment.courseId}.',
-        );
-      }
       await _ensureCourseTeacher(
         courseVersionId: existingCourseVersionId,
         expectedTeacherId: localTeacherId,
