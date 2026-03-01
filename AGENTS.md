@@ -14,6 +14,9 @@
 - `.env.example` - sanitized local secrets template (`.env` is local and untracked).
 - `BACKUP_DRILL.md` - backup restore verification drill and incident checklist.
 
+## Local skills
+- `skills/windows_release_publish/SKILL.md` - build Windows release, package `family_teacher.zip`, upload to server, remove old versioned ZIP artifacts, and verify public download URL/hash.
+
 ## Experience updates
 - Course sync correctness depends on server-authoritative versioning and deletion events: treat remote bundle version as source of truth, and replay deletion events on login to clean multi-device local state.
 - UI feedback preference: use persistent, manually dismissible messages for workflow-critical status (no auto-fade snackbars).

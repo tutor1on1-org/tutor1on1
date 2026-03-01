@@ -68,6 +68,14 @@ flutter build windows --release
 Required workflow gate: run release build before updating `DONEs.md` after code changes.
 
 ## Utility scripts
+### Windows release publish (build + zip + upload)
+```powershell
+powershell -ExecutionPolicy Bypass -File skills/windows_release_publish/scripts/publish_windows_release.ps1
+```
+Optional flags:
+- `-SkipBuild` (reuse existing `build/windows/x64/runner/Release`)
+- `-SkipUpload` (build + zip only)
+
 ### Auth API smoke test
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/test_auth.ps1
