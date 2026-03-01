@@ -53,6 +53,7 @@
 - Teacher progress review should use `(student + course)` filtering and display session-level `chat_sessions.summary_text` / `summary_lit_percent` so server-synced summaries are visible without opening each session.
 - Recovery flow hardening rule: with `RECOVERY_TOKEN_ECHO=false`, `/api/auth/request-recovery` must not leak token in API response and should be validated with SMTP-path regression tests.
 - Delivery discipline: after code changes pass validation, commit and push in the same turn unless the user explicitly says not to push.
+- Build discipline: after code changes, run concrete builds before reporting done (`go build -o family-teacher-api ./cmd/server` for backend changes and `flutter build windows --release` for app changes).
 - Student tutor chat reliability should enforce structured-output schemas for `learn_*`/`review_*`, single-flight dedupe by `(session + prompt + call_hash)`, explicit retry telemetry (`attempt/reason/backoff`), and summary cache reuse when no new evidence exists.
 - Desktop integration tests in this workspace can fail with "More than one device connected"; run with an explicit target (for example `flutter test integration_test/app_flow_test.dart -d windows`).
 - Legacy tutor prompt names (`learn`, `review`, `summarize`) are retired from active UI/managed sync paths; keep prompt/template flow centered on structured prompts (`learn_init`, `learn_cont`, `review_init`, `review_cont`, `summary`).
