@@ -71,3 +71,4 @@
 - Log privacy rule: treat LLM/TTS logs as credential-protected data by encrypting sensitive log payload fields with an app-layer key derived from the active login credentials, and only surface entries relevant to the signed-in teacher/student scope.
 - Letta OSS local bootstrap on Windows needs Python 3.11+, and OpenAI handles are unavailable until `OPENAI_API_KEY` is set in the process environment even when local `/v1/health` is already `ok`.
 - Auto sync should run from home screens (startup + periodic), welcome/login should only prepare session key material, sync throttling should be tracked per category with timestamp keys scoped by hashed device identity, and progress sync should call batch upload only.
+- Windows secure-storage startup rule: run a bootstrap integrity check on secure storage, and if DPAPI decrypt fails (`CryptUnprotectData`), reset secure storage then continue (forcing fresh login) instead of hard-crashing app startup.

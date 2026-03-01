@@ -63,6 +63,7 @@ class AppServices {
     );
     final settingsRepository = SettingsRepository(db);
     final secureStorage = SecureStorageService();
+    await secureStorage.ensureReadableOrReset();
     final settings = await settingsRepository.load();
     final baseUrl = settings.baseUrl.trim();
     final legacyKey = await secureStorage.readApiKey();

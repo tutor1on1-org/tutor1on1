@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../security/hash_utils.dart';
@@ -40,6 +41,30 @@ class SecureStorageService {
   static const _syncRunAtPrefix = 'sync_run_at:';
   static final String _syncRunDeviceHash = _buildSyncRunDeviceHash();
   final FlutterSecureStorage _storage;
+
+  Future<void> ensureReadableOrReset() async {
+    try {
+      await _storage.readAll();
+      return;
+    } catch (error) {
+      if (!_isWindowsDpapiDecryptFailure(error)) {
+        rethrow;
+      }
+      debugPrint(
+        'Secure storage DPAPI decrypt failed. Resetting secure storage. '
+        'error=$error',
+      );
+      await _storage.deleteAll();
+      try {
+        await _storage.readAll();
+      } catch (verifyError) {
+        throw StateError(
+          'Secure storage reset verification failed after DPAPI decrypt '
+          'error. original=$error verify=$verifyError',
+        );
+      }
+    }
+  }
 
   Future<String?> readApiKey() => _storage.read(key: _apiKeyKey);
 
@@ -418,5 +443,16 @@ class SecureStorageService {
       Platform.pathSeparator,
     ].join('|');
     return sha256Hex(seed);
+  }
+
+  bool _isWindowsDpapiDecryptFailure(Object error) {
+    if (!Platform.isWindows) {
+      return false;
+    }
+    final message = error.toString().toLowerCase();
+    return message.contains('cryptunprotectdata') ||
+        message.contains('cryptunrpotectdata') ||
+        message.contains('failure on cryptunprotectdata()') ||
+        message.contains('error_invalid_data');
   }
 }
