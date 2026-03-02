@@ -1963,6 +1963,176 @@ void main() {
   );
 
   test(
+    'local sync mock: stale-cursor 3127 progress rows skip decrypt/import quickly',
+    () async {
+      final crypto = SessionCryptoService();
+      final secureStorage = _MemorySecureStorage(accessToken: 'token');
+
+      final teacherId = await db.createUser(
+        username: 'teacher_stale_perf',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 911,
+      );
+      final studentId = await db.createUser(
+        username: 'student_stale_perf',
+        pinHash: 'hash',
+        role: 'student',
+        remoteUserId: 3011,
+      );
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'StalePerf',
+        granularity: 1,
+        textbookText: '',
+        sourcePath: r'C:\courses\stale_perf',
+      );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 191,
+      );
+
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+      final remoteStudentId = student!.remoteUserId!;
+
+      final studentKeyPair = await crypto.generateKeyPair();
+      final studentPublicKey = await crypto.extractPublicKey(studentKeyPair);
+      await secureStorage.writeUserPrivateKey(
+        remoteStudentId,
+        await crypto.encodePrivateKey(studentKeyPair),
+      );
+      await secureStorage.writeUserPublicKey(
+        remoteStudentId,
+        crypto.encodePublicKey(studentPublicKey),
+      );
+
+      final baseUpdatedAt = DateTime.parse('2026-03-02T14:00:00Z');
+      for (var i = 0; i < 3127; i++) {
+        await db.upsertProgressFromSync(
+          studentId: studentId,
+          courseVersionId: courseVersionId,
+          kpKey: '2.1.$i',
+          lit: i.isEven,
+          litPercent: i % 101,
+          questionLevel: 'medium',
+          summaryText: 'local-$i',
+          summaryRawResponse: '',
+          summaryValid: true,
+          updatedAt: baseUpdatedAt.add(Duration(seconds: i)),
+        );
+      }
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_progress_upload',
+        runAt: baseUpdatedAt.add(const Duration(seconds: 10)),
+      );
+
+      final remoteItems = List<ProgressSyncItem>.generate(3127, (index) {
+        final updatedAt = baseUpdatedAt.add(Duration(seconds: index));
+        return ProgressSyncItem(
+          cursorId: index + 1,
+          courseId: 191,
+          courseSubject: 'StalePerf',
+          teacherUserId: 911,
+          studentUserId: remoteStudentId,
+          kpKey: '2.1.$index',
+          lit: index.isEven,
+          litPercent: index % 101,
+          questionLevel: 'medium',
+          summaryText: 'remote-$index',
+          summaryRawResponse: '',
+          summaryValid: true,
+          updatedAt: updatedAt.toUtc().toIso8601String(),
+          envelope: '%%%INVALID_BASE64%%%',
+          envelopeHash: '',
+        );
+      });
+
+      var progressListCalls = 0;
+      final api = _TestSessionSyncApiService(
+        secureStorage: secureStorage,
+        sessionItems: const <SessionSyncItem>[],
+        progressItems: const <ProgressSyncItem>[],
+        listSessionsDeltaHandler: ({
+          String? since,
+          int? sinceId,
+          int? limit,
+          String? ifNoneMatch,
+        }) {
+          return SyncListResult<SessionSyncItem>(
+            items: const <SessionSyncItem>[],
+            etag: 's304',
+            notModified: true,
+          );
+        },
+        listProgressChunksDeltaHandler: ({
+          String? since,
+          int? sinceId,
+          int? limit,
+          String? ifNoneMatch,
+        }) {
+          return SyncListResult<ProgressSyncChunkItem>(
+            items: const <ProgressSyncChunkItem>[],
+            etag: 'chunk-empty',
+            notModified: false,
+          );
+        },
+        listProgressDeltaHandler: ({
+          String? since,
+          int? sinceId,
+          int? limit,
+          String? ifNoneMatch,
+        }) {
+          progressListCalls++;
+          if (progressListCalls == 1) {
+            return SyncListResult<ProgressSyncItem>(
+              items: remoteItems,
+              etag: 'progress-page',
+              notModified: false,
+            );
+          }
+          return SyncListResult<ProgressSyncItem>(
+            items: const <ProgressSyncItem>[],
+            etag: 'progress-empty',
+            notModified: false,
+          );
+        },
+      );
+      final userKeyService = UserKeyService(
+        secureStorage: secureStorage,
+        api: api,
+        crypto: crypto,
+      );
+      final syncService = SessionSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        api: api,
+        userKeyService: userKeyService,
+        crypto: crypto,
+      );
+
+      final stopwatch = Stopwatch()..start();
+      await syncService.syncIfReady(currentUser: student);
+      stopwatch.stop();
+
+      expect(progressListCalls, equals(1));
+      expect(stopwatch.elapsed.inMilliseconds, lessThan(1000));
+      final progressRows = await db.getProgressForCourse(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+      );
+      expect(progressRows, hasLength(3127));
+      expect(api.uploadedProgressChunkEntries, isEmpty);
+      expect(api.uploadedProgressEntries, isEmpty);
+    },
+  );
+
+  test(
     'force pull from server replaces local student data without uploads',
     () async {
       final crypto = SessionCryptoService();
