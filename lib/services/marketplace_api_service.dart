@@ -618,24 +618,31 @@ class MarketplaceApiService {
     required String courseName,
     required File bundleFile,
   }) async {
-    final token = await _requireAccessToken();
     final uri = Uri.parse('$_baseUrl/api/bundles/upload').replace(
       queryParameters: {
         'bundle_id': bundleId.toString(),
         'course_name': courseName.trim(),
       },
     );
-    final request = http.MultipartRequest('POST', uri);
-    request.headers['Authorization'] = 'Bearer $token';
-    request.files.add(await http.MultipartFile.fromPath(
-      'bundle',
-      bundleFile.path,
-    ));
-    http.StreamedResponse streamed;
-    try {
-      streamed = await _client.send(request);
-    } on Exception catch (error) {
-      throw MarketplaceApiException('Request failed: $error');
+    Future<http.StreamedResponse> send(String token) async {
+      final request = http.MultipartRequest('POST', uri);
+      request.headers['Authorization'] = 'Bearer $token';
+      request.files.add(await http.MultipartFile.fromPath(
+        'bundle',
+        bundleFile.path,
+      ));
+      try {
+        return await _client.send(request);
+      } on Exception catch (error) {
+        throw MarketplaceApiException('Request failed: $error');
+      }
+    }
+
+    var token = await _requireAccessToken();
+    var streamed = await send(token);
+    if (streamed.statusCode == 401 && await _refreshAccessToken()) {
+      token = await _requireAccessToken();
+      streamed = await send(token);
     }
     final response = await http.Response.fromStream(streamed);
     final decoded = _decodeResponse(response);
@@ -649,19 +656,27 @@ class MarketplaceApiService {
     required int bundleVersionId,
     required String targetPath,
   }) async {
-    final token = await _requireAccessToken();
     final uri = Uri.parse('$_baseUrl/api/bundles/download').replace(
       queryParameters: {
         'bundle_version_id': bundleVersionId.toString(),
       },
     );
-    final request = http.Request('GET', uri);
-    request.headers['Authorization'] = 'Bearer $token';
-    http.StreamedResponse streamed;
-    try {
-      streamed = await _client.send(request);
-    } on Exception catch (error) {
-      throw MarketplaceApiException('Request failed: $error');
+    Future<http.StreamedResponse> send(String token) async {
+      final request = http.Request('GET', uri);
+      request.headers['Authorization'] = 'Bearer $token';
+      try {
+        return await _client.send(request);
+      } on Exception catch (error) {
+        throw MarketplaceApiException('Request failed: $error');
+      }
+    }
+
+    var token = await _requireAccessToken();
+    var streamed = await send(token);
+    if (streamed.statusCode == 401 && await _refreshAccessToken()) {
+      await streamed.stream.drain();
+      token = await _requireAccessToken();
+      streamed = await send(token);
     }
     if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
       final body = await streamed.stream.bytesToString();
@@ -709,21 +724,30 @@ class MarketplaceApiService {
     Map<String, String>? params,
     String? ifNoneMatch,
   }) async {
-    final token = await _requireAccessToken();
     final uri = Uri.parse('$_baseUrl$path').replace(queryParameters: params);
-    final headers = _authHeaders(token);
-    final etag = (ifNoneMatch ?? '').trim();
-    if (etag.isNotEmpty) {
-      headers['If-None-Match'] = etag;
+    Future<http.Response> send(String token) async {
+      final headers = _authHeaders(token);
+      final etag = (ifNoneMatch ?? '').trim();
+      if (etag.isNotEmpty) {
+        headers['If-None-Match'] = etag;
+      }
+      try {
+        return await _client.get(
+          uri,
+          headers: headers,
+        );
+      } on Exception catch (error) {
+        throw MarketplaceApiException('Request failed: $error');
+      }
     }
-    try {
-      return await _client.get(
-        uri,
-        headers: headers,
-      );
-    } on Exception catch (error) {
-      throw MarketplaceApiException('Request failed: $error');
+
+    var token = await _requireAccessToken();
+    var response = await send(token);
+    if (response.statusCode == 401 && await _refreshAccessToken()) {
+      token = await _requireAccessToken();
+      response = await send(token);
     }
+    return response;
   }
 
   Future<dynamic> _post(
@@ -731,17 +755,24 @@ class MarketplaceApiService {
     Map<String, dynamic> body, {
     Map<String, String>? params,
   }) async {
-    final token = await _requireAccessToken();
     final uri = Uri.parse('$_baseUrl$path').replace(queryParameters: params);
-    http.Response response;
-    try {
-      response = await _client.post(
-        uri,
-        headers: _authHeaders(token),
-        body: jsonEncode(body),
-      );
-    } on Exception catch (error) {
-      throw MarketplaceApiException('Request failed: $error');
+    Future<http.Response> send(String token) async {
+      try {
+        return await _client.post(
+          uri,
+          headers: _authHeaders(token),
+          body: jsonEncode(body),
+        );
+      } on Exception catch (error) {
+        throw MarketplaceApiException('Request failed: $error');
+      }
+    }
+
+    var token = await _requireAccessToken();
+    var response = await send(token);
+    if (response.statusCode == 401 && await _refreshAccessToken()) {
+      token = await _requireAccessToken();
+      response = await send(token);
     }
     return _decodeResponse(response);
   }
@@ -759,6 +790,48 @@ class MarketplaceApiService {
       throw MarketplaceApiException('Missing auth token.');
     }
     return token.trim();
+  }
+
+  Future<bool> _refreshAccessToken() async {
+    final refreshToken = await _secureStorage.readAuthRefreshToken();
+    if (refreshToken == null || refreshToken.trim().isEmpty) {
+      return false;
+    }
+    http.Response response;
+    try {
+      response = await _client.post(
+        Uri.parse('$_baseUrl/api/auth/refresh'),
+        headers: const {'Content-Type': 'application/json'},
+        body: jsonEncode({'refresh_token': refreshToken.trim()}),
+      );
+    } on Exception catch (error) {
+      throw MarketplaceApiException('Token refresh failed: $error');
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      if (response.statusCode == 400 || response.statusCode == 401) {
+        await _secureStorage.deleteAuthTokens();
+        return false;
+      }
+      throw MarketplaceApiException(
+        _extractError(response.body) ?? 'Token refresh failed.',
+        statusCode: response.statusCode,
+      );
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw MarketplaceApiException('Token refresh response invalid.');
+    }
+    final accessToken = (decoded['access_token'] as String?)?.trim() ?? '';
+    final nextRefreshToken =
+        (decoded['refresh_token'] as String?)?.trim() ?? '';
+    if (accessToken.isEmpty || nextRefreshToken.isEmpty) {
+      throw MarketplaceApiException('Token refresh response missing tokens.');
+    }
+    await _secureStorage.writeAuthTokens(
+      accessToken: accessToken,
+      refreshToken: nextRefreshToken,
+    );
+    return true;
   }
 
   dynamic _decodeResponse(http.Response response) {

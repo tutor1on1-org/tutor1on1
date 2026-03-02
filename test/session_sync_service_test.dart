@@ -1127,6 +1127,152 @@ void main() {
   );
 
   test(
+    'session download drains paginated deltas in one sync run',
+    () async {
+      final crypto = SessionCryptoService();
+      final secureStorage = _MemorySecureStorage(accessToken: 'token');
+
+      final teacherId = await db.createUser(
+        username: 'teacher_pagination',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 905,
+      );
+      final studentId = await db.createUser(
+        username: 'student_pagination',
+        pinHash: 'hash',
+        role: 'student',
+        remoteUserId: 3005,
+      );
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Physics',
+        granularity: 1,
+        textbookText: '',
+        sourcePath: r'C:\courses\physics',
+      );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 140,
+      );
+
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+      final remoteStudentId = student!.remoteUserId!;
+
+      final studentKeyPair = await crypto.generateKeyPair();
+      final studentPublicKey = await crypto.extractPublicKey(studentKeyPair);
+      await secureStorage.writeUserPrivateKey(
+        remoteStudentId,
+        await crypto.encodePrivateKey(studentKeyPair),
+      );
+      await secureStorage.writeUserPublicKey(
+        remoteStudentId,
+        crypto.encodePublicKey(studentPublicKey),
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_progress_upload',
+        runAt: DateTime.now().toUtc(),
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_session_upload',
+        runAt: DateTime.now().toUtc(),
+      );
+
+      final firstPage = List<SessionSyncItem>.generate(500, (index) {
+        final cursorId = index + 1;
+        return SessionSyncItem(
+          cursorId: cursorId,
+          sessionSyncId: '',
+          courseId: 140,
+          teacherUserId: 905,
+          studentUserId: remoteStudentId,
+          senderUserId: remoteStudentId,
+          updatedAt: '2026-03-01T08:00:00Z',
+          envelope: '',
+          envelopeHash: '',
+        );
+      });
+
+      var sessionListCalls = 0;
+      String? secondSince;
+      int? secondSinceId;
+      final api = _TestSessionSyncApiService(
+        secureStorage: secureStorage,
+        sessionItems: const <SessionSyncItem>[],
+        progressItems: const <ProgressSyncItem>[],
+        listSessionsDeltaHandler: ({
+          String? since,
+          int? sinceId,
+          int? limit,
+          String? ifNoneMatch,
+        }) {
+          sessionListCalls++;
+          if (sessionListCalls == 1) {
+            expect((since ?? '').trim(), isEmpty);
+            expect(sinceId == null || sinceId == 0, isTrue);
+            expect(limit, equals(500));
+            return SyncListResult<SessionSyncItem>(
+              items: firstPage,
+              etag: 'session-page-1',
+              notModified: false,
+            );
+          }
+          secondSince = since;
+          secondSinceId = sinceId;
+          expect(limit, equals(500));
+          return SyncListResult<SessionSyncItem>(
+            items: const <SessionSyncItem>[],
+            etag: 'session-page-2',
+            notModified: false,
+          );
+        },
+        listProgressDeltaHandler: ({
+          String? since,
+          int? sinceId,
+          int? limit,
+          String? ifNoneMatch,
+        }) {
+          return SyncListResult<ProgressSyncItem>(
+            items: const <ProgressSyncItem>[],
+            etag: 'progress-empty',
+            notModified: false,
+          );
+        },
+      );
+
+      final userKeyService = UserKeyService(
+        secureStorage: secureStorage,
+        api: api,
+        crypto: crypto,
+      );
+      final syncService = SessionSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        api: api,
+        userKeyService: userKeyService,
+        crypto: crypto,
+      );
+
+      await syncService.syncIfReady(currentUser: student);
+
+      expect(sessionListCalls, equals(2));
+      expect(secondSince, equals('2026-03-01T08:00:00.000Z'));
+      expect(secondSinceId, equals(500));
+      expect(
+        await secureStorage.readSessionSyncCursor(remoteStudentId),
+        equals('2026-03-01T08:00:00.000Z|500'),
+      );
+    },
+  );
+
+  test(
     'force pull from server replaces local student data without uploads',
     () async {
       final crypto = SessionCryptoService();

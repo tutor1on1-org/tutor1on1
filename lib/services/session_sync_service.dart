@@ -51,6 +51,7 @@ class SessionSyncService {
       'session_sync_run_session_download';
   static const String _syncRunDomainProgressDownload =
       'session_sync_run_progress_download';
+  static const int _syncDownloadPageSize = 500;
   static const int _progressUploadBatchSize = 200;
   static const int _progressUploadIsolationMaxSplits = 24;
   bool _syncing = false;
@@ -806,81 +807,66 @@ class SessionSyncService {
     int remoteUserId,
     SimpleKeyPair keyPair,
   ) async {
-    final cursorRaw = await _secureStorage.readSessionSyncCursor(remoteUserId);
-    final cursor = _parseSyncListCursor(cursorRaw);
-    final listScopeKey = _syncListScopeKey(cursorRaw);
-    final ifNoneMatch = await _secureStorage.readSyncListEtag(
+    final initialCursorRaw =
+        await _secureStorage.readSessionSyncCursor(remoteUserId);
+    var cursor = _parseSyncListCursor(initialCursorRaw);
+    var requestIfNoneMatch = await _secureStorage.readSyncListEtag(
       remoteUserId: remoteUserId,
       domain: _syncDomainSessionDownload,
-      scopeKey: listScopeKey,
+      scopeKey: _syncListScopeKey(initialCursorRaw),
     );
-    final listResult = await _api.listSessionsDelta(
-      since: cursor?.updatedAt.toUtc().toIso8601String(),
-      sinceId: cursor?.cursorId,
-      ifNoneMatch: ifNoneMatch,
-    );
-    await _writeSyncListEtag(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainSessionDownload,
-      scopeKey: listScopeKey,
-      etag: listResult.etag,
-    );
-    if (listResult.notModified) {
-      return;
-    }
-    final items = listResult.items;
-    if (items.isEmpty) {
-      return;
-    }
-    _SyncListCursor? latestCursor;
-    for (final item in items) {
-      final itemUpdatedAt =
-          DateTime.tryParse(item.updatedAt)?.toUtc() ?? DateTime.now().toUtc();
-      final itemCursor = _SyncListCursor(
-        updatedAt: itemUpdatedAt,
-        cursorId: item.cursorId < 0 ? 0 : item.cursorId,
+    while (true) {
+      final requestCursorRaw =
+          cursor == null ? '' : _serializeSyncListCursor(cursor);
+      final listResult = await _api.listSessionsDelta(
+        since: cursor?.updatedAt.toUtc().toIso8601String(),
+        sinceId: cursor?.cursorId,
+        ifNoneMatch: requestIfNoneMatch,
+        limit: _syncDownloadPageSize,
       );
-      final sessionSyncId = item.sessionSyncId.trim();
-      if (sessionSyncId.isEmpty) {
-        latestCursor = _latestSyncCursor(latestCursor, itemCursor);
-        continue;
-      }
-      final syncState = await _secureStorage.readSyncItemState(
+      requestIfNoneMatch = null;
+      await _writeSyncListEtag(
         remoteUserId: remoteUserId,
         domain: _syncDomainSessionDownload,
-        scopeKey: sessionSyncId,
+        scopeKey: _syncListScopeKey(requestCursorRaw),
+        etag: listResult.etag,
       );
-      if (!_isTimestampNewer(itemUpdatedAt, syncState?.lastChangedAt)) {
-        latestCursor = _latestSyncCursor(latestCursor, itemCursor);
-        continue;
+      if (listResult.notModified) {
+        return;
       }
-      final remoteHash = _resolveSyncHash(
-        primaryHash: item.envelopeHash,
-        fallbackValue: item.envelope,
-      );
-      if (syncState != null &&
-          remoteHash.isNotEmpty &&
-          syncState.contentHash == remoteHash) {
-        await _secureStorage.writeSyncItemState(
+      final items = listResult.items;
+      if (items.isEmpty) {
+        return;
+      }
+      var latestCursor = cursor;
+      for (final item in items) {
+        final itemUpdatedAt = DateTime.tryParse(item.updatedAt)?.toUtc() ??
+            DateTime.now().toUtc();
+        final itemCursor = _SyncListCursor(
+          updatedAt: itemUpdatedAt,
+          cursorId: item.cursorId < 0 ? 0 : item.cursorId,
+        );
+        final sessionSyncId = item.sessionSyncId.trim();
+        if (sessionSyncId.isEmpty) {
+          latestCursor = _latestSyncCursor(latestCursor, itemCursor);
+          continue;
+        }
+        final syncState = await _secureStorage.readSyncItemState(
           remoteUserId: remoteUserId,
           domain: _syncDomainSessionDownload,
           scopeKey: sessionSyncId,
-          contentHash: remoteHash,
-          lastChangedAt: itemUpdatedAt,
-          lastSyncedAt: itemUpdatedAt,
         );
-        latestCursor = _latestSyncCursor(latestCursor, itemCursor);
-        continue;
-      }
-      final existingLocalSession = await (_db.select(_db.chatSessions)
-            ..where((tbl) => tbl.syncId.equals(sessionSyncId))
-            ..limit(1))
-          .getSingleOrNull();
-      if (existingLocalSession != null) {
-        final localUpdatedAt = (existingLocalSession.syncUpdatedAt ??
-                existingLocalSession.startedAt)
-            .toUtc();
-        if (localUpdatedAt.isAfter(itemUpdatedAt)) {
+        if (!_isTimestampNewer(itemUpdatedAt, syncState?.lastChangedAt)) {
+          latestCursor = _latestSyncCursor(latestCursor, itemCursor);
+          continue;
+        }
+        final remoteHash = _resolveSyncHash(
+          primaryHash: item.envelopeHash,
+          fallbackValue: item.envelope,
+        );
+        if (syncState != null &&
+            remoteHash.isNotEmpty &&
+            syncState.contentHash == remoteHash) {
           await _secureStorage.writeSyncItemState(
             remoteUserId: remoteUserId,
             domain: _syncDomainSessionDownload,
@@ -892,33 +878,63 @@ class SessionSyncService {
           latestCursor = _latestSyncCursor(latestCursor, itemCursor);
           continue;
         }
+        final existingLocalSession = await (_db.select(_db.chatSessions)
+              ..where((tbl) => tbl.syncId.equals(sessionSyncId))
+              ..limit(1))
+            .getSingleOrNull();
+        if (existingLocalSession != null) {
+          final localUpdatedAt = (existingLocalSession.syncUpdatedAt ??
+                  existingLocalSession.startedAt)
+              .toUtc();
+          if (localUpdatedAt.isAfter(itemUpdatedAt)) {
+            await _secureStorage.writeSyncItemState(
+              remoteUserId: remoteUserId,
+              domain: _syncDomainSessionDownload,
+              scopeKey: sessionSyncId,
+              contentHash: remoteHash,
+              lastChangedAt: itemUpdatedAt,
+              lastSyncedAt: itemUpdatedAt,
+            );
+            latestCursor = _latestSyncCursor(latestCursor, itemCursor);
+            continue;
+          }
+        }
+        final payload = await _decryptItem(item, remoteUserId, keyPair);
+        await _importPayload(
+          currentUser,
+          payload,
+          teacherRemoteIdHint: item.teacherUserId,
+        );
+        final updatedAt =
+            DateTime.tryParse(payload['updated_at'] as String? ?? '')
+                    ?.toUtc() ??
+                itemUpdatedAt;
+        final resolvedHash =
+            remoteHash.isNotEmpty ? remoteHash : _hashCanonicalJson(payload);
+        await _secureStorage.writeSyncItemState(
+          remoteUserId: remoteUserId,
+          domain: _syncDomainSessionDownload,
+          scopeKey: sessionSyncId,
+          contentHash: resolvedHash,
+          lastChangedAt: updatedAt,
+          lastSyncedAt: updatedAt,
+        );
+        latestCursor = _latestSyncCursor(latestCursor, itemCursor);
       }
-      final payload = await _decryptItem(item, remoteUserId, keyPair);
-      await _importPayload(
-        currentUser,
-        payload,
-        teacherRemoteIdHint: item.teacherUserId,
-      );
-      final updatedAt =
-          DateTime.tryParse(payload['updated_at'] as String? ?? '')?.toUtc() ??
-              itemUpdatedAt;
-      final resolvedHash =
-          remoteHash.isNotEmpty ? remoteHash : _hashCanonicalJson(payload);
-      await _secureStorage.writeSyncItemState(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainSessionDownload,
-        scopeKey: sessionSyncId,
-        contentHash: resolvedHash,
-        lastChangedAt: updatedAt,
-        lastSyncedAt: updatedAt,
-      );
-      latestCursor = _latestSyncCursor(latestCursor, itemCursor);
-    }
-    if (latestCursor != null) {
+      if (latestCursor == null) {
+        return;
+      }
+      if (cursor != null && _compareSyncCursor(latestCursor, cursor) <= 0) {
+        return;
+      }
       await _secureStorage.writeSessionSyncCursor(
         remoteUserId,
         _serializeSyncListCursor(latestCursor),
       );
+      cursor = latestCursor;
+      if (items.length < _syncDownloadPageSize) {
+        return;
+      }
     }
   }
 
@@ -930,127 +946,163 @@ class SessionSyncService {
     if (currentUser.role != 'student') {
       return;
     }
-    final cursorRaw = await _secureStorage.readProgressSyncCursor(remoteUserId);
-    final cursor = _parseSyncListCursor(cursorRaw);
-    final listScopeKey = _syncListScopeKey(cursorRaw);
-    final ifNoneMatch = await _secureStorage.readSyncListEtag(
+    final initialCursorRaw =
+        await _secureStorage.readProgressSyncCursor(remoteUserId);
+    var cursor = _parseSyncListCursor(initialCursorRaw);
+    var requestIfNoneMatch = await _secureStorage.readSyncListEtag(
       remoteUserId: remoteUserId,
       domain: _syncDomainProgressDownload,
-      scopeKey: listScopeKey,
+      scopeKey: _syncListScopeKey(initialCursorRaw),
     );
-    final listResult = await _api.listProgressDelta(
-      since: cursor?.updatedAt.toUtc().toIso8601String(),
-      sinceId: cursor?.cursorId,
-      ifNoneMatch: ifNoneMatch,
-    );
-    await _writeSyncListEtag(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainProgressDownload,
-      scopeKey: listScopeKey,
-      etag: listResult.etag,
-    );
-    if (listResult.notModified) {
-      return;
-    }
-    final items = listResult.items;
-    if (items.isEmpty) {
-      return;
-    }
-    _SyncListCursor? latestCursor;
-    for (final item in items) {
-      final itemUpdatedAt =
-          DateTime.tryParse(item.updatedAt)?.toUtc() ?? DateTime.now().toUtc();
-      final itemCursor = _SyncListCursor(
-        updatedAt: itemUpdatedAt,
-        cursorId: item.cursorId < 0 ? 0 : item.cursorId,
+    while (true) {
+      final requestCursorRaw =
+          cursor == null ? '' : _serializeSyncListCursor(cursor);
+      final listResult = await _api.listProgressDelta(
+        since: cursor?.updatedAt.toUtc().toIso8601String(),
+        sinceId: cursor?.cursorId,
+        ifNoneMatch: requestIfNoneMatch,
+        limit: _syncDownloadPageSize,
       );
-      final scopeKey = '${item.courseId}:${item.kpKey.trim()}';
-      final syncState = await _secureStorage.readSyncItemState(
+      requestIfNoneMatch = null;
+      await _writeSyncListEtag(
         remoteUserId: remoteUserId,
         domain: _syncDomainProgressDownload,
-        scopeKey: scopeKey,
+        scopeKey: _syncListScopeKey(requestCursorRaw),
+        etag: listResult.etag,
       );
-      if (!_isTimestampNewer(itemUpdatedAt, syncState?.lastChangedAt)) {
-        latestCursor = _latestSyncCursor(latestCursor, itemCursor);
-        continue;
+      if (listResult.notModified) {
+        return;
       }
-      final fallbackHash = _hashProgressSyncItem(item);
-      final remoteHash = _resolveSyncHash(
-        primaryHash: item.envelopeHash,
-        fallbackValue:
-            item.envelope.trim().isNotEmpty ? item.envelope : fallbackHash,
-      );
-      if (syncState != null &&
-          remoteHash.isNotEmpty &&
-          syncState.contentHash == remoteHash) {
-        await _secureStorage.writeSyncItemState(
+      final items = listResult.items;
+      if (items.isEmpty) {
+        return;
+      }
+      var latestCursor = cursor;
+      for (final item in items) {
+        final itemUpdatedAt = DateTime.tryParse(item.updatedAt)?.toUtc() ??
+            DateTime.now().toUtc();
+        final itemCursor = _SyncListCursor(
+          updatedAt: itemUpdatedAt,
+          cursorId: item.cursorId < 0 ? 0 : item.cursorId,
+        );
+        final scopeKey = '${item.courseId}:${item.kpKey.trim()}';
+        final syncState = await _secureStorage.readSyncItemState(
           remoteUserId: remoteUserId,
           domain: _syncDomainProgressDownload,
           scopeKey: scopeKey,
-          contentHash: remoteHash,
-          lastChangedAt: itemUpdatedAt,
-          lastSyncedAt: itemUpdatedAt,
         );
-        latestCursor = _latestSyncCursor(latestCursor, itemCursor);
-        continue;
-      }
-      final resolved = await _resolveProgressPayload(
-        item: item,
-        remoteUserId: remoteUserId,
-        keyPair: keyPair,
-      );
-      final localTeacherId = await _resolveLocalTeacherId(
-        currentUser: currentUser,
-        teacherRemoteId: item.teacherUserId,
-      );
-      var courseVersionId =
-          await _db.getCourseVersionIdForRemoteCourse(resolved.courseId);
-      if (courseVersionId == null && localTeacherId != null) {
-        courseVersionId = await _findLocalCourseVersionBySubject(
-          teacherId: localTeacherId,
-          subject: resolved.courseSubject,
+        if (!_isTimestampNewer(itemUpdatedAt, syncState?.lastChangedAt)) {
+          latestCursor = _latestSyncCursor(latestCursor, itemCursor);
+          continue;
+        }
+        final fallbackHash = _hashProgressSyncItem(item);
+        final remoteHash = _resolveSyncHash(
+          primaryHash: item.envelopeHash,
+          fallbackValue:
+              item.envelope.trim().isNotEmpty ? item.envelope : fallbackHash,
         );
-      }
-      if (courseVersionId == null && currentUser.role == 'student') {
-        courseVersionId = await _findAssignedCourseVersionBySubject(
-          studentId: currentUser.id,
-          subject: resolved.courseSubject,
+        if (syncState != null &&
+            remoteHash.isNotEmpty &&
+            syncState.contentHash == remoteHash) {
+          await _secureStorage.writeSyncItemState(
+            remoteUserId: remoteUserId,
+            domain: _syncDomainProgressDownload,
+            scopeKey: scopeKey,
+            contentHash: remoteHash,
+            lastChangedAt: itemUpdatedAt,
+            lastSyncedAt: itemUpdatedAt,
+          );
+          latestCursor = _latestSyncCursor(latestCursor, itemCursor);
+          continue;
+        }
+        final resolved = await _resolveProgressPayload(
+          item: item,
+          remoteUserId: remoteUserId,
+          keyPair: keyPair,
         );
-      }
-      if (courseVersionId == null) {
-        courseVersionId = await _db.createCourseVersion(
-          teacherId: localTeacherId ?? currentUser.id,
-          subject: resolved.courseSubject.trim().isEmpty
-              ? 'Course'
-              : resolved.courseSubject.trim(),
-          granularity: 1,
-          textbookText: '',
-          sourcePath: null,
+        final localTeacherId = await _resolveLocalTeacherId(
+          currentUser: currentUser,
+          teacherRemoteId: item.teacherUserId,
         );
-      }
-      if (localTeacherId != null) {
-        await _ensureCourseTeacher(
+        var courseVersionId =
+            await _db.getCourseVersionIdForRemoteCourse(resolved.courseId);
+        if (courseVersionId == null && localTeacherId != null) {
+          courseVersionId = await _findLocalCourseVersionBySubject(
+            teacherId: localTeacherId,
+            subject: resolved.courseSubject,
+          );
+        }
+        if (courseVersionId == null && currentUser.role == 'student') {
+          courseVersionId = await _findAssignedCourseVersionBySubject(
+            studentId: currentUser.id,
+            subject: resolved.courseSubject,
+          );
+        }
+        if (courseVersionId == null) {
+          courseVersionId = await _db.createCourseVersion(
+            teacherId: localTeacherId ?? currentUser.id,
+            subject: resolved.courseSubject.trim().isEmpty
+                ? 'Course'
+                : resolved.courseSubject.trim(),
+            granularity: 1,
+            textbookText: '',
+            sourcePath: null,
+          );
+        }
+        if (localTeacherId != null) {
+          await _ensureCourseTeacher(
+            courseVersionId: courseVersionId,
+            expectedTeacherId: localTeacherId,
+          );
+        }
+        await _bindRemoteCourseLinkIfNeeded(
           courseVersionId: courseVersionId,
-          expectedTeacherId: localTeacherId,
+          remoteCourseId: resolved.courseId,
         );
-      }
-      await _bindRemoteCourseLinkIfNeeded(
-        courseVersionId: courseVersionId,
-        remoteCourseId: resolved.courseId,
-      );
-      await _db.assignStudent(
-        studentId: currentUser.id,
-        courseVersionId: courseVersionId,
-      );
-      final updatedAt =
-          DateTime.tryParse(resolved.updatedAt)?.toUtc() ?? itemUpdatedAt;
-      final existingLocalProgress = await _db.getProgress(
-        studentId: currentUser.id,
-        courseVersionId: courseVersionId,
-        kpKey: resolved.kpKey,
-      );
-      if (existingLocalProgress != null &&
-          existingLocalProgress.updatedAt.toUtc().isAfter(updatedAt)) {
+        await _db.assignStudent(
+          studentId: currentUser.id,
+          courseVersionId: courseVersionId,
+        );
+        final updatedAt =
+            DateTime.tryParse(resolved.updatedAt)?.toUtc() ?? itemUpdatedAt;
+        final existingLocalProgress = await _db.getProgress(
+          studentId: currentUser.id,
+          courseVersionId: courseVersionId,
+          kpKey: resolved.kpKey,
+        );
+        if (existingLocalProgress != null &&
+            existingLocalProgress.updatedAt.toUtc().isAfter(updatedAt)) {
+          final resolvedHash = remoteHash.isNotEmpty
+              ? remoteHash
+              : _hashResolvedProgress(resolved);
+          await _secureStorage.writeSyncItemState(
+            remoteUserId: remoteUserId,
+            domain: _syncDomainProgressDownload,
+            scopeKey: scopeKey,
+            contentHash: resolvedHash,
+            lastChangedAt: itemUpdatedAt,
+            lastSyncedAt: itemUpdatedAt,
+          );
+          latestCursor = _latestSyncCursor(latestCursor, itemCursor);
+          continue;
+        }
+        await _db.upsertProgressFromSync(
+          studentId: currentUser.id,
+          courseVersionId: courseVersionId,
+          kpKey: resolved.kpKey,
+          lit: resolved.lit,
+          litPercent: resolved.litPercent,
+          questionLevel:
+              resolved.questionLevel.isEmpty ? null : resolved.questionLevel,
+          summaryText:
+              resolved.summaryText.isEmpty ? null : resolved.summaryText,
+          summaryRawResponse: resolved.summaryRawResponse.isEmpty
+              ? null
+              : resolved.summaryRawResponse,
+          summaryValid: resolved.summaryValid,
+          updatedAt: updatedAt,
+        );
+        final updatedAtUtc = updatedAt.toUtc();
         final resolvedHash = remoteHash.isNotEmpty
             ? remoteHash
             : _hashResolvedProgress(resolved);
@@ -1059,45 +1111,25 @@ class SessionSyncService {
           domain: _syncDomainProgressDownload,
           scopeKey: scopeKey,
           contentHash: resolvedHash,
-          lastChangedAt: itemUpdatedAt,
-          lastSyncedAt: itemUpdatedAt,
+          lastChangedAt: updatedAtUtc,
+          lastSyncedAt: updatedAtUtc,
         );
         latestCursor = _latestSyncCursor(latestCursor, itemCursor);
-        continue;
       }
-      await _db.upsertProgressFromSync(
-        studentId: currentUser.id,
-        courseVersionId: courseVersionId,
-        kpKey: resolved.kpKey,
-        lit: resolved.lit,
-        litPercent: resolved.litPercent,
-        questionLevel:
-            resolved.questionLevel.isEmpty ? null : resolved.questionLevel,
-        summaryText: resolved.summaryText.isEmpty ? null : resolved.summaryText,
-        summaryRawResponse: resolved.summaryRawResponse.isEmpty
-            ? null
-            : resolved.summaryRawResponse,
-        summaryValid: resolved.summaryValid,
-        updatedAt: updatedAt,
-      );
-      final updatedAtUtc = updatedAt.toUtc();
-      final resolvedHash =
-          remoteHash.isNotEmpty ? remoteHash : _hashResolvedProgress(resolved);
-      await _secureStorage.writeSyncItemState(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainProgressDownload,
-        scopeKey: scopeKey,
-        contentHash: resolvedHash,
-        lastChangedAt: updatedAtUtc,
-        lastSyncedAt: updatedAtUtc,
-      );
-      latestCursor = _latestSyncCursor(latestCursor, itemCursor);
-    }
-    if (latestCursor != null) {
+      if (latestCursor == null) {
+        return;
+      }
+      if (cursor != null && _compareSyncCursor(latestCursor, cursor) <= 0) {
+        return;
+      }
       await _secureStorage.writeProgressSyncCursor(
         remoteUserId,
         _serializeSyncListCursor(latestCursor),
       );
+      cursor = latestCursor;
+      if (items.length < _syncDownloadPageSize) {
+        return;
+      }
     }
   }
 

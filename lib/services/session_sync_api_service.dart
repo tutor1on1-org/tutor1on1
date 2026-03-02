@@ -415,35 +415,51 @@ class SessionSyncApiService {
     Map<String, String>? params,
     String? ifNoneMatch,
   }) async {
-    final token = await _requireAccessToken();
     final uri = Uri.parse('$_baseUrl$path').replace(queryParameters: params);
-    final headers = _authHeaders(token);
-    final etag = (ifNoneMatch ?? '').trim();
-    if (etag.isNotEmpty) {
-      headers['If-None-Match'] = etag;
+    Future<http.Response> send(String token) async {
+      final headers = _authHeaders(token);
+      final etag = (ifNoneMatch ?? '').trim();
+      if (etag.isNotEmpty) {
+        headers['If-None-Match'] = etag;
+      }
+      try {
+        return await _client.get(
+          uri,
+          headers: headers,
+        );
+      } on Exception catch (error) {
+        throw SessionSyncApiException('Request failed: $error');
+      }
     }
-    try {
-      return await _client.get(
-        uri,
-        headers: headers,
-      );
-    } on Exception catch (error) {
-      throw SessionSyncApiException('Request failed: $error');
+
+    var token = await _requireAccessToken();
+    var response = await send(token);
+    if (response.statusCode == 401 && await _refreshAccessToken()) {
+      token = await _requireAccessToken();
+      response = await send(token);
     }
+    return response;
   }
 
   Future<dynamic> _post(String path, Map<String, dynamic> body) async {
-    final token = await _requireAccessToken();
     final uri = Uri.parse('$_baseUrl$path');
-    http.Response response;
-    try {
-      response = await _client.post(
-        uri,
-        headers: _authHeaders(token),
-        body: jsonEncode(body),
-      );
-    } on Exception catch (error) {
-      throw SessionSyncApiException('Request failed: $error');
+    Future<http.Response> send(String token) async {
+      try {
+        return await _client.post(
+          uri,
+          headers: _authHeaders(token),
+          body: jsonEncode(body),
+        );
+      } on Exception catch (error) {
+        throw SessionSyncApiException('Request failed: $error');
+      }
+    }
+
+    var token = await _requireAccessToken();
+    var response = await send(token);
+    if (response.statusCode == 401 && await _refreshAccessToken()) {
+      token = await _requireAccessToken();
+      response = await send(token);
     }
     return _decodeResponse(response);
   }
@@ -461,6 +477,48 @@ class SessionSyncApiService {
       throw SessionSyncApiException('Missing auth token.');
     }
     return token.trim();
+  }
+
+  Future<bool> _refreshAccessToken() async {
+    final refreshToken = await _secureStorage.readAuthRefreshToken();
+    if (refreshToken == null || refreshToken.trim().isEmpty) {
+      return false;
+    }
+    http.Response response;
+    try {
+      response = await _client.post(
+        Uri.parse('$_baseUrl/api/auth/refresh'),
+        headers: const {'Content-Type': 'application/json'},
+        body: jsonEncode({'refresh_token': refreshToken.trim()}),
+      );
+    } on Exception catch (error) {
+      throw SessionSyncApiException('Token refresh failed: $error');
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      if (response.statusCode == 400 || response.statusCode == 401) {
+        await _secureStorage.deleteAuthTokens();
+        return false;
+      }
+      throw SessionSyncApiException(
+        _extractError(response.body) ?? 'Token refresh failed.',
+        statusCode: response.statusCode,
+      );
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw SessionSyncApiException('Token refresh response invalid.');
+    }
+    final accessToken = (decoded['access_token'] as String?)?.trim() ?? '';
+    final nextRefreshToken =
+        (decoded['refresh_token'] as String?)?.trim() ?? '';
+    if (accessToken.isEmpty || nextRefreshToken.isEmpty) {
+      throw SessionSyncApiException('Token refresh response missing tokens.');
+    }
+    await _secureStorage.writeAuthTokens(
+      accessToken: accessToken,
+      refreshToken: nextRefreshToken,
+    );
+    return true;
   }
 
   dynamic _decodeResponse(http.Response response) {

@@ -8,8 +8,35 @@ import 'package:family_teacher/services/secure_storage_service.dart';
 import 'package:family_teacher/services/session_sync_api_service.dart';
 
 class _TokenSecureStorage extends SecureStorageService {
+  _TokenSecureStorage({
+    String accessToken = 'token',
+    String refreshToken = 'refresh-token',
+  })  : _accessToken = accessToken,
+        _refreshToken = refreshToken;
+
+  String _accessToken;
+  String _refreshToken;
+
   @override
-  Future<String?> readAuthAccessToken() async => 'token';
+  Future<String?> readAuthAccessToken() async => _accessToken;
+
+  @override
+  Future<String?> readAuthRefreshToken() async => _refreshToken;
+
+  @override
+  Future<void> writeAuthTokens({
+    required String accessToken,
+    required String refreshToken,
+  }) async {
+    _accessToken = accessToken;
+    _refreshToken = refreshToken;
+  }
+
+  @override
+  Future<void> deleteAuthTokens() async {
+    _accessToken = '';
+    _refreshToken = '';
+  }
 }
 
 void main() {
@@ -118,5 +145,52 @@ void main() {
       () => api.listSessionsDelta(sinceId: 10),
       throwsA(isA<SessionSyncApiException>()),
     );
+  });
+
+  test('listProgressDelta refreshes token and retries once on 401', () async {
+    final storage = _TokenSecureStorage(
+      accessToken: 'expired-token',
+      refreshToken: 'refresh-1',
+    );
+    var refreshCalls = 0;
+    var listCalls = 0;
+    final client = MockClient((request) async {
+      if (request.url.path == '/api/auth/refresh') {
+        refreshCalls++;
+        final payload = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(payload['refresh_token'], equals('refresh-1'));
+        return http.Response(
+          jsonEncode(<String, Object?>{
+            'access_token': 'fresh-token',
+            'refresh_token': 'refresh-2',
+          }),
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }
+      if (request.url.path == '/api/progress/sync/list') {
+        listCalls++;
+        final auth = request.headers['Authorization'];
+        if (auth == 'Bearer expired-token') {
+          return http.Response('{"message":"unauthorized"}', 401);
+        }
+        expect(auth, equals('Bearer fresh-token'));
+        return http.Response('[]', 200);
+      }
+      fail('Unexpected request: ${request.url.path}');
+    });
+    final api = SessionSyncApiService(
+      secureStorage: storage,
+      baseUrl: 'https://example.com',
+      client: client,
+    );
+
+    final result = await api.listProgressDelta();
+
+    expect(result.items, isEmpty);
+    expect(refreshCalls, equals(1));
+    expect(listCalls, equals(2));
+    expect(await storage.readAuthAccessToken(), equals('fresh-token'));
+    expect(await storage.readAuthRefreshToken(), equals('refresh-2'));
   });
 }
