@@ -143,7 +143,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
       await services.enrollmentSyncService.syncIfReady(currentUser: user);
       _setSyncState(
         syncing: showOverlay,
-        message: showOverlay ? 'Syncing sessions from server...' : '',
+        message: showOverlay ? 'Syncing sessions/progress from server...' : '',
       );
       await services.sessionSyncService.syncIfReady(currentUser: user);
     } catch (error) {
