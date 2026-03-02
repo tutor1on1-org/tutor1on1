@@ -193,4 +193,34 @@ void main() {
     expect(await storage.readAuthAccessToken(), equals('fresh-token'));
     expect(await storage.readAuthRefreshToken(), equals('refresh-2'));
   });
+
+  test('uploadSessionBatch sends chapter_key payload', () async {
+    late Map<String, dynamic> capturedBody;
+    final client = MockClient((request) async {
+      expect(request.url.path, equals('/api/sessions/sync/upload-batch'));
+      capturedBody = jsonDecode(request.body) as Map<String, dynamic>;
+      return http.Response('{"status":"ok"}', 200);
+    });
+    final api = SessionSyncApiService(
+      secureStorage: _TokenSecureStorage(),
+      baseUrl: 'https://example.com',
+      client: client,
+    );
+
+    await api.uploadSessionBatch(<SessionUploadEntry>[
+      SessionUploadEntry(
+        sessionSyncId: 'sync-1',
+        courseId: 77,
+        studentUserId: 3001,
+        chapterKey: '2.1',
+        updatedAt: '2026-03-02T00:00:00Z',
+        envelope: 'ZW52',
+        envelopeHash: 'hash',
+      ),
+    ]);
+
+    final items = (capturedBody['items'] as List).cast<Map<String, dynamic>>();
+    expect(items, hasLength(1));
+    expect(items.first['chapter_key'], equals('2.1'));
+  });
 }

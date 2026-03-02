@@ -219,7 +219,7 @@ func (h *ProgressSyncHandler) List(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
-	limit, err := parseLimitQuery(c, 200, 500)
+	limit, err := parseLimitQuery(c, 1000, 5000)
 	if err != nil {
 		return err
 	}

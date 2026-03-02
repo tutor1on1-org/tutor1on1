@@ -298,6 +298,7 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
     required String sessionSyncId,
     required int courseId,
     required int studentUserId,
+    String chapterKey = '',
     required String updatedAt,
     required String envelope,
     String? envelopeHash,
@@ -306,10 +307,26 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
       'session_sync_id': sessionSyncId,
       'course_id': courseId,
       'student_user_id': studentUserId,
+      'chapter_key': chapterKey,
       'updated_at': updatedAt,
       'envelope': envelope,
       'envelope_hash': envelopeHash ?? '',
     });
+  }
+
+  @override
+  Future<void> uploadSessionBatch(List<SessionUploadEntry> entries) async {
+    for (final entry in entries) {
+      uploadedSessions.add(<String, dynamic>{
+        'session_sync_id': entry.sessionSyncId,
+        'course_id': entry.courseId,
+        'student_user_id': entry.studentUserId,
+        'chapter_key': entry.chapterKey,
+        'updated_at': entry.updatedAt,
+        'envelope': entry.envelope,
+        'envelope_hash': entry.envelopeHash,
+      });
+    }
   }
 
   @override
@@ -1185,7 +1202,7 @@ void main() {
         runAt: DateTime.now().toUtc(),
       );
 
-      final firstPage = List<SessionSyncItem>.generate(500, (index) {
+      final firstPage = List<SessionSyncItem>.generate(5000, (index) {
         final cursorId = index + 1;
         return SessionSyncItem(
           cursorId: cursorId,
@@ -1217,7 +1234,7 @@ void main() {
           if (sessionListCalls == 1) {
             expect((since ?? '').trim(), isEmpty);
             expect(sinceId == null || sinceId == 0, isTrue);
-            expect(limit, equals(500));
+            expect(limit, equals(5000));
             return SyncListResult<SessionSyncItem>(
               items: firstPage,
               etag: 'session-page-1',
@@ -1226,7 +1243,7 @@ void main() {
           }
           secondSince = since;
           secondSinceId = sinceId;
-          expect(limit, equals(500));
+          expect(limit, equals(5000));
           return SyncListResult<SessionSyncItem>(
             items: const <SessionSyncItem>[],
             etag: 'session-page-2',
@@ -1264,10 +1281,10 @@ void main() {
 
       expect(sessionListCalls, equals(2));
       expect(secondSince, equals('2026-03-01T08:00:00.000Z'));
-      expect(secondSinceId, equals(500));
+      expect(secondSinceId, equals(5000));
       expect(
         await secureStorage.readSessionSyncCursor(remoteStudentId),
-        equals('2026-03-01T08:00:00.000Z|500'),
+        equals('2026-03-01T08:00:00.000Z|5000'),
       );
     },
   );

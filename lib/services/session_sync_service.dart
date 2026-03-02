@@ -51,7 +51,7 @@ class SessionSyncService {
       'session_sync_run_session_download';
   static const String _syncRunDomainProgressDownload =
       'session_sync_run_progress_download';
-  static const int _syncDownloadPageSize = 500;
+  static const int _syncDownloadPageSize = 5000;
   static const int _progressUploadBatchSize = 200;
   static const int _progressUploadIsolationMaxSplits = 24;
   bool _syncing = false;
@@ -696,6 +696,8 @@ class SessionSyncService {
     required Map<int, CourseKeyBundle> keysByCourse,
     required List<_PendingSessionUpload> groupItems,
   }) async {
+    final preparedUploads = <_PreparedSessionUpload>[];
+    final batchEntries = <SessionUploadEntry>[];
     for (final pending in groupItems) {
       final syncSession = pending.session;
       final syncId = pending.syncId;
@@ -778,26 +780,67 @@ class SessionSyncService {
       );
       final envelopeJson = jsonEncode(envelope.toJson());
       final envelopeBase64 = base64Encode(utf8.encode(envelopeJson));
-      await _api.uploadSession(
-        sessionSyncId: payload['session_sync_id'] as String,
-        courseId: remoteCourseId,
-        studentUserId: resolvedKeys.studentUserId,
-        updatedAt: (payload['updated_at'] as String?) ??
-            DateTime.now().toUtc().toIso8601String(),
-        envelope: envelopeBase64,
-        envelopeHash: _hashEnvelope(envelopeJson),
+      final envelopeHash = _hashEnvelope(envelopeJson);
+      batchEntries.add(
+        SessionUploadEntry(
+          sessionSyncId: payload['session_sync_id'] as String,
+          courseId: remoteCourseId,
+          studentUserId: resolvedKeys.studentUserId,
+          chapterKey: _extractSecondLevelChapter(syncSession.kpKey),
+          updatedAt: (payload['updated_at'] as String?) ??
+              DateTime.now().toUtc().toIso8601String(),
+          envelope: envelopeBase64,
+          envelopeHash: envelopeHash,
+        ),
       );
+      preparedUploads.add(
+        _PreparedSessionUpload(
+          sessionId: syncSession.id,
+          syncUpdatedAt: syncUpdatedAt,
+          syncStateWrite: _SyncStateWrite(
+            domain: _syncDomainSessionUpload,
+            scopeKey: syncId,
+            contentHash: payloadHash,
+            lastChangedAt: syncUpdatedAt,
+            lastSyncedAt: syncUpdatedAt,
+          ),
+        ),
+      );
+    }
+    if (batchEntries.isEmpty) {
+      return;
+    }
+    try {
+      await _api.uploadSessionBatch(batchEntries);
+    } on SessionSyncApiException catch (error) {
+      if (error.statusCode != 404) {
+        rethrow;
+      }
+      for (final entry in batchEntries) {
+        await _api.uploadSession(
+          sessionSyncId: entry.sessionSyncId,
+          courseId: entry.courseId,
+          studentUserId: entry.studentUserId,
+          chapterKey: entry.chapterKey,
+          updatedAt: entry.updatedAt,
+          envelope: entry.envelope,
+          envelopeHash: entry.envelopeHash,
+        );
+      }
+    }
+    for (final prepared in preparedUploads) {
       await _markSessionUploaded(
-        sessionId: syncSession.id,
-        uploadedAt: syncUpdatedAt,
+        sessionId: prepared.sessionId,
+        uploadedAt: prepared.syncUpdatedAt,
       );
+      final syncStateWrite = prepared.syncStateWrite;
       await _secureStorage.writeSyncItemState(
         remoteUserId: remoteUserId,
-        domain: _syncDomainSessionUpload,
-        scopeKey: syncId,
-        contentHash: payloadHash,
-        lastChangedAt: syncUpdatedAt,
-        lastSyncedAt: syncUpdatedAt,
+        domain: syncStateWrite.domain,
+        scopeKey: syncStateWrite.scopeKey,
+        contentHash: syncStateWrite.contentHash,
+        lastChangedAt: syncStateWrite.lastChangedAt,
+        lastSyncedAt: syncStateWrite.lastSyncedAt,
       );
     }
   }
@@ -2036,6 +2079,18 @@ class _PendingProgressUpload {
 
   final ProgressUploadEntry upload;
   final _SyncStateWrite stateWrite;
+}
+
+class _PreparedSessionUpload {
+  _PreparedSessionUpload({
+    required this.sessionId,
+    required this.syncUpdatedAt,
+    required this.syncStateWrite,
+  });
+
+  final int sessionId;
+  final DateTime syncUpdatedAt;
+  final _SyncStateWrite syncStateWrite;
 }
 
 class _FailedProgressUpload {

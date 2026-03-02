@@ -30,6 +30,7 @@ func TestSessionSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"teacher_user_id",
 		"student_user_id",
 		"sender_user_id",
+		"chapter_key",
 		"updated_at",
 		"envelope",
 		"envelope_hash",
@@ -40,11 +41,12 @@ func TestSessionSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		int64(901),
 		userID,
 		userID,
+		"1.1",
 		updatedAt,
 		[]byte("session_payload"),
 		"session_hash",
 	)
-	mock.ExpectQuery(`SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, updated_at, envelope, envelope_hash`).
+	mock.ExpectQuery(`SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, chapter_key, updated_at, envelope, envelope_hash`).
 		WithArgs(userID, userID, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(rows)
 	rows2 := sqlmock.NewRows([]string{
@@ -54,6 +56,7 @@ func TestSessionSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"teacher_user_id",
 		"student_user_id",
 		"sender_user_id",
+		"chapter_key",
 		"updated_at",
 		"envelope",
 		"envelope_hash",
@@ -64,11 +67,12 @@ func TestSessionSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		int64(901),
 		userID,
 		userID,
+		"1.1",
 		updatedAt,
 		[]byte("session_payload"),
 		"session_hash",
 	)
-	mock.ExpectQuery(`SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, updated_at, envelope, envelope_hash`).
+	mock.ExpectQuery(`SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, chapter_key, updated_at, envelope, envelope_hash`).
 		WithArgs(userID, userID, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(rows2)
 
@@ -238,6 +242,7 @@ func TestSessionSyncListSinceIDIncludesEqualTimestampRows(t *testing.T) {
 		"teacher_user_id",
 		"student_user_id",
 		"sender_user_id",
+		"chapter_key",
 		"updated_at",
 		"envelope",
 		"envelope_hash",
@@ -248,11 +253,12 @@ func TestSessionSyncListSinceIDIncludesEqualTimestampRows(t *testing.T) {
 		int64(901),
 		userID,
 		userID,
+		"1.1",
 		since,
 		[]byte("payload"),
 		"hash",
 	)
-	mock.ExpectQuery(`SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, updated_at, envelope, envelope_hash`).
+	mock.ExpectQuery(`SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, chapter_key, updated_at, envelope, envelope_hash`).
 		WithArgs(userID, userID, since, since, int64(10), 5).
 		WillReturnRows(rows)
 

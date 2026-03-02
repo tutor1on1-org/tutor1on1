@@ -97,6 +97,7 @@ class SessionSyncItem {
     required this.teacherUserId,
     required this.studentUserId,
     required this.senderUserId,
+    this.chapterKey = '',
     required this.updatedAt,
     required this.envelope,
     required this.envelopeHash,
@@ -108,6 +109,7 @@ class SessionSyncItem {
   final int teacherUserId;
   final int studentUserId;
   final int senderUserId;
+  final String chapterKey;
   final String updatedAt;
   final String envelope;
   final String envelopeHash;
@@ -120,11 +122,42 @@ class SessionSyncItem {
       teacherUserId: (json['teacher_user_id'] as num?)?.toInt() ?? 0,
       studentUserId: (json['student_user_id'] as num?)?.toInt() ?? 0,
       senderUserId: (json['sender_user_id'] as num?)?.toInt() ?? 0,
+      chapterKey: (json['chapter_key'] as String?) ?? '',
       updatedAt: (json['updated_at'] as String?) ?? '',
       envelope: (json['envelope'] as String?) ?? '',
       envelopeHash: (json['envelope_hash'] as String?) ?? '',
     );
   }
+}
+
+class SessionUploadEntry {
+  SessionUploadEntry({
+    required this.sessionSyncId,
+    required this.courseId,
+    required this.studentUserId,
+    required this.chapterKey,
+    required this.updatedAt,
+    required this.envelope,
+    required this.envelopeHash,
+  });
+
+  final String sessionSyncId;
+  final int courseId;
+  final int studentUserId;
+  final String chapterKey;
+  final String updatedAt;
+  final String envelope;
+  final String envelopeHash;
+
+  Map<String, dynamic> toJson() => {
+        'session_sync_id': sessionSyncId,
+        'course_id': courseId,
+        'student_user_id': studentUserId,
+        'chapter_key': chapterKey,
+        'updated_at': updatedAt,
+        'envelope': envelope,
+        'envelope_hash': envelopeHash,
+      };
 }
 
 class ProgressSyncItem {
@@ -256,6 +289,7 @@ class SessionSyncApiService {
     required String sessionSyncId,
     required int courseId,
     required int studentUserId,
+    String chapterKey = '',
     required String updatedAt,
     required String envelope,
     String? envelopeHash,
@@ -264,10 +298,23 @@ class SessionSyncApiService {
       'session_sync_id': sessionSyncId,
       'course_id': courseId,
       'student_user_id': studentUserId,
+      'chapter_key': chapterKey,
       'updated_at': updatedAt,
       'envelope': envelope,
       'envelope_hash': envelopeHash ?? '',
     });
+  }
+
+  Future<void> uploadSessionBatch(List<SessionUploadEntry> entries) async {
+    if (entries.isEmpty) {
+      return;
+    }
+    await _post(
+      '/api/sessions/sync/upload-batch',
+      {
+        'items': entries.map((entry) => entry.toJson()).toList(growable: false),
+      },
+    );
   }
 
   Future<List<SessionSyncItem>> listSessions({String? since}) async {
