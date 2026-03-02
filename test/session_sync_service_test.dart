@@ -1592,6 +1592,377 @@ void main() {
   );
 
   test(
+    'progress upload skips when no local progress changed since last successful upload run',
+    () async {
+      final crypto = SessionCryptoService();
+      final secureStorage = _MemorySecureStorage(accessToken: 'token');
+
+      final teacherId = await db.createUser(
+        username: 'teacher_upload_skip',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 908,
+      );
+      final studentId = await db.createUser(
+        username: 'student_upload_skip',
+        pinHash: 'hash',
+        role: 'student',
+        remoteUserId: 3008,
+      );
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Chemistry',
+        granularity: 1,
+        textbookText: '',
+        sourcePath: r'C:\courses\chemistry',
+      );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 170,
+      );
+
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+      final remoteStudentId = student!.remoteUserId!;
+
+      final studentKeyPair = await crypto.generateKeyPair();
+      final studentPublicKey = await crypto.extractPublicKey(studentKeyPair);
+      await secureStorage.writeUserPrivateKey(
+        remoteStudentId,
+        await crypto.encodePrivateKey(studentKeyPair),
+      );
+      await secureStorage.writeUserPublicKey(
+        remoteStudentId,
+        crypto.encodePublicKey(studentPublicKey),
+      );
+
+      final progressUpdatedAt = DateTime.parse('2026-03-02T11:00:00Z');
+      await db.upsertProgressFromSync(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+        kpKey: '1.1.1',
+        lit: true,
+        litPercent: 90,
+        questionLevel: 'hard',
+        summaryText: 'stable',
+        summaryRawResponse: '',
+        summaryValid: true,
+        updatedAt: progressUpdatedAt,
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_progress_upload',
+        runAt: progressUpdatedAt.add(const Duration(seconds: 30)),
+      );
+
+      final api = _TestSessionSyncApiService(
+        secureStorage: secureStorage,
+        sessionItems: const <SessionSyncItem>[],
+        progressItems: const <ProgressSyncItem>[],
+      );
+      final userKeyService = UserKeyService(
+        secureStorage: secureStorage,
+        api: api,
+        crypto: crypto,
+      );
+      final syncService = SessionSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        api: api,
+        userKeyService: userKeyService,
+        crypto: crypto,
+      );
+
+      await syncService.syncIfReady(currentUser: student);
+
+      expect(api.uploadedProgressChunkEntries, isEmpty);
+      expect(api.uploadedProgressEntries, isEmpty);
+    },
+  );
+
+  test(
+    'progress row download skips decrypt when local timestamp is already up-to-date',
+    () async {
+      final crypto = SessionCryptoService();
+      final secureStorage = _MemorySecureStorage(accessToken: 'token');
+
+      final teacherId = await db.createUser(
+        username: 'teacher_download_skip',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 909,
+      );
+      final studentId = await db.createUser(
+        username: 'student_download_skip',
+        pinHash: 'hash',
+        role: 'student',
+        remoteUserId: 3009,
+      );
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'History',
+        granularity: 1,
+        textbookText: '',
+        sourcePath: r'C:\courses\history',
+      );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 180,
+      );
+
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+      final remoteStudentId = student!.remoteUserId!;
+
+      final studentKeyPair = await crypto.generateKeyPair();
+      final studentPublicKey = await crypto.extractPublicKey(studentKeyPair);
+      await secureStorage.writeUserPrivateKey(
+        remoteStudentId,
+        await crypto.encodePrivateKey(studentKeyPair),
+      );
+      await secureStorage.writeUserPublicKey(
+        remoteStudentId,
+        crypto.encodePublicKey(studentPublicKey),
+      );
+
+      final localUpdatedAt = DateTime.parse('2026-03-02T12:00:00Z');
+      await db.upsertProgressFromSync(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+        kpKey: '2.1.3',
+        lit: true,
+        litPercent: 75,
+        questionLevel: 'medium',
+        summaryText: 'local',
+        summaryRawResponse: '',
+        summaryValid: true,
+        updatedAt: localUpdatedAt,
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_progress_upload',
+        runAt: localUpdatedAt.add(const Duration(seconds: 30)),
+      );
+
+      final api = _TestSessionSyncApiService(
+        secureStorage: secureStorage,
+        sessionItems: const <SessionSyncItem>[],
+        progressItems: const <ProgressSyncItem>[],
+        listProgressDeltaHandler: ({
+          String? since,
+          int? sinceId,
+          int? limit,
+          String? ifNoneMatch,
+        }) {
+          return SyncListResult<ProgressSyncItem>(
+            items: <ProgressSyncItem>[
+              ProgressSyncItem(
+                cursorId: 777,
+                courseId: 180,
+                courseSubject: 'History',
+                teacherUserId: 909,
+                studentUserId: remoteStudentId,
+                kpKey: '2.1.3',
+                lit: true,
+                litPercent: 75,
+                questionLevel: 'medium',
+                summaryText: 'remote-same',
+                summaryRawResponse: '',
+                summaryValid: true,
+                updatedAt: '2026-03-02T12:00:00Z',
+                envelope: '%%%INVALID_BASE64%%%',
+                envelopeHash: '',
+              ),
+            ],
+            etag: 'progress-stale-cursor',
+            notModified: false,
+          );
+        },
+        listProgressChunksDeltaHandler: ({
+          String? since,
+          int? sinceId,
+          int? limit,
+          String? ifNoneMatch,
+        }) {
+          return SyncListResult<ProgressSyncChunkItem>(
+            items: const <ProgressSyncChunkItem>[],
+            etag: 'chunk-empty',
+            notModified: false,
+          );
+        },
+      );
+      final userKeyService = UserKeyService(
+        secureStorage: secureStorage,
+        api: api,
+        crypto: crypto,
+      );
+      final syncService = SessionSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        api: api,
+        userKeyService: userKeyService,
+        crypto: crypto,
+      );
+
+      await syncService.syncIfReady(currentUser: student);
+
+      final progress = await db.getProgress(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+        kpKey: '2.1.3',
+      );
+      expect(progress, isNotNull);
+      expect(progress!.updatedAt.toUtc(), equals(localUpdatedAt.toUtc()));
+      expect(
+        await secureStorage.readProgressSyncCursor(remoteStudentId),
+        equals('2026-03-02T12:00:00.000Z|777'),
+      );
+    },
+  );
+
+  test(
+    'local sync mock: no-change sync completes quickly for large progress set',
+    () async {
+      final crypto = SessionCryptoService();
+      final secureStorage = _MemorySecureStorage(accessToken: 'token');
+
+      final teacherId = await db.createUser(
+        username: 'teacher_noop_perf',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 910,
+      );
+      final studentId = await db.createUser(
+        username: 'student_noop_perf',
+        pinHash: 'hash',
+        role: 'student',
+        remoteUserId: 3010,
+      );
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Perf',
+        granularity: 1,
+        textbookText: '',
+        sourcePath: r'C:\courses\perf',
+      );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 190,
+      );
+
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+      final remoteStudentId = student!.remoteUserId!;
+
+      final studentKeyPair = await crypto.generateKeyPair();
+      final studentPublicKey = await crypto.extractPublicKey(studentKeyPair);
+      await secureStorage.writeUserPrivateKey(
+        remoteStudentId,
+        await crypto.encodePrivateKey(studentKeyPair),
+      );
+      await secureStorage.writeUserPublicKey(
+        remoteStudentId,
+        crypto.encodePublicKey(studentPublicKey),
+      );
+
+      final baseUpdatedAt = DateTime.parse('2026-03-02T13:00:00Z');
+      for (var i = 0; i < 3127; i++) {
+        await db.upsertProgressFromSync(
+          studentId: studentId,
+          courseVersionId: courseVersionId,
+          kpKey: '1.1.$i',
+          lit: i.isEven,
+          litPercent: i % 101,
+          questionLevel: 'medium',
+          summaryText: 'p$i',
+          summaryRawResponse: '',
+          summaryValid: true,
+          updatedAt: baseUpdatedAt.add(Duration(milliseconds: i)),
+        );
+      }
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_progress_upload',
+        runAt: baseUpdatedAt.add(const Duration(seconds: 5)),
+      );
+
+      final api = _TestSessionSyncApiService(
+        secureStorage: secureStorage,
+        sessionItems: const <SessionSyncItem>[],
+        progressItems: const <ProgressSyncItem>[],
+        listSessionsDeltaHandler: ({
+          String? since,
+          int? sinceId,
+          int? limit,
+          String? ifNoneMatch,
+        }) {
+          return SyncListResult<SessionSyncItem>(
+            items: const <SessionSyncItem>[],
+            etag: 's304',
+            notModified: true,
+          );
+        },
+        listProgressChunksDeltaHandler: ({
+          String? since,
+          int? sinceId,
+          int? limit,
+          String? ifNoneMatch,
+        }) {
+          return SyncListResult<ProgressSyncChunkItem>(
+            items: const <ProgressSyncChunkItem>[],
+            etag: 'pc304',
+            notModified: true,
+          );
+        },
+        listProgressDeltaHandler: ({
+          String? since,
+          int? sinceId,
+          int? limit,
+          String? ifNoneMatch,
+        }) {
+          return SyncListResult<ProgressSyncItem>(
+            items: const <ProgressSyncItem>[],
+            etag: 'p304',
+            notModified: true,
+          );
+        },
+      );
+      final userKeyService = UserKeyService(
+        secureStorage: secureStorage,
+        api: api,
+        crypto: crypto,
+      );
+      final syncService = SessionSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        api: api,
+        userKeyService: userKeyService,
+        crypto: crypto,
+      );
+
+      final stopwatch = Stopwatch()..start();
+      await syncService.syncIfReady(currentUser: student);
+      stopwatch.stop();
+
+      expect(stopwatch.elapsed.inMilliseconds, lessThan(1000));
+      expect(api.uploadedProgressChunkEntries, isEmpty);
+      expect(api.uploadedProgressEntries, isEmpty);
+    },
+  );
+
+  test(
     'force pull from server replaces local student data without uploads',
     () async {
       final crypto = SessionCryptoService();

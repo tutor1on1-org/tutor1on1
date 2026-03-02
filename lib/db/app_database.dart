@@ -801,6 +801,88 @@ ORDER BY s.started_at DESC
         .getSingleOrNull();
   }
 
+  Future<DateTime?> getLatestProgressUpdatedAtForSync({
+    required int studentId,
+  }) async {
+    final query = selectOnly(progressEntries)
+      ..addColumns([progressEntries.updatedAt.max()])
+      ..where(progressEntries.studentId.equals(studentId))
+      ..where(progressEntries.kpKey.isNotValue(kTreeViewStateKpKey));
+    final row = await query.getSingle();
+    final value = row.read(progressEntries.updatedAt.max());
+    return value?.toUtc();
+  }
+
+  Future<List<ProgressEntry>> listProgressEntriesForSyncUpload({
+    required int studentId,
+    DateTime? updatedAtOrAfter,
+  }) {
+    final normalizedUpdatedAt = updatedAtOrAfter?.toUtc();
+    final query = select(progressEntries)
+      ..where((tbl) =>
+          tbl.studentId.equals(studentId) &
+          tbl.kpKey.isNotValue(kTreeViewStateKpKey));
+    if (normalizedUpdatedAt != null) {
+      query.where(
+          (tbl) => tbl.updatedAt.isBiggerOrEqualValue(normalizedUpdatedAt));
+    }
+    return query.get();
+  }
+
+  Future<Map<String, DateTime>> getProgressUpdatedAtByRemoteCourseAndKp({
+    required int studentId,
+  }) async {
+    final rows = await customSelect(
+      '''
+SELECT crl.remote_course_id AS remote_course_id,
+       p.kp_key AS kp_key,
+       p.updated_at AS updated_at
+FROM progress_entries p
+JOIN course_remote_links crl ON crl.course_version_id = p.course_version_id
+WHERE p.student_id = ? AND p.kp_key <> ?
+''',
+      variables: [
+        Variable.withInt(studentId),
+        Variable.withString(kTreeViewStateKpKey),
+      ],
+      readsFrom: {progressEntries, courseRemoteLinks},
+    ).get();
+    final result = <String, DateTime>{};
+    for (final row in rows) {
+      final remoteCourseRaw = row.data['remote_course_id'];
+      final remoteCourseId =
+          remoteCourseRaw is num ? remoteCourseRaw.toInt() : 0;
+      if (remoteCourseId <= 0) {
+        continue;
+      }
+      final kpRaw = row.data['kp_key'];
+      final kpKey = kpRaw is String ? kpRaw.trim() : '';
+      if (kpKey.isEmpty) {
+        continue;
+      }
+      final updatedRaw = row.data['updated_at'];
+      DateTime? updatedAt;
+      if (updatedRaw is DateTime) {
+        updatedAt = updatedRaw.toUtc();
+      } else if (updatedRaw is String) {
+        updatedAt = DateTime.tryParse(updatedRaw)?.toUtc();
+      } else if (updatedRaw is num) {
+        final rawInt = updatedRaw.toInt();
+        final millis = rawInt > 1000000000000 ? rawInt : rawInt * 1000;
+        updatedAt = DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true);
+      }
+      if (updatedAt == null) {
+        continue;
+      }
+      final key = '$remoteCourseId:$kpKey';
+      final current = result[key];
+      if (current == null || updatedAt.isAfter(current)) {
+        result[key] = updatedAt;
+      }
+    }
+    return result;
+  }
+
   Future<void> upsertProgress({
     required int studentId,
     required int courseVersionId,

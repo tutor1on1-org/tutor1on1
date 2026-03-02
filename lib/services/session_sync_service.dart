@@ -384,9 +384,23 @@ class SessionSyncService {
     if (currentUser.role != 'student') {
       return;
     }
-    final entries = await (_db.select(_db.progressEntries)
-          ..where((tbl) => tbl.studentId.equals(currentUser.id)))
-        .get();
+    final latestLocalProgressUpdatedAt =
+        await _db.getLatestProgressUpdatedAtForSync(studentId: currentUser.id);
+    if (latestLocalProgressUpdatedAt == null) {
+      return;
+    }
+    final lastUploadRunAt = await _secureStorage.readSyncRunAt(
+      remoteUserId: remoteUserId,
+      domain: _syncRunDomainProgressUpload,
+    );
+    if (lastUploadRunAt != null &&
+        !latestLocalProgressUpdatedAt.isAfter(lastUploadRunAt.toUtc())) {
+      return;
+    }
+    final entries = await _db.listProgressEntriesForSyncUpload(
+      studentId: currentUser.id,
+      updatedAtOrAfter: lastUploadRunAt?.toUtc(),
+    );
     if (entries.isEmpty) {
       return;
     }
@@ -1280,12 +1294,18 @@ class SessionSyncService {
     if (currentUser.role != 'student') {
       return;
     }
+    final localProgressUpdatedAtByRemoteScope =
+        await _db.getProgressUpdatedAtByRemoteCourseAndKp(
+      studentId: currentUser.id,
+    );
     bool needsLegacyBackfill = false;
     try {
       needsLegacyBackfill = await _downloadProgressChunks(
         currentUser: currentUser,
         remoteUserId: remoteUserId,
         keyPair: keyPair,
+        localProgressUpdatedAtByRemoteScope:
+            localProgressUpdatedAtByRemoteScope,
       );
     } on SessionSyncApiException catch (error) {
       if (error.statusCode != 404) {
@@ -1295,6 +1315,8 @@ class SessionSyncService {
         currentUser: currentUser,
         remoteUserId: remoteUserId,
         keyPair: keyPair,
+        localProgressUpdatedAtByRemoteScope:
+            localProgressUpdatedAtByRemoteScope,
       );
       return;
     }
@@ -1303,6 +1325,8 @@ class SessionSyncService {
         currentUser: currentUser,
         remoteUserId: remoteUserId,
         keyPair: keyPair,
+        localProgressUpdatedAtByRemoteScope:
+            localProgressUpdatedAtByRemoteScope,
       );
     }
   }
@@ -1311,6 +1335,7 @@ class SessionSyncService {
     required User currentUser,
     required int remoteUserId,
     required SimpleKeyPair keyPair,
+    required Map<String, DateTime> localProgressUpdatedAtByRemoteScope,
   }) async {
     final initialCursorRaw = await _readProgressChunkCursor(remoteUserId);
     var cursor = _parseSyncListCursor(initialCursorRaw);
@@ -1394,6 +1419,8 @@ class SessionSyncService {
             remoteUserId: remoteUserId,
             keyPair: keyPair,
             item: progressItem,
+            localProgressUpdatedAtByRemoteScope:
+                localProgressUpdatedAtByRemoteScope,
           );
         }
         final resolvedChunkHash = remoteChunkHash.isNotEmpty
@@ -1430,6 +1457,7 @@ class SessionSyncService {
     required User currentUser,
     required int remoteUserId,
     required SimpleKeyPair keyPair,
+    required Map<String, DateTime> localProgressUpdatedAtByRemoteScope,
   }) async {
     final initialCursorRaw =
         await _secureStorage.readProgressSyncCursor(remoteUserId);
@@ -1475,6 +1503,8 @@ class SessionSyncService {
           remoteUserId: remoteUserId,
           keyPair: keyPair,
           item: item,
+          localProgressUpdatedAtByRemoteScope:
+              localProgressUpdatedAtByRemoteScope,
         );
         latestCursor = _latestSyncCursor(latestCursor, itemCursor);
       }
@@ -1500,10 +1530,20 @@ class SessionSyncService {
     required int remoteUserId,
     required SimpleKeyPair keyPair,
     required ProgressSyncItem item,
+    required Map<String, DateTime> localProgressUpdatedAtByRemoteScope,
   }) async {
     final itemUpdatedAt =
         DateTime.tryParse(item.updatedAt)?.toUtc() ?? DateTime.now().toUtc();
-    final scopeKey = '${item.courseId}:${item.kpKey.trim()}';
+    final kpKey = item.kpKey.trim();
+    if (item.courseId <= 0 || kpKey.isEmpty) {
+      return;
+    }
+    final scopeKey = '${item.courseId}:$kpKey';
+    final indexedLocalUpdatedAt = localProgressUpdatedAtByRemoteScope[scopeKey];
+    if (indexedLocalUpdatedAt != null &&
+        !itemUpdatedAt.isAfter(indexedLocalUpdatedAt.toUtc())) {
+      return;
+    }
     final syncState = await _secureStorage.readSyncItemState(
       remoteUserId: remoteUserId,
       domain: _syncDomainProgressDownload,
@@ -1599,6 +1639,8 @@ class SessionSyncService {
         lastChangedAt: itemUpdatedAt,
         lastSyncedAt: itemUpdatedAt,
       );
+      localProgressUpdatedAtByRemoteScope[scopeKey] =
+          existingLocalProgress.updatedAt.toUtc();
       return;
     }
     await _db.upsertProgressFromSync(
@@ -1627,6 +1669,7 @@ class SessionSyncService {
       lastChangedAt: updatedAtUtc,
       lastSyncedAt: updatedAtUtc,
     );
+    localProgressUpdatedAtByRemoteScope[scopeKey] = updatedAtUtc;
   }
 
   Future<List<ProgressSyncItem>> _resolveProgressChunkItems({
