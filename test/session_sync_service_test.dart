@@ -2133,6 +2133,163 @@ void main() {
   );
 
   test(
+    'local sync mock: one changed session uploads quickly with large unchanged session set',
+    () async {
+      final crypto = SessionCryptoService();
+      final secureStorage = _MemorySecureStorage(accessToken: 'token');
+
+      final teacherId = await db.createUser(
+        username: 'teacher_one_session_change',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 912,
+      );
+      final studentId = await db.createUser(
+        username: 'student_one_session_change',
+        pinHash: 'hash',
+        role: 'student',
+        remoteUserId: 3012,
+      );
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'SessionPerf',
+        granularity: 1,
+        textbookText: '',
+        sourcePath: r'C:\courses\session_perf',
+      );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 192,
+      );
+
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+      final remoteStudentId = student!.remoteUserId!;
+
+      final studentKeyPair = await crypto.generateKeyPair();
+      final studentPublicKey = await crypto.extractPublicKey(studentKeyPair);
+      await secureStorage.writeUserPrivateKey(
+        remoteStudentId,
+        await crypto.encodePrivateKey(studentKeyPair),
+      );
+      await secureStorage.writeUserPublicKey(
+        remoteStudentId,
+        crypto.encodePublicKey(studentPublicKey),
+      );
+      final teacherKeyPair = await crypto.generateKeyPair();
+      final teacherPublicKey = await crypto.extractPublicKey(teacherKeyPair);
+
+      final unchangedTime = DateTime.parse('2026-03-02T15:00:00Z');
+      for (var i = 0; i < 3127; i++) {
+        await db.into(db.chatSessions).insert(
+              ChatSessionsCompanion.insert(
+                studentId: studentId,
+                courseVersionId: courseVersionId,
+                kpKey: '3.1.$i',
+                title: Value('Session $i'),
+                status: const Value('active'),
+                startedAt: Value(unchangedTime.add(Duration(seconds: i))),
+                syncId: Value('session-perf-$i'),
+                syncUpdatedAt: Value(unchangedTime.add(Duration(seconds: i))),
+                syncUploadedAt: Value(unchangedTime.add(Duration(seconds: i))),
+              ),
+            );
+      }
+
+      final changedSessionUpdatedAt = DateTime.parse('2026-03-02T16:30:00Z');
+      final changedSessionId = await db.into(db.chatSessions).insert(
+            ChatSessionsCompanion.insert(
+              studentId: studentId,
+              courseVersionId: courseVersionId,
+              kpKey: '3.2.1',
+              title: const Value('Changed Session'),
+              status: const Value('active'),
+              startedAt: Value(changedSessionUpdatedAt),
+              syncId: const Value('session-perf-changed'),
+              syncUpdatedAt: Value(changedSessionUpdatedAt),
+              syncUploadedAt: Value(
+                  changedSessionUpdatedAt.subtract(const Duration(hours: 2))),
+            ),
+          );
+      await db.into(db.chatMessages).insert(
+            ChatMessagesCompanion.insert(
+              sessionId: changedSessionId,
+              role: 'assistant',
+              content: 'changed session payload',
+              createdAt: Value(changedSessionUpdatedAt),
+            ),
+          );
+
+      final nowUtc = DateTime.now().toUtc();
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_session_download',
+        runAt: nowUtc,
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_progress_download',
+        runAt: nowUtc,
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_progress_upload',
+        runAt: nowUtc,
+      );
+
+      final api = _TestSessionSyncApiService(
+        secureStorage: secureStorage,
+        sessionItems: const <SessionSyncItem>[],
+        progressItems: const <ProgressSyncItem>[],
+        courseKeysByCourse: <int, CourseKeyBundle>{
+          192: CourseKeyBundle(
+            courseId: 192,
+            teacherUserId: 912,
+            teacherPublicKey: crypto.encodePublicKey(teacherPublicKey),
+            studentUserId: remoteStudentId,
+            studentPublicKey: crypto.encodePublicKey(studentPublicKey),
+          ),
+        },
+      );
+      final userKeyService = UserKeyService(
+        secureStorage: secureStorage,
+        api: api,
+        crypto: crypto,
+      );
+      final syncService = SessionSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        api: api,
+        userKeyService: userKeyService,
+        crypto: crypto,
+      );
+
+      final stopwatch = Stopwatch()..start();
+      await syncService.syncIfReady(currentUser: student);
+      stopwatch.stop();
+
+      print(
+          'one_changed_session_elapsed_ms=${stopwatch.elapsed.inMilliseconds}');
+      expect(stopwatch.elapsed.inMilliseconds, lessThan(1000));
+      expect(api.uploadedSessions, hasLength(1));
+      expect(
+        api.uploadedSessions.single['session_sync_id'],
+        equals('session-perf-changed'),
+      );
+      final changedSession = await db.getSession(changedSessionId);
+      expect(changedSession, isNotNull);
+      expect(
+        changedSession!.syncUploadedAt!.toUtc(),
+        equals(changedSessionUpdatedAt.toUtc()),
+      );
+    },
+  );
+
+  test(
     'force pull from server replaces local student data without uploads',
     () async {
       final crypto = SessionCryptoService();
