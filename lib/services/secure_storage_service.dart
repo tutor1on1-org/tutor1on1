@@ -42,6 +42,8 @@ class SecureStorageService {
   static final String _syncRunDeviceHash = _buildSyncRunDeviceHash();
   final FlutterSecureStorage _storage;
 
+  static String get syncRunDeviceHash => _syncRunDeviceHash;
+
   Future<void> ensureReadableOrReset() async {
     try {
       await _storage.readAll();

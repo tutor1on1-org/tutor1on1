@@ -44,6 +44,8 @@ void main() {
     late Uri capturedUri;
     final client = MockClient((request) async {
       capturedUri = request.url;
+      expect(request.headers['X-Device-Id'], isNotNull);
+      expect((request.headers['X-Device-Id'] ?? '').trim().isNotEmpty, isTrue);
       return http.Response(
         jsonEncode(
           <Map<String, Object?>>[

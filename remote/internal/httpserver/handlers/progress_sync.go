@@ -52,16 +52,42 @@ type uploadProgressChunkBatchRequest struct {
 	Items []uploadProgressChunkRequest `json:"items"`
 }
 
+const (
+	progressSyncAuditActionInsert    = "insert"
+	progressSyncAuditActionUpdate    = "update"
+	progressSyncAuditActionSkipStale = "skip_stale"
+	progressSyncDeviceIDHeader       = "X-Device-Id"
+	progressSyncLegacyDeviceIDHeader = "X-FT-Device-Id"
+	progressSyncMaxDeviceIDLength    = 128
+)
+
+type progressSyncAuditRecord struct {
+	courseID         int64
+	studentUserID    int64
+	teacherUserID    int64
+	kpKey            string
+	actorUserID      int64
+	deviceID         string
+	action           string
+	oldLitPercent    *int
+	newLitPercent    int
+	oldQuestionLevel sql.NullString
+	newQuestionLevel sql.NullString
+	oldUpdatedAt     *time.Time
+	newUpdatedAt     time.Time
+}
+
 func (h *ProgressSyncHandler) Upload(c *fiber.Ctx) error {
 	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
+	deviceID := extractProgressSyncDeviceID(c)
 	var req uploadProgressRequest
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
 	}
-	savedCount, err := h.saveUploads(userID, []uploadProgressRequest{req})
+	savedCount, err := h.saveUploads(userID, deviceID, []uploadProgressRequest{req})
 	if err != nil {
 		return err
 	}
@@ -76,6 +102,7 @@ func (h *ProgressSyncHandler) UploadBatch(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
+	deviceID := extractProgressSyncDeviceID(c)
 	var req uploadProgressBatchRequest
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
@@ -83,7 +110,7 @@ func (h *ProgressSyncHandler) UploadBatch(c *fiber.Ctx) error {
 	if len(req.Items) == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "items required")
 	}
-	savedCount, err := h.saveUploads(userID, req.Items)
+	savedCount, err := h.saveUploads(userID, deviceID, req.Items)
 	if err != nil {
 		return err
 	}
@@ -117,6 +144,7 @@ func (h *ProgressSyncHandler) UploadChunksBatch(c *fiber.Ctx) error {
 
 func (h *ProgressSyncHandler) saveUploads(
 	userID int64,
+	deviceID string,
 	items []uploadProgressRequest,
 ) (int, error) {
 	tx, err := h.cfg.Store.DB.Begin()
@@ -130,25 +158,16 @@ func (h *ProgressSyncHandler) saveUploads(
 		}
 	}()
 
-	stmt, err := tx.Prepare(
-		`INSERT INTO progress_sync
-		 (course_id, teacher_user_id, student_user_id, kp_key, lit, lit_percent, question_level, summary_text, summary_raw_response, summary_valid, updated_at, envelope, envelope_hash)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE
-		   teacher_user_id = VALUES(teacher_user_id),
-		   lit = VALUES(lit),
-		   lit_percent = VALUES(lit_percent),
-		   question_level = VALUES(question_level),
-		   summary_text = VALUES(summary_text),
-		   summary_raw_response = VALUES(summary_raw_response),
-		   summary_valid = VALUES(summary_valid),
-		   updated_at = VALUES(updated_at),
-		   envelope = VALUES(envelope),
-		   envelope_hash = VALUES(envelope_hash)`,
+	selectStmt, err := tx.Prepare(
+		`SELECT lit_percent, question_level, updated_at
+		 FROM progress_sync
+		 WHERE course_id = ? AND student_user_id = ? AND kp_key = ?
+		 LIMIT 1
+		 FOR UPDATE`,
 	)
 	if err != nil {
 		log.Printf(
-			"progress sync statement prepare failed: user_id=%d items=%d error=%v",
+			"progress sync select statement prepare failed: user_id=%d items=%d error=%v",
 			userID,
 			len(items),
 			err,
@@ -156,7 +175,67 @@ func (h *ProgressSyncHandler) saveUploads(
 		status, message := classifyProgressSyncSaveError(err)
 		return 0, fiber.NewError(status, message)
 	}
-	defer stmt.Close()
+	defer selectStmt.Close()
+
+	insertStmt, err := tx.Prepare(
+		`INSERT INTO progress_sync
+		 (course_id, teacher_user_id, student_user_id, kp_key, lit, lit_percent, question_level, summary_text, summary_raw_response, summary_valid, updated_at, envelope, envelope_hash)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	)
+	if err != nil {
+		log.Printf(
+			"progress sync insert statement prepare failed: user_id=%d items=%d error=%v",
+			userID,
+			len(items),
+			err,
+		)
+		status, message := classifyProgressSyncSaveError(err)
+		return 0, fiber.NewError(status, message)
+	}
+	defer insertStmt.Close()
+
+	updateStmt, err := tx.Prepare(
+		`UPDATE progress_sync
+		 SET teacher_user_id = ?,
+		     lit = ?,
+		     lit_percent = ?,
+		     question_level = ?,
+		     summary_text = ?,
+		     summary_raw_response = ?,
+		     summary_valid = ?,
+		     updated_at = ?,
+		     envelope = ?,
+		     envelope_hash = ?
+		 WHERE course_id = ? AND student_user_id = ? AND kp_key = ?`,
+	)
+	if err != nil {
+		log.Printf(
+			"progress sync update statement prepare failed: user_id=%d items=%d error=%v",
+			userID,
+			len(items),
+			err,
+		)
+		status, message := classifyProgressSyncSaveError(err)
+		return 0, fiber.NewError(status, message)
+	}
+	defer updateStmt.Close()
+
+	auditStmt, err := tx.Prepare(
+		`INSERT INTO progress_sync_audit
+		 (course_id, student_user_id, teacher_user_id, kp_key, actor_user_id, device_id, action, old_lit_percent, new_lit_percent, old_question_level, new_question_level, old_updated_at, new_updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	)
+	if err != nil {
+		log.Printf(
+			"progress sync audit statement prepare failed: user_id=%d items=%d error=%v",
+			userID,
+			len(items),
+			err,
+		)
+		status, message := classifyProgressSyncSaveError(err)
+		return 0, fiber.NewError(status, message)
+	}
+	defer auditStmt.Close()
 
 	teacherUserIDByCourse := map[int64]int64{}
 	enrollmentByCourse := map[int64]bool{}
@@ -203,6 +282,10 @@ func (h *ProgressSyncHandler) saveUploads(
 		if litPercent > 100 {
 			litPercent = 100
 		}
+		incomingQuestionLevel := nullableString(item.QuestionLevel)
+		incomingSummaryText := nullableString(item.SummaryText)
+		incomingSummaryRawResponse := nullableString(item.SummaryRawResponse)
+		incomingEnvelopeHash := nullableString(item.EnvelopeHash)
 		envelope := strings.TrimSpace(item.Envelope)
 		var envelopeBytes []byte
 		if envelope != "" {
@@ -213,20 +296,139 @@ func (h *ProgressSyncHandler) saveUploads(
 			envelopeBytes = decodedEnvelope
 		}
 
-		if _, err := stmt.Exec(
+		var (
+			existingLitPercent    int
+			existingQuestionLevel sql.NullString
+			existingUpdatedAt     time.Time
+			existingFound         bool
+		)
+		scanErr := selectStmt.QueryRow(item.CourseID, userID, kpKey).Scan(
+			&existingLitPercent,
+			&existingQuestionLevel,
+			&existingUpdatedAt,
+		)
+		switch {
+		case scanErr == nil:
+			existingFound = true
+		case errors.Is(scanErr, sql.ErrNoRows):
+			existingFound = false
+		default:
+			log.Printf(
+				"progress sync existing row lookup failed: user_id=%d course_id=%d kp_key=%q error=%v",
+				userID,
+				item.CourseID,
+				kpKey,
+				scanErr,
+			)
+			status, message := classifyProgressSyncSaveError(scanErr)
+			return 0, fiber.NewError(status, message)
+		}
+
+		if existingFound && updatedAt.Before(existingUpdatedAt) {
+			oldLitPercent := existingLitPercent
+			oldUpdatedAt := existingUpdatedAt
+			if err := insertProgressSyncAudit(auditStmt, progressSyncAuditRecord{
+				courseID:         item.CourseID,
+				studentUserID:    userID,
+				teacherUserID:    teacherUserID,
+				kpKey:            kpKey,
+				actorUserID:      userID,
+				deviceID:         deviceID,
+				action:           progressSyncAuditActionSkipStale,
+				oldLitPercent:    &oldLitPercent,
+				newLitPercent:    litPercent,
+				oldQuestionLevel: existingQuestionLevel,
+				newQuestionLevel: incomingQuestionLevel,
+				oldUpdatedAt:     &oldUpdatedAt,
+				newUpdatedAt:     updatedAt,
+			}); err != nil {
+				log.Printf(
+					"progress sync audit save failed: action=%s user_id=%d course_id=%d kp_key=%q error=%v",
+					progressSyncAuditActionSkipStale,
+					userID,
+					item.CourseID,
+					kpKey,
+					err,
+				)
+				status, message := classifyProgressSyncSaveError(err)
+				return 0, fiber.NewError(status, message)
+			}
+			continue
+		}
+
+		if existingFound {
+			if _, err := updateStmt.Exec(
+				teacherUserID,
+				item.Lit,
+				litPercent,
+				nullableStringToInterface(incomingQuestionLevel),
+				nullableStringToInterface(incomingSummaryText),
+				nullableStringToInterface(incomingSummaryRawResponse),
+				item.SummaryValid,
+				updatedAt,
+				envelopeBytes,
+				nullableStringToInterface(incomingEnvelopeHash),
+				item.CourseID,
+				userID,
+				kpKey,
+			); err != nil {
+				log.Printf(
+					"progress sync update failed: user_id=%d course_id=%d kp_key=%q updated_at=%q error=%v",
+					userID,
+					item.CourseID,
+					kpKey,
+					item.UpdatedAt,
+					err,
+				)
+				status, message := classifyProgressSyncSaveError(err)
+				return 0, fiber.NewError(status, message)
+			}
+			oldLitPercent := existingLitPercent
+			oldUpdatedAt := existingUpdatedAt
+			if err := insertProgressSyncAudit(auditStmt, progressSyncAuditRecord{
+				courseID:         item.CourseID,
+				studentUserID:    userID,
+				teacherUserID:    teacherUserID,
+				kpKey:            kpKey,
+				actorUserID:      userID,
+				deviceID:         deviceID,
+				action:           progressSyncAuditActionUpdate,
+				oldLitPercent:    &oldLitPercent,
+				newLitPercent:    litPercent,
+				oldQuestionLevel: existingQuestionLevel,
+				newQuestionLevel: incomingQuestionLevel,
+				oldUpdatedAt:     &oldUpdatedAt,
+				newUpdatedAt:     updatedAt,
+			}); err != nil {
+				log.Printf(
+					"progress sync audit save failed: action=%s user_id=%d course_id=%d kp_key=%q error=%v",
+					progressSyncAuditActionUpdate,
+					userID,
+					item.CourseID,
+					kpKey,
+					err,
+				)
+				status, message := classifyProgressSyncSaveError(err)
+				return 0, fiber.NewError(status, message)
+			}
+			savedCount++
+			continue
+		}
+
+		if _, err := insertStmt.Exec(
 			item.CourseID,
 			teacherUserID,
 			userID,
 			kpKey,
 			item.Lit,
 			litPercent,
-			nullableString(item.QuestionLevel),
-			nullableString(item.SummaryText),
-			nullableString(item.SummaryRawResponse),
+			nullableStringToInterface(incomingQuestionLevel),
+			nullableStringToInterface(incomingSummaryText),
+			nullableStringToInterface(incomingSummaryRawResponse),
 			item.SummaryValid,
 			updatedAt,
 			envelopeBytes,
-			nullableString(item.EnvelopeHash),
+			nullableStringToInterface(incomingEnvelopeHash),
 		); err != nil {
 			log.Printf(
 				"progress sync save failed: user_id=%d course_id=%d kp_key=%q updated_at=%q error=%v",
@@ -234,6 +436,32 @@ func (h *ProgressSyncHandler) saveUploads(
 				item.CourseID,
 				kpKey,
 				item.UpdatedAt,
+				err,
+			)
+			status, message := classifyProgressSyncSaveError(err)
+			return 0, fiber.NewError(status, message)
+		}
+		if err := insertProgressSyncAudit(auditStmt, progressSyncAuditRecord{
+			courseID:         item.CourseID,
+			studentUserID:    userID,
+			teacherUserID:    teacherUserID,
+			kpKey:            kpKey,
+			actorUserID:      userID,
+			deviceID:         deviceID,
+			action:           progressSyncAuditActionInsert,
+			oldLitPercent:    nil,
+			newLitPercent:    litPercent,
+			oldQuestionLevel: sql.NullString{Valid: false},
+			newQuestionLevel: incomingQuestionLevel,
+			oldUpdatedAt:     nil,
+			newUpdatedAt:     updatedAt,
+		}); err != nil {
+			log.Printf(
+				"progress sync audit save failed: action=%s user_id=%d course_id=%d kp_key=%q error=%v",
+				progressSyncAuditActionInsert,
+				userID,
+				item.CourseID,
+				kpKey,
 				err,
 			)
 			status, message := classifyProgressSyncSaveError(err)
@@ -631,4 +859,55 @@ func classifyProgressSyncSaveError(err error) (int, string) {
 		}
 	}
 	return fiber.StatusInternalServerError, "progress sync save failed"
+}
+
+func extractProgressSyncDeviceID(c *fiber.Ctx) string {
+	deviceID := strings.TrimSpace(c.Get(progressSyncDeviceIDHeader))
+	if deviceID == "" {
+		deviceID = strings.TrimSpace(c.Get(progressSyncLegacyDeviceIDHeader))
+	}
+	if len(deviceID) > progressSyncMaxDeviceIDLength {
+		deviceID = deviceID[:progressSyncMaxDeviceIDLength]
+	}
+	return deviceID
+}
+
+func insertProgressSyncAudit(stmt *sql.Stmt, record progressSyncAuditRecord) error {
+	_, err := stmt.Exec(
+		record.courseID,
+		record.studentUserID,
+		record.teacherUserID,
+		record.kpKey,
+		record.actorUserID,
+		nullableStringToInterface(nullableString(record.deviceID)),
+		record.action,
+		nullableIntToInterface(record.oldLitPercent),
+		record.newLitPercent,
+		nullableStringToInterface(record.oldQuestionLevel),
+		nullableStringToInterface(record.newQuestionLevel),
+		nullableTimeToInterface(record.oldUpdatedAt),
+		record.newUpdatedAt,
+	)
+	return err
+}
+
+func nullableStringToInterface(value sql.NullString) interface{} {
+	if !value.Valid {
+		return nil
+	}
+	return value.String
+}
+
+func nullableIntToInterface(value *int) interface{} {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func nullableTimeToInterface(value *time.Time) interface{} {
+	if value == nil {
+		return nil
+	}
+	return *value
 }

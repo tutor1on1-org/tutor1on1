@@ -1964,10 +1964,8 @@ class SessionService {
       return null;
     }
     final masteryLevel = _questionLevelToMasteryLevel(progress?.questionLevel);
-    final litPercent =
-        session.summaryLitPercent ?? _masteryLevelToPercent(masteryLevel);
-    final lit =
-        session.summaryLit ?? (litPercent == null ? null : litPercent >= 100);
+    final litPercent = _masteryLevelToPercent(masteryLevel);
+    final lit = litPercent == null ? null : litPercent >= 100;
     return SummarizeResult(
       success: true,
       message: 'Summary unchanged. Reused cached result.',

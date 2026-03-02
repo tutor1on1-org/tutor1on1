@@ -643,6 +643,7 @@ class SessionSyncApiService {
     return {
       'Content-Type': 'application/json',
       'Authorization': 'Bearer $token',
+      'X-Device-Id': SecureStorageService.syncRunDeviceHash,
     };
   }
 
