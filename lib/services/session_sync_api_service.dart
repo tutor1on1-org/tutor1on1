@@ -216,6 +216,47 @@ class ProgressSyncItem {
   }
 }
 
+class ProgressSyncChunkItem {
+  ProgressSyncChunkItem({
+    required this.cursorId,
+    required this.courseId,
+    required this.courseSubject,
+    required this.teacherUserId,
+    required this.studentUserId,
+    required this.chapterKey,
+    required this.itemCount,
+    required this.updatedAt,
+    required this.envelope,
+    required this.envelopeHash,
+  });
+
+  final int cursorId;
+  final int courseId;
+  final String courseSubject;
+  final int teacherUserId;
+  final int studentUserId;
+  final String chapterKey;
+  final int itemCount;
+  final String updatedAt;
+  final String envelope;
+  final String envelopeHash;
+
+  factory ProgressSyncChunkItem.fromJson(Map<String, dynamic> json) {
+    return ProgressSyncChunkItem(
+      cursorId: (json['cursor_id'] as num?)?.toInt() ?? 0,
+      courseId: (json['course_id'] as num?)?.toInt() ?? 0,
+      courseSubject: (json['course_subject'] as String?) ?? '',
+      teacherUserId: (json['teacher_user_id'] as num?)?.toInt() ?? 0,
+      studentUserId: (json['student_user_id'] as num?)?.toInt() ?? 0,
+      chapterKey: (json['chapter_key'] as String?) ?? '',
+      itemCount: (json['item_count'] as num?)?.toInt() ?? 0,
+      updatedAt: (json['updated_at'] as String?) ?? '',
+      envelope: (json['envelope'] as String?) ?? '',
+      envelopeHash: (json['envelope_hash'] as String?) ?? '',
+    );
+  }
+}
+
 class ProgressUploadEntry {
   ProgressUploadEntry({
     required this.courseId,
@@ -234,6 +275,33 @@ class ProgressUploadEntry {
   Map<String, dynamic> toJson() => {
         'course_id': courseId,
         'kp_key': kpKey,
+        'updated_at': updatedAt,
+        'envelope': envelope,
+        'envelope_hash': envelopeHash,
+      };
+}
+
+class ProgressChunkUploadEntry {
+  ProgressChunkUploadEntry({
+    required this.courseId,
+    required this.chapterKey,
+    required this.itemCount,
+    required this.updatedAt,
+    required this.envelope,
+    required this.envelopeHash,
+  });
+
+  final int courseId;
+  final String chapterKey;
+  final int itemCount;
+  final String updatedAt;
+  final String envelope;
+  final String envelopeHash;
+
+  Map<String, dynamic> toJson() => {
+        'course_id': courseId,
+        'chapter_key': chapterKey,
+        'item_count': itemCount,
         'updated_at': updatedAt,
         'envelope': envelope,
         'envelope_hash': envelopeHash,
@@ -397,6 +465,19 @@ class SessionSyncApiService {
     );
   }
 
+  Future<void> uploadProgressChunkBatch(
+      List<ProgressChunkUploadEntry> entries) async {
+    if (entries.isEmpty) {
+      return;
+    }
+    await _post(
+      '/api/progress/sync/chunks/upload-batch',
+      {
+        'items': entries.map((entry) => entry.toJson()).toList(growable: false),
+      },
+    );
+  }
+
   Future<List<ProgressSyncItem>> listProgress({String? since}) async {
     final result = await listProgressDelta(since: since);
     return result.items;
@@ -443,6 +524,53 @@ class SessionSyncApiService {
       items: decoded
           .whereType<Map<String, dynamic>>()
           .map(ProgressSyncItem.fromJson)
+          .toList(),
+      etag: response.headers['etag'],
+      notModified: false,
+    );
+  }
+
+  Future<SyncListResult<ProgressSyncChunkItem>> listProgressChunksDelta({
+    String? since,
+    int? sinceId,
+    int? limit,
+    String? ifNoneMatch,
+  }) async {
+    final params = <String, String>{};
+    final normalizedSince = (since ?? '').trim();
+    final normalizedSinceId = sinceId ?? 0;
+    if (normalizedSince.isNotEmpty) {
+      params['since'] = normalizedSince;
+    }
+    if (normalizedSinceId > 0) {
+      if (normalizedSince.isEmpty) {
+        throw SessionSyncApiException('since_id requires since.');
+      }
+      params['since_id'] = normalizedSinceId.toString();
+    }
+    if ((limit ?? 0) > 0) {
+      params['limit'] = limit!.toString();
+    }
+    final response = await _getResponse(
+      '/api/progress/sync/chunks/list',
+      params: params,
+      ifNoneMatch: ifNoneMatch,
+    );
+    if (response.statusCode == 304) {
+      return SyncListResult<ProgressSyncChunkItem>(
+        items: const <ProgressSyncChunkItem>[],
+        etag: response.headers['etag'],
+        notModified: true,
+      );
+    }
+    final decoded = _decodeResponse(response);
+    if (decoded is! List) {
+      throw SessionSyncApiException('Unexpected response format.');
+    }
+    return SyncListResult<ProgressSyncChunkItem>(
+      items: decoded
+          .whereType<Map<String, dynamic>>()
+          .map(ProgressSyncChunkItem.fromJson)
           .toList(),
       etag: response.headers['etag'],
       notModified: false,

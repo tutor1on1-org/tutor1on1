@@ -218,13 +218,18 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
     required this.progressItems,
     this.listSessionsDeltaHandler,
     this.listProgressDeltaHandler,
+    this.listProgressChunksDeltaHandler,
+    this.uploadProgressChunkBatchHandler,
+    Map<int, CourseKeyBundle>? courseKeysByCourse,
   }) : super(
           secureStorage: secureStorage,
           baseUrl: 'https://example.com',
           client: MockClient(
             (_) async => http.Response('[]', 200),
           ),
-        );
+        ) {
+    _courseKeysByCourse = courseKeysByCourse ?? <int, CourseKeyBundle>{};
+  }
 
   final List<SessionSyncItem> sessionItems;
   final List<ProgressSyncItem> progressItems;
@@ -240,8 +245,19 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
     int? limit,
     String? ifNoneMatch,
   })? listProgressDeltaHandler;
+  final SyncListResult<ProgressSyncChunkItem> Function({
+    String? since,
+    int? sinceId,
+    int? limit,
+    String? ifNoneMatch,
+  })? listProgressChunksDeltaHandler;
+  final Future<void> Function(List<ProgressChunkUploadEntry> entries)?
+      uploadProgressChunkBatchHandler;
+  late final Map<int, CourseKeyBundle> _courseKeysByCourse;
   final List<ProgressUploadEntry> uploadedProgressEntries =
       <ProgressUploadEntry>[];
+  final List<ProgressChunkUploadEntry> uploadedProgressChunkEntries =
+      <ProgressChunkUploadEntry>[];
   final List<Map<String, dynamic>> uploadedSessions = <Map<String, dynamic>>[];
 
   @override
@@ -289,8 +305,41 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
   }
 
   @override
+  Future<SyncListResult<ProgressSyncChunkItem>> listProgressChunksDelta({
+    String? since,
+    int? sinceId,
+    int? limit,
+    String? ifNoneMatch,
+  }) async {
+    if (listProgressChunksDeltaHandler != null) {
+      return listProgressChunksDeltaHandler!(
+        since: since,
+        sinceId: sinceId,
+        limit: limit,
+        ifNoneMatch: ifNoneMatch,
+      );
+    }
+    return SyncListResult<ProgressSyncChunkItem>(
+      items: const <ProgressSyncChunkItem>[],
+      etag: 'progress-chunk-etag-empty',
+      notModified: false,
+    );
+  }
+
+  @override
   Future<void> uploadProgressBatch(List<ProgressUploadEntry> entries) async {
     uploadedProgressEntries.addAll(entries);
+  }
+
+  @override
+  Future<void> uploadProgressChunkBatch(
+    List<ProgressChunkUploadEntry> entries,
+  ) async {
+    if (uploadProgressChunkBatchHandler != null) {
+      await uploadProgressChunkBatchHandler!(entries);
+      return;
+    }
+    uploadedProgressChunkEntries.addAll(entries);
   }
 
   @override
@@ -334,6 +383,10 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
     required int courseId,
     required int studentUserId,
   }) async {
+    final configured = _courseKeysByCourse[courseId];
+    if (configured != null) {
+      return configured;
+    }
     throw StateError('Unexpected getCourseKeys call in this test.');
   }
 }
@@ -1286,6 +1339,255 @@ void main() {
         await secureStorage.readSessionSyncCursor(remoteStudentId),
         equals('2026-03-01T08:00:00.000Z|5000'),
       );
+    },
+  );
+
+  test(
+    'progress upload batches chapter chunks when chunk endpoint is available',
+    () async {
+      final crypto = SessionCryptoService();
+      final secureStorage = _MemorySecureStorage(accessToken: 'token');
+
+      final teacherId = await db.createUser(
+        username: 'teacher_chunk_upload',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 906,
+      );
+      final studentId = await db.createUser(
+        username: 'student_chunk_upload',
+        pinHash: 'hash',
+        role: 'student',
+        remoteUserId: 3006,
+      );
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Math',
+        granularity: 1,
+        textbookText: '',
+        sourcePath: r'C:\courses\math',
+      );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 150,
+      );
+
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+      final remoteStudentId = student!.remoteUserId!;
+
+      final studentKeyPair = await crypto.generateKeyPair();
+      final studentPublicKey = await crypto.extractPublicKey(studentKeyPair);
+      await secureStorage.writeUserPrivateKey(
+        remoteStudentId,
+        await crypto.encodePrivateKey(studentKeyPair),
+      );
+      await secureStorage.writeUserPublicKey(
+        remoteStudentId,
+        crypto.encodePublicKey(studentPublicKey),
+      );
+
+      final teacherKeyPair = await crypto.generateKeyPair();
+      final teacherPublicKey = await crypto.extractPublicKey(teacherKeyPair);
+
+      await db.upsertProgressFromSync(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+        kpKey: '1.1.1',
+        lit: true,
+        litPercent: 80,
+        questionLevel: 'medium',
+        summaryText: 'a',
+        summaryRawResponse: '',
+        summaryValid: true,
+        updatedAt: DateTime.parse('2026-03-02T10:00:00Z'),
+      );
+      await db.upsertProgressFromSync(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+        kpKey: '1.1.2',
+        lit: false,
+        litPercent: 20,
+        questionLevel: 'easy',
+        summaryText: 'b',
+        summaryRawResponse: '',
+        summaryValid: false,
+        updatedAt: DateTime.parse('2026-03-02T10:01:00Z'),
+      );
+      await db.upsertProgressFromSync(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+        kpKey: '2.1.1',
+        lit: true,
+        litPercent: 60,
+        questionLevel: 'medium',
+        summaryText: 'c',
+        summaryRawResponse: '',
+        summaryValid: true,
+        updatedAt: DateTime.parse('2026-03-02T10:02:00Z'),
+      );
+
+      final api = _TestSessionSyncApiService(
+        secureStorage: secureStorage,
+        sessionItems: const <SessionSyncItem>[],
+        progressItems: const <ProgressSyncItem>[],
+        courseKeysByCourse: <int, CourseKeyBundle>{
+          150: CourseKeyBundle(
+            courseId: 150,
+            teacherUserId: 906,
+            teacherPublicKey: crypto.encodePublicKey(teacherPublicKey),
+            studentUserId: remoteStudentId,
+            studentPublicKey: crypto.encodePublicKey(studentPublicKey),
+          ),
+        },
+      );
+      final userKeyService = UserKeyService(
+        secureStorage: secureStorage,
+        api: api,
+        crypto: crypto,
+      );
+      final syncService = SessionSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        api: api,
+        userKeyService: userKeyService,
+        crypto: crypto,
+      );
+
+      await syncService.syncIfReady(currentUser: student);
+
+      expect(api.uploadedProgressEntries, isEmpty);
+      expect(api.uploadedProgressChunkEntries, hasLength(2));
+      final itemCountByChapter = <String, int>{
+        for (final entry in api.uploadedProgressChunkEntries)
+          entry.chapterKey: entry.itemCount,
+      };
+      expect(itemCountByChapter['1.1'], equals(2));
+      expect(itemCountByChapter['2.1'], equals(1));
+    },
+  );
+
+  test(
+    'progress upload falls back to legacy row batch when chunk upload returns 404',
+    () async {
+      final crypto = SessionCryptoService();
+      final secureStorage = _MemorySecureStorage(accessToken: 'token');
+
+      final teacherId = await db.createUser(
+        username: 'teacher_chunk_fallback',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 907,
+      );
+      final studentId = await db.createUser(
+        username: 'student_chunk_fallback',
+        pinHash: 'hash',
+        role: 'student',
+        remoteUserId: 3007,
+      );
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Physics',
+        granularity: 1,
+        textbookText: '',
+        sourcePath: r'C:\courses\physics',
+      );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 160,
+      );
+
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+      final remoteStudentId = student!.remoteUserId!;
+
+      final studentKeyPair = await crypto.generateKeyPair();
+      final studentPublicKey = await crypto.extractPublicKey(studentKeyPair);
+      await secureStorage.writeUserPrivateKey(
+        remoteStudentId,
+        await crypto.encodePrivateKey(studentKeyPair),
+      );
+      await secureStorage.writeUserPublicKey(
+        remoteStudentId,
+        crypto.encodePublicKey(studentPublicKey),
+      );
+
+      final teacherKeyPair = await crypto.generateKeyPair();
+      final teacherPublicKey = await crypto.extractPublicKey(teacherKeyPair);
+
+      await db.upsertProgressFromSync(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+        kpKey: '1.1.1',
+        lit: true,
+        litPercent: 85,
+        questionLevel: 'medium',
+        summaryText: 'fallback',
+        summaryRawResponse: '',
+        summaryValid: true,
+        updatedAt: DateTime.parse('2026-03-02T11:00:00Z'),
+      );
+
+      final api = _TestSessionSyncApiService(
+        secureStorage: secureStorage,
+        sessionItems: const <SessionSyncItem>[],
+        progressItems: const <ProgressSyncItem>[],
+        listProgressChunksDeltaHandler: ({
+          String? since,
+          int? sinceId,
+          int? limit,
+          String? ifNoneMatch,
+        }) {
+          return SyncListResult<ProgressSyncChunkItem>(
+            items: const <ProgressSyncChunkItem>[],
+            etag: 'chunk-empty',
+            notModified: false,
+          );
+        },
+        uploadProgressChunkBatchHandler: (
+          List<ProgressChunkUploadEntry> _,
+        ) async {
+          throw SessionSyncApiException(
+            'not found',
+            statusCode: 404,
+          );
+        },
+        courseKeysByCourse: <int, CourseKeyBundle>{
+          160: CourseKeyBundle(
+            courseId: 160,
+            teacherUserId: 907,
+            teacherPublicKey: crypto.encodePublicKey(teacherPublicKey),
+            studentUserId: remoteStudentId,
+            studentPublicKey: crypto.encodePublicKey(studentPublicKey),
+          ),
+        },
+      );
+      final userKeyService = UserKeyService(
+        secureStorage: secureStorage,
+        api: api,
+        crypto: crypto,
+      );
+      final syncService = SessionSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        api: api,
+        userKeyService: userKeyService,
+        crypto: crypto,
+      );
+
+      await syncService.syncIfReady(currentUser: student);
+
+      expect(api.uploadedProgressChunkEntries, isEmpty);
+      expect(api.uploadedProgressEntries, hasLength(1));
+      expect(api.uploadedProgressEntries.single.kpKey, equals('1.1.1'));
     },
   );
 

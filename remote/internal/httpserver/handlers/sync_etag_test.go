@@ -229,6 +229,102 @@ func TestProgressSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 	assertSQLMockExpectations(t, mock)
 }
 
+func TestProgressSyncChunksListReturnsNotModifiedWhenETagMatches(t *testing.T) {
+	db, mock := newHandlerSQLMock(t)
+	defer db.Close()
+
+	userID := int64(3006)
+	updatedAt := time.Date(2026, 2, 27, 9, 12, 0, 0, time.UTC)
+	rows := sqlmock.NewRows([]string{
+		"id",
+		"course_id",
+		"subject",
+		"teacher_user_id",
+		"student_user_id",
+		"chapter_key",
+		"item_count",
+		"updated_at",
+		"envelope",
+		"envelope_hash",
+	}).AddRow(
+		int64(1),
+		int64(77),
+		"Biology",
+		int64(901),
+		userID,
+		"1.1",
+		24,
+		updatedAt,
+		[]byte("chunk_payload"),
+		"chunk_hash",
+	)
+	mock.ExpectQuery(`SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.chapter_key, p.item_count, p.updated_at, p.envelope, p.envelope_hash`).
+		WithArgs(userID, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnRows(rows)
+	rows2 := sqlmock.NewRows([]string{
+		"id",
+		"course_id",
+		"subject",
+		"teacher_user_id",
+		"student_user_id",
+		"chapter_key",
+		"item_count",
+		"updated_at",
+		"envelope",
+		"envelope_hash",
+	}).AddRow(
+		int64(1),
+		int64(77),
+		"Biology",
+		int64(901),
+		userID,
+		"1.1",
+		24,
+		updatedAt,
+		[]byte("chunk_payload"),
+		"chunk_hash",
+	)
+	mock.ExpectQuery(`SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.chapter_key, p.item_count, p.updated_at, p.envelope, p.envelope_hash`).
+		WithArgs(userID, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnRows(rows2)
+
+	app := buildSyncETagTestApp(db, []string{"test-secret"})
+	token := signTestJWT(t, "test-secret", userID, true)
+
+	status, _, headers := callAPI(
+		t,
+		app,
+		http.MethodGet,
+		"/api/progress/sync/chunks/list",
+		token,
+		"",
+	)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d", status, http.StatusOK)
+	}
+	etag := headers.Get("Etag")
+	if strings.TrimSpace(etag) == "" {
+		t.Fatal("missing ETag on progress chunk sync list response")
+	}
+
+	status, _, _ = callAPIWithExtraHeaders(
+		t,
+		app,
+		http.MethodGet,
+		"/api/progress/sync/chunks/list",
+		token,
+		"",
+		map[string]string{
+			"If-None-Match": etag,
+		},
+	)
+	if status != http.StatusNotModified {
+		t.Fatalf("status = %d, want %d", status, http.StatusNotModified)
+	}
+
+	assertSQLMockExpectations(t, mock)
+}
+
 func TestSessionSyncListSinceIDIncludesEqualTimestampRows(t *testing.T) {
 	db, mock := newHandlerSQLMock(t)
 	defer db.Close()
@@ -348,6 +444,63 @@ func TestProgressSyncListSinceIDIncludesEqualTimestampRows(t *testing.T) {
 	}
 	if !strings.Contains(body, `"kp_key":"1.1"`) {
 		t.Fatalf("response missing expected item: %s", body)
+	}
+
+	assertSQLMockExpectations(t, mock)
+}
+
+func TestProgressSyncChunksListSinceIDIncludesEqualTimestampRows(t *testing.T) {
+	db, mock := newHandlerSQLMock(t)
+	defer db.Close()
+
+	userID := int64(3106)
+	since := time.Date(2026, 2, 27, 9, 12, 0, 0, time.UTC)
+	rows := sqlmock.NewRows([]string{
+		"id",
+		"course_id",
+		"subject",
+		"teacher_user_id",
+		"student_user_id",
+		"chapter_key",
+		"item_count",
+		"updated_at",
+		"envelope",
+		"envelope_hash",
+	}).AddRow(
+		int64(24),
+		int64(77),
+		"Biology",
+		int64(901),
+		userID,
+		"1.1",
+		24,
+		since,
+		[]byte("chunk_payload"),
+		"chunk_hash",
+	)
+	mock.ExpectQuery(`SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.chapter_key, p.item_count, p.updated_at, p.envelope, p.envelope_hash`).
+		WithArgs(userID, since, since, int64(23), 5).
+		WillReturnRows(rows)
+
+	app := buildSyncETagTestApp(db, []string{"test-secret"})
+	token := signTestJWT(t, "test-secret", userID, true)
+
+	status, body, _ := callAPI(
+		t,
+		app,
+		http.MethodGet,
+		"/api/progress/sync/chunks/list?since=2026-02-27T09:12:00Z&since_id=23&limit=5",
+		token,
+		"",
+	)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d", status, http.StatusOK)
+	}
+	if !strings.Contains(body, `"cursor_id":24`) {
+		t.Fatalf("response missing cursor row: %s", body)
+	}
+	if !strings.Contains(body, `"chapter_key":"1.1"`) {
+		t.Fatalf("response missing expected chunk: %s", body)
 	}
 
 	assertSQLMockExpectations(t, mock)
@@ -548,6 +701,7 @@ func buildSyncETagTestApp(db *sql.DB, jwtSecrets []string) *fiber.App {
 	app.Get("/api/teacher/courses", teacherCourses.ListCourses)
 	app.Get("/api/sessions/sync/list", sessionSync.List)
 	app.Get("/api/progress/sync/list", progressSync.List)
+	app.Get("/api/progress/sync/chunks/list", progressSync.ListChunks)
 	return app
 }
 

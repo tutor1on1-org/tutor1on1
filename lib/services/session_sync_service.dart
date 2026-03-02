@@ -41,8 +41,11 @@ class SessionSyncService {
   static const String _syncDomainSessionUpload = 'session_upload';
   static const String _syncDomainSessionGroupUpload = 'session_group_upload';
   static const String _syncDomainProgressUpload = 'progress_upload';
+  static const String _syncDomainProgressChunkUpload = 'progress_chunk_upload';
   static const String _syncDomainSessionDownload = 'session_download';
   static const String _syncDomainProgressDownload = 'progress_download';
+  static const String _syncDomainProgressChunkDownload =
+      'progress_chunk_download';
   static const String _syncRunDomainProgressUpload =
       'session_sync_run_progress_upload';
   static const String _syncRunDomainSessionUpload =
@@ -51,8 +54,10 @@ class SessionSyncService {
       'session_sync_run_session_download';
   static const String _syncRunDomainProgressDownload =
       'session_sync_run_progress_download';
+  static const String _progressChunkCursorScopeKey = '__cursor__';
   static const int _syncDownloadPageSize = 5000;
   static const int _progressUploadBatchSize = 200;
+  static const int _progressChunkUploadBatchSize = 24;
   static const int _progressUploadIsolationMaxSplits = 24;
   bool _syncing = false;
 
@@ -247,12 +252,29 @@ class SessionSyncService {
             ) ??
             '')
         .trim();
+    final progressChunkCursorRaw =
+        (await _readProgressChunkCursor(remoteUserId) ?? '').trim();
+    final progressChunkListScopeKey = _syncListScopeKey(progressChunkCursorRaw);
+    final progressChunkEtagRaw = (await _secureStorage.readSyncListEtag(
+              remoteUserId: remoteUserId,
+              domain: _syncDomainProgressChunkDownload,
+              scopeKey: progressChunkListScopeKey,
+            ) ??
+            '')
+        .trim();
     if (!hasLocalProgress &&
-        (progressCursorRaw.isNotEmpty || progressEtagRaw.isNotEmpty)) {
+        (progressCursorRaw.isNotEmpty ||
+            progressEtagRaw.isNotEmpty ||
+            progressChunkCursorRaw.isNotEmpty ||
+            progressChunkEtagRaw.isNotEmpty)) {
       await _secureStorage.deleteProgressSyncCursor(remoteUserId);
       await _secureStorage.clearSyncDomainState(
         remoteUserId: remoteUserId,
         domain: _syncDomainProgressDownload,
+      );
+      await _secureStorage.clearSyncDomainState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainProgressChunkDownload,
       );
       await _secureStorage.clearSyncDomainState(
         remoteUserId: remoteUserId,
@@ -273,6 +295,10 @@ class SessionSyncService {
     await _secureStorage.clearSyncDomainState(
       remoteUserId: remoteUserId,
       domain: _syncDomainProgressDownload,
+    );
+    await _secureStorage.clearSyncDomainState(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainProgressChunkDownload,
     );
     await _secureStorage.clearSyncDomainState(
       remoteUserId: remoteUserId,
@@ -364,6 +390,271 @@ class SessionSyncService {
     if (entries.isEmpty) {
       return;
     }
+    try {
+      await _uploadPendingProgressChunks(
+        remoteUserId: remoteUserId,
+        entries: entries,
+      );
+    } on SessionSyncApiException catch (error) {
+      if (error.statusCode != 404) {
+        rethrow;
+      }
+      await _uploadPendingProgressLegacy(
+        remoteUserId: remoteUserId,
+        entries: entries,
+      );
+    }
+  }
+
+  Future<void> _uploadPendingProgressChunks({
+    required int remoteUserId,
+    required List<ProgressEntry> entries,
+  }) async {
+    final chapterGroups = <String, _ProgressChunkGroup>{};
+    for (final entry in entries) {
+      if (entry.kpKey == kTreeViewStateKpKey) {
+        continue;
+      }
+      final remoteCourseId = await _db.getRemoteCourseId(entry.courseVersionId);
+      if (remoteCourseId == null || remoteCourseId <= 0) {
+        continue;
+      }
+      final entryUpdatedAt = entry.updatedAt.toUtc();
+      final chapterKey = _extractSecondLevelChapter(entry.kpKey);
+      final groupScopeKey = '$remoteCourseId:$chapterKey';
+      final scopeKey = '$remoteCourseId:${entry.kpKey.trim()}';
+      final payloadHash = _hashProgressPayloadCore(
+        entry: entry,
+        remoteCourseId: remoteCourseId,
+        remoteUserId: remoteUserId,
+      );
+      final group = chapterGroups.putIfAbsent(
+        groupScopeKey,
+        () => _ProgressChunkGroup(
+          scopeKey: groupScopeKey,
+          remoteCourseId: remoteCourseId,
+          chapterKey: chapterKey,
+        ),
+      );
+      final member = _ProgressChunkMember(
+        entry: entry,
+        scopeKey: scopeKey,
+        updatedAt: entryUpdatedAt,
+        payloadHash: payloadHash,
+      );
+      group.members.add(member);
+      final syncState = await _secureStorage.readSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainProgressUpload,
+        scopeKey: scopeKey,
+      );
+      final downloadedState = await _secureStorage.readSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainProgressDownload,
+        scopeKey: scopeKey,
+      );
+      if (downloadedState != null &&
+          downloadedState.lastChangedAt.toUtc().isAfter(entryUpdatedAt)) {
+        group.blockedByRemoteNewer = true;
+        continue;
+      }
+      if (!_isTimestampNewer(entryUpdatedAt, syncState?.lastSyncedAt)) {
+        continue;
+      }
+      if (syncState != null && syncState.contentHash == payloadHash) {
+        await _secureStorage.writeSyncItemState(
+          remoteUserId: remoteUserId,
+          domain: _syncDomainProgressUpload,
+          scopeKey: scopeKey,
+          contentHash: payloadHash,
+          lastChangedAt: entryUpdatedAt,
+          lastSyncedAt: entryUpdatedAt,
+        );
+        continue;
+      }
+      group.hasPendingChanges = true;
+    }
+    final groupsToUpload = chapterGroups.values
+        .where(
+            (group) => group.hasPendingChanges && !group.blockedByRemoteNewer)
+        .toList(growable: false);
+    if (groupsToUpload.isEmpty) {
+      return;
+    }
+
+    final keysByCourse = <int, CourseKeyBundle>{};
+    final courseSubjectsByVersion = <int, String>{};
+    final preparedUploads = <_PreparedProgressChunkUpload>[];
+    for (final group in groupsToUpload) {
+      var resolvedKeys = keysByCourse[group.remoteCourseId];
+      resolvedKeys ??= await _api.getCourseKeys(
+        courseId: group.remoteCourseId,
+        studentUserId: remoteUserId,
+      );
+      keysByCourse[group.remoteCourseId] = resolvedKeys;
+
+      final chunkItems = <Map<String, dynamic>>[];
+      final itemStateWrites = <_SyncStateWrite>[];
+      var groupUpdatedAt = DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+      var courseSubject = '';
+      for (final member in group.members) {
+        final entry = member.entry;
+        var resolvedSubject = courseSubjectsByVersion[entry.courseVersionId];
+        if (resolvedSubject == null) {
+          resolvedSubject = await _resolveCourseSubject(entry.courseVersionId);
+          courseSubjectsByVersion[entry.courseVersionId] = resolvedSubject;
+        }
+        if (courseSubject.isEmpty) {
+          courseSubject = resolvedSubject;
+        }
+        final payload = _buildProgressPayload(
+          entry: entry,
+          courseSubject: resolvedSubject,
+          remoteCourseId: group.remoteCourseId,
+          teacherUserId: resolvedKeys.teacherUserId,
+          studentUserId: resolvedKeys.studentUserId,
+        );
+        chunkItems.add(payload);
+        itemStateWrites.add(
+          _SyncStateWrite(
+            domain: _syncDomainProgressUpload,
+            scopeKey: member.scopeKey,
+            contentHash: member.payloadHash,
+            lastChangedAt: member.updatedAt,
+            lastSyncedAt: member.updatedAt,
+          ),
+        );
+        groupUpdatedAt = _latestTimestamp(groupUpdatedAt, member.updatedAt);
+      }
+      chunkItems.sort((left, right) {
+        final leftKp = (left['kp_key'] as String? ?? '').trim();
+        final rightKp = (right['kp_key'] as String? ?? '').trim();
+        if (leftKp == rightKp) {
+          final leftUpdated = (left['updated_at'] as String? ?? '').trim();
+          final rightUpdated = (right['updated_at'] as String? ?? '').trim();
+          return leftUpdated.compareTo(rightUpdated);
+        }
+        return leftKp.compareTo(rightKp);
+      });
+      final chunkPayload = <String, dynamic>{
+        'version': 1,
+        'course_id': group.remoteCourseId,
+        'course_subject': courseSubject,
+        'chapter_key': group.chapterKey,
+        'teacher_remote_user_id': resolvedKeys.teacherUserId,
+        'student_remote_user_id': resolvedKeys.studentUserId,
+        'updated_at': groupUpdatedAt.toUtc().toIso8601String(),
+        'items': chunkItems,
+      };
+      final chunkHash = _hashCanonicalJson(chunkPayload);
+      final groupState = await _secureStorage.readSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainProgressChunkUpload,
+        scopeKey: group.scopeKey,
+      );
+      if (!_isTimestampNewer(groupUpdatedAt, groupState?.lastSyncedAt)) {
+        continue;
+      }
+      if (groupState != null && groupState.contentHash == chunkHash) {
+        for (final stateWrite in itemStateWrites) {
+          await _secureStorage.writeSyncItemState(
+            remoteUserId: remoteUserId,
+            domain: stateWrite.domain,
+            scopeKey: stateWrite.scopeKey,
+            contentHash: stateWrite.contentHash,
+            lastChangedAt: stateWrite.lastChangedAt,
+            lastSyncedAt: stateWrite.lastSyncedAt,
+          );
+        }
+        await _secureStorage.writeSyncItemState(
+          remoteUserId: remoteUserId,
+          domain: _syncDomainProgressChunkUpload,
+          scopeKey: group.scopeKey,
+          contentHash: chunkHash,
+          lastChangedAt: groupUpdatedAt,
+          lastSyncedAt: groupUpdatedAt,
+        );
+        continue;
+      }
+      final envelope = await _crypto.encryptPayload(
+        payload: chunkPayload,
+        recipients: [
+          RecipientPublicKey(
+            userId: resolvedKeys.teacherUserId,
+            publicKey: _crypto.decodePublicKey(resolvedKeys.teacherPublicKey),
+          ),
+          RecipientPublicKey(
+            userId: resolvedKeys.studentUserId,
+            publicKey: _crypto.decodePublicKey(resolvedKeys.studentPublicKey),
+          ),
+        ],
+      );
+      final envelopeJson = jsonEncode(envelope.toJson());
+      preparedUploads.add(
+        _PreparedProgressChunkUpload(
+          upload: ProgressChunkUploadEntry(
+            courseId: group.remoteCourseId,
+            chapterKey: group.chapterKey,
+            itemCount: chunkItems.length,
+            updatedAt: groupUpdatedAt.toUtc().toIso8601String(),
+            envelope: base64Encode(utf8.encode(envelopeJson)),
+            envelopeHash: _hashEnvelope(envelopeJson),
+          ),
+          itemStateWrites: itemStateWrites,
+          groupStateWrite: _SyncStateWrite(
+            domain: _syncDomainProgressChunkUpload,
+            scopeKey: group.scopeKey,
+            contentHash: chunkHash,
+            lastChangedAt: groupUpdatedAt,
+            lastSyncedAt: groupUpdatedAt,
+          ),
+        ),
+      );
+    }
+    if (preparedUploads.isEmpty) {
+      return;
+    }
+    for (var index = 0;
+        index < preparedUploads.length;
+        index += _progressChunkUploadBatchSize) {
+      final endExclusive = index + _progressChunkUploadBatchSize;
+      final chunk = preparedUploads.sublist(
+        index,
+        endExclusive > preparedUploads.length
+            ? preparedUploads.length
+            : endExclusive,
+      );
+      await _api.uploadProgressChunkBatch(
+        chunk.map((item) => item.upload).toList(growable: false),
+      );
+      for (final prepared in chunk) {
+        for (final stateWrite in prepared.itemStateWrites) {
+          await _secureStorage.writeSyncItemState(
+            remoteUserId: remoteUserId,
+            domain: stateWrite.domain,
+            scopeKey: stateWrite.scopeKey,
+            contentHash: stateWrite.contentHash,
+            lastChangedAt: stateWrite.lastChangedAt,
+            lastSyncedAt: stateWrite.lastSyncedAt,
+          );
+        }
+        final groupStateWrite = prepared.groupStateWrite;
+        await _secureStorage.writeSyncItemState(
+          remoteUserId: remoteUserId,
+          domain: groupStateWrite.domain,
+          scopeKey: groupStateWrite.scopeKey,
+          contentHash: groupStateWrite.contentHash,
+          lastChangedAt: groupStateWrite.lastChangedAt,
+          lastSyncedAt: groupStateWrite.lastSyncedAt,
+        );
+      }
+    }
+  }
+
+  Future<void> _uploadPendingProgressLegacy({
+    required int remoteUserId,
+    required List<ProgressEntry> entries,
+  }) async {
     final keysByCourse = <int, CourseKeyBundle>{};
     final courseSubjectsByVersion = <int, String>{};
     final pendingUploads = <_PendingProgressUpload>[];
@@ -989,6 +1280,157 @@ class SessionSyncService {
     if (currentUser.role != 'student') {
       return;
     }
+    bool needsLegacyBackfill = false;
+    try {
+      needsLegacyBackfill = await _downloadProgressChunks(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+        keyPair: keyPair,
+      );
+    } on SessionSyncApiException catch (error) {
+      if (error.statusCode != 404) {
+        rethrow;
+      }
+      await _downloadProgressRows(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+        keyPair: keyPair,
+      );
+      return;
+    }
+    if (needsLegacyBackfill) {
+      await _downloadProgressRows(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+        keyPair: keyPair,
+      );
+    }
+  }
+
+  Future<bool> _downloadProgressChunks({
+    required User currentUser,
+    required int remoteUserId,
+    required SimpleKeyPair keyPair,
+  }) async {
+    final initialCursorRaw = await _readProgressChunkCursor(remoteUserId);
+    var cursor = _parseSyncListCursor(initialCursorRaw);
+    var requestIfNoneMatch = await _secureStorage.readSyncListEtag(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainProgressChunkDownload,
+      scopeKey: _syncListScopeKey(initialCursorRaw),
+    );
+    var sawChunkItems = false;
+    while (true) {
+      final requestCursorRaw =
+          cursor == null ? '' : _serializeSyncListCursor(cursor);
+      final listResult = await _api.listProgressChunksDelta(
+        since: cursor?.updatedAt.toUtc().toIso8601String(),
+        sinceId: cursor?.cursorId,
+        ifNoneMatch: requestIfNoneMatch,
+        limit: _syncDownloadPageSize,
+      );
+      requestIfNoneMatch = null;
+      await _writeSyncListEtag(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainProgressChunkDownload,
+        scopeKey: _syncListScopeKey(requestCursorRaw),
+        etag: listResult.etag,
+      );
+      if (listResult.notModified) {
+        return !sawChunkItems && cursor == null;
+      }
+      final items = listResult.items;
+      if (items.isEmpty) {
+        return !sawChunkItems && cursor == null;
+      }
+      sawChunkItems = true;
+      var latestCursor = cursor;
+      for (final chunkItem in items) {
+        final itemUpdatedAt = DateTime.tryParse(chunkItem.updatedAt)?.toUtc() ??
+            DateTime.now().toUtc();
+        final itemCursor = _SyncListCursor(
+          updatedAt: itemUpdatedAt,
+          cursorId: chunkItem.cursorId < 0 ? 0 : chunkItem.cursorId,
+        );
+        final normalizedChapterKey = chunkItem.chapterKey.trim().isEmpty
+            ? 'ungrouped'
+            : chunkItem.chapterKey.trim();
+        final chunkScopeKey = '${chunkItem.courseId}:$normalizedChapterKey';
+        final chunkState = await _secureStorage.readSyncItemState(
+          remoteUserId: remoteUserId,
+          domain: _syncDomainProgressChunkDownload,
+          scopeKey: chunkScopeKey,
+        );
+        if (!_isTimestampNewer(itemUpdatedAt, chunkState?.lastChangedAt)) {
+          latestCursor = _latestSyncCursor(latestCursor, itemCursor);
+          continue;
+        }
+        final remoteChunkHash = _resolveSyncHash(
+          primaryHash: chunkItem.envelopeHash,
+          fallbackValue: chunkItem.envelope,
+        );
+        if (chunkState != null &&
+            remoteChunkHash.isNotEmpty &&
+            chunkState.contentHash == remoteChunkHash) {
+          await _secureStorage.writeSyncItemState(
+            remoteUserId: remoteUserId,
+            domain: _syncDomainProgressChunkDownload,
+            scopeKey: chunkScopeKey,
+            contentHash: remoteChunkHash,
+            lastChangedAt: itemUpdatedAt,
+            lastSyncedAt: itemUpdatedAt,
+          );
+          latestCursor = _latestSyncCursor(latestCursor, itemCursor);
+          continue;
+        }
+        final progressItems = await _resolveProgressChunkItems(
+          chunkItem: chunkItem,
+          remoteUserId: remoteUserId,
+          keyPair: keyPair,
+        );
+        for (final progressItem in progressItems) {
+          await _applyDownloadedProgressItem(
+            currentUser: currentUser,
+            remoteUserId: remoteUserId,
+            keyPair: keyPair,
+            item: progressItem,
+          );
+        }
+        final resolvedChunkHash = remoteChunkHash.isNotEmpty
+            ? remoteChunkHash
+            : _hashEnvelope(chunkItem.envelope.trim());
+        await _secureStorage.writeSyncItemState(
+          remoteUserId: remoteUserId,
+          domain: _syncDomainProgressChunkDownload,
+          scopeKey: chunkScopeKey,
+          contentHash: resolvedChunkHash,
+          lastChangedAt: itemUpdatedAt,
+          lastSyncedAt: itemUpdatedAt,
+        );
+        latestCursor = _latestSyncCursor(latestCursor, itemCursor);
+      }
+      if (latestCursor == null) {
+        return false;
+      }
+      if (cursor != null && _compareSyncCursor(latestCursor, cursor) <= 0) {
+        return false;
+      }
+      await _writeProgressChunkCursor(
+        remoteUserId: remoteUserId,
+        rawCursor: _serializeSyncListCursor(latestCursor),
+      );
+      cursor = latestCursor;
+      if (items.length < _syncDownloadPageSize) {
+        return false;
+      }
+    }
+  }
+
+  Future<void> _downloadProgressRows({
+    required User currentUser,
+    required int remoteUserId,
+    required SimpleKeyPair keyPair,
+  }) async {
     final initialCursorRaw =
         await _secureStorage.readProgressSyncCursor(remoteUserId);
     var cursor = _parseSyncListCursor(initialCursorRaw);
@@ -1028,134 +1470,11 @@ class SessionSyncService {
           updatedAt: itemUpdatedAt,
           cursorId: item.cursorId < 0 ? 0 : item.cursorId,
         );
-        final scopeKey = '${item.courseId}:${item.kpKey.trim()}';
-        final syncState = await _secureStorage.readSyncItemState(
-          remoteUserId: remoteUserId,
-          domain: _syncDomainProgressDownload,
-          scopeKey: scopeKey,
-        );
-        if (!_isTimestampNewer(itemUpdatedAt, syncState?.lastChangedAt)) {
-          latestCursor = _latestSyncCursor(latestCursor, itemCursor);
-          continue;
-        }
-        final fallbackHash = _hashProgressSyncItem(item);
-        final remoteHash = _resolveSyncHash(
-          primaryHash: item.envelopeHash,
-          fallbackValue:
-              item.envelope.trim().isNotEmpty ? item.envelope : fallbackHash,
-        );
-        if (syncState != null &&
-            remoteHash.isNotEmpty &&
-            syncState.contentHash == remoteHash) {
-          await _secureStorage.writeSyncItemState(
-            remoteUserId: remoteUserId,
-            domain: _syncDomainProgressDownload,
-            scopeKey: scopeKey,
-            contentHash: remoteHash,
-            lastChangedAt: itemUpdatedAt,
-            lastSyncedAt: itemUpdatedAt,
-          );
-          latestCursor = _latestSyncCursor(latestCursor, itemCursor);
-          continue;
-        }
-        final resolved = await _resolveProgressPayload(
-          item: item,
+        await _applyDownloadedProgressItem(
+          currentUser: currentUser,
           remoteUserId: remoteUserId,
           keyPair: keyPair,
-        );
-        final localTeacherId = await _resolveLocalTeacherId(
-          currentUser: currentUser,
-          teacherRemoteId: item.teacherUserId,
-        );
-        var courseVersionId =
-            await _db.getCourseVersionIdForRemoteCourse(resolved.courseId);
-        if (courseVersionId == null && localTeacherId != null) {
-          courseVersionId = await _findLocalCourseVersionBySubject(
-            teacherId: localTeacherId,
-            subject: resolved.courseSubject,
-          );
-        }
-        if (courseVersionId == null && currentUser.role == 'student') {
-          courseVersionId = await _findAssignedCourseVersionBySubject(
-            studentId: currentUser.id,
-            subject: resolved.courseSubject,
-          );
-        }
-        if (courseVersionId == null) {
-          courseVersionId = await _db.createCourseVersion(
-            teacherId: localTeacherId ?? currentUser.id,
-            subject: resolved.courseSubject.trim().isEmpty
-                ? 'Course'
-                : resolved.courseSubject.trim(),
-            granularity: 1,
-            textbookText: '',
-            sourcePath: null,
-          );
-        }
-        if (localTeacherId != null) {
-          await _ensureCourseTeacher(
-            courseVersionId: courseVersionId,
-            expectedTeacherId: localTeacherId,
-          );
-        }
-        await _bindRemoteCourseLinkIfNeeded(
-          courseVersionId: courseVersionId,
-          remoteCourseId: resolved.courseId,
-        );
-        await _db.assignStudent(
-          studentId: currentUser.id,
-          courseVersionId: courseVersionId,
-        );
-        final updatedAt =
-            DateTime.tryParse(resolved.updatedAt)?.toUtc() ?? itemUpdatedAt;
-        final existingLocalProgress = await _db.getProgress(
-          studentId: currentUser.id,
-          courseVersionId: courseVersionId,
-          kpKey: resolved.kpKey,
-        );
-        if (existingLocalProgress != null &&
-            existingLocalProgress.updatedAt.toUtc().isAfter(updatedAt)) {
-          final resolvedHash = remoteHash.isNotEmpty
-              ? remoteHash
-              : _hashResolvedProgress(resolved);
-          await _secureStorage.writeSyncItemState(
-            remoteUserId: remoteUserId,
-            domain: _syncDomainProgressDownload,
-            scopeKey: scopeKey,
-            contentHash: resolvedHash,
-            lastChangedAt: itemUpdatedAt,
-            lastSyncedAt: itemUpdatedAt,
-          );
-          latestCursor = _latestSyncCursor(latestCursor, itemCursor);
-          continue;
-        }
-        await _db.upsertProgressFromSync(
-          studentId: currentUser.id,
-          courseVersionId: courseVersionId,
-          kpKey: resolved.kpKey,
-          lit: resolved.lit,
-          litPercent: resolved.litPercent,
-          questionLevel:
-              resolved.questionLevel.isEmpty ? null : resolved.questionLevel,
-          summaryText:
-              resolved.summaryText.isEmpty ? null : resolved.summaryText,
-          summaryRawResponse: resolved.summaryRawResponse.isEmpty
-              ? null
-              : resolved.summaryRawResponse,
-          summaryValid: resolved.summaryValid,
-          updatedAt: updatedAt,
-        );
-        final updatedAtUtc = updatedAt.toUtc();
-        final resolvedHash = remoteHash.isNotEmpty
-            ? remoteHash
-            : _hashResolvedProgress(resolved);
-        await _secureStorage.writeSyncItemState(
-          remoteUserId: remoteUserId,
-          domain: _syncDomainProgressDownload,
-          scopeKey: scopeKey,
-          contentHash: resolvedHash,
-          lastChangedAt: updatedAtUtc,
-          lastSyncedAt: updatedAtUtc,
+          item: item,
         );
         latestCursor = _latestSyncCursor(latestCursor, itemCursor);
       }
@@ -1174,6 +1493,251 @@ class SessionSyncService {
         return;
       }
     }
+  }
+
+  Future<void> _applyDownloadedProgressItem({
+    required User currentUser,
+    required int remoteUserId,
+    required SimpleKeyPair keyPair,
+    required ProgressSyncItem item,
+  }) async {
+    final itemUpdatedAt =
+        DateTime.tryParse(item.updatedAt)?.toUtc() ?? DateTime.now().toUtc();
+    final scopeKey = '${item.courseId}:${item.kpKey.trim()}';
+    final syncState = await _secureStorage.readSyncItemState(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainProgressDownload,
+      scopeKey: scopeKey,
+    );
+    if (!_isTimestampNewer(itemUpdatedAt, syncState?.lastChangedAt)) {
+      return;
+    }
+    final fallbackHash = _hashProgressSyncItem(item);
+    final remoteHash = _resolveSyncHash(
+      primaryHash: item.envelopeHash,
+      fallbackValue:
+          item.envelope.trim().isNotEmpty ? item.envelope : fallbackHash,
+    );
+    if (syncState != null &&
+        remoteHash.isNotEmpty &&
+        syncState.contentHash == remoteHash) {
+      await _secureStorage.writeSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainProgressDownload,
+        scopeKey: scopeKey,
+        contentHash: remoteHash,
+        lastChangedAt: itemUpdatedAt,
+        lastSyncedAt: itemUpdatedAt,
+      );
+      return;
+    }
+    final resolved = await _resolveProgressPayload(
+      item: item,
+      remoteUserId: remoteUserId,
+      keyPair: keyPair,
+    );
+    final localTeacherId = await _resolveLocalTeacherId(
+      currentUser: currentUser,
+      teacherRemoteId: item.teacherUserId,
+    );
+    var courseVersionId = await _db.getCourseVersionIdForRemoteCourse(
+      resolved.courseId,
+    );
+    if (courseVersionId == null && localTeacherId != null) {
+      courseVersionId = await _findLocalCourseVersionBySubject(
+        teacherId: localTeacherId,
+        subject: resolved.courseSubject,
+      );
+    }
+    if (courseVersionId == null && currentUser.role == 'student') {
+      courseVersionId = await _findAssignedCourseVersionBySubject(
+        studentId: currentUser.id,
+        subject: resolved.courseSubject,
+      );
+    }
+    if (courseVersionId == null) {
+      courseVersionId = await _db.createCourseVersion(
+        teacherId: localTeacherId ?? currentUser.id,
+        subject: resolved.courseSubject.trim().isEmpty
+            ? 'Course'
+            : resolved.courseSubject.trim(),
+        granularity: 1,
+        textbookText: '',
+        sourcePath: null,
+      );
+    }
+    if (localTeacherId != null) {
+      await _ensureCourseTeacher(
+        courseVersionId: courseVersionId,
+        expectedTeacherId: localTeacherId,
+      );
+    }
+    await _bindRemoteCourseLinkIfNeeded(
+      courseVersionId: courseVersionId,
+      remoteCourseId: resolved.courseId,
+    );
+    await _db.assignStudent(
+      studentId: currentUser.id,
+      courseVersionId: courseVersionId,
+    );
+    final updatedAt =
+        DateTime.tryParse(resolved.updatedAt)?.toUtc() ?? itemUpdatedAt;
+    final existingLocalProgress = await _db.getProgress(
+      studentId: currentUser.id,
+      courseVersionId: courseVersionId,
+      kpKey: resolved.kpKey,
+    );
+    if (existingLocalProgress != null &&
+        existingLocalProgress.updatedAt.toUtc().isAfter(updatedAt)) {
+      final resolvedHash =
+          remoteHash.isNotEmpty ? remoteHash : _hashResolvedProgress(resolved);
+      await _secureStorage.writeSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainProgressDownload,
+        scopeKey: scopeKey,
+        contentHash: resolvedHash,
+        lastChangedAt: itemUpdatedAt,
+        lastSyncedAt: itemUpdatedAt,
+      );
+      return;
+    }
+    await _db.upsertProgressFromSync(
+      studentId: currentUser.id,
+      courseVersionId: courseVersionId,
+      kpKey: resolved.kpKey,
+      lit: resolved.lit,
+      litPercent: resolved.litPercent,
+      questionLevel:
+          resolved.questionLevel.isEmpty ? null : resolved.questionLevel,
+      summaryText: resolved.summaryText.isEmpty ? null : resolved.summaryText,
+      summaryRawResponse: resolved.summaryRawResponse.isEmpty
+          ? null
+          : resolved.summaryRawResponse,
+      summaryValid: resolved.summaryValid,
+      updatedAt: updatedAt,
+    );
+    final updatedAtUtc = updatedAt.toUtc();
+    final resolvedHash =
+        remoteHash.isNotEmpty ? remoteHash : _hashResolvedProgress(resolved);
+    await _secureStorage.writeSyncItemState(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainProgressDownload,
+      scopeKey: scopeKey,
+      contentHash: resolvedHash,
+      lastChangedAt: updatedAtUtc,
+      lastSyncedAt: updatedAtUtc,
+    );
+  }
+
+  Future<List<ProgressSyncItem>> _resolveProgressChunkItems({
+    required ProgressSyncChunkItem chunkItem,
+    required int remoteUserId,
+    required SimpleKeyPair keyPair,
+  }) async {
+    if (chunkItem.envelope.trim().isEmpty) {
+      throw StateError('Progress chunk sync envelope missing.');
+    }
+    final envelopeJson = utf8.decode(base64Decode(chunkItem.envelope));
+    if (chunkItem.envelopeHash.trim().isNotEmpty) {
+      final computed = _hashEnvelope(envelopeJson);
+      if (computed != chunkItem.envelopeHash.trim()) {
+        throw StateError('Progress chunk sync envelope hash mismatch.');
+      }
+    }
+    final decoded = jsonDecode(envelopeJson);
+    if (decoded is! Map<String, dynamic>) {
+      throw StateError('Progress chunk sync envelope invalid.');
+    }
+    final envelope = EncryptedEnvelope.fromJson(decoded);
+    final payload = await _crypto.decryptEnvelope(
+      envelope: envelope,
+      userKeyPair: keyPair,
+      userId: remoteUserId,
+    );
+
+    final payloadStudentID = _parsePayloadInt(
+      payload['student_remote_user_id'],
+      field: 'student_remote_user_id',
+    );
+    if (payloadStudentID != remoteUserId) {
+      throw StateError('Progress chunk payload student mismatch.');
+    }
+    final payloadCourseID = _parsePayloadInt(
+      payload['course_id'],
+      field: 'course_id',
+    );
+    if (payloadCourseID != chunkItem.courseId) {
+      throw StateError('Progress chunk payload course mismatch.');
+    }
+    final payloadTeacherID = _parsePayloadInt(
+      payload['teacher_remote_user_id'],
+      field: 'teacher_remote_user_id',
+    );
+    final payloadCourseSubject = _parsePayloadString(
+      payload['course_subject'],
+      field: 'course_subject',
+      isRequired: false,
+    ).trim();
+    final itemList = payload['items'];
+    if (itemList is! List) {
+      throw StateError('Progress chunk payload items invalid.');
+    }
+    final results = <ProgressSyncItem>[];
+    for (final rawItem in itemList) {
+      if (rawItem is! Map<String, dynamic>) {
+        continue;
+      }
+      final kpKey =
+          _parsePayloadString(rawItem['kp_key'], field: 'kp_key').trim();
+      if (kpKey.isEmpty) {
+        continue;
+      }
+      final updatedAt = _parsePayloadString(
+        rawItem['updated_at'],
+        field: 'updated_at',
+      );
+      final litPercentRaw = _parsePayloadInt(
+        rawItem['lit_percent'],
+        field: 'lit_percent',
+      );
+      results.add(
+        ProgressSyncItem(
+          cursorId: 0,
+          courseId: payloadCourseID,
+          courseSubject: payloadCourseSubject.isNotEmpty
+              ? payloadCourseSubject
+              : chunkItem.courseSubject,
+          teacherUserId: payloadTeacherID,
+          studentUserId: payloadStudentID,
+          kpKey: kpKey,
+          lit: _parsePayloadBool(rawItem['lit'], field: 'lit'),
+          litPercent: litPercentRaw.clamp(0, 100).toInt(),
+          questionLevel: _parsePayloadString(
+            rawItem['question_level'],
+            field: 'question_level',
+            isRequired: false,
+          ),
+          summaryText: _parsePayloadString(
+            rawItem['summary_text'],
+            field: 'summary_text',
+            isRequired: false,
+          ),
+          summaryRawResponse: _parsePayloadString(
+            rawItem['summary_raw_response'],
+            field: 'summary_raw_response',
+            isRequired: false,
+          ),
+          summaryValid: _parsePayloadNullableBool(
+            rawItem['summary_valid'],
+            field: 'summary_valid',
+          ),
+          updatedAt: updatedAt,
+          envelope: '',
+          envelopeHash: '',
+        ),
+      );
+    }
+    return results;
   }
 
   Future<Map<String, dynamic>> _decryptItem(
@@ -1600,6 +2164,37 @@ class SessionSyncService {
   String _syncListScopeKey(String? cursor) {
     final normalized = (cursor ?? '').trim();
     return 'since:$normalized';
+  }
+
+  Future<String?> _readProgressChunkCursor(int remoteUserId) async {
+    final state = await _secureStorage.readSyncItemState(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainProgressChunkDownload,
+      scopeKey: _progressChunkCursorScopeKey,
+    );
+    if (state == null) {
+      return null;
+    }
+    final raw = state.contentHash.trim();
+    return raw.isEmpty ? null : raw;
+  }
+
+  Future<void> _writeProgressChunkCursor({
+    required int remoteUserId,
+    required String rawCursor,
+  }) async {
+    final parsed = _parseSyncListCursor(rawCursor);
+    if (parsed == null) {
+      return;
+    }
+    await _secureStorage.writeSyncItemState(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainProgressChunkDownload,
+      scopeKey: _progressChunkCursorScopeKey,
+      contentHash: _serializeSyncListCursor(parsed),
+      lastChangedAt: parsed.updatedAt,
+      lastSyncedAt: parsed.updatedAt,
+    );
   }
 
   _SyncListCursor? _parseSyncListCursor(String? raw) {
@@ -2071,6 +2666,35 @@ class _PendingSessionUpload {
   final int remoteCourseId;
 }
 
+class _ProgressChunkGroup {
+  _ProgressChunkGroup({
+    required this.scopeKey,
+    required this.remoteCourseId,
+    required this.chapterKey,
+  });
+
+  final String scopeKey;
+  final int remoteCourseId;
+  final String chapterKey;
+  final List<_ProgressChunkMember> members = <_ProgressChunkMember>[];
+  bool hasPendingChanges = false;
+  bool blockedByRemoteNewer = false;
+}
+
+class _ProgressChunkMember {
+  _ProgressChunkMember({
+    required this.entry,
+    required this.scopeKey,
+    required this.updatedAt,
+    required this.payloadHash,
+  });
+
+  final ProgressEntry entry;
+  final String scopeKey;
+  final DateTime updatedAt;
+  final String payloadHash;
+}
+
 class _PendingProgressUpload {
   _PendingProgressUpload({
     required this.upload,
@@ -2079,6 +2703,18 @@ class _PendingProgressUpload {
 
   final ProgressUploadEntry upload;
   final _SyncStateWrite stateWrite;
+}
+
+class _PreparedProgressChunkUpload {
+  _PreparedProgressChunkUpload({
+    required this.upload,
+    required this.itemStateWrites,
+    required this.groupStateWrite,
+  });
+
+  final ProgressChunkUploadEntry upload;
+  final List<_SyncStateWrite> itemStateWrites;
+  final _SyncStateWrite groupStateWrite;
 }
 
 class _PreparedSessionUpload {

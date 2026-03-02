@@ -77,5 +77,7 @@ func registerRoutes(app *fiber.App, deps handlers.Dependencies) {
 	api.Get("/sessions/sync/list", syncLimiter.Handler(middleware.KeyByIP), sessionSync.List)
 	api.Post("/progress/sync/upload", syncLimiter.Handler(middleware.KeyByIP), progressSync.Upload)
 	api.Post("/progress/sync/upload-batch", syncLimiter.Handler(middleware.KeyByIP), progressSync.UploadBatch)
+	api.Post("/progress/sync/chunks/upload-batch", syncLimiter.Handler(middleware.KeyByIP), progressSync.UploadChunksBatch)
 	api.Get("/progress/sync/list", syncLimiter.Handler(middleware.KeyByIP), progressSync.List)
+	api.Get("/progress/sync/chunks/list", syncLimiter.Handler(middleware.KeyByIP), progressSync.ListChunks)
 }

@@ -132,6 +132,54 @@ void main() {
     expect(result.items.single.cursorId, equals(22));
   });
 
+  test('listProgressChunksDelta sends since_id and parses chunk fields',
+      () async {
+    late Uri capturedUri;
+    final client = MockClient((request) async {
+      capturedUri = request.url;
+      return http.Response(
+        jsonEncode(
+          <Map<String, Object?>>[
+            <String, Object?>{
+              'cursor_id': 33,
+              'course_id': 66,
+              'course_subject': 'Chemistry',
+              'teacher_user_id': 901,
+              'student_user_id': 3002,
+              'chapter_key': '2.1',
+              'item_count': 42,
+              'updated_at': '2026-02-27T09:12:00Z',
+              'envelope': 'ZW52',
+              'envelope_hash': 'hash',
+            },
+          ],
+        ),
+        200,
+        headers: <String, String>{'content-type': 'application/json'},
+      );
+    });
+    final api = SessionSyncApiService(
+      secureStorage: _TokenSecureStorage(),
+      baseUrl: 'https://example.com',
+      client: client,
+    );
+
+    final result = await api.listProgressChunksDelta(
+      since: '2026-02-27T09:12:00Z',
+      sinceId: 32,
+      limit: 5,
+    );
+
+    expect(capturedUri.path, equals('/api/progress/sync/chunks/list'));
+    expect(
+        capturedUri.queryParameters['since'], equals('2026-02-27T09:12:00Z'));
+    expect(capturedUri.queryParameters['since_id'], equals('32'));
+    expect(capturedUri.queryParameters['limit'], equals('5'));
+    expect(result.items, hasLength(1));
+    expect(result.items.single.cursorId, equals(33));
+    expect(result.items.single.chapterKey, equals('2.1'));
+  });
+
   test('listSessionsDelta rejects since_id when since is missing', () async {
     final api = SessionSyncApiService(
       secureStorage: _TokenSecureStorage(),
@@ -222,5 +270,36 @@ void main() {
     final items = (capturedBody['items'] as List).cast<Map<String, dynamic>>();
     expect(items, hasLength(1));
     expect(items.first['chapter_key'], equals('2.1'));
+  });
+
+  test('uploadProgressChunkBatch sends chapter-level payload', () async {
+    late Map<String, dynamic> capturedBody;
+    final client = MockClient((request) async {
+      expect(
+          request.url.path, equals('/api/progress/sync/chunks/upload-batch'));
+      capturedBody = jsonDecode(request.body) as Map<String, dynamic>;
+      return http.Response('{"status":"ok"}', 200);
+    });
+    final api = SessionSyncApiService(
+      secureStorage: _TokenSecureStorage(),
+      baseUrl: 'https://example.com',
+      client: client,
+    );
+
+    await api.uploadProgressChunkBatch(<ProgressChunkUploadEntry>[
+      ProgressChunkUploadEntry(
+        courseId: 77,
+        chapterKey: '2.1',
+        itemCount: 42,
+        updatedAt: '2026-03-02T00:00:00Z',
+        envelope: 'ZW52',
+        envelopeHash: 'hash',
+      ),
+    ]);
+
+    final items = (capturedBody['items'] as List).cast<Map<String, dynamic>>();
+    expect(items, hasLength(1));
+    expect(items.first['chapter_key'], equals('2.1'));
+    expect(items.first['item_count'], equals(42));
   });
 }
