@@ -1,5 +1,5 @@
 # BUGS
-Last updated: 2026-02-28
+Last updated: 2026-03-08
 
 ## Active watch
 - Student import race after bundle download (monitoring): fixed by awaiting archive extraction in client bundle service (`f77e7e0`); keep watching for recurrence in production-like flow.
@@ -64,3 +64,8 @@ Last updated: 2026-02-28
 - Symptom: `flutter build windows --release` fails with override signature errors in `packages/record_linux` after dependency resolution updates.
 - Root cause: local path override implemented an outdated platform-interface method signature (`hasPermission(String)`), while `record_platform_interface` required `hasPermission(String, {bool request = true})`.
 - Prevention: keep all local package overrides in lockstep with platform-interface method signatures whenever dependencies are refreshed; verify with release build gate.
+
+13. Windows secure-storage sync state contention
+- Symptom: session sync becomes very slow and can fail with `PathAccessException ... flutter_secure_storage.dat ... used by another process`.
+- Root cause: thousands of per-item sync states were stored in `flutter_secure_storage`; on Windows the plugin reads/decrypts and rewrites the whole encrypted file for each key operation, which creates heavy local I/O and file-lock races under large sync sets.
+- Prevention: keep secure storage for low-cardinality secrets only, store high-cardinality sync metadata/state in SQLite, and use manifest+fetch sync so normal download sync does not depend on per-row cursor chatter.

@@ -182,6 +182,136 @@ void main() {
     expect(result.items.single.chapterKey, equals('2.1'));
   });
 
+  test('getDownloadManifest sends include_progress and handles 304', () async {
+    late Uri capturedUri;
+    late http.Request capturedRequest;
+    final client = MockClient((request) async {
+      capturedRequest = request;
+      capturedUri = request.url;
+      return http.Response(
+        '',
+        304,
+        headers: <String, String>{'etag': 'manifest-304'},
+      );
+    });
+    final api = SessionSyncApiService(
+      secureStorage: _TokenSecureStorage(),
+      baseUrl: 'https://example.com',
+      client: client,
+    );
+
+    final result = await api.getDownloadManifest(
+      includeProgress: true,
+      ifNoneMatch: 'prior-manifest',
+    );
+
+    expect(capturedUri.path, equals('/api/sync/download-manifest'));
+    expect(capturedUri.queryParameters['include_progress'], equals('true'));
+    expect(capturedRequest.headers['If-None-Match'], equals('prior-manifest'));
+    expect(result.notModified, isTrue);
+    expect(result.etag, equals('manifest-304'));
+    expect(result.sessions, isEmpty);
+    expect(result.progressChunks, isEmpty);
+    expect(result.progressRows, isEmpty);
+  });
+
+  test('fetchDownloadPayload posts fetch keys and parses payload', () async {
+    late Map<String, dynamic> capturedBody;
+    final client = MockClient((request) async {
+      expect(request.url.path, equals('/api/sync/download-fetch'));
+      capturedBody = jsonDecode(request.body) as Map<String, dynamic>;
+      return http.Response(
+        jsonEncode(<String, Object?>{
+          'sessions': <Map<String, Object?>>[
+            <String, Object?>{
+              'cursor_id': 11,
+              'session_sync_id': 's1',
+              'course_id': 44,
+              'teacher_user_id': 901,
+              'student_user_id': 3001,
+              'sender_user_id': 3001,
+              'updated_at': '2026-03-08T08:00:00Z',
+              'envelope': 'ZW52',
+              'envelope_hash': 'session-hash',
+            },
+          ],
+          'progress_chunks': <Map<String, Object?>>[
+            <String, Object?>{
+              'cursor_id': 22,
+              'course_id': 55,
+              'course_subject': 'Biology',
+              'teacher_user_id': 901,
+              'student_user_id': 3001,
+              'chapter_key': '1.1',
+              'item_count': 2,
+              'updated_at': '2026-03-08T08:01:00Z',
+              'envelope': 'Y2h1bms=',
+              'envelope_hash': 'chunk-hash',
+            },
+          ],
+          'progress_rows': <Map<String, Object?>>[
+            <String, Object?>{
+              'cursor_id': 33,
+              'course_id': 55,
+              'course_subject': 'Biology',
+              'teacher_user_id': 901,
+              'student_user_id': 3001,
+              'kp_key': '1.1.1',
+              'lit': true,
+              'lit_percent': 88,
+              'question_level': 'medium',
+              'summary_text': 'summary',
+              'summary_raw_response': 'raw',
+              'summary_valid': true,
+              'updated_at': '2026-03-08T08:02:00Z',
+              'envelope': 'cm93',
+              'envelope_hash': 'row-hash',
+            },
+          ],
+        }),
+        200,
+        headers: <String, String>{'content-type': 'application/json'},
+      );
+    });
+    final api = SessionSyncApiService(
+      secureStorage: _TokenSecureStorage(),
+      baseUrl: 'https://example.com',
+      client: client,
+    );
+
+    final result = await api.fetchDownloadPayload(
+      request: SyncDownloadFetchRequest(
+        sessionSyncIds: const <String>['s1'],
+        progressChunks: <ProgressChunkFetchKey>[
+          ProgressChunkFetchKey(courseId: 55, chapterKey: '1.1'),
+        ],
+        progressRows: <ProgressRowFetchKey>[
+          ProgressRowFetchKey(courseId: 55, kpKey: '1.1.1'),
+        ],
+      ),
+    );
+
+    expect(capturedBody['session_sync_ids'], equals(<String>['s1']));
+    expect(
+      capturedBody['progress_chunks'],
+      equals(<Map<String, Object?>>[
+        <String, Object?>{'course_id': 55, 'chapter_key': '1.1'},
+      ]),
+    );
+    expect(
+      capturedBody['progress_rows'],
+      equals(<Map<String, Object?>>[
+        <String, Object?>{'course_id': 55, 'kp_key': '1.1.1'},
+      ]),
+    );
+    expect(result.sessions, hasLength(1));
+    expect(result.sessions.single.sessionSyncId, equals('s1'));
+    expect(result.progressChunks, hasLength(1));
+    expect(result.progressChunks.single.chapterKey, equals('1.1'));
+    expect(result.progressRows, hasLength(1));
+    expect(result.progressRows.single.kpKey, equals('1.1.1'));
+  });
+
   test('listSessionsDelta rejects since_id when since is missing', () async {
     final api = SessionSyncApiService(
       secureStorage: _TokenSecureStorage(),

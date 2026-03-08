@@ -8,14 +8,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:family_teacher/db/app_database.dart';
+import 'package:family_teacher/db/app_database.dart' hide SyncItemState;
 import 'package:family_teacher/services/secure_storage_service.dart';
 import 'package:family_teacher/services/session_crypto_service.dart';
 import 'package:family_teacher/services/session_sync_api_service.dart';
 import 'package:family_teacher/services/session_sync_service.dart';
+import 'package:family_teacher/services/sync_state_repository.dart';
 import 'package:family_teacher/services/user_key_service.dart';
 
-class _MemorySecureStorage extends SecureStorageService {
+class _MemorySecureStorage extends SecureStorageService
+    implements SyncStateRepository {
   _MemorySecureStorage({String? accessToken}) : _accessToken = accessToken;
 
   final String? _accessToken;
@@ -194,6 +196,7 @@ class _MemorySecureStorage extends SecureStorageService {
     bool clearItemStates = true,
     bool clearListEtags = true,
     bool clearRunAt = true,
+    bool clearCursors = false,
   }) async {
     final normalizedDomain = domain.trim().toLowerCase();
     if (clearItemStates) {
@@ -220,6 +223,8 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
     this.listProgressDeltaHandler,
     this.listProgressChunksDeltaHandler,
     this.uploadProgressChunkBatchHandler,
+    this.downloadManifestHandler,
+    this.fetchDownloadPayloadHandler,
     Map<int, CourseKeyBundle>? courseKeysByCourse,
   }) : super(
           secureStorage: secureStorage,
@@ -253,6 +258,13 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
   })? listProgressChunksDeltaHandler;
   final Future<void> Function(List<ProgressChunkUploadEntry> entries)?
       uploadProgressChunkBatchHandler;
+  final SyncDownloadManifestResult Function({
+    bool includeProgress,
+    String? ifNoneMatch,
+  })? downloadManifestHandler;
+  final Future<SyncDownloadFetchResult> Function(
+    SyncDownloadFetchRequest request,
+  )? fetchDownloadPayloadHandler;
   late final Map<int, CourseKeyBundle> _courseKeysByCourse;
   final List<ProgressUploadEntry> uploadedProgressEntries =
       <ProgressUploadEntry>[];
@@ -279,6 +291,68 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
       items: sessionItems,
       etag: 'sessions-etag',
       notModified: false,
+    );
+  }
+
+  @override
+  Future<SyncDownloadManifestResult> getDownloadManifest({
+    required bool includeProgress,
+    String? ifNoneMatch,
+  }) async {
+    if (downloadManifestHandler != null) {
+      return downloadManifestHandler!(
+        includeProgress: includeProgress,
+        ifNoneMatch: ifNoneMatch,
+      );
+    }
+    return SyncDownloadManifestResult(
+      sessions: sessionItems
+          .map(
+            (item) => SessionSyncManifestItem(
+              sessionSyncId: item.sessionSyncId,
+              updatedAt: item.updatedAt,
+              envelopeHash: item.envelopeHash,
+            ),
+          )
+          .toList(growable: false),
+      progressChunks: const <ProgressSyncChunkManifestItem>[],
+      progressRows: includeProgress
+          ? progressItems
+              .map(
+                (item) => ProgressSyncManifestItem(
+                  courseId: item.courseId,
+                  kpKey: item.kpKey,
+                  updatedAt: item.updatedAt,
+                  envelopeHash: item.envelopeHash,
+                ),
+              )
+              .toList(growable: false)
+          : const <ProgressSyncManifestItem>[],
+      etag: 'download-manifest-etag',
+      notModified: false,
+    );
+  }
+
+  @override
+  Future<SyncDownloadFetchResult> fetchDownloadPayload({
+    required SyncDownloadFetchRequest request,
+  }) async {
+    if (fetchDownloadPayloadHandler != null) {
+      return fetchDownloadPayloadHandler!(request);
+    }
+    final sessionIds = request.sessionSyncIds.toSet();
+    final progressRowKeys = request.progressRows
+        .map((item) => '${item.courseId}:${item.kpKey}')
+        .toSet();
+    return SyncDownloadFetchResult(
+      sessions: sessionItems
+          .where((item) => sessionIds.contains(item.sessionSyncId))
+          .toList(growable: false),
+      progressChunks: const <ProgressSyncChunkItem>[],
+      progressRows: progressItems
+          .where((item) =>
+              progressRowKeys.contains('${item.courseId}:${item.kpKey}'))
+          .toList(growable: false),
     );
   }
 
@@ -1197,7 +1271,7 @@ void main() {
   );
 
   test(
-    'session download drains paginated deltas in one sync run',
+    'session download fetches all manifest-selected items in one sync run',
     () async {
       final crypto = SessionCryptoService();
       final secureStorage = _MemorySecureStorage(accessToken: 'token');
@@ -1255,64 +1329,53 @@ void main() {
         runAt: DateTime.now().toUtc(),
       );
 
-      final firstPage = List<SessionSyncItem>.generate(5000, (index) {
-        final cursorId = index + 1;
-        return SessionSyncItem(
-          cursorId: cursorId,
-          sessionSyncId: '',
-          courseId: 140,
-          teacherUserId: 905,
-          studentUserId: remoteStudentId,
-          senderUserId: remoteStudentId,
+      final manifestItems = List<SessionSyncManifestItem>.generate(5000, (
+        index,
+      ) {
+        final sessionSyncId = 'sync-${index + 1}';
+        return SessionSyncManifestItem(
+          sessionSyncId: sessionSyncId,
           updatedAt: '2026-03-01T08:00:00Z',
-          envelope: '',
-          envelopeHash: '',
+          envelopeHash: 'hash-$sessionSyncId',
         );
       });
 
-      var sessionListCalls = 0;
-      String? secondSince;
-      int? secondSinceId;
+      var manifestCalls = 0;
+      var fetchCalls = 0;
       final api = _TestSessionSyncApiService(
         secureStorage: secureStorage,
         sessionItems: const <SessionSyncItem>[],
         progressItems: const <ProgressSyncItem>[],
-        listSessionsDeltaHandler: ({
-          String? since,
-          int? sinceId,
-          int? limit,
-          String? ifNoneMatch,
-        }) {
-          sessionListCalls++;
-          if (sessionListCalls == 1) {
-            expect((since ?? '').trim(), isEmpty);
-            expect(sinceId == null || sinceId == 0, isTrue);
-            expect(limit, equals(5000));
-            return SyncListResult<SessionSyncItem>(
-              items: firstPage,
-              etag: 'session-page-1',
-              notModified: false,
-            );
-          }
-          secondSince = since;
-          secondSinceId = sinceId;
-          expect(limit, equals(5000));
-          return SyncListResult<SessionSyncItem>(
-            items: const <SessionSyncItem>[],
-            etag: 'session-page-2',
+        downloadManifestHandler: (
+            {bool includeProgress = false, String? ifNoneMatch}) {
+          manifestCalls++;
+          expect(includeProgress, isTrue);
+          expect(ifNoneMatch, isNull);
+          return SyncDownloadManifestResult(
+            sessions: manifestItems,
+            progressChunks: const <ProgressSyncChunkManifestItem>[],
+            progressRows: const <ProgressSyncManifestItem>[],
+            etag: 'download-manifest-page-1',
             notModified: false,
           );
         },
-        listProgressDeltaHandler: ({
-          String? since,
-          int? sinceId,
-          int? limit,
-          String? ifNoneMatch,
-        }) {
-          return SyncListResult<ProgressSyncItem>(
-            items: const <ProgressSyncItem>[],
-            etag: 'progress-empty',
-            notModified: false,
+        fetchDownloadPayloadHandler: (request) async {
+          fetchCalls++;
+          expect(request.sessionSyncIds, hasLength(5000));
+          expect(
+            request.sessionSyncIds.first,
+            equals(manifestItems.first.sessionSyncId),
+          );
+          expect(
+            request.sessionSyncIds.last,
+            equals(manifestItems.last.sessionSyncId),
+          );
+          expect(request.progressChunks, isEmpty);
+          expect(request.progressRows, isEmpty);
+          return SyncDownloadFetchResult(
+            sessions: const <SessionSyncItem>[],
+            progressChunks: const <ProgressSyncChunkItem>[],
+            progressRows: const <ProgressSyncItem>[],
           );
         },
       );
@@ -1332,13 +1395,8 @@ void main() {
 
       await syncService.syncIfReady(currentUser: student);
 
-      expect(sessionListCalls, equals(2));
-      expect(secondSince, equals('2026-03-01T08:00:00.000Z'));
-      expect(secondSinceId, equals(5000));
-      expect(
-        await secureStorage.readSessionSyncCursor(remoteStudentId),
-        equals('2026-03-01T08:00:00.000Z|5000'),
-      );
+      expect(manifestCalls, equals(1));
+      expect(fetchCalls, equals(1));
     },
   );
 
@@ -1752,50 +1810,38 @@ void main() {
         runAt: localUpdatedAt.add(const Duration(seconds: 30)),
       );
 
+      var manifestCalls = 0;
+      var fetchCalls = 0;
       final api = _TestSessionSyncApiService(
         secureStorage: secureStorage,
         sessionItems: const <SessionSyncItem>[],
         progressItems: const <ProgressSyncItem>[],
-        listProgressDeltaHandler: ({
-          String? since,
-          int? sinceId,
-          int? limit,
-          String? ifNoneMatch,
-        }) {
-          return SyncListResult<ProgressSyncItem>(
-            items: <ProgressSyncItem>[
-              ProgressSyncItem(
-                cursorId: 777,
+        downloadManifestHandler: (
+            {bool includeProgress = false, String? ifNoneMatch}) {
+          manifestCalls++;
+          expect(includeProgress, isTrue);
+          expect(ifNoneMatch, isNull);
+          return SyncDownloadManifestResult(
+            sessions: const <SessionSyncManifestItem>[],
+            progressChunks: const <ProgressSyncChunkManifestItem>[],
+            progressRows: <ProgressSyncManifestItem>[
+              ProgressSyncManifestItem(
                 courseId: 180,
-                courseSubject: 'History',
-                teacherUserId: 909,
-                studentUserId: remoteStudentId,
                 kpKey: '2.1.3',
-                lit: true,
-                litPercent: 75,
-                questionLevel: 'medium',
-                summaryText: 'remote-same',
-                summaryRawResponse: '',
-                summaryValid: true,
                 updatedAt: '2026-03-02T12:00:00Z',
-                envelope: '%%%INVALID_BASE64%%%',
-                envelopeHash: '',
+                envelopeHash: 'same-row',
               ),
             ],
-            etag: 'progress-stale-cursor',
+            etag: 'progress-manifest-stale-row',
             notModified: false,
           );
         },
-        listProgressChunksDeltaHandler: ({
-          String? since,
-          int? sinceId,
-          int? limit,
-          String? ifNoneMatch,
-        }) {
-          return SyncListResult<ProgressSyncChunkItem>(
-            items: const <ProgressSyncChunkItem>[],
-            etag: 'chunk-empty',
-            notModified: false,
+        fetchDownloadPayloadHandler: (request) async {
+          fetchCalls++;
+          return SyncDownloadFetchResult(
+            sessions: const <SessionSyncItem>[],
+            progressChunks: const <ProgressSyncChunkItem>[],
+            progressRows: const <ProgressSyncItem>[],
           );
         },
       );
@@ -1821,10 +1867,8 @@ void main() {
       );
       expect(progress, isNotNull);
       expect(progress!.updatedAt.toUtc(), equals(localUpdatedAt.toUtc()));
-      expect(
-        await secureStorage.readProgressSyncCursor(remoteStudentId),
-        equals('2026-03-02T12:00:00.000Z|777'),
-      );
+      expect(manifestCalls, equals(1));
+      expect(fetchCalls, equals(0));
     },
   );
 
@@ -2029,77 +2073,52 @@ void main() {
       await secureStorage.writeSyncRunAt(
         remoteUserId: remoteStudentId,
         domain: 'session_sync_run_progress_upload',
-        runAt: baseUpdatedAt.add(const Duration(seconds: 10)),
+        runAt: baseUpdatedAt
+            .add(const Duration(seconds: 3127))
+            .add(const Duration(minutes: 1)),
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_session_upload',
+        runAt: DateTime.now().toUtc(),
       );
 
-      final remoteItems = List<ProgressSyncItem>.generate(3127, (index) {
+      final manifestItems = List<ProgressSyncManifestItem>.generate(3127, (
+        index,
+      ) {
         final updatedAt = baseUpdatedAt.add(Duration(seconds: index));
-        return ProgressSyncItem(
-          cursorId: index + 1,
+        return ProgressSyncManifestItem(
           courseId: 191,
-          courseSubject: 'StalePerf',
-          teacherUserId: 911,
-          studentUserId: remoteStudentId,
           kpKey: '2.1.$index',
-          lit: index.isEven,
-          litPercent: index % 101,
-          questionLevel: 'medium',
-          summaryText: 'remote-$index',
-          summaryRawResponse: '',
-          summaryValid: true,
           updatedAt: updatedAt.toUtc().toIso8601String(),
-          envelope: '%%%INVALID_BASE64%%%',
-          envelopeHash: '',
+          envelopeHash: 'row-hash-$index',
         );
       });
 
-      var progressListCalls = 0;
+      var manifestCalls = 0;
+      var fetchCalls = 0;
       final api = _TestSessionSyncApiService(
         secureStorage: secureStorage,
         sessionItems: const <SessionSyncItem>[],
         progressItems: const <ProgressSyncItem>[],
-        listSessionsDeltaHandler: ({
-          String? since,
-          int? sinceId,
-          int? limit,
-          String? ifNoneMatch,
-        }) {
-          return SyncListResult<SessionSyncItem>(
-            items: const <SessionSyncItem>[],
-            etag: 's304',
-            notModified: true,
-          );
-        },
-        listProgressChunksDeltaHandler: ({
-          String? since,
-          int? sinceId,
-          int? limit,
-          String? ifNoneMatch,
-        }) {
-          return SyncListResult<ProgressSyncChunkItem>(
-            items: const <ProgressSyncChunkItem>[],
-            etag: 'chunk-empty',
+        downloadManifestHandler: (
+            {bool includeProgress = false, String? ifNoneMatch}) {
+          manifestCalls++;
+          expect(includeProgress, isTrue);
+          return SyncDownloadManifestResult(
+            sessions: const <SessionSyncManifestItem>[],
+            progressChunks: const <ProgressSyncChunkManifestItem>[],
+            progressRows: manifestItems,
+            etag: 'progress-manifest',
             notModified: false,
           );
         },
-        listProgressDeltaHandler: ({
-          String? since,
-          int? sinceId,
-          int? limit,
-          String? ifNoneMatch,
-        }) {
-          progressListCalls++;
-          if (progressListCalls == 1) {
-            return SyncListResult<ProgressSyncItem>(
-              items: remoteItems,
-              etag: 'progress-page',
-              notModified: false,
-            );
-          }
-          return SyncListResult<ProgressSyncItem>(
-            items: const <ProgressSyncItem>[],
-            etag: 'progress-empty',
-            notModified: false,
+        fetchDownloadPayloadHandler: (request) async {
+          fetchCalls++;
+          return SyncDownloadFetchResult(
+            sessions: const <SessionSyncItem>[],
+            progressChunks: const <ProgressSyncChunkItem>[],
+            progressRows: const <ProgressSyncItem>[],
           );
         },
       );
@@ -2120,8 +2139,9 @@ void main() {
       await syncService.syncIfReady(currentUser: student);
       stopwatch.stop();
 
-      expect(progressListCalls, equals(1));
-      expect(stopwatch.elapsed.inMilliseconds, lessThan(1000));
+      expect(manifestCalls, equals(1));
+      expect(fetchCalls, equals(0));
+      expect(stopwatch.elapsed.inMilliseconds, lessThan(2000));
       final progressRows = await db.getProgressForCourse(
         studentId: studentId,
         courseVersionId: courseVersionId,

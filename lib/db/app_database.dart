@@ -231,6 +231,30 @@ class StudentPromptProfiles extends Table {
   DateTimeColumn get updatedAt => dateTime().nullable()();
 }
 
+class SyncItemStates extends Table {
+  IntColumn get remoteUserId => integer()();
+  TextColumn get domain => text()();
+  TextColumn get scopeKey => text()();
+  TextColumn get contentHash => text()();
+  DateTimeColumn get lastChangedAt => dateTime()();
+  DateTimeColumn get lastSyncedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {remoteUserId, domain, scopeKey};
+}
+
+class SyncMetadataEntries extends Table {
+  IntColumn get remoteUserId => integer()();
+  TextColumn get kind => text()();
+  TextColumn get domain => text()();
+  TextColumn get scopeKey => text()();
+  TextColumn get value => text()();
+  DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+
+  @override
+  Set<Column> get primaryKey => {remoteUserId, kind, domain, scopeKey};
+}
+
 @DriftDatabase(
   tables: [
     Users,
@@ -247,6 +271,8 @@ class StudentPromptProfiles extends Table {
     PromptTemplates,
     StudentPromptProfiles,
     CourseRemoteLinks,
+    SyncItemStates,
+    SyncMetadataEntries,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -261,7 +287,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 23;
+  int get schemaVersion => 24;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -364,6 +390,10 @@ class AppDatabase extends _$AppDatabase {
             await m.addColumn(chatSessions, chatSessions.syncUpdatedAt);
             await m.addColumn(chatSessions, chatSessions.syncUploadedAt);
             await m.createTable(courseRemoteLinks);
+          }
+          if (from < 24) {
+            await m.createTable(syncItemStates);
+            await m.createTable(syncMetadataEntries);
           }
         },
       );

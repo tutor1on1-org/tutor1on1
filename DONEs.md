@@ -1,5 +1,5 @@
 # DONES
-Last updated: 2026-02-27
+Last updated: 2026-03-08
 
 - Replaced deterministic memory consolidation with Codex memory hook automation: `scripts/hook_memory_update.ps1` now triggers on tracked line-count delta `>10`, reuses a dedicated session, updates only target memory docs, and tracks snapshot in `scripts/memory_line_snapshot.json`; pre-push now runs memory hook before validation and blocks push until memory updates are committed.
 - Improved student tutor interaction contract: added explicit student intent controls in chat UI (`Auto`, `Need Hint`, `My Attempt`, `Final`) and passed `student_intent` into prompt rendering for LEARN/REVIEW flows.
@@ -39,5 +39,8 @@ Last updated: 2026-02-27
 - Implemented teacher course deletion flow with confirmation text and remote marketplace deletion.
 - Added bundle metadata application guard with `version_id` to prevent older overwrite.
 - Fixed student bundle download `403` caused by Nginx file permission mismatch on storage path.
+- Reworked session/progress download sync around a two-step manifest+fetch flow (`/api/sync/download-manifest` + `/api/sync/download-fetch`) so normal catch-up sync downloads indexes first and only fetches stale content.
+- Moved session/progress sync metadata/state out of Windows secure storage and into Drift/SQLite, eliminating the `flutter_secure_storage.dat` bottleneck and file-lock failure mode for large sync sets.
+- Added regression coverage for the new download protocol on both client and backend, deployed the updated API service, and published a new Windows desktop ZIP at `https://43.99.59.107/downloads/family_teacher.zip`.
 
 Historical completions were moved to `LOGBOOK.md`.

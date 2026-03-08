@@ -7347,6 +7347,726 @@ class CourseRemoteLinksCompanion extends UpdateCompanion<CourseRemoteLink> {
   }
 }
 
+class $SyncItemStatesTable extends SyncItemStates
+    with TableInfo<$SyncItemStatesTable, SyncItemState> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $SyncItemStatesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _remoteUserIdMeta =
+      const VerificationMeta('remoteUserId');
+  @override
+  late final GeneratedColumn<int> remoteUserId = GeneratedColumn<int>(
+      'remote_user_id', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _domainMeta = const VerificationMeta('domain');
+  @override
+  late final GeneratedColumn<String> domain = GeneratedColumn<String>(
+      'domain', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _scopeKeyMeta =
+      const VerificationMeta('scopeKey');
+  @override
+  late final GeneratedColumn<String> scopeKey = GeneratedColumn<String>(
+      'scope_key', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _contentHashMeta =
+      const VerificationMeta('contentHash');
+  @override
+  late final GeneratedColumn<String> contentHash = GeneratedColumn<String>(
+      'content_hash', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _lastChangedAtMeta =
+      const VerificationMeta('lastChangedAt');
+  @override
+  late final GeneratedColumn<DateTime> lastChangedAt =
+      GeneratedColumn<DateTime>('last_changed_at', aliasedName, false,
+          type: DriftSqlType.dateTime, requiredDuringInsert: true);
+  static const VerificationMeta _lastSyncedAtMeta =
+      const VerificationMeta('lastSyncedAt');
+  @override
+  late final GeneratedColumn<DateTime> lastSyncedAt = GeneratedColumn<DateTime>(
+      'last_synced_at', aliasedName, false,
+      type: DriftSqlType.dateTime, requiredDuringInsert: true);
+  @override
+  List<GeneratedColumn> get $columns => [
+        remoteUserId,
+        domain,
+        scopeKey,
+        contentHash,
+        lastChangedAt,
+        lastSyncedAt
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'sync_item_states';
+  @override
+  VerificationContext validateIntegrity(Insertable<SyncItemState> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('remote_user_id')) {
+      context.handle(
+          _remoteUserIdMeta,
+          remoteUserId.isAcceptableOrUnknown(
+              data['remote_user_id']!, _remoteUserIdMeta));
+    } else if (isInserting) {
+      context.missing(_remoteUserIdMeta);
+    }
+    if (data.containsKey('domain')) {
+      context.handle(_domainMeta,
+          domain.isAcceptableOrUnknown(data['domain']!, _domainMeta));
+    } else if (isInserting) {
+      context.missing(_domainMeta);
+    }
+    if (data.containsKey('scope_key')) {
+      context.handle(_scopeKeyMeta,
+          scopeKey.isAcceptableOrUnknown(data['scope_key']!, _scopeKeyMeta));
+    } else if (isInserting) {
+      context.missing(_scopeKeyMeta);
+    }
+    if (data.containsKey('content_hash')) {
+      context.handle(
+          _contentHashMeta,
+          contentHash.isAcceptableOrUnknown(
+              data['content_hash']!, _contentHashMeta));
+    } else if (isInserting) {
+      context.missing(_contentHashMeta);
+    }
+    if (data.containsKey('last_changed_at')) {
+      context.handle(
+          _lastChangedAtMeta,
+          lastChangedAt.isAcceptableOrUnknown(
+              data['last_changed_at']!, _lastChangedAtMeta));
+    } else if (isInserting) {
+      context.missing(_lastChangedAtMeta);
+    }
+    if (data.containsKey('last_synced_at')) {
+      context.handle(
+          _lastSyncedAtMeta,
+          lastSyncedAt.isAcceptableOrUnknown(
+              data['last_synced_at']!, _lastSyncedAtMeta));
+    } else if (isInserting) {
+      context.missing(_lastSyncedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {remoteUserId, domain, scopeKey};
+  @override
+  SyncItemState map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return SyncItemState(
+      remoteUserId: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}remote_user_id'])!,
+      domain: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}domain'])!,
+      scopeKey: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}scope_key'])!,
+      contentHash: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}content_hash'])!,
+      lastChangedAt: attachedDatabase.typeMapping.read(
+          DriftSqlType.dateTime, data['${effectivePrefix}last_changed_at'])!,
+      lastSyncedAt: attachedDatabase.typeMapping.read(
+          DriftSqlType.dateTime, data['${effectivePrefix}last_synced_at'])!,
+    );
+  }
+
+  @override
+  $SyncItemStatesTable createAlias(String alias) {
+    return $SyncItemStatesTable(attachedDatabase, alias);
+  }
+}
+
+class SyncItemState extends DataClass implements Insertable<SyncItemState> {
+  final int remoteUserId;
+  final String domain;
+  final String scopeKey;
+  final String contentHash;
+  final DateTime lastChangedAt;
+  final DateTime lastSyncedAt;
+  const SyncItemState(
+      {required this.remoteUserId,
+      required this.domain,
+      required this.scopeKey,
+      required this.contentHash,
+      required this.lastChangedAt,
+      required this.lastSyncedAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['remote_user_id'] = Variable<int>(remoteUserId);
+    map['domain'] = Variable<String>(domain);
+    map['scope_key'] = Variable<String>(scopeKey);
+    map['content_hash'] = Variable<String>(contentHash);
+    map['last_changed_at'] = Variable<DateTime>(lastChangedAt);
+    map['last_synced_at'] = Variable<DateTime>(lastSyncedAt);
+    return map;
+  }
+
+  SyncItemStatesCompanion toCompanion(bool nullToAbsent) {
+    return SyncItemStatesCompanion(
+      remoteUserId: Value(remoteUserId),
+      domain: Value(domain),
+      scopeKey: Value(scopeKey),
+      contentHash: Value(contentHash),
+      lastChangedAt: Value(lastChangedAt),
+      lastSyncedAt: Value(lastSyncedAt),
+    );
+  }
+
+  factory SyncItemState.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return SyncItemState(
+      remoteUserId: serializer.fromJson<int>(json['remoteUserId']),
+      domain: serializer.fromJson<String>(json['domain']),
+      scopeKey: serializer.fromJson<String>(json['scopeKey']),
+      contentHash: serializer.fromJson<String>(json['contentHash']),
+      lastChangedAt: serializer.fromJson<DateTime>(json['lastChangedAt']),
+      lastSyncedAt: serializer.fromJson<DateTime>(json['lastSyncedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'remoteUserId': serializer.toJson<int>(remoteUserId),
+      'domain': serializer.toJson<String>(domain),
+      'scopeKey': serializer.toJson<String>(scopeKey),
+      'contentHash': serializer.toJson<String>(contentHash),
+      'lastChangedAt': serializer.toJson<DateTime>(lastChangedAt),
+      'lastSyncedAt': serializer.toJson<DateTime>(lastSyncedAt),
+    };
+  }
+
+  SyncItemState copyWith(
+          {int? remoteUserId,
+          String? domain,
+          String? scopeKey,
+          String? contentHash,
+          DateTime? lastChangedAt,
+          DateTime? lastSyncedAt}) =>
+      SyncItemState(
+        remoteUserId: remoteUserId ?? this.remoteUserId,
+        domain: domain ?? this.domain,
+        scopeKey: scopeKey ?? this.scopeKey,
+        contentHash: contentHash ?? this.contentHash,
+        lastChangedAt: lastChangedAt ?? this.lastChangedAt,
+        lastSyncedAt: lastSyncedAt ?? this.lastSyncedAt,
+      );
+  SyncItemState copyWithCompanion(SyncItemStatesCompanion data) {
+    return SyncItemState(
+      remoteUserId: data.remoteUserId.present
+          ? data.remoteUserId.value
+          : this.remoteUserId,
+      domain: data.domain.present ? data.domain.value : this.domain,
+      scopeKey: data.scopeKey.present ? data.scopeKey.value : this.scopeKey,
+      contentHash:
+          data.contentHash.present ? data.contentHash.value : this.contentHash,
+      lastChangedAt: data.lastChangedAt.present
+          ? data.lastChangedAt.value
+          : this.lastChangedAt,
+      lastSyncedAt: data.lastSyncedAt.present
+          ? data.lastSyncedAt.value
+          : this.lastSyncedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SyncItemState(')
+          ..write('remoteUserId: $remoteUserId, ')
+          ..write('domain: $domain, ')
+          ..write('scopeKey: $scopeKey, ')
+          ..write('contentHash: $contentHash, ')
+          ..write('lastChangedAt: $lastChangedAt, ')
+          ..write('lastSyncedAt: $lastSyncedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+      remoteUserId, domain, scopeKey, contentHash, lastChangedAt, lastSyncedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is SyncItemState &&
+          other.remoteUserId == this.remoteUserId &&
+          other.domain == this.domain &&
+          other.scopeKey == this.scopeKey &&
+          other.contentHash == this.contentHash &&
+          other.lastChangedAt == this.lastChangedAt &&
+          other.lastSyncedAt == this.lastSyncedAt);
+}
+
+class SyncItemStatesCompanion extends UpdateCompanion<SyncItemState> {
+  final Value<int> remoteUserId;
+  final Value<String> domain;
+  final Value<String> scopeKey;
+  final Value<String> contentHash;
+  final Value<DateTime> lastChangedAt;
+  final Value<DateTime> lastSyncedAt;
+  final Value<int> rowid;
+  const SyncItemStatesCompanion({
+    this.remoteUserId = const Value.absent(),
+    this.domain = const Value.absent(),
+    this.scopeKey = const Value.absent(),
+    this.contentHash = const Value.absent(),
+    this.lastChangedAt = const Value.absent(),
+    this.lastSyncedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  SyncItemStatesCompanion.insert({
+    required int remoteUserId,
+    required String domain,
+    required String scopeKey,
+    required String contentHash,
+    required DateTime lastChangedAt,
+    required DateTime lastSyncedAt,
+    this.rowid = const Value.absent(),
+  })  : remoteUserId = Value(remoteUserId),
+        domain = Value(domain),
+        scopeKey = Value(scopeKey),
+        contentHash = Value(contentHash),
+        lastChangedAt = Value(lastChangedAt),
+        lastSyncedAt = Value(lastSyncedAt);
+  static Insertable<SyncItemState> custom({
+    Expression<int>? remoteUserId,
+    Expression<String>? domain,
+    Expression<String>? scopeKey,
+    Expression<String>? contentHash,
+    Expression<DateTime>? lastChangedAt,
+    Expression<DateTime>? lastSyncedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (remoteUserId != null) 'remote_user_id': remoteUserId,
+      if (domain != null) 'domain': domain,
+      if (scopeKey != null) 'scope_key': scopeKey,
+      if (contentHash != null) 'content_hash': contentHash,
+      if (lastChangedAt != null) 'last_changed_at': lastChangedAt,
+      if (lastSyncedAt != null) 'last_synced_at': lastSyncedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  SyncItemStatesCompanion copyWith(
+      {Value<int>? remoteUserId,
+      Value<String>? domain,
+      Value<String>? scopeKey,
+      Value<String>? contentHash,
+      Value<DateTime>? lastChangedAt,
+      Value<DateTime>? lastSyncedAt,
+      Value<int>? rowid}) {
+    return SyncItemStatesCompanion(
+      remoteUserId: remoteUserId ?? this.remoteUserId,
+      domain: domain ?? this.domain,
+      scopeKey: scopeKey ?? this.scopeKey,
+      contentHash: contentHash ?? this.contentHash,
+      lastChangedAt: lastChangedAt ?? this.lastChangedAt,
+      lastSyncedAt: lastSyncedAt ?? this.lastSyncedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (remoteUserId.present) {
+      map['remote_user_id'] = Variable<int>(remoteUserId.value);
+    }
+    if (domain.present) {
+      map['domain'] = Variable<String>(domain.value);
+    }
+    if (scopeKey.present) {
+      map['scope_key'] = Variable<String>(scopeKey.value);
+    }
+    if (contentHash.present) {
+      map['content_hash'] = Variable<String>(contentHash.value);
+    }
+    if (lastChangedAt.present) {
+      map['last_changed_at'] = Variable<DateTime>(lastChangedAt.value);
+    }
+    if (lastSyncedAt.present) {
+      map['last_synced_at'] = Variable<DateTime>(lastSyncedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SyncItemStatesCompanion(')
+          ..write('remoteUserId: $remoteUserId, ')
+          ..write('domain: $domain, ')
+          ..write('scopeKey: $scopeKey, ')
+          ..write('contentHash: $contentHash, ')
+          ..write('lastChangedAt: $lastChangedAt, ')
+          ..write('lastSyncedAt: $lastSyncedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $SyncMetadataEntriesTable extends SyncMetadataEntries
+    with TableInfo<$SyncMetadataEntriesTable, SyncMetadataEntry> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $SyncMetadataEntriesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _remoteUserIdMeta =
+      const VerificationMeta('remoteUserId');
+  @override
+  late final GeneratedColumn<int> remoteUserId = GeneratedColumn<int>(
+      'remote_user_id', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _kindMeta = const VerificationMeta('kind');
+  @override
+  late final GeneratedColumn<String> kind = GeneratedColumn<String>(
+      'kind', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _domainMeta = const VerificationMeta('domain');
+  @override
+  late final GeneratedColumn<String> domain = GeneratedColumn<String>(
+      'domain', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _scopeKeyMeta =
+      const VerificationMeta('scopeKey');
+  @override
+  late final GeneratedColumn<String> scopeKey = GeneratedColumn<String>(
+      'scope_key', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _valueMeta = const VerificationMeta('value');
+  @override
+  late final GeneratedColumn<String> value = GeneratedColumn<String>(
+      'value', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _updatedAtMeta =
+      const VerificationMeta('updatedAt');
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+      'updated_at', aliasedName, false,
+      type: DriftSqlType.dateTime,
+      requiredDuringInsert: false,
+      defaultValue: currentDateAndTime);
+  @override
+  List<GeneratedColumn> get $columns =>
+      [remoteUserId, kind, domain, scopeKey, value, updatedAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'sync_metadata_entries';
+  @override
+  VerificationContext validateIntegrity(Insertable<SyncMetadataEntry> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('remote_user_id')) {
+      context.handle(
+          _remoteUserIdMeta,
+          remoteUserId.isAcceptableOrUnknown(
+              data['remote_user_id']!, _remoteUserIdMeta));
+    } else if (isInserting) {
+      context.missing(_remoteUserIdMeta);
+    }
+    if (data.containsKey('kind')) {
+      context.handle(
+          _kindMeta, kind.isAcceptableOrUnknown(data['kind']!, _kindMeta));
+    } else if (isInserting) {
+      context.missing(_kindMeta);
+    }
+    if (data.containsKey('domain')) {
+      context.handle(_domainMeta,
+          domain.isAcceptableOrUnknown(data['domain']!, _domainMeta));
+    } else if (isInserting) {
+      context.missing(_domainMeta);
+    }
+    if (data.containsKey('scope_key')) {
+      context.handle(_scopeKeyMeta,
+          scopeKey.isAcceptableOrUnknown(data['scope_key']!, _scopeKeyMeta));
+    } else if (isInserting) {
+      context.missing(_scopeKeyMeta);
+    }
+    if (data.containsKey('value')) {
+      context.handle(
+          _valueMeta, value.isAcceptableOrUnknown(data['value']!, _valueMeta));
+    } else if (isInserting) {
+      context.missing(_valueMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(_updatedAtMeta,
+          updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey =>
+      {remoteUserId, kind, domain, scopeKey};
+  @override
+  SyncMetadataEntry map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return SyncMetadataEntry(
+      remoteUserId: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}remote_user_id'])!,
+      kind: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}kind'])!,
+      domain: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}domain'])!,
+      scopeKey: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}scope_key'])!,
+      value: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}value'])!,
+      updatedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}updated_at'])!,
+    );
+  }
+
+  @override
+  $SyncMetadataEntriesTable createAlias(String alias) {
+    return $SyncMetadataEntriesTable(attachedDatabase, alias);
+  }
+}
+
+class SyncMetadataEntry extends DataClass
+    implements Insertable<SyncMetadataEntry> {
+  final int remoteUserId;
+  final String kind;
+  final String domain;
+  final String scopeKey;
+  final String value;
+  final DateTime updatedAt;
+  const SyncMetadataEntry(
+      {required this.remoteUserId,
+      required this.kind,
+      required this.domain,
+      required this.scopeKey,
+      required this.value,
+      required this.updatedAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['remote_user_id'] = Variable<int>(remoteUserId);
+    map['kind'] = Variable<String>(kind);
+    map['domain'] = Variable<String>(domain);
+    map['scope_key'] = Variable<String>(scopeKey);
+    map['value'] = Variable<String>(value);
+    map['updated_at'] = Variable<DateTime>(updatedAt);
+    return map;
+  }
+
+  SyncMetadataEntriesCompanion toCompanion(bool nullToAbsent) {
+    return SyncMetadataEntriesCompanion(
+      remoteUserId: Value(remoteUserId),
+      kind: Value(kind),
+      domain: Value(domain),
+      scopeKey: Value(scopeKey),
+      value: Value(value),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory SyncMetadataEntry.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return SyncMetadataEntry(
+      remoteUserId: serializer.fromJson<int>(json['remoteUserId']),
+      kind: serializer.fromJson<String>(json['kind']),
+      domain: serializer.fromJson<String>(json['domain']),
+      scopeKey: serializer.fromJson<String>(json['scopeKey']),
+      value: serializer.fromJson<String>(json['value']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'remoteUserId': serializer.toJson<int>(remoteUserId),
+      'kind': serializer.toJson<String>(kind),
+      'domain': serializer.toJson<String>(domain),
+      'scopeKey': serializer.toJson<String>(scopeKey),
+      'value': serializer.toJson<String>(value),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  SyncMetadataEntry copyWith(
+          {int? remoteUserId,
+          String? kind,
+          String? domain,
+          String? scopeKey,
+          String? value,
+          DateTime? updatedAt}) =>
+      SyncMetadataEntry(
+        remoteUserId: remoteUserId ?? this.remoteUserId,
+        kind: kind ?? this.kind,
+        domain: domain ?? this.domain,
+        scopeKey: scopeKey ?? this.scopeKey,
+        value: value ?? this.value,
+        updatedAt: updatedAt ?? this.updatedAt,
+      );
+  SyncMetadataEntry copyWithCompanion(SyncMetadataEntriesCompanion data) {
+    return SyncMetadataEntry(
+      remoteUserId: data.remoteUserId.present
+          ? data.remoteUserId.value
+          : this.remoteUserId,
+      kind: data.kind.present ? data.kind.value : this.kind,
+      domain: data.domain.present ? data.domain.value : this.domain,
+      scopeKey: data.scopeKey.present ? data.scopeKey.value : this.scopeKey,
+      value: data.value.present ? data.value.value : this.value,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SyncMetadataEntry(')
+          ..write('remoteUserId: $remoteUserId, ')
+          ..write('kind: $kind, ')
+          ..write('domain: $domain, ')
+          ..write('scopeKey: $scopeKey, ')
+          ..write('value: $value, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(remoteUserId, kind, domain, scopeKey, value, updatedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is SyncMetadataEntry &&
+          other.remoteUserId == this.remoteUserId &&
+          other.kind == this.kind &&
+          other.domain == this.domain &&
+          other.scopeKey == this.scopeKey &&
+          other.value == this.value &&
+          other.updatedAt == this.updatedAt);
+}
+
+class SyncMetadataEntriesCompanion extends UpdateCompanion<SyncMetadataEntry> {
+  final Value<int> remoteUserId;
+  final Value<String> kind;
+  final Value<String> domain;
+  final Value<String> scopeKey;
+  final Value<String> value;
+  final Value<DateTime> updatedAt;
+  final Value<int> rowid;
+  const SyncMetadataEntriesCompanion({
+    this.remoteUserId = const Value.absent(),
+    this.kind = const Value.absent(),
+    this.domain = const Value.absent(),
+    this.scopeKey = const Value.absent(),
+    this.value = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  SyncMetadataEntriesCompanion.insert({
+    required int remoteUserId,
+    required String kind,
+    required String domain,
+    required String scopeKey,
+    required String value,
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  })  : remoteUserId = Value(remoteUserId),
+        kind = Value(kind),
+        domain = Value(domain),
+        scopeKey = Value(scopeKey),
+        value = Value(value);
+  static Insertable<SyncMetadataEntry> custom({
+    Expression<int>? remoteUserId,
+    Expression<String>? kind,
+    Expression<String>? domain,
+    Expression<String>? scopeKey,
+    Expression<String>? value,
+    Expression<DateTime>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (remoteUserId != null) 'remote_user_id': remoteUserId,
+      if (kind != null) 'kind': kind,
+      if (domain != null) 'domain': domain,
+      if (scopeKey != null) 'scope_key': scopeKey,
+      if (value != null) 'value': value,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  SyncMetadataEntriesCompanion copyWith(
+      {Value<int>? remoteUserId,
+      Value<String>? kind,
+      Value<String>? domain,
+      Value<String>? scopeKey,
+      Value<String>? value,
+      Value<DateTime>? updatedAt,
+      Value<int>? rowid}) {
+    return SyncMetadataEntriesCompanion(
+      remoteUserId: remoteUserId ?? this.remoteUserId,
+      kind: kind ?? this.kind,
+      domain: domain ?? this.domain,
+      scopeKey: scopeKey ?? this.scopeKey,
+      value: value ?? this.value,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (remoteUserId.present) {
+      map['remote_user_id'] = Variable<int>(remoteUserId.value);
+    }
+    if (kind.present) {
+      map['kind'] = Variable<String>(kind.value);
+    }
+    if (domain.present) {
+      map['domain'] = Variable<String>(domain.value);
+    }
+    if (scopeKey.present) {
+      map['scope_key'] = Variable<String>(scopeKey.value);
+    }
+    if (value.present) {
+      map['value'] = Variable<String>(value.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('SyncMetadataEntriesCompanion(')
+          ..write('remoteUserId: $remoteUserId, ')
+          ..write('kind: $kind, ')
+          ..write('domain: $domain, ')
+          ..write('scopeKey: $scopeKey, ')
+          ..write('value: $value, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -7369,6 +8089,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $StudentPromptProfilesTable(this);
   late final $CourseRemoteLinksTable courseRemoteLinks =
       $CourseRemoteLinksTable(this);
+  late final $SyncItemStatesTable syncItemStates = $SyncItemStatesTable(this);
+  late final $SyncMetadataEntriesTable syncMetadataEntries =
+      $SyncMetadataEntriesTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -7387,7 +8110,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         apiConfigs,
         promptTemplates,
         studentPromptProfiles,
-        courseRemoteLinks
+        courseRemoteLinks,
+        syncItemStates,
+        syncMetadataEntries
       ];
 }
 
@@ -10829,6 +11554,392 @@ typedef $$CourseRemoteLinksTableProcessedTableManager = ProcessedTableManager<
     ),
     CourseRemoteLink,
     PrefetchHooks Function()>;
+typedef $$SyncItemStatesTableCreateCompanionBuilder = SyncItemStatesCompanion
+    Function({
+  required int remoteUserId,
+  required String domain,
+  required String scopeKey,
+  required String contentHash,
+  required DateTime lastChangedAt,
+  required DateTime lastSyncedAt,
+  Value<int> rowid,
+});
+typedef $$SyncItemStatesTableUpdateCompanionBuilder = SyncItemStatesCompanion
+    Function({
+  Value<int> remoteUserId,
+  Value<String> domain,
+  Value<String> scopeKey,
+  Value<String> contentHash,
+  Value<DateTime> lastChangedAt,
+  Value<DateTime> lastSyncedAt,
+  Value<int> rowid,
+});
+
+class $$SyncItemStatesTableFilterComposer
+    extends Composer<_$AppDatabase, $SyncItemStatesTable> {
+  $$SyncItemStatesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get remoteUserId => $composableBuilder(
+      column: $table.remoteUserId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get domain => $composableBuilder(
+      column: $table.domain, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get scopeKey => $composableBuilder(
+      column: $table.scopeKey, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get contentHash => $composableBuilder(
+      column: $table.contentHash, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get lastChangedAt => $composableBuilder(
+      column: $table.lastChangedAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get lastSyncedAt => $composableBuilder(
+      column: $table.lastSyncedAt, builder: (column) => ColumnFilters(column));
+}
+
+class $$SyncItemStatesTableOrderingComposer
+    extends Composer<_$AppDatabase, $SyncItemStatesTable> {
+  $$SyncItemStatesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get remoteUserId => $composableBuilder(
+      column: $table.remoteUserId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get domain => $composableBuilder(
+      column: $table.domain, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get scopeKey => $composableBuilder(
+      column: $table.scopeKey, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get contentHash => $composableBuilder(
+      column: $table.contentHash, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get lastChangedAt => $composableBuilder(
+      column: $table.lastChangedAt,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get lastSyncedAt => $composableBuilder(
+      column: $table.lastSyncedAt,
+      builder: (column) => ColumnOrderings(column));
+}
+
+class $$SyncItemStatesTableAnnotationComposer
+    extends Composer<_$AppDatabase, $SyncItemStatesTable> {
+  $$SyncItemStatesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get remoteUserId => $composableBuilder(
+      column: $table.remoteUserId, builder: (column) => column);
+
+  GeneratedColumn<String> get domain =>
+      $composableBuilder(column: $table.domain, builder: (column) => column);
+
+  GeneratedColumn<String> get scopeKey =>
+      $composableBuilder(column: $table.scopeKey, builder: (column) => column);
+
+  GeneratedColumn<String> get contentHash => $composableBuilder(
+      column: $table.contentHash, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get lastChangedAt => $composableBuilder(
+      column: $table.lastChangedAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get lastSyncedAt => $composableBuilder(
+      column: $table.lastSyncedAt, builder: (column) => column);
+}
+
+class $$SyncItemStatesTableTableManager extends RootTableManager<
+    _$AppDatabase,
+    $SyncItemStatesTable,
+    SyncItemState,
+    $$SyncItemStatesTableFilterComposer,
+    $$SyncItemStatesTableOrderingComposer,
+    $$SyncItemStatesTableAnnotationComposer,
+    $$SyncItemStatesTableCreateCompanionBuilder,
+    $$SyncItemStatesTableUpdateCompanionBuilder,
+    (
+      SyncItemState,
+      BaseReferences<_$AppDatabase, $SyncItemStatesTable, SyncItemState>
+    ),
+    SyncItemState,
+    PrefetchHooks Function()> {
+  $$SyncItemStatesTableTableManager(
+      _$AppDatabase db, $SyncItemStatesTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$SyncItemStatesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$SyncItemStatesTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$SyncItemStatesTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<int> remoteUserId = const Value.absent(),
+            Value<String> domain = const Value.absent(),
+            Value<String> scopeKey = const Value.absent(),
+            Value<String> contentHash = const Value.absent(),
+            Value<DateTime> lastChangedAt = const Value.absent(),
+            Value<DateTime> lastSyncedAt = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              SyncItemStatesCompanion(
+            remoteUserId: remoteUserId,
+            domain: domain,
+            scopeKey: scopeKey,
+            contentHash: contentHash,
+            lastChangedAt: lastChangedAt,
+            lastSyncedAt: lastSyncedAt,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required int remoteUserId,
+            required String domain,
+            required String scopeKey,
+            required String contentHash,
+            required DateTime lastChangedAt,
+            required DateTime lastSyncedAt,
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              SyncItemStatesCompanion.insert(
+            remoteUserId: remoteUserId,
+            domain: domain,
+            scopeKey: scopeKey,
+            contentHash: contentHash,
+            lastChangedAt: lastChangedAt,
+            lastSyncedAt: lastSyncedAt,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$SyncItemStatesTableProcessedTableManager = ProcessedTableManager<
+    _$AppDatabase,
+    $SyncItemStatesTable,
+    SyncItemState,
+    $$SyncItemStatesTableFilterComposer,
+    $$SyncItemStatesTableOrderingComposer,
+    $$SyncItemStatesTableAnnotationComposer,
+    $$SyncItemStatesTableCreateCompanionBuilder,
+    $$SyncItemStatesTableUpdateCompanionBuilder,
+    (
+      SyncItemState,
+      BaseReferences<_$AppDatabase, $SyncItemStatesTable, SyncItemState>
+    ),
+    SyncItemState,
+    PrefetchHooks Function()>;
+typedef $$SyncMetadataEntriesTableCreateCompanionBuilder
+    = SyncMetadataEntriesCompanion Function({
+  required int remoteUserId,
+  required String kind,
+  required String domain,
+  required String scopeKey,
+  required String value,
+  Value<DateTime> updatedAt,
+  Value<int> rowid,
+});
+typedef $$SyncMetadataEntriesTableUpdateCompanionBuilder
+    = SyncMetadataEntriesCompanion Function({
+  Value<int> remoteUserId,
+  Value<String> kind,
+  Value<String> domain,
+  Value<String> scopeKey,
+  Value<String> value,
+  Value<DateTime> updatedAt,
+  Value<int> rowid,
+});
+
+class $$SyncMetadataEntriesTableFilterComposer
+    extends Composer<_$AppDatabase, $SyncMetadataEntriesTable> {
+  $$SyncMetadataEntriesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get remoteUserId => $composableBuilder(
+      column: $table.remoteUserId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get kind => $composableBuilder(
+      column: $table.kind, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get domain => $composableBuilder(
+      column: $table.domain, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get scopeKey => $composableBuilder(
+      column: $table.scopeKey, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get value => $composableBuilder(
+      column: $table.value, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+      column: $table.updatedAt, builder: (column) => ColumnFilters(column));
+}
+
+class $$SyncMetadataEntriesTableOrderingComposer
+    extends Composer<_$AppDatabase, $SyncMetadataEntriesTable> {
+  $$SyncMetadataEntriesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get remoteUserId => $composableBuilder(
+      column: $table.remoteUserId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get kind => $composableBuilder(
+      column: $table.kind, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get domain => $composableBuilder(
+      column: $table.domain, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get scopeKey => $composableBuilder(
+      column: $table.scopeKey, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get value => $composableBuilder(
+      column: $table.value, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+      column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
+}
+
+class $$SyncMetadataEntriesTableAnnotationComposer
+    extends Composer<_$AppDatabase, $SyncMetadataEntriesTable> {
+  $$SyncMetadataEntriesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get remoteUserId => $composableBuilder(
+      column: $table.remoteUserId, builder: (column) => column);
+
+  GeneratedColumn<String> get kind =>
+      $composableBuilder(column: $table.kind, builder: (column) => column);
+
+  GeneratedColumn<String> get domain =>
+      $composableBuilder(column: $table.domain, builder: (column) => column);
+
+  GeneratedColumn<String> get scopeKey =>
+      $composableBuilder(column: $table.scopeKey, builder: (column) => column);
+
+  GeneratedColumn<String> get value =>
+      $composableBuilder(column: $table.value, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$SyncMetadataEntriesTableTableManager extends RootTableManager<
+    _$AppDatabase,
+    $SyncMetadataEntriesTable,
+    SyncMetadataEntry,
+    $$SyncMetadataEntriesTableFilterComposer,
+    $$SyncMetadataEntriesTableOrderingComposer,
+    $$SyncMetadataEntriesTableAnnotationComposer,
+    $$SyncMetadataEntriesTableCreateCompanionBuilder,
+    $$SyncMetadataEntriesTableUpdateCompanionBuilder,
+    (
+      SyncMetadataEntry,
+      BaseReferences<_$AppDatabase, $SyncMetadataEntriesTable,
+          SyncMetadataEntry>
+    ),
+    SyncMetadataEntry,
+    PrefetchHooks Function()> {
+  $$SyncMetadataEntriesTableTableManager(
+      _$AppDatabase db, $SyncMetadataEntriesTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$SyncMetadataEntriesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$SyncMetadataEntriesTableOrderingComposer(
+                  $db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$SyncMetadataEntriesTableAnnotationComposer(
+                  $db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<int> remoteUserId = const Value.absent(),
+            Value<String> kind = const Value.absent(),
+            Value<String> domain = const Value.absent(),
+            Value<String> scopeKey = const Value.absent(),
+            Value<String> value = const Value.absent(),
+            Value<DateTime> updatedAt = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              SyncMetadataEntriesCompanion(
+            remoteUserId: remoteUserId,
+            kind: kind,
+            domain: domain,
+            scopeKey: scopeKey,
+            value: value,
+            updatedAt: updatedAt,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required int remoteUserId,
+            required String kind,
+            required String domain,
+            required String scopeKey,
+            required String value,
+            Value<DateTime> updatedAt = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              SyncMetadataEntriesCompanion.insert(
+            remoteUserId: remoteUserId,
+            kind: kind,
+            domain: domain,
+            scopeKey: scopeKey,
+            value: value,
+            updatedAt: updatedAt,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$SyncMetadataEntriesTableProcessedTableManager = ProcessedTableManager<
+    _$AppDatabase,
+    $SyncMetadataEntriesTable,
+    SyncMetadataEntry,
+    $$SyncMetadataEntriesTableFilterComposer,
+    $$SyncMetadataEntriesTableOrderingComposer,
+    $$SyncMetadataEntriesTableAnnotationComposer,
+    $$SyncMetadataEntriesTableCreateCompanionBuilder,
+    $$SyncMetadataEntriesTableUpdateCompanionBuilder,
+    (
+      SyncMetadataEntry,
+      BaseReferences<_$AppDatabase, $SyncMetadataEntriesTable,
+          SyncMetadataEntry>
+    ),
+    SyncMetadataEntry,
+    PrefetchHooks Function()>;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -10862,4 +11973,8 @@ class $AppDatabaseManager {
       $$StudentPromptProfilesTableTableManager(_db, _db.studentPromptProfiles);
   $$CourseRemoteLinksTableTableManager get courseRemoteLinks =>
       $$CourseRemoteLinksTableTableManager(_db, _db.courseRemoteLinks);
+  $$SyncItemStatesTableTableManager get syncItemStates =>
+      $$SyncItemStatesTableTableManager(_db, _db.syncItemStates);
+  $$SyncMetadataEntriesTableTableManager get syncMetadataEntries =>
+      $$SyncMetadataEntriesTableTableManager(_db, _db.syncMetadataEntries);
 }

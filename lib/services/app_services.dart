@@ -15,6 +15,7 @@ import 'secure_storage_service.dart';
 import 'settings_repository.dart';
 import 'session_service.dart';
 import 'stt_service.dart';
+import 'sync_state_repository.dart';
 import 'tts_service.dart';
 import 'tts_log_repository.dart';
 import 'user_key_service.dart';
@@ -102,6 +103,7 @@ class AppServices {
     );
     final sessionSyncApi = SessionSyncApiService(secureStorage: secureStorage);
     final cryptoService = SessionCryptoService();
+    final syncStateRepository = DatabaseSyncStateRepository(db);
     final userKeyService = UserKeyService(
       secureStorage: secureStorage,
       api: sessionSyncApi,
@@ -109,7 +111,7 @@ class AppServices {
     );
     final sessionSyncService = SessionSyncService(
       db: db,
-      secureStorage: secureStorage,
+      secureStorage: syncStateRepository,
       api: sessionSyncApi,
       userKeyService: userKeyService,
       crypto: cryptoService,

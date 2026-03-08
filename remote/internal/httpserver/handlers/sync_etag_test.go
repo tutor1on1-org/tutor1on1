@@ -684,6 +684,173 @@ func TestTeacherCoursesListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 	assertSQLMockExpectations(t, mock)
 }
 
+func TestDownloadManifestReturnsNotModifiedWhenETagMatches(t *testing.T) {
+	db, mock := newHandlerSQLMock(t)
+	defer db.Close()
+
+	userID := int64(3010)
+	updatedAt := time.Date(2026, 3, 8, 8, 0, 0, 0, time.UTC)
+	rows := sqlmock.NewRows([]string{
+		"session_sync_id",
+		"updated_at",
+		"envelope_hash",
+		"envelope",
+	}).AddRow(
+		"s1",
+		updatedAt,
+		"session-hash",
+		[]byte("session_payload"),
+	)
+	mock.ExpectQuery(`SELECT session_sync_id, updated_at, envelope_hash, envelope`).
+		WithArgs(userID, userID).
+		WillReturnRows(rows)
+	rows2 := sqlmock.NewRows([]string{
+		"session_sync_id",
+		"updated_at",
+		"envelope_hash",
+		"envelope",
+	}).AddRow(
+		"s1",
+		updatedAt,
+		"session-hash",
+		[]byte("session_payload"),
+	)
+	mock.ExpectQuery(`SELECT session_sync_id, updated_at, envelope_hash, envelope`).
+		WithArgs(userID, userID).
+		WillReturnRows(rows2)
+
+	app := buildSyncETagTestApp(db, []string{"test-secret"})
+	token := signTestJWT(t, "test-secret", userID, true)
+
+	status, _, headers := callAPI(
+		t,
+		app,
+		http.MethodGet,
+		"/api/sync/download-manifest?include_progress=false",
+		token,
+		"",
+	)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d", status, http.StatusOK)
+	}
+	etag := headers.Get("Etag")
+	if strings.TrimSpace(etag) == "" {
+		t.Fatal("missing ETag on sync download manifest response")
+	}
+
+	status, _, _ = callAPIWithExtraHeaders(
+		t,
+		app,
+		http.MethodGet,
+		"/api/sync/download-manifest?include_progress=false",
+		token,
+		"",
+		map[string]string{
+			"If-None-Match": etag,
+		},
+	)
+	if status != http.StatusNotModified {
+		t.Fatalf("status = %d, want %d", status, http.StatusNotModified)
+	}
+
+	assertSQLMockExpectations(t, mock)
+}
+
+func TestDownloadFetchReturnsRequestedPayload(t *testing.T) {
+	db, mock := newHandlerSQLMock(t)
+	defer db.Close()
+
+	userID := int64(3011)
+	updatedAt := time.Date(2026, 3, 8, 8, 2, 0, 0, time.UTC)
+
+	sessionRows := sqlmock.NewRows([]string{
+		"id",
+		"session_sync_id",
+		"course_id",
+		"teacher_user_id",
+		"student_user_id",
+		"sender_user_id",
+		"chapter_key",
+		"updated_at",
+		"envelope",
+		"envelope_hash",
+	}).AddRow(
+		int64(11),
+		"s1",
+		int64(44),
+		int64(901),
+		userID,
+		userID,
+		"1.1",
+		updatedAt,
+		[]byte("session_payload"),
+		"session-hash",
+	)
+	mock.ExpectQuery(`SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, chapter_key, updated_at, envelope, envelope_hash`).
+		WithArgs(userID, userID, "s1").
+		WillReturnRows(sessionRows)
+
+	progressRows := sqlmock.NewRows([]string{
+		"id",
+		"course_id",
+		"subject",
+		"teacher_user_id",
+		"student_user_id",
+		"kp_key",
+		"lit",
+		"lit_percent",
+		"question_level",
+		"summary_text",
+		"summary_raw_response",
+		"summary_valid",
+		"updated_at",
+		"envelope",
+		"envelope_hash",
+	}).AddRow(
+		int64(33),
+		int64(55),
+		"Biology",
+		int64(901),
+		userID,
+		"1.1.1",
+		true,
+		88,
+		"medium",
+		"summary",
+		"raw",
+		true,
+		updatedAt,
+		[]byte("progress_payload"),
+		"progress-hash",
+	)
+	mock.ExpectQuery(`SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.kp_key, p.lit, p.lit_percent`).
+		WithArgs(userID, int64(55), "1.1.1").
+		WillReturnRows(progressRows)
+
+	app := buildSyncETagTestApp(db, []string{"test-secret"})
+	token := signTestJWT(t, "test-secret", userID, true)
+
+	status, body, _ := callAPI(
+		t,
+		app,
+		http.MethodPost,
+		"/api/sync/download-fetch",
+		token,
+		`{"session_sync_ids":["s1"],"progress_chunks":[],"progress_rows":[{"course_id":55,"kp_key":"1.1.1"}]}`,
+	)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", status, http.StatusOK, body)
+	}
+	if !strings.Contains(body, `"session_sync_id":"s1"`) {
+		t.Fatalf("missing session payload in response body: %s", body)
+	}
+	if !strings.Contains(body, `"kp_key":"1.1.1"`) {
+		t.Fatalf("missing progress row payload in response body: %s", body)
+	}
+
+	assertSQLMockExpectations(t, mock)
+}
+
 func buildSyncETagTestApp(db *sql.DB, jwtSecrets []string) *fiber.App {
 	deps := Dependencies{
 		Config: config.Config{
@@ -695,6 +862,7 @@ func buildSyncETagTestApp(db *sql.DB, jwtSecrets []string) *fiber.App {
 	teacherCourses := NewTeacherCoursesHandler(deps)
 	sessionSync := NewSessionSyncHandler(deps)
 	progressSync := NewProgressSyncHandler(deps)
+	syncDownload := NewSyncDownloadHandler(deps)
 
 	app := fiber.New()
 	app.Get("/api/enrollments", enrollments.ListEnrollments)
@@ -702,6 +870,8 @@ func buildSyncETagTestApp(db *sql.DB, jwtSecrets []string) *fiber.App {
 	app.Get("/api/sessions/sync/list", sessionSync.List)
 	app.Get("/api/progress/sync/list", progressSync.List)
 	app.Get("/api/progress/sync/chunks/list", progressSync.ListChunks)
+	app.Get("/api/sync/download-manifest", syncDownload.Manifest)
+	app.Post("/api/sync/download-fetch", syncDownload.Fetch)
 	return app
 }
 

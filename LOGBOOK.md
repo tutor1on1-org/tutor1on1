@@ -50,3 +50,9 @@ Historical timeline. Keep active runbook details in `WORKLOG.md`.
 - Added `scripts/remote_exec.ps1` for canonical key-only SSH defaults and added `BACKUP_DRILL.md` restore/incident runbook.
 - Rotated temporary local secrets in `.env` and updated operational docs for rotation/revocation and drill workflow.
 - Added tutor-chat reliability hardening: structured schemas for learn/review prompts, single-flight request dedupe, retry telemetry fields in LLM logs, and summary cache short-circuit when context is unchanged.
+
+## 2026-03-08
+- Reworked session/progress download sync to a manifest+fetch model: client requests compact indexes first, then fetches only missing/stale payloads.
+- Moved sync metadata/state off Windows secure storage and into local Drift/SQLite tables to remove `flutter_secure_storage.dat` contention during large syncs.
+- Added client API coverage for `/api/sync/download-manifest` and `/api/sync/download-fetch`, plus backend handler coverage for ETag and fetch response behavior.
+- Deployed updated backend to `family-teacher-api.service`, verified local and public `/health`, built Windows release, and published canonical `https://43.99.59.107/downloads/family_teacher.zip`.

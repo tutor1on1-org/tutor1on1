@@ -19,6 +19,7 @@ func registerRoutes(app *fiber.App, deps handlers.Dependencies) {
 	userKeys := handlers.NewUserKeysHandler(deps)
 	sessionSync := handlers.NewSessionSyncHandler(deps)
 	progressSync := handlers.NewProgressSyncHandler(deps)
+	syncDownload := handlers.NewSyncDownloadHandler(deps)
 
 	app.Get("/health", health.Check)
 
@@ -75,6 +76,8 @@ func registerRoutes(app *fiber.App, deps handlers.Dependencies) {
 	api.Post("/sessions/sync/upload", syncLimiter.Handler(middleware.KeyByIP), sessionSync.Upload)
 	api.Post("/sessions/sync/upload-batch", syncLimiter.Handler(middleware.KeyByIP), sessionSync.UploadBatch)
 	api.Get("/sessions/sync/list", syncLimiter.Handler(middleware.KeyByIP), sessionSync.List)
+	api.Get("/sync/download-manifest", syncLimiter.Handler(middleware.KeyByIP), syncDownload.Manifest)
+	api.Post("/sync/download-fetch", syncLimiter.Handler(middleware.KeyByIP), syncDownload.Fetch)
 	api.Post("/progress/sync/upload", syncLimiter.Handler(middleware.KeyByIP), progressSync.Upload)
 	api.Post("/progress/sync/upload-batch", syncLimiter.Handler(middleware.KeyByIP), progressSync.UploadBatch)
 	api.Post("/progress/sync/chunks/upload-batch", syncLimiter.Handler(middleware.KeyByIP), progressSync.UploadChunksBatch)

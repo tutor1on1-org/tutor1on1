@@ -71,3 +71,15 @@ Historical setup timeline moved to `LOGBOOK.md`.
 - Verified:
   - health endpoint `https://43.99.59.107/health` returned `{"status":"ok"}`.
   - batch endpoint responds (unauthorized without token), confirming route is active.
+
+## Remote server updates (2026-03-08, sync manifest + Windows publish)
+- Added sync download endpoints:
+  - `GET /api/sync/download-manifest`
+  - `POST /api/sync/download-fetch`
+- Deployed updated `routes.go` and new `handlers/sync_download.go`, rebuilt binary on host, installed to `/opt/family_teacher_remote/bin/family-teacher-api`, restarted `family-teacher-api.service`.
+- Verified:
+  - local health `http://127.0.0.1:8080/health` returned `{"status":"ok"}`
+  - public health `https://43.99.59.107/health` returned `{"status":"ok"}`
+- Published Windows desktop ZIP:
+  - URL: `https://43.99.59.107/downloads/family_teacher.zip`
+  - SHA-256: `8b2afb71946dede72c0afa16c54a26bf12ea7b7518750fea1bed926b87f17c8c`

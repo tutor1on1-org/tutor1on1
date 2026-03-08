@@ -29,6 +29,22 @@ class SyncListResult<T> {
   final bool notModified;
 }
 
+class SyncDownloadManifestResult {
+  SyncDownloadManifestResult({
+    required this.sessions,
+    required this.progressChunks,
+    required this.progressRows,
+    required this.etag,
+    required this.notModified,
+  });
+
+  final List<SessionSyncManifestItem> sessions;
+  final List<ProgressSyncChunkManifestItem> progressChunks;
+  final List<ProgressSyncManifestItem> progressRows;
+  final String? etag;
+  final bool notModified;
+}
+
 class UserKeyRecord {
   UserKeyRecord({
     required this.publicKey,
@@ -257,6 +273,151 @@ class ProgressSyncChunkItem {
   }
 }
 
+class SessionSyncManifestItem {
+  SessionSyncManifestItem({
+    required this.sessionSyncId,
+    required this.updatedAt,
+    required this.envelopeHash,
+  });
+
+  final String sessionSyncId;
+  final String updatedAt;
+  final String envelopeHash;
+
+  factory SessionSyncManifestItem.fromJson(Map<String, dynamic> json) {
+    return SessionSyncManifestItem(
+      sessionSyncId: (json['session_sync_id'] as String?) ?? '',
+      updatedAt: (json['updated_at'] as String?) ?? '',
+      envelopeHash: (json['envelope_hash'] as String?) ?? '',
+    );
+  }
+}
+
+class ProgressSyncChunkManifestItem {
+  ProgressSyncChunkManifestItem({
+    required this.courseId,
+    required this.chapterKey,
+    required this.updatedAt,
+    required this.envelopeHash,
+  });
+
+  final int courseId;
+  final String chapterKey;
+  final String updatedAt;
+  final String envelopeHash;
+
+  factory ProgressSyncChunkManifestItem.fromJson(Map<String, dynamic> json) {
+    return ProgressSyncChunkManifestItem(
+      courseId: (json['course_id'] as num?)?.toInt() ?? 0,
+      chapterKey: (json['chapter_key'] as String?) ?? '',
+      updatedAt: (json['updated_at'] as String?) ?? '',
+      envelopeHash: (json['envelope_hash'] as String?) ?? '',
+    );
+  }
+}
+
+class ProgressSyncManifestItem {
+  ProgressSyncManifestItem({
+    required this.courseId,
+    required this.kpKey,
+    required this.updatedAt,
+    required this.envelopeHash,
+  });
+
+  final int courseId;
+  final String kpKey;
+  final String updatedAt;
+  final String envelopeHash;
+
+  factory ProgressSyncManifestItem.fromJson(Map<String, dynamic> json) {
+    return ProgressSyncManifestItem(
+      courseId: (json['course_id'] as num?)?.toInt() ?? 0,
+      kpKey: (json['kp_key'] as String?) ?? '',
+      updatedAt: (json['updated_at'] as String?) ?? '',
+      envelopeHash: (json['envelope_hash'] as String?) ?? '',
+    );
+  }
+}
+
+class SyncDownloadFetchRequest {
+  SyncDownloadFetchRequest({
+    required this.sessionSyncIds,
+    required this.progressChunks,
+    required this.progressRows,
+  });
+
+  final List<String> sessionSyncIds;
+  final List<ProgressChunkFetchKey> progressChunks;
+  final List<ProgressRowFetchKey> progressRows;
+
+  Map<String, dynamic> toJson() => {
+        'session_sync_ids': sessionSyncIds,
+        'progress_chunks':
+            progressChunks.map((item) => item.toJson()).toList(growable: false),
+        'progress_rows':
+            progressRows.map((item) => item.toJson()).toList(growable: false),
+      };
+}
+
+class ProgressChunkFetchKey {
+  ProgressChunkFetchKey({
+    required this.courseId,
+    required this.chapterKey,
+  });
+
+  final int courseId;
+  final String chapterKey;
+
+  Map<String, dynamic> toJson() => {
+        'course_id': courseId,
+        'chapter_key': chapterKey,
+      };
+}
+
+class ProgressRowFetchKey {
+  ProgressRowFetchKey({
+    required this.courseId,
+    required this.kpKey,
+  });
+
+  final int courseId;
+  final String kpKey;
+
+  Map<String, dynamic> toJson() => {
+        'course_id': courseId,
+        'kp_key': kpKey,
+      };
+}
+
+class SyncDownloadFetchResult {
+  SyncDownloadFetchResult({
+    required this.sessions,
+    required this.progressChunks,
+    required this.progressRows,
+  });
+
+  final List<SessionSyncItem> sessions;
+  final List<ProgressSyncChunkItem> progressChunks;
+  final List<ProgressSyncItem> progressRows;
+
+  factory SyncDownloadFetchResult.fromJson(Map<String, dynamic> json) {
+    return SyncDownloadFetchResult(
+      sessions: ((json['sessions'] as List?) ?? const <dynamic>[])
+          .whereType<Map<String, dynamic>>()
+          .map(SessionSyncItem.fromJson)
+          .toList(),
+      progressChunks: ((json['progress_chunks'] as List?) ?? const <dynamic>[])
+          .whereType<Map<String, dynamic>>()
+          .map(ProgressSyncChunkItem.fromJson)
+          .toList(),
+      progressRows: ((json['progress_rows'] as List?) ?? const <dynamic>[])
+          .whereType<Map<String, dynamic>>()
+          .map(ProgressSyncItem.fromJson)
+          .toList(),
+    );
+  }
+}
+
 class ProgressUploadEntry {
   ProgressUploadEntry({
     required this.courseId,
@@ -351,6 +512,62 @@ class SessionSyncApiService {
       throw SessionSyncApiException('Unexpected response format.');
     }
     return CourseKeyBundle.fromJson(response);
+  }
+
+  Future<SyncDownloadManifestResult> getDownloadManifest({
+    required bool includeProgress,
+    String? ifNoneMatch,
+  }) async {
+    final response = await _getResponse(
+      '/api/sync/download-manifest',
+      params: <String, String>{
+        'include_progress': includeProgress ? 'true' : 'false',
+      },
+      ifNoneMatch: ifNoneMatch,
+    );
+    if (response.statusCode == 304) {
+      return SyncDownloadManifestResult(
+        sessions: const <SessionSyncManifestItem>[],
+        progressChunks: const <ProgressSyncChunkManifestItem>[],
+        progressRows: const <ProgressSyncManifestItem>[],
+        etag: response.headers['etag'],
+        notModified: true,
+      );
+    }
+    final decoded = _decodeResponse(response);
+    if (decoded is! Map<String, dynamic>) {
+      throw SessionSyncApiException('Unexpected response format.');
+    }
+    return SyncDownloadManifestResult(
+      sessions: ((decoded['sessions'] as List?) ?? const <dynamic>[])
+          .whereType<Map<String, dynamic>>()
+          .map(SessionSyncManifestItem.fromJson)
+          .toList(),
+      progressChunks:
+          ((decoded['progress_chunks'] as List?) ?? const <dynamic>[])
+              .whereType<Map<String, dynamic>>()
+              .map(ProgressSyncChunkManifestItem.fromJson)
+              .toList(),
+      progressRows: ((decoded['progress_rows'] as List?) ?? const <dynamic>[])
+          .whereType<Map<String, dynamic>>()
+          .map(ProgressSyncManifestItem.fromJson)
+          .toList(),
+      etag: response.headers['etag'],
+      notModified: false,
+    );
+  }
+
+  Future<SyncDownloadFetchResult> fetchDownloadPayload({
+    required SyncDownloadFetchRequest request,
+  }) async {
+    final response = await _post(
+      '/api/sync/download-fetch',
+      request.toJson(),
+    );
+    if (response is! Map<String, dynamic>) {
+      throw SessionSyncApiException('Unexpected response format.');
+    }
+    return SyncDownloadFetchResult.fromJson(response);
   }
 
   Future<void> uploadSession({
