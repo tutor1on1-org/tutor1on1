@@ -13,7 +13,9 @@
     "error_book_update",
     "evidence",
     "mastery_level",
-    "next_mode"
+    "next_mode",
+    "next_action",
+    "next_help_bias"
   ],
   "properties": {
     "teacher_message": {
@@ -37,26 +39,19 @@
       "enum": ["UNFINISHED", "FINISHED"]
     },
     "question": {
-      "anyOf": [
-        {
-          "type": "null"
+      "type": "object",
+      "required": ["text", "type_id"],
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1
         },
-        {
-          "type": "object",
-          "required": ["text", "type_id"],
-          "properties": {
-            "text": {
-              "type": "string",
-              "minLength": 1
-            },
-            "type_id": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "additionalProperties": true
+        "type_id": {
+          "type": "string",
+          "minLength": 1
         }
-      ]
+      },
+      "additionalProperties": true
     },
     "grading": {
       "anyOf": [
@@ -149,7 +144,15 @@
     },
     "next_mode": {
       "type": "string",
-      "enum": ["LEARN", "REVIEW", "SUMMARY"]
+      "enum": ["LEARN", "REVIEW"]
+    },
+    "next_action": {
+      "type": "string",
+      "enum": ["NONE", "SUMMARY"]
+    },
+    "next_help_bias": {
+      "type": "string",
+      "enum": ["EASIER", "UNCHANGED", "HARDER"]
     }
   },
   "additionalProperties": false

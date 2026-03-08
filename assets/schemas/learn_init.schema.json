@@ -6,6 +6,8 @@
     "teacher_message",
     "understanding",
     "next_mode",
+    "next_action",
+    "next_help_bias",
     "turn_state"
   ],
   "properties": {
@@ -20,6 +22,14 @@
     "next_mode": {
       "type": "string",
       "enum": ["LEARN", "REVIEW"]
+    },
+    "next_action": {
+      "type": "string",
+      "enum": ["NONE", "SUMMARY"]
+    },
+    "next_help_bias": {
+      "type": "string",
+      "enum": ["EASIER", "UNCHANGED", "HARDER"]
     },
     "turn_state": {
       "type": "string",

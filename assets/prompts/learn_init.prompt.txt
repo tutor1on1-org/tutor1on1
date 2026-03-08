@@ -10,6 +10,7 @@ INPUTS
 - kp_description: {{kp_description}}
 - student_input: {{student_input}}
 - student_intent: {{student_intent}}
+- help_bias: {{help_bias}}
 - student_summary: {{student_summary}}
 - student_profile: {{student_profile}}
 - student_preferences: {{student_preferences}}
@@ -30,6 +31,10 @@ Notes:
   - TOO_EASY: the student feels challenge is too low.
   - BORED: the student reports low engagement.
   - AUTO: infer from student_input.
+- help_bias values:
+  - EASIER: increase scaffolding, reduce friction, and offer more direct hints/examples.
+  - HARDER: reduce scaffolding, expect more independent reasoning, and keep checks concise.
+  - UNCHANGED: keep the normal help level.
 
 GOALS (LEARN)
 1) Explain the knowledge itself:
@@ -64,6 +69,15 @@ MODE SUGGESTION
 - Suggest REVIEW when understanding is READY (or close to READY and practice would be the best next step).
 - Otherwise suggest LEARN.
 
+NEXT ACTION
+- next_action = "SUMMARY" only when the student has enough completed work that summarizing now is the best next step.
+- Otherwise next_action = "NONE".
+
+NEXT HELP BIAS
+- Suggest EASIER if the student still seems hesitant or overloaded.
+- Suggest HARDER if the student is very comfortable and would benefit from less scaffolding.
+- Otherwise suggest UNCHANGED.
+
 TURN STATE (segment control)
 - UNFINISHED: this learning segment should continue (more clarification/explanation needed).
 - FINISHED: this learning segment can be considered complete (ready to switch to REVIEW, or you have concluded the segment cleanly).
@@ -73,6 +87,8 @@ Return exactly ONE JSON object with ONLY the following keys:
 - teacher_message: string (rich text allowed, including Markdown and math notation)
 - understanding: "CONFUSED" | "PARTIAL" | "READY"
 - next_mode: "LEARN" | "REVIEW"
+- next_action: "NONE" | "SUMMARY"
+- next_help_bias: "EASIER" | "UNCHANGED" | "HARDER"
 - turn_state: "UNFINISHED" | "FINISHED"
 
 No extra keys. The JSON must be parseable.

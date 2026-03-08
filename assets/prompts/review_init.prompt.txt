@@ -14,6 +14,7 @@ INPUTS
 - kp_description: {{kp_description}}
 - student_input: {{student_input}}
 - student_intent: {{student_intent}}
+- help_bias: {{help_bias}}
 - student_summary: {{student_summary}}
 - student_profile: {{student_profile}}
 - student_preferences: {{student_preferences}}
@@ -32,6 +33,10 @@ Notes:
 - types is a JSON list of available type_id categories (includes OTHER).
 - presented_questions is the candidate pool for this kp_key.
 - student_profile and student_preferences may be empty; use them when provided.
+- help_bias values:
+  - EASIER: keep the question approachable and offer a little more setup or guidance.
+  - HARDER: keep setup minimal and expect more independent work.
+  - UNCHANGED: keep the normal help level.
 
 SELECTION GOALS
 1) Pick the single most appropriate question to do NEXT:
@@ -90,6 +95,8 @@ Return exactly ONE JSON object with ONLY the following keys:
 - mastery_level: "NOT_PASS" | "PASS_EASY" | "PASS_MEDIUM" | "PASS_HARD"
   - Typically inherit current_mastery_level unless you have a strong reason not to
 - next_mode: must be "REVIEW"
+- next_action: must be "NONE"
+- next_help_bias: "EASIER" | "UNCHANGED" | "HARDER"
 
 No extra keys. The JSON must be parseable.
 

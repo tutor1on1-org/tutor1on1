@@ -224,6 +224,7 @@ class SessionService {
     required CourseVersion courseVersion,
     required CourseNode node,
     String? studentIntent,
+    String? helpBias,
     String? modelOverride,
     bool stream = false,
     void Function(String chunk)? onChunk,
@@ -255,6 +256,7 @@ class SessionService {
       courseVersion: courseVersion,
       node: node,
       studentIntent: studentIntent,
+      helpBias: helpBias,
       modelOverride: modelOverride,
       onPromptWarning: onPromptWarning,
     );
@@ -294,6 +296,7 @@ class SessionService {
     required CourseVersion courseVersion,
     required CourseNode node,
     required String? studentIntent,
+    required String? helpBias,
     required String? modelOverride,
     required void Function()? onPromptWarning,
   }) async {
@@ -311,6 +314,7 @@ class SessionService {
       requestedIntent: studentIntent,
       studentInput: studentInput,
     );
+    final resolvedHelpBias = _normalizeHelpBias(helpBias);
     final promptResolution = _resolveTutorPrompt(
       mode: mode,
       messages: messages,
@@ -383,6 +387,7 @@ class SessionService {
       'session_history': history,
       'student_input': studentInput.trim(),
       'student_intent': resolvedStudentIntent,
+      'help_bias': resolvedHelpBias,
       'current_difficulty_level': currentDifficultyLevel,
       'student_summary': progress?.summaryText ?? session?.summaryText ?? '',
       'student_profile': studentPromptContext.profileText,
@@ -1074,7 +1079,7 @@ class SessionService {
         );
       }
       final question = parsed['question'];
-      if (question != null && question is! Map) {
+      if (question is! Map) {
         throw StateError(
           'LLM response for "$promptName" has invalid "question". '
           'Response preview: ${_summarizeResponseForError(responseText)}',
@@ -1084,6 +1089,17 @@ class SessionService {
       if (answerState == 'FINAL_ANSWER' && turnState != 'FINISHED') {
         throw StateError(
           'LLM response for "$promptName" requires turn_state=FINISHED when answer_state=FINAL_ANSWER. '
+          'Response preview: ${_summarizeResponseForError(responseText)}',
+        );
+      }
+      final nextAction =
+          (parsed['next_action'] as String?)?.trim().toUpperCase();
+      if (nextAction != null &&
+          nextAction.isNotEmpty &&
+          nextAction != 'NONE' &&
+          nextAction != 'SUMMARY') {
+        throw StateError(
+          'LLM response for "$promptName" has invalid "next_action". '
           'Response preview: ${_summarizeResponseForError(responseText)}',
         );
       }
@@ -1397,17 +1413,9 @@ class SessionService {
       if (actionMode == 'learn') {
         promptName =
             previousTurnState == 'UNFINISHED' ? 'learn_cont' : 'learn_init';
-      } else if (previousTurnState == 'UNFINISHED') {
-        promptName = 'review_cont';
-      } else if (_isExplicitAnotherQuestionRequest(
-        studentInput: studentInput,
-        studentIntent: studentIntent,
-      )) {
-        promptName = 'review_init';
       } else {
-        // After a finished review question, stay in REVIEW_CONT until the
-        // student explicitly asks for another question.
-        promptName = 'review_cont';
+        promptName =
+            previousTurnState == 'UNFINISHED' ? 'review_cont' : 'review_init';
       }
       return _TutorPromptResolution(
         promptName: promptName,
@@ -1421,35 +1429,6 @@ class SessionService {
       lastAssistantIndex: null,
       prevJson: null,
     );
-  }
-
-  bool _isExplicitAnotherQuestionRequest({
-    required String studentInput,
-    required String studentIntent,
-  }) {
-    if (studentIntent == 'TOO_EASY' || studentIntent == 'BORED') {
-      return true;
-    }
-    final text = studentInput.trim().toLowerCase();
-    if (text.isEmpty) {
-      return false;
-    }
-    if (_isSummaryRequest(text)) {
-      return false;
-    }
-    return text.contains('another question') ||
-        text.contains('one more question') ||
-        text.contains('next question') ||
-        text.contains('new question') ||
-        text.contains('give me another') ||
-        text.contains('start next');
-  }
-
-  bool _isSummaryRequest(String textLower) {
-    return textLower.contains('summarize') ||
-        textLower.contains('summary') ||
-        textLower.contains('score session') ||
-        textLower.contains('session score');
   }
 
   _AssistantJsonRef? _findLastAssistantForActionMode({
@@ -1673,6 +1652,16 @@ class SessionService {
       return 'BORED';
     }
     return 'PARTIAL_ATTEMPT';
+  }
+
+  String _normalizeHelpBias(String? value) {
+    final normalized = (value ?? '').trim().toUpperCase();
+    if (normalized == 'EASIER' ||
+        normalized == 'HARDER' ||
+        normalized == 'UNCHANGED') {
+      return normalized;
+    }
+    return 'UNCHANGED';
   }
 
   Future<void> _updateReviewDifficultyIfNeeded({

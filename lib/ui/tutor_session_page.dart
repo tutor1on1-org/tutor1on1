@@ -50,7 +50,8 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   bool _loadingSession = true;
   bool _autoStartAttempted = false;
   TutorMode _mode = TutorMode.learn;
-  _StudentIntent _studentIntent = _StudentIntent.auto;
+  _TurnStep _step = _TurnStep.newTurn;
+  _HelpBias? _helpBias;
   String? _sessionModel;
   String? _sessionTitle;
   RequestHandle<dynamic>? _pending;
@@ -96,6 +97,8 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   bool _sttCancelHover = false;
   String? _pendingSttAudioPath;
   bool _applyingTranscription = false;
+  bool _summarySuggested = false;
+  int? _lastBranchPromptMessageId;
   final GlobalKey _sttCancelKey = GlobalKey();
   final LayerLink _sttButtonLink = LayerLink();
 
@@ -177,7 +180,11 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       _sessionTitle = session.title;
     }
     setState(() => _loadingSession = false);
-    await _applySuggestedModeFromSession(db);
+    await _applyAssistantSuggestionsFromSession(
+      db,
+      showToast: false,
+      allowBranchPrompt: false,
+    );
     await _maybeAutoStart(db);
   }
 
@@ -668,21 +675,6 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                   ? l10n.stopTooltip
                                   : l10n.sendTooltip,
                             ),
-                            if (_mode == TutorMode.review) ...[
-                              const SizedBox(width: 4),
-                              TextButton(
-                                onPressed: (_sending || sttBusy)
-                                    ? null
-                                    : () {
-                                        setState(() {
-                                          _studentIntent =
-                                              _StudentIntent.finalAnswer;
-                                        });
-                                        _sendMessage();
-                                      },
-                                child: const Text('Final Answer'),
-                              ),
-                            ],
                           ],
                         ),
                       ),
@@ -703,34 +695,24 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                 l10n: l10n,
                               ),
                             ),
+                            _stepChip(
+                              label: 'New',
+                              step: _TurnStep.newTurn,
+                            ),
+                            _stepChip(
+                              label: 'Continue',
+                              step: _TurnStep.continueTurn,
+                            ),
                             _modeChip(TutorMode.learn, l10n),
                             _modeChip(TutorMode.review, l10n),
-                            if (_mode == TutorMode.review) ...[
-                              _studentIntentChip(
-                                label: 'Auto',
-                                intent: _StudentIntent.auto,
-                              ),
-                              _studentIntentChip(
-                                label: 'Need Hint',
-                                intent: _StudentIntent.helpRequest,
-                              ),
-                              _studentIntentChip(
-                                label: 'My Attempt',
-                                intent: _StudentIntent.partialAttempt,
-                              ),
-                              _studentIntentChip(
-                                label: 'Final',
-                                intent: _StudentIntent.finalAnswer,
-                              ),
-                              _studentIntentChip(
-                                label: 'Too Easy',
-                                intent: _StudentIntent.tooEasy,
-                              ),
-                              _studentIntentChip(
-                                label: 'Boring',
-                                intent: _StudentIntent.bored,
-                              ),
-                            ],
+                            _helpBiasChip(
+                              label: 'Easier',
+                              bias: _HelpBias.easier,
+                            ),
+                            _helpBiasChip(
+                              label: 'Harder',
+                              bias: _HelpBias.harder,
+                            ),
                             const SizedBox(width: 12),
                             Row(
                               mainAxisSize: MainAxisSize.min,
@@ -795,6 +777,16 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                               ),
                             ElevatedButton(
                               key: const Key('summary_button'),
+                              style: _summarySuggested
+                                  ? ElevatedButton.styleFrom(
+                                      backgroundColor: Theme.of(context)
+                                          .colorScheme
+                                          .tertiaryContainer,
+                                      foregroundColor: Theme.of(context)
+                                          .colorScheme
+                                          .onTertiaryContainer,
+                                    )
+                                  : null,
                               onPressed: _sending ? null : _requestSummary,
                               child: Text(l10n.summaryButton),
                             ),
@@ -900,20 +892,38 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     );
   }
 
-  Widget _studentIntentChip({
+  Widget _stepChip({
     required String label,
-    required _StudentIntent intent,
+    required _TurnStep step,
   }) {
     return ChoiceChip(
       label: Text(label),
-      selected: _studentIntent == intent,
+      selected: _step == step,
       onSelected: _sending
           ? null
           : (selected) {
               if (!selected) {
                 return;
               }
-              setState(() => _studentIntent = intent);
+              setState(() => _step = step);
+            },
+    );
+  }
+
+  Widget _helpBiasChip({
+    required String label,
+    required _HelpBias bias,
+  }) {
+    final selected = _helpBias == bias;
+    return FilterChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: _sending
+          ? null
+          : (next) {
+              setState(() {
+                _helpBias = next ? bias : null;
+              });
             },
     );
   }
@@ -1163,8 +1173,8 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     final db = context.read<AppDatabase>();
     final sessionService = context.read<AppServices>().sessionService;
     final sttService = context.read<AppServices>().sttService;
-    final selectedIntent =
-        _mode == TutorMode.review ? _studentIntent : _StudentIntent.auto;
+    final messages = await db.getMessagesForSession(widget.sessionId);
+    final resolvedPromptName = _resolvePromptNameForSend(messages);
     final modelOverride = _resolveModelOverride();
     _prepareTts();
     final pendingAudioPath = _pendingSttAudioPath;
@@ -1191,9 +1201,9 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     try {
       final llmHandle = await sessionService.startTutorAction(
         sessionId: widget.sessionId,
-        mode: _mode.promptName,
+        mode: resolvedPromptName,
         studentInput: trimmedInput,
-        studentIntent: selectedIntent.promptValue,
+        helpBias: _helpBias?.promptValue,
         courseVersion: widget.courseVersion,
         node: widget.node,
         modelOverride: modelOverride,
@@ -1213,11 +1223,12 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       if (_ttsEnabled) {
         await _flushDisplay();
       }
-      await _applySuggestedModeFromSession(db);
+      await _applyAssistantSuggestionsFromSession(
+        db,
+        showToast: true,
+        allowBranchPrompt: true,
+      );
       _inputController.clear();
-      if (mounted) {
-        setState(() => _studentIntent = _StudentIntent.auto);
-      }
       _inputFocus.requestFocus();
     } catch (e) {
       await _showErrorDialog(
@@ -1234,7 +1245,10 @@ class _ChatSessionPageState extends State<ChatSessionPage>
 
   Future<void> _requestSummary() async {
     final l10n = AppLocalizations.of(context)!;
-    setState(() => _sending = true);
+    setState(() {
+      _sending = true;
+      _summarySuggested = false;
+    });
     final db = context.read<AppDatabase>();
     final sessionService = context.read<AppServices>().sessionService;
     final modelOverride = _resolveModelOverride();
@@ -1267,7 +1281,11 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         );
       }
       if (result.success) {
-        await _applySuggestedModeFromSession(db);
+        await _applyAssistantSuggestionsFromSession(
+          db,
+          showToast: true,
+          allowBranchPrompt: false,
+        );
       }
     } catch (e) {
       await _showSummaryErrorDialog(
@@ -1428,11 +1446,15 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     final modelOverride = _resolveModelOverride();
     _prepareTts();
     try {
+      final messages = await db.getMessagesForSession(widget.sessionId);
+      final resolvedPromptName = _resolvePromptNameForSend(messages);
       final llmHandle = await sessionService.startTutorAction(
         sessionId: widget.sessionId,
-        mode: action,
+        mode: action == 'learn' || action == 'review'
+            ? resolvedPromptName
+            : action,
         studentInput: '',
-        studentIntent: _StudentIntent.auto.promptValue,
+        helpBias: _helpBias?.promptValue,
         courseVersion: widget.courseVersion,
         node: widget.node,
         modelOverride: modelOverride,
@@ -1450,7 +1472,11 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       if (_ttsEnabled) {
         await _flushDisplay();
       }
-      await _applySuggestedModeFromSession(db);
+      await _applyAssistantSuggestionsFromSession(
+        db,
+        showToast: true,
+        allowBranchPrompt: true,
+      );
     } catch (e) {
       await _showErrorDialog(
         title: l10n.refreshFailedTitle,
@@ -1504,12 +1530,15 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         sessionId: widget.sessionId,
         fromMessageId: message.id,
       );
-      final mode = message.action ?? _mode.promptName;
+      final messages = await db.getMessagesForSession(widget.sessionId);
+      final mode = message.action == 'learn' || message.action == 'review'
+          ? _resolvePromptNameForSend(messages)
+          : (message.action ?? _mode.promptName);
       final llmHandle = await sessionService.startTutorAction(
         sessionId: widget.sessionId,
         mode: mode,
         studentInput: updated.trim(),
-        studentIntent: _StudentIntent.auto.promptValue,
+        helpBias: _helpBias?.promptValue,
         courseVersion: widget.courseVersion,
         node: widget.node,
         modelOverride: modelOverride,
@@ -1527,7 +1556,11 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       if (_ttsEnabled) {
         await _flushDisplay();
       }
-      await _applySuggestedModeFromSession(db);
+      await _applyAssistantSuggestionsFromSession(
+        db,
+        showToast: true,
+        allowBranchPrompt: true,
+      );
     } catch (e) {
       await _showErrorDialog(
         title: l10n.editFailedTitle,
@@ -1671,6 +1704,20 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     );
   }
 
+  void _showBriefMessage(String message) {
+    if (!mounted) {
+      return;
+    }
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 1),
+      ),
+    );
+  }
+
   void _showPersistentMessage(String message) {
     if (!mounted) {
       return;
@@ -1807,18 +1854,66 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     return '$hour:$minute:$second';
   }
 
-  Future<void> _applySuggestedModeFromSession(AppDatabase db) async {
+  Future<void> _applyAssistantSuggestionsFromSession(
+    AppDatabase db, {
+    required bool showToast,
+    required bool allowBranchPrompt,
+  }) async {
     final messages = await db.getMessagesForSession(widget.sessionId);
     if (!mounted) {
       return;
     }
-    final suggested = _extractSuggestedMode(messages);
-    if (suggested != null && suggested != _mode) {
-      setState(() => _mode = suggested);
+    final suggestion = _extractAssistantSuggestion(messages);
+    if (suggestion == null) {
+      return;
     }
+    final updates = <String>[];
+    var nextMode = _mode;
+    var nextStep = _step;
+    var nextHelpBias = _helpBias;
+    var nextSummarySuggested = suggestion.summarySuggested;
+
+    if (suggestion.mode != null && suggestion.mode != _mode) {
+      nextMode = suggestion.mode!;
+      updates.add(_labelForMode(nextMode));
+    }
+    if (suggestion.step != null && suggestion.step != _step) {
+      nextStep = suggestion.step!;
+      updates.add(_labelForStep(nextStep));
+    }
+    if (suggestion.clearHelpBias && _helpBias != null) {
+      nextHelpBias = null;
+      updates.add('Unchanged');
+    } else if (suggestion.helpBias != null &&
+        suggestion.helpBias != _helpBias) {
+      nextHelpBias = suggestion.helpBias;
+      updates.add(_labelForHelpBias(nextHelpBias));
+    }
+    if (nextSummarySuggested != _summarySuggested ||
+        nextMode != _mode ||
+        nextStep != _step ||
+        nextHelpBias != _helpBias) {
+      setState(() {
+        _mode = nextMode;
+        _step = nextStep;
+        _helpBias = nextHelpBias;
+        _summarySuggested = nextSummarySuggested;
+      });
+    }
+    if (showToast && updates.isNotEmpty) {
+      _showBriefMessage('Switched to ${updates.join(' / ')}');
+    }
+    if (!allowBranchPrompt ||
+        !suggestion.turnFinished ||
+        suggestion.messageId == _lastBranchPromptMessageId) {
+      return;
+    }
+    _lastBranchPromptMessageId = suggestion.messageId;
+    await _showFinishedTurnActions(suggestion);
   }
 
-  TutorMode? _extractSuggestedMode(List<ChatMessage> messages) {
+  _AssistantUiSuggestion? _extractAssistantSuggestion(
+      List<ChatMessage> messages) {
     for (var i = messages.length - 1; i >= 0; i--) {
       final message = messages[i];
       if (message.role != 'assistant') {
@@ -1828,14 +1923,33 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       if (parsed == null) {
         continue;
       }
-      final nextMode = _normalizeNextMode(parsed['next_mode']);
-      if (nextMode != null) {
-        return nextMode;
-      }
-      final nextStep = _normalizeNextStep(parsed['next_step']);
-      if (nextStep != null) {
-        return nextStep;
-      }
+      final mode = _normalizeNextMode(parsed['next_mode']) ??
+          _normalizeNextStep(parsed['next_step']);
+      final turnState = _normalizeTurnState(parsed['turn_state']);
+      final action = message.action ?? '';
+      final step =
+          (action == 'learn' || action == 'review') && turnState != null
+              ? (turnState == 'FINISHED'
+                  ? _TurnStep.newTurn
+                  : _TurnStep.continueTurn)
+              : null;
+      final nextAction =
+          (parsed['next_action'] as String?)?.trim().toUpperCase() ?? '';
+      final nextHelpBias =
+          (parsed['next_help_bias'] as String?)?.trim().toUpperCase() ?? '';
+      return _AssistantUiSuggestion(
+        messageId: message.id,
+        action: action,
+        mode: mode,
+        step: step,
+        helpBias: nextHelpBias == 'EASIER'
+            ? _HelpBias.easier
+            : (nextHelpBias == 'HARDER' ? _HelpBias.harder : null),
+        clearHelpBias: nextHelpBias == 'UNCHANGED',
+        summarySuggested: nextAction == 'SUMMARY',
+        turnFinished: turnState == 'FINISHED' &&
+            (action == 'learn' || action == 'review'),
+      );
     }
     return null;
   }
@@ -1898,6 +2012,214 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       return TutorMode.review;
     }
     return null;
+  }
+
+  String? _normalizeTurnState(Object? value) {
+    if (value is! String) {
+      return null;
+    }
+    final normalized = value.trim().toUpperCase();
+    if (normalized == 'UNFINISHED' || normalized == 'FINISHED') {
+      return normalized;
+    }
+    return null;
+  }
+
+  String _resolvePromptNameForSend(List<ChatMessage> messages) {
+    if (_mode == TutorMode.learn) {
+      final hasActiveLearn = _hasActiveLearnSegment(messages);
+      if (_step == _TurnStep.continueTurn && !hasActiveLearn) {
+        if (mounted) {
+          setState(() => _step = _TurnStep.newTurn);
+        }
+        _showBriefMessage('Switched to New');
+        return 'learn_init';
+      }
+      return _step == _TurnStep.continueTurn ? 'learn_cont' : 'learn_init';
+    }
+    final hasActiveReview = _hasActiveReviewQuestion(messages);
+    if (_step == _TurnStep.continueTurn && !hasActiveReview) {
+      if (mounted) {
+        setState(() => _step = _TurnStep.newTurn);
+      }
+      _showBriefMessage('Switched to New');
+      return 'review_init';
+    }
+    return _step == _TurnStep.continueTurn ? 'review_cont' : 'review_init';
+  }
+
+  bool _hasActiveLearnSegment(List<ChatMessage> messages) {
+    final assistant = _findLastAssistantForAction(messages, 'learn');
+    if (assistant == null) {
+      return false;
+    }
+    final turnState =
+        _normalizeTurnState(_extractMessageJson(assistant)?['turn_state']);
+    return turnState == 'UNFINISHED';
+  }
+
+  bool _hasActiveReviewQuestion(List<ChatMessage> messages) {
+    final assistant = _findLastAssistantForAction(messages, 'review');
+    if (assistant == null) {
+      return false;
+    }
+    final parsed = _extractMessageJson(assistant);
+    final turnState = _normalizeTurnState(parsed?['turn_state']);
+    final question = parsed?['question'];
+    return turnState == 'UNFINISHED' && question is Map<String, dynamic>;
+  }
+
+  ChatMessage? _findLastAssistantForAction(
+      List<ChatMessage> messages, String action) {
+    for (var i = messages.length - 1; i >= 0; i--) {
+      final message = messages[i];
+      if (message.role == 'assistant' && message.action == action) {
+        return message;
+      }
+    }
+    return null;
+  }
+
+  String _labelForMode(TutorMode mode) {
+    return mode == TutorMode.learn ? 'Learn' : 'Review';
+  }
+
+  String _labelForStep(_TurnStep step) {
+    return step == _TurnStep.newTurn ? 'New' : 'Continue';
+  }
+
+  String _labelForHelpBias(_HelpBias? bias) {
+    if (bias == _HelpBias.easier) {
+      return 'Easier';
+    }
+    if (bias == _HelpBias.harder) {
+      return 'Harder';
+    }
+    return 'Unchanged';
+  }
+
+  Future<void> _showFinishedTurnActions(
+      _AssistantUiSuggestion suggestion) async {
+    if (!mounted) {
+      return;
+    }
+    final choice = await showDialog<_FinishedAction>(
+      context: context,
+      builder: (context) {
+        final isReview = suggestion.action == 'review';
+        final recommended = _recommendedFinishedAction(suggestion);
+        final firstChoice = isReview
+            ? _FinishedAction.nextQuestion
+            : _FinishedAction.continueLearning;
+        final firstLabel = isReview ? 'Another question' : 'Continue learning';
+        final secondChoice =
+            isReview ? _FinishedAction.learn : _FinishedAction.tryQuestion;
+        final secondLabel = isReview ? 'Learn' : 'Try a question';
+        return AlertDialog(
+          title: const Text('Next step'),
+          actions: [
+            _finishedActionButton(
+              choice: firstChoice,
+              label: firstLabel,
+              recommended: recommended,
+            ),
+            _finishedActionButton(
+              choice: secondChoice,
+              label: secondLabel,
+              recommended: recommended,
+            ),
+            _finishedActionButton(
+              choice: _FinishedAction.summarize,
+              label: 'Summarize',
+              recommended: recommended,
+            ),
+            _finishedActionButton(
+              choice: _FinishedAction.pause,
+              label: 'Pause',
+              recommended: recommended,
+            ),
+          ],
+        );
+      },
+    );
+    if (choice == null || !mounted) {
+      return;
+    }
+    switch (choice) {
+      case _FinishedAction.nextQuestion:
+        setState(() {
+          _mode = TutorMode.review;
+          _step = _TurnStep.newTurn;
+          _summarySuggested = false;
+        });
+        await _sendMessage(allowEmpty: true);
+        break;
+      case _FinishedAction.learn:
+        setState(() {
+          _mode = TutorMode.learn;
+          _step = _TurnStep.continueTurn;
+          _summarySuggested = false;
+        });
+        await _sendMessage(allowEmpty: true);
+        break;
+      case _FinishedAction.continueLearning:
+        setState(() {
+          _mode = TutorMode.learn;
+          _step = _TurnStep.newTurn;
+          _summarySuggested = false;
+        });
+        await _sendMessage(allowEmpty: true);
+        break;
+      case _FinishedAction.tryQuestion:
+        setState(() {
+          _mode = TutorMode.review;
+          _step = _TurnStep.newTurn;
+          _summarySuggested = false;
+        });
+        await _sendMessage(allowEmpty: true);
+        break;
+      case _FinishedAction.summarize:
+        setState(() => _summarySuggested = false);
+        await _requestSummary();
+        break;
+      case _FinishedAction.pause:
+        setState(() => _summarySuggested = false);
+        break;
+    }
+  }
+
+  Widget _finishedActionButton({
+    required _FinishedAction choice,
+    required String label,
+    required _FinishedAction recommended,
+  }) {
+    final isRecommended = choice == recommended;
+    final child = Text(label);
+    if (isRecommended) {
+      return ElevatedButton(
+        onPressed: () => Navigator.of(context).pop(choice),
+        child: child,
+      );
+    }
+    return TextButton(
+      onPressed: () => Navigator.of(context).pop(choice),
+      child: child,
+    );
+  }
+
+  _FinishedAction _recommendedFinishedAction(
+      _AssistantUiSuggestion suggestion) {
+    if (suggestion.summarySuggested) {
+      return _FinishedAction.summarize;
+    }
+    if (suggestion.action == 'review') {
+      return suggestion.mode == TutorMode.learn
+          ? _FinishedAction.learn
+          : _FinishedAction.nextQuestion;
+    }
+    return suggestion.mode == TutorMode.review
+        ? _FinishedAction.tryQuestion
+        : _FinishedAction.continueLearning;
   }
 
   List<_ErrorBookPreviewItem> _buildErrorBookPreview(
@@ -2541,16 +2863,48 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   }
 }
 
-enum _StudentIntent {
-  auto('AUTO'),
-  helpRequest('HELP_REQUEST'),
-  partialAttempt('PARTIAL_ATTEMPT'),
-  finalAnswer('FINAL_ANSWER'),
-  tooEasy('TOO_EASY'),
-  bored('BORED');
+enum _TurnStep {
+  newTurn,
+  continueTurn,
+}
 
-  const _StudentIntent(this.promptValue);
+enum _HelpBias {
+  easier('EASIER'),
+  harder('HARDER');
+
+  const _HelpBias(this.promptValue);
   final String promptValue;
+}
+
+enum _FinishedAction {
+  nextQuestion,
+  learn,
+  continueLearning,
+  tryQuestion,
+  summarize,
+  pause,
+}
+
+class _AssistantUiSuggestion {
+  const _AssistantUiSuggestion({
+    required this.messageId,
+    required this.action,
+    required this.mode,
+    required this.step,
+    required this.helpBias,
+    required this.clearHelpBias,
+    required this.summarySuggested,
+    required this.turnFinished,
+  });
+
+  final int messageId;
+  final String action;
+  final TutorMode? mode;
+  final _TurnStep? step;
+  final _HelpBias? helpBias;
+  final bool clearHelpBias;
+  final bool summarySuggested;
+  final bool turnFinished;
 }
 
 class _SendIntent extends Intent {

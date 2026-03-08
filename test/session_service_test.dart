@@ -614,7 +614,7 @@ void main() {
   });
 
   test(
-    'review mode keeps review_cont after finished turn unless student explicitly asks another question',
+    'review mode starts review_init after finished turn',
     () async {
       final fixture = await _createTutorFixture(
         db: db,
@@ -632,7 +632,10 @@ void main() {
                   'difficulty_action': 'HOLD',
                   'recommended_level': 'medium',
                   'turn_state': 'FINISHED',
-                  'question': null,
+                  'question': {
+                    'text': 'Solve 2x + 1 = 9',
+                    'type_id': 'ALGEBRA',
+                  },
                   'grading': {
                     'is_correct': true,
                     'mistake_summary': 'Good',
@@ -658,46 +661,6 @@ void main() {
         Future<LlmCallResult>.value(
           _llmOk(
             responseText: jsonEncode(<String, Object?>{
-              'teacher_message':
-                  'Nice work. Do you want another question or summarize now?',
-              'answer_state': 'FINAL_ANSWER',
-              'difficulty_action': 'HOLD',
-              'recommended_level': 'medium',
-              'turn_state': 'FINISHED',
-              'question': null,
-              'grading': null,
-              'error_book_update': null,
-              'evidence': {
-                'a': 2,
-                'c': 2,
-                'h': 0,
-                't': 'OTHER',
-                'mt': <String>[],
-              },
-              'mastery_level': 'PASS_MEDIUM',
-              'next_mode': 'REVIEW',
-            }),
-            callHash: 'review_gate_1',
-          ),
-        ),
-      );
-      final neutralHandle = await service.startTutorAction(
-        sessionId: fixture.sessionId,
-        mode: 'review',
-        studentInput: 'ok',
-        courseVersion: fixture.courseVersion,
-        node: fixture.node,
-      );
-      await neutralHandle.future;
-
-      expect(llmService.callInvocations.length, equals(1));
-      expect(
-          llmService.callInvocations.single.promptName, equals('review_cont'));
-
-      llmService.queueCall(
-        Future<LlmCallResult>.value(
-          _llmOk(
-            responseText: jsonEncode(<String, Object?>{
               'teacher_message': 'Here is your next question: ...',
               'turn_state': 'UNFINISHED',
               'question': {
@@ -716,22 +679,25 @@ void main() {
               },
               'mastery_level': 'PASS_MEDIUM',
               'next_mode': 'REVIEW',
+              'next_action': 'NONE',
+              'next_help_bias': 'UNCHANGED',
             }),
-            callHash: 'review_gate_2',
+            callHash: 'review_init_after_finish',
           ),
         ),
       );
-      final explicitNextHandle = await service.startTutorAction(
+      final handle = await service.startTutorAction(
         sessionId: fixture.sessionId,
         mode: 'review',
-        studentInput: 'another question please',
+        studentInput: 'ok',
         courseVersion: fixture.courseVersion,
         node: fixture.node,
       );
-      await explicitNextHandle.future;
+      await handle.future;
 
-      expect(llmService.callInvocations.length, equals(2));
-      expect(llmService.callInvocations[1].promptName, equals('review_init'));
+      expect(llmService.callInvocations.length, equals(1));
+      expect(
+          llmService.callInvocations.single.promptName, equals('review_init'));
     },
   );
 

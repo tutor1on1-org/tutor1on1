@@ -69,6 +69,8 @@ Model output:
       'teacher_message': 'Let us focus on one idea, then a quick check.',
       'understanding': 'PARTIAL',
       'next_mode': 'LEARN',
+      'next_action': 'NONE',
+      'next_help_bias': 'UNCHANGED',
       'turn_state': 'UNFINISHED',
     };
     final result = await validator.validateJson(
@@ -96,6 +98,8 @@ Model output:
       },
       'mastery_level': 'NOT_PASS',
       'next_mode': 'REVIEW',
+      'next_action': 'NONE',
+      'next_help_bias': 'UNCHANGED',
     };
     final result = await validator.validateJson(
       schemaMap: schema,
@@ -111,6 +115,8 @@ Model output:
     final validator = SchemaValidator();
     final invalid = {
       'teacher_message': 'Try one more step.',
+      'difficulty_action': 'HOLD',
+      'recommended_level': 'easy',
       'turn_state': 'UNFINISHED',
       'question': {
         'text': 'What is 3 + 4?',
@@ -127,6 +133,8 @@ Model output:
       },
       'mastery_level': 'NOT_PASS',
       'next_mode': 'REVIEW',
+      'next_action': 'NONE',
+      'next_help_bias': 'UNCHANGED',
     };
     final result = await validator.validateJson(
       schemaMap: schema,
@@ -161,6 +169,8 @@ Model output:
       },
       'mastery_level': 'NOT_PASS',
       'next_mode': 'REVIEW',
+      'next_action': 'NONE',
+      'next_help_bias': 'UNCHANGED',
     };
     final result = await validator.validateJson(
       schemaMap: schema,

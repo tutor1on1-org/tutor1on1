@@ -106,6 +106,7 @@ class PromptTemplateValidator {
       'session_history',
       'student_input',
       'student_intent',
+      'help_bias',
     };
     const nextGenContext = {
       'lesson_content',

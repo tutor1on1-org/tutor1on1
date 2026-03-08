@@ -2,7 +2,7 @@
 
 Durable cross-session lessons and operating rules moved from AGENTS.md (memory-maintenance refactor).
 
-- Review flow control rule: after a `review_cont` turn reaches `FINISHED`, do not auto-start `review_init`; keep post-finish turns in `review_cont` unless student explicitly asks for another question, and use that gate turn to ask "another question or summarize".
+- Tutor branching rule: do not ask students to type navigation commands like "another question" or "summarize". When a learn/review turn reaches `FINISHED`, drive the next step through explicit UI controls/buttons; generic `review` routing should restart with `review_init`, not keep a typed-choice gate in `review_cont`.
 - Summary stability rule: cache/reuse summary when no new graded review result exists after last summary, and clamp weak-evidence re-summarize downgrades (for example `a<=1`) to avoid large mastery swings.
 - New-device recovery rule: provide an explicit one-way "Take Server Copy" path for students that clears local session/progress data, resets session/progress download cursors + list ETags/run-state, and runs forced server->client pull without upload.
 - Empty-local bootstrap rule: if local student `chat_sessions`/`progress_entries` are empty but secure-storage sync cursor/etag state exists, clear session/progress download cursor + domain sync state before delta pull; stale cursors can force `since` pagination past history and yield a false "no server data" empty import.
@@ -46,6 +46,7 @@ Durable cross-session lessons and operating rules moved from AGENTS.md (memory-m
 - Teacher progress review should use `(student + course)` filtering and display session-level `chat_sessions.summary_text` / `summary_lit_percent` so server-synced summaries are visible without opening each session.
 - Recovery flow hardening rule: with `RECOVERY_TOKEN_ECHO=false`, `/api/auth/request-recovery` must not leak token in API response and should be validated with SMTP-path regression tests.
 - Delivery discipline: after code changes pass validation, commit and push in the same turn unless the user explicitly says not to push.
+- Release discipline: for app changes, do compile + validation + git push + remote release upload in the same turn unless the user explicitly says to skip one of those steps.
 - Build discipline: after code changes, run concrete builds before reporting done (`go build -o family-teacher-api ./cmd/server` for backend changes and `flutter build windows --release` for app changes).
 - Deployment schema discipline: when backend code starts reading/writing new DB columns (for example `progress_sync.envelope` / `envelope_hash`), apply the corresponding DB migration in production before restarting API binaries; otherwise sync endpoints can return `500 progress sync save failed` and clients may appear stuck during session sync retries.
 - Student tutor chat reliability should enforce structured-output schemas for `learn_*`/`review_*`, single-flight dedupe by `(session + prompt + call_hash)`, explicit retry telemetry (`attempt/reason/backoff`), and summary cache reuse when no new evidence exists.
