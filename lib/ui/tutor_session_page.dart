@@ -1909,7 +1909,12 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       return;
     }
     _lastBranchPromptMessageId = suggestion.messageId;
-    await _showFinishedTurnActions(suggestion);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      unawaited(_showFinishedTurnActions(suggestion));
+    });
   }
 
   _AssistantUiSuggestion? _extractAssistantSuggestion(
