@@ -44,6 +44,12 @@ Historical setup timeline moved to `LOGBOOK.md`.
   - URL: `https://43.99.59.107/downloads/family_teacher.zip`
   - SHA-256: `8b2afb71946dede72c0afa16c54a26bf12ea7b7518750fea1bed926b87f17c8c`
 
+## Remote server updates (2026-03-08, teacher course sync + Windows republish)
+- Published refreshed Windows desktop ZIP after teacher course bundle/prompt sync changes.
+- Verified candidate-first promotion and canonical download URL:
+  - URL: `https://43.99.59.107/downloads/family_teacher.zip`
+  - SHA-256: `2500b6fce349573dafc5292e9b78dcc3ef2318c02a8506b7b71ec926e3cb07bb`
+
 ## Remote server updates (2026-02-26, progress sync batch)
 - Added API endpoint `POST /api/progress/sync/upload-batch` and deployed to host.
 - Updated `progress_sync.go` and `routes.go`, rebuilt binary with `/usr/local/go/bin/go build`, restarted `family-teacher-api.service`.
