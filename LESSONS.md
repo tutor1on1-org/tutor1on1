@@ -8,7 +8,7 @@ Durable cross-session lessons and operating rules moved from AGENTS.md (memory-m
 - Empty-local bootstrap rule: if local student `chat_sessions`/`progress_entries` are empty but secure-storage sync cursor/etag state exists, clear session/progress download cursor + domain sync state before delta pull; stale cursors can force `since` pagination past history and yield a false "no server data" empty import.
 - Session/progress conflict rule: apply last-modified arbitration on both download and upload paths (compare local `syncUpdatedAt`/`updatedAt` vs remote `updated_at`) so the newer record wins and stale-side updates are skipped.
 - Course sync correctness depends on server-authoritative versioning and deletion events: treat remote bundle version as source of truth, and replay deletion events on login to clean multi-device local state.
-- UI feedback preference: use persistent, manually dismissible messages for workflow-critical status (no auto-fade snackbars).
+- Workflow-critical UI feedback should use persistent, manually dismissible messages instead of auto-fade snackbars, including marketplace enrollment/quit/download flows.
 - Marketplace course identity must be normalized and enforced server-side as `(teacher_id + course_name_key)` to prevent duplicate course rows across repeated uploads.
 - Marketplace visibility must require at least one bundle version; deleting the last bundle version should auto-unpublish the course to avoid stale/duplicate listings.
 - JWT secret exposure is critical: with HS256 auth, anyone holding the secret can mint bearer tokens for arbitrary `sub`; rotate secrets immediately if exposed and minimize distribution.
@@ -42,12 +42,9 @@ Durable cross-session lessons and operating rules moved from AGENTS.md (memory-m
 - For Windows PowerShell smoke runs, use `curl.exe` for authenticated multipart upload/download paths to avoid inconsistent `HttpClient` behavior across host runtimes.
 - For server sync operations triggered from auth/home screens, use a blocking gray overlay with a bottom progress panel so users see sync phase and cannot trigger conflicting actions during sync.
 - Tutor TTS rendering must never flush an empty display buffer into `chat_messages.content`; empty flush can overwrite a valid assistant payload and make successful LLM replies appear blank.
-- Marketplace enrollment/quit/download workflow feedback should use persistent, manually dismissible messages; transient snackbars are easy to miss during multi-step actions.
+- App-change handoff discipline: run self-battle, concrete build, validation, memory update, push, and publish/upload the remote release in the same turn unless the user explicitly skips a step; see `WORKFLOW.md` for the detailed sequence.
 - Teacher progress review should use `(student + course)` filtering and display session-level `chat_sessions.summary_text` / `summary_lit_percent` so server-synced summaries are visible without opening each session.
 - Recovery flow hardening rule: with `RECOVERY_TOKEN_ECHO=false`, `/api/auth/request-recovery` must not leak token in API response and should be validated with SMTP-path regression tests.
-- Delivery discipline: after code changes pass validation, commit and push in the same turn unless the user explicitly says not to push.
-- Release discipline: for app changes, do compile + validation + git push + remote release upload in the same turn unless the user explicitly says to skip one of those steps.
-- Build discipline: after code changes, run concrete builds before reporting done (`go build -o family-teacher-api ./cmd/server` for backend changes and `flutter build windows --release` for app changes).
 - Deployment schema discipline: when backend code starts reading/writing new DB columns (for example `progress_sync.envelope` / `envelope_hash`), apply the corresponding DB migration in production before restarting API binaries; otherwise sync endpoints can return `500 progress sync save failed` and clients may appear stuck during session sync retries.
 - Student tutor chat reliability should enforce structured-output schemas for `learn_*`/`review_*`, single-flight dedupe by `(session + prompt + call_hash)`, explicit retry telemetry (`attempt/reason/backoff`), and summary cache reuse when no new evidence exists.
 - Desktop integration tests in this workspace can fail with "More than one device connected"; run with an explicit target (for example `flutter test integration_test/app_flow_test.dart -d windows`).

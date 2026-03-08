@@ -1,17 +1,19 @@
 # WORKFLOW
-Last updated: 2026-02-28
+Last updated: 2026-03-08
 
 ## Standard workflow
 1. Understand scope and locate the true failing/target layer.
 2. For bugs, reproduce with evidence first (logs, repro script, or minimal failing test).
 3. Implement the minimal correct root-cause change.
-4. Validate changed path first, then adjacent regressions, then end-to-end path when feasible.
-5. Run `flutter build windows --release` before updating `DONEs.md`.
-6. If backend under `remote/` changed, rebuild binary and restart service before reporting done.
+4. Run a self-battle before handoff: summarize the conclusion, criticize it, then refine the answer or fix.
+5. Validate changed path first, then adjacent regressions, then end-to-end path when feasible.
+6. Run concrete builds before reporting done (`flutter build windows --release` for app changes; `go build -o family-teacher-api ./cmd/server` for backend changes).
 7. Update memory docs intentionally; the memory hook auto-consolidates only memory markdown files whose line-count delta is `>10` from `scripts/memory_line_snapshot.json`.
 8. Update docs (`BUGS.md`, `LOGBOOK.md`, `TODOS.md`, `DONEs.md`) as applicable.
 9. Run `powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1 -NoPostHook`.
 10. Commit and push in the same turn after validation unless the user explicitly says not to push.
+11. For app changes, publish/upload the remote Windows release in the same turn unless the user explicitly says to skip it.
+12. If backend under `remote/` changed, rebuild/deploy/restart per the remote ops workflow before reporting done.
 
 ## Bug-fix discipline
 1. Reproduce with evidence (logs, script, or minimal failing test).
