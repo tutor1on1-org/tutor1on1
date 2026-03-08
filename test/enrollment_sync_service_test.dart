@@ -1,15 +1,21 @@
+import 'dart:io';
+
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
 import 'package:family_teacher/db/app_database.dart';
+import 'package:family_teacher/llm/prompt_repository.dart';
+import 'package:family_teacher/services/course_bundle_service.dart';
 import 'package:family_teacher/services/course_service.dart';
 import 'package:family_teacher/services/enrollment_sync_service.dart';
 import 'package:family_teacher/services/marketplace_api_service.dart';
-import 'package:family_teacher/services/secure_storage_service.dart';
+import 'package:family_teacher/services/secure_storage_service.dart' as storage;
 
-class _TestSecureStorageService extends SecureStorageService {
+class _TestSecureStorageService extends storage.SecureStorageService {
   _TestSecureStorageService({
     String? accessToken,
     int? deletionCursor,
@@ -21,6 +27,8 @@ class _TestSecureStorageService extends SecureStorageService {
   final Map<String, int> _installedVersionByKey = <String, int>{};
   final Map<String, String> _etagByKey = <String, String>{};
   final Map<String, DateTime> _runAtByDomain = <String, DateTime>{};
+  final Map<String, storage.SyncItemState> _syncItemStateByKey =
+      <String, storage.SyncItemState>{};
 
   @override
   Future<String?> readAuthAccessToken() async => _accessToken;
@@ -90,14 +98,43 @@ class _TestSecureStorageService extends SecureStorageService {
   }) async {
     _runAtByDomain['$remoteUserId:$domain'] = runAt.toUtc();
   }
+
+  @override
+  Future<storage.SyncItemState?> readSyncItemState({
+    required int remoteUserId,
+    required String domain,
+    required String scopeKey,
+  }) async {
+    return _syncItemStateByKey['$remoteUserId:$domain:$scopeKey'];
+  }
+
+  @override
+  Future<void> writeSyncItemState({
+    required int remoteUserId,
+    required String domain,
+    required String scopeKey,
+    required String contentHash,
+    required DateTime lastChangedAt,
+    required DateTime lastSyncedAt,
+  }) async {
+    _syncItemStateByKey['$remoteUserId:$domain:$scopeKey'] =
+        storage.SyncItemState(
+      contentHash: contentHash,
+      lastChangedAt: lastChangedAt.toUtc(),
+      lastSyncedAt: lastSyncedAt.toUtc(),
+    );
+  }
 }
 
 class _TestMarketplaceApiService extends MarketplaceApiService {
   _TestMarketplaceApiService({
-    required SecureStorageService secureStorage,
+    required storage.SecureStorageService secureStorage,
     List<EnrollmentSummary>? enrollments,
     List<EnrollmentDeletionEvent>? deletionEvents,
     List<TeacherCourseSummary>? teacherCourses,
+    Map<int, List<TeacherBundleVersionSummary>>?
+        teacherBundleVersionsByCourseId,
+    Map<int, File>? bundleFilesByVersionId,
     List<EnrollmentDeletionEvent> Function(int? sinceId)?
         deletionEventsProvider,
     this.enrollmentsNotModified = false,
@@ -107,6 +144,9 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   })  : _enrollments = enrollments ?? const <EnrollmentSummary>[],
         _deletionEvents = deletionEvents ?? const <EnrollmentDeletionEvent>[],
         _teacherCourses = teacherCourses ?? const <TeacherCourseSummary>[],
+        _teacherBundleVersionsByCourseId = teacherBundleVersionsByCourseId ??
+            const <int, List<TeacherBundleVersionSummary>>{},
+        _bundleFilesByVersionId = bundleFilesByVersionId ?? const <int, File>{},
         _deletionEventsProvider = deletionEventsProvider,
         super(
           secureStorage: secureStorage,
@@ -119,18 +159,24 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   final List<EnrollmentSummary> _enrollments;
   final List<EnrollmentDeletionEvent> _deletionEvents;
   final List<TeacherCourseSummary> _teacherCourses;
+  final Map<int, List<TeacherBundleVersionSummary>>
+      _teacherBundleVersionsByCourseId;
+  final Map<int, File> _bundleFilesByVersionId;
   final List<EnrollmentDeletionEvent> Function(int? sinceId)?
       _deletionEventsProvider;
   final bool enrollmentsNotModified;
   final bool teacherCoursesNotModified;
   final String? enrollmentsEtag;
   final String? teacherCoursesEtag;
+  final List<_UploadedBundleRecord> uploadedBundles = <_UploadedBundleRecord>[];
   int? lastDeletionSinceId;
   String? lastEnrollmentsIfNoneMatch;
   String? lastTeacherCoursesIfNoneMatch;
   int listEnrollmentsDeltaCalls = 0;
   int listDeletionEventsCalls = 0;
   int listTeacherCoursesDeltaCalls = 0;
+  int listTeacherCoursesCalls = 0;
+  int listTeacherBundleVersionsCalls = 0;
 
   @override
   Future<List<EnrollmentSummary>> listEnrollments() async {
@@ -165,6 +211,7 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
 
   @override
   Future<List<TeacherCourseSummary>> listTeacherCourses() async {
+    listTeacherCoursesCalls++;
     return _teacherCourses;
   }
 
@@ -182,17 +229,146 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
       notModified: teacherCoursesNotModified,
     );
   }
+
+  @override
+  Future<List<TeacherBundleVersionSummary>> listTeacherBundleVersions(
+    int courseId,
+  ) async {
+    listTeacherBundleVersionsCalls++;
+    return _teacherBundleVersionsByCourseId[courseId] ??
+        const <TeacherBundleVersionSummary>[];
+  }
+
+  @override
+  Future<File> downloadBundleToFile({
+    required int bundleVersionId,
+    required String targetPath,
+  }) async {
+    final source = _bundleFilesByVersionId[bundleVersionId];
+    if (source == null || !source.existsSync()) {
+      throw StateError(
+        'Missing test bundle file for version $bundleVersionId.',
+      );
+    }
+    final target = File(targetPath);
+    await target.parent.create(recursive: true);
+    return source.copy(targetPath);
+  }
+
+  @override
+  Future<Map<String, dynamic>> uploadBundle({
+    required int bundleId,
+    required String courseName,
+    required File bundleFile,
+  }) async {
+    final copyDir = await Directory.systemTemp.createTemp('ft_upload_bundle_');
+    final copyPath = p.join(copyDir.path, p.basename(bundleFile.path));
+    final copy = await bundleFile.copy(copyPath);
+    uploadedBundles.add(
+      _UploadedBundleRecord(
+        bundleId: bundleId,
+        courseName: courseName,
+        bundleFile: copy,
+      ),
+    );
+    return <String, dynamic>{
+      'bundle_version_id': bundleId * 1000 + uploadedBundles.length,
+      'status': 'uploaded',
+    };
+  }
+
+  @override
+  Future<EnsureBundleResult> ensureBundle(
+    int courseId, {
+    String? courseName,
+  }) async {
+    return EnsureBundleResult(
+      bundleId: courseId * 10,
+      courseId: courseId,
+    );
+  }
+}
+
+class _UploadedBundleRecord {
+  _UploadedBundleRecord({
+    required this.bundleId,
+    required this.courseName,
+    required this.bundleFile,
+  });
+
+  final int bundleId;
+  final String courseName;
+  final File bundleFile;
+}
+
+class _TestPathProviderPlatform extends PathProviderPlatform {
+  _TestPathProviderPlatform(this.rootPath);
+
+  final String rootPath;
+
+  @override
+  Future<String?> getTemporaryPath() async {
+    final dir = Directory(p.join(rootPath, 'temp'));
+    await dir.create(recursive: true);
+    return dir.path;
+  }
+
+  @override
+  Future<String?> getApplicationDocumentsPath() async {
+    final dir = Directory(p.join(rootPath, 'documents'));
+    await dir.create(recursive: true);
+    return dir.path;
+  }
+}
+
+Future<Directory> _createCourseFolder({
+  required String label,
+  required String rootTitle,
+}) async {
+  final dir = await Directory.systemTemp.createTemp('ft_course_$label');
+  await File(p.join(dir.path, 'contents.txt')).writeAsString(
+    '1 $rootTitle\n',
+  );
+  await File(p.join(dir.path, '1_lecture.txt')).writeAsString(
+    'Lecture for $rootTitle',
+  );
+  return dir;
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   late AppDatabase db;
+  final tempPaths = <String>[];
+  final tempFiles = <String>[];
+  late Directory pathProviderRoot;
 
   setUp(() {
     db = AppDatabase.forTesting(NativeDatabase.memory());
+    pathProviderRoot =
+        Directory.systemTemp.createTempSync('ft_test_path_provider_');
+    PathProviderPlatform.instance =
+        _TestPathProviderPlatform(pathProviderRoot.path);
   });
 
   tearDown(() async {
     await db.close();
+    for (final path in tempPaths) {
+      final directory = Directory(path);
+      if (directory.existsSync()) {
+        await directory.delete(recursive: true);
+      }
+    }
+    tempPaths.clear();
+    for (final path in tempFiles) {
+      final file = File(path);
+      if (file.existsSync()) {
+        await file.delete();
+      }
+    }
+    tempFiles.clear();
+    if (pathProviderRoot.existsSync()) {
+      await pathProviderRoot.delete(recursive: true);
+    }
   });
 
   test(
@@ -213,6 +389,15 @@ void main() {
       );
       final teacher = await db.getUserById(teacherId);
       expect(teacher, isNotNull);
+      final remoteDir = await _createCourseFolder(
+        label: 'teacher_sync_suffix_remote',
+        rootTitle: 'Algebra',
+      );
+      tempPaths.add(remoteDir.path);
+      final remoteBundle = await CourseBundleService().createBundleFromFolder(
+        remoteDir.path,
+      );
+      tempFiles.add(remoteBundle.path);
 
       final secureStorage = _TestSecureStorageService();
       final api = _TestMarketplaceApiService(
@@ -229,12 +414,14 @@ void main() {
             status: 'active',
           ),
         ],
+        bundleFilesByVersionId: <int, File>{3: remoteBundle},
       );
       final service = EnrollmentSyncService(
         db: db,
         secureStorage: secureStorage,
         courseService: CourseService(db),
         marketplaceApi: api,
+        promptRepository: PromptRepository(db: db),
       );
 
       await service.syncIfReady(currentUser: teacher!);
@@ -251,6 +438,327 @@ void main() {
       final allTeacherCourses = await db.getCourseVersionsForTeacher(teacherId);
       expect(allTeacherCourses.length, equals(1));
       expect(allTeacherCourses.first.id, equals(localCourseId));
+    },
+  );
+
+  test(
+    'teacher first sync downloads remote bundle when local course hash differs',
+    () async {
+      final teacherId = await db.createUser(
+        username: 'teacher_pull_remote',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 1701,
+      );
+      final studentId = await db.createUser(
+        username: 'student_pull_remote',
+        pinHash: 'hash',
+        role: 'student',
+        teacherId: teacherId,
+        remoteUserId: 1702,
+      );
+      final localDir = await _createCourseFolder(
+        label: 'local_pull_remote',
+        rootTitle: 'Local Topic',
+      );
+      tempPaths.add(localDir.path);
+      final remoteDir = await _createCourseFolder(
+        label: 'remote_pull_remote',
+        rootTitle: 'Remote Topic',
+      );
+      tempPaths.add(remoteDir.path);
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Physics',
+        granularity: 1,
+        textbookText: '1 Local Topic',
+        sourcePath: localDir.path,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 9101,
+      );
+      final teacher = await db.getUserById(teacherId);
+      expect(teacher, isNotNull);
+
+      final bundleService = CourseBundleService();
+      final remoteBundle = await bundleService.createBundleFromFolder(
+        remoteDir.path,
+        promptMetadata: <String, dynamic>{
+          'schema': 'family_teacher_prompt_bundle_v1',
+          'remote_course_id': 9101,
+          'teacher_username': 'teacher_pull_remote',
+          'prompt_templates': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'prompt_name': 'learn_init',
+              'scope': 'course',
+              'content': 'REMOTE COURSE PROMPT',
+            },
+            <String, dynamic>{
+              'prompt_name': 'review_cont',
+              'scope': 'student',
+              'content': 'REMOTE STUDENT PROMPT',
+              'student_remote_user_id': 1702,
+              'student_username': 'student_pull_remote',
+            },
+          ],
+          'student_prompt_profiles': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'scope': 'student',
+              'student_remote_user_id': 1702,
+              'student_username': 'student_pull_remote',
+              'preferred_tone': 'calm',
+            },
+          ],
+        },
+      );
+      tempFiles.add(remoteBundle.path);
+      final remoteHash =
+          await bundleService.computeBundleSemanticHash(remoteBundle);
+
+      final secureStorage = _TestSecureStorageService();
+      final api = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+        teacherCourses: <TeacherCourseSummary>[
+          TeacherCourseSummary(
+            courseId: 9101,
+            subject: 'Physics',
+            grade: '',
+            description: '',
+            visibility: 'private',
+            publishedAt: '',
+            latestBundleVersionId: 301,
+            status: 'active',
+          ),
+        ],
+        teacherBundleVersionsByCourseId: <int,
+            List<TeacherBundleVersionSummary>>{
+          9101: <TeacherBundleVersionSummary>[
+            TeacherBundleVersionSummary(
+              bundleVersionId: 301,
+              bundleId: 91,
+              version: 3,
+              hash: remoteHash,
+              createdAt: '2026-03-08T00:00:00Z',
+              sizeBytes: remoteBundle.lengthSync(),
+              isLatest: true,
+              fileMissing: false,
+            ),
+          ],
+        },
+        bundleFilesByVersionId: <int, File>{301: remoteBundle},
+      );
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService: CourseService(db),
+        marketplaceApi: api,
+        promptRepository: PromptRepository(db: db),
+      );
+
+      await service.syncIfReady(currentUser: teacher!);
+
+      final updatedCourse = await db.getCourseVersionById(courseVersionId);
+      expect(updatedCourse, isNotNull);
+      expect(updatedCourse!.textbookText, contains('Remote Topic'));
+      expect(updatedCourse.sourcePath, isNot(equals(localDir.path)));
+      expect(
+        await secureStorage.readInstalledCourseBundleVersion(
+          remoteUserId: 1701,
+          remoteCourseId: 9101,
+        ),
+        equals(301),
+      );
+      final syncState = await secureStorage.readSyncItemState(
+        remoteUserId: 1701,
+        domain: 'enrollment_sync_teacher_upload',
+        scopeKey: 'course:9101',
+      );
+      expect(syncState, isNotNull);
+      expect(syncState!.contentHash, equals(remoteHash));
+
+      final activeCoursePrompt = await db.getActivePromptTemplate(
+        teacherId: teacherId,
+        promptName: 'learn_init',
+        courseKey: updatedCourse.sourcePath,
+        studentId: null,
+      );
+      expect(activeCoursePrompt, isNotNull);
+      expect(activeCoursePrompt!.content, equals('REMOTE COURSE PROMPT'));
+
+      final activeStudentPrompt = await db.getActivePromptTemplate(
+        teacherId: teacherId,
+        promptName: 'review_cont',
+        courseKey: updatedCourse.sourcePath,
+        studentId: studentId,
+      );
+      expect(activeStudentPrompt, isNotNull);
+      expect(activeStudentPrompt!.content, equals('REMOTE STUDENT PROMPT'));
+
+      final studentProfile = await db.getStudentPromptProfile(
+        teacherId: teacherId,
+        courseKey: updatedCourse.sourcePath,
+        studentId: studentId,
+      );
+      expect(studentProfile, isNotNull);
+      expect(studentProfile!.preferredTone, equals('calm'));
+      expect(api.listTeacherBundleVersionsCalls, equals(1));
+    },
+  );
+
+  test(
+    'teacher upload reuses loaded course manifest and excludes teacher-global prompts',
+    () async {
+      final teacherId = await db.createUser(
+        username: 'teacher_upload_bundle',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 1801,
+      );
+      final studentId = await db.createUser(
+        username: 'student_upload_bundle',
+        pinHash: 'hash',
+        role: 'student',
+        teacherId: teacherId,
+        remoteUserId: 1802,
+      );
+      final courseADir = await _createCourseFolder(
+        label: 'upload_course_a',
+        rootTitle: 'Course A Topic',
+      );
+      tempPaths.add(courseADir.path);
+      final courseBDir = await _createCourseFolder(
+        label: 'upload_course_b',
+        rootTitle: 'Course B Topic',
+      );
+      tempPaths.add(courseBDir.path);
+
+      final courseAId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Course A',
+        granularity: 1,
+        textbookText: '1 Course A Topic',
+        sourcePath: courseADir.path,
+      );
+      final courseBId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Course B',
+        granularity: 1,
+        textbookText: '1 Course B Topic',
+        sourcePath: courseBDir.path,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseAId,
+        remoteCourseId: 9201,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseBId,
+        remoteCourseId: 9202,
+      );
+      await db.insertPromptTemplate(
+        teacherId: teacherId,
+        promptName: 'learn_init',
+        content: 'GLOBAL PROMPT',
+      );
+      await db.insertPromptTemplate(
+        teacherId: teacherId,
+        promptName: 'learn_init',
+        content: 'COURSE PROMPT',
+        courseKey: courseADir.path,
+      );
+      await db.insertPromptTemplate(
+        teacherId: teacherId,
+        promptName: 'review_cont',
+        content: 'STUDENT PROMPT',
+        courseKey: courseADir.path,
+        studentId: studentId,
+      );
+      await db.upsertStudentPromptProfile(
+        teacherId: teacherId,
+        courseKey: courseADir.path,
+        studentId: studentId,
+        preferredTone: 'energetic',
+      );
+      final teacher = await db.getUserById(teacherId);
+      expect(teacher, isNotNull);
+
+      final secureStorage = _TestSecureStorageService();
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: 1801,
+        domain: 'enrollment_sync_teacher',
+        runAt: DateTime.now().toUtc().subtract(const Duration(minutes: 5)),
+      );
+      final api = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+        teacherCourses: <TeacherCourseSummary>[
+          TeacherCourseSummary(
+            courseId: 9201,
+            subject: 'Course A',
+            grade: '',
+            description: '',
+            visibility: 'private',
+            publishedAt: '',
+            latestBundleVersionId: null,
+            status: 'active',
+          ),
+          TeacherCourseSummary(
+            courseId: 9202,
+            subject: 'Course B',
+            grade: '',
+            description: '',
+            visibility: 'private',
+            publishedAt: '',
+            latestBundleVersionId: null,
+            status: 'active',
+          ),
+        ],
+      );
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService: CourseService(db),
+        marketplaceApi: api,
+        promptRepository: PromptRepository(db: db),
+      );
+
+      await service.syncIfReady(currentUser: teacher!);
+
+      expect(api.listTeacherCoursesDeltaCalls, equals(1));
+      expect(api.listTeacherCoursesCalls, equals(1));
+      expect(api.uploadedBundles.length, equals(2));
+
+      final uploadedCourseABundle = api.uploadedBundles.firstWhere(
+        (entry) => entry.courseName == 'Course A',
+      );
+      tempPaths.add(uploadedCourseABundle.bundleFile.parent.path);
+      final metadata = await CourseBundleService()
+          .readPromptMetadataFromBundleFile(uploadedCourseABundle.bundleFile);
+      expect(metadata, isNotNull);
+      final promptTemplates = (metadata!['prompt_templates'] as List<dynamic>)
+          .cast<Map<String, dynamic>>();
+      expect(
+        promptTemplates.any((item) => item['scope'] == 'teacher'),
+        isFalse,
+      );
+      expect(
+        promptTemplates.any((item) => item['scope'] == 'course'),
+        isTrue,
+      );
+      expect(
+        promptTemplates.any((item) => item['scope'] == 'student'),
+        isTrue,
+      );
+      final studentProfiles =
+          (metadata['student_prompt_profiles'] as List<dynamic>)
+              .cast<Map<String, dynamic>>();
+      expect(
+        studentProfiles.any((item) => item['scope'] == 'teacher'),
+        isFalse,
+      );
+      expect(
+        studentProfiles.any((item) => item['scope'] == 'student'),
+        isTrue,
+      );
     },
   );
 
@@ -328,6 +836,7 @@ void main() {
         secureStorage: secureStorage,
         courseService: CourseService(db),
         marketplaceApi: api,
+        promptRepository: PromptRepository(db: db),
       );
 
       await service.syncIfReady(currentUser: student!);
@@ -398,6 +907,7 @@ void main() {
         secureStorage: secureStorage,
         courseService: CourseService(db),
         marketplaceApi: api,
+        promptRepository: PromptRepository(db: db),
       );
 
       await service.syncIfReady(currentUser: student!);
@@ -467,6 +977,7 @@ void main() {
         secureStorage: secureStorage,
         courseService: CourseService(db),
         marketplaceApi: api,
+        promptRepository: PromptRepository(db: db),
       );
 
       await service.syncIfReady(currentUser: student!);
@@ -550,6 +1061,7 @@ void main() {
         secureStorage: secureStorage,
         courseService: CourseService(db),
         marketplaceApi: api,
+        promptRepository: PromptRepository(db: db),
       );
 
       await service.syncIfReady(currentUser: student!);
@@ -658,6 +1170,7 @@ void main() {
         secureStorage: secureStorage,
         courseService: CourseService(db),
         marketplaceApi: api,
+        promptRepository: PromptRepository(db: db),
       );
 
       await service.syncIfReady(currentUser: teacher!);
@@ -718,6 +1231,7 @@ void main() {
       secureStorage: secureStorage,
       courseService: CourseService(db),
       marketplaceApi: api,
+      promptRepository: PromptRepository(db: db),
     );
 
     await service.syncIfReady(currentUser: student!);
@@ -761,6 +1275,7 @@ void main() {
         secureStorage: secureStorage,
         courseService: CourseService(db),
         marketplaceApi: api,
+        promptRepository: PromptRepository(db: db),
       );
 
       await service.syncIfReady(currentUser: student!);
@@ -797,6 +1312,7 @@ void main() {
       secureStorage: secureStorage,
       courseService: CourseService(db),
       marketplaceApi: api,
+      promptRepository: PromptRepository(db: db),
     );
 
     await service.syncIfReady(currentUser: teacher!);

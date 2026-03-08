@@ -93,6 +93,7 @@ class AppServices {
       secureStorage: secureStorage,
       courseService: courseService,
       marketplaceApi: marketplaceApi,
+      promptRepository: promptRepository,
     );
     final sessionService = SessionService(
       db,
