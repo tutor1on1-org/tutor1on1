@@ -15,6 +15,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
 function Invoke-Checked {
   param(
     [Parameter(Mandatory = $true)]
@@ -58,6 +61,65 @@ function Assert-Http200 {
   $headers | ForEach-Object { Write-Host $_ }
   if (-not ($headers -match 'HTTP/\d\.\d 200 OK')) {
     throw "URL check failed for $Label. Expected HTTP 200: $Url"
+  }
+}
+
+function New-ExplorerCompatibleZip {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$SourceDir,
+    [Parameter(Mandatory = $true)]
+    [string]$DestinationZip
+  )
+  if (-not (Test-Path -LiteralPath $SourceDir)) {
+    throw "ZIP source directory not found: $SourceDir"
+  }
+  if (Test-Path -LiteralPath $DestinationZip) {
+    Remove-Item -LiteralPath $DestinationZip -Force
+  }
+  $sourceRoot = (Resolve-Path -LiteralPath $SourceDir).Path.TrimEnd('\', '/')
+  $files = Get-ChildItem -LiteralPath $sourceRoot -Recurse -File
+  $zipStream = [System.IO.File]::Open(
+    $DestinationZip,
+    [System.IO.FileMode]::CreateNew,
+    [System.IO.FileAccess]::ReadWrite,
+    [System.IO.FileShare]::None
+  )
+  $archive = [System.IO.Compression.ZipArchive]::new(
+    $zipStream,
+    [System.IO.Compression.ZipArchiveMode]::Create,
+    $false
+  )
+  try {
+    foreach ($file in $files) {
+      $relativePath = $file.FullName.Substring($sourceRoot.Length).TrimStart('\', '/')
+      $entryName = $relativePath.Replace('\', '/')
+      if ([string]::IsNullOrWhiteSpace($entryName)) {
+        throw "Computed empty ZIP entry name for $($file.FullName)"
+      }
+      $entry = $archive.CreateEntry(
+        $entryName,
+        [System.IO.Compression.CompressionLevel]::Optimal
+      )
+      $entry.LastWriteTime = [DateTimeOffset]::new($file.LastWriteTimeUtc)
+      $entryStream = $null
+      $inputStream = $null
+      try {
+        $entryStream = $entry.Open()
+        $inputStream = [System.IO.File]::OpenRead($file.FullName)
+        $inputStream.CopyTo($entryStream)
+      } finally {
+        if ($inputStream -ne $null) {
+          $inputStream.Dispose()
+        }
+        if ($entryStream -ne $null) {
+          $entryStream.Dispose()
+        }
+      }
+    }
+  } finally {
+    $archive.Dispose()
+    $zipStream.Dispose()
   }
 }
 
@@ -105,7 +167,7 @@ try {
     Remove-Item -LiteralPath $zipPath -Force
   }
   Invoke-Checked -Label "Create ZIP: $zipPath" -Action {
-    tar -a -c -f $zipPath -C $releaseDir .
+    New-ExplorerCompatibleZip -SourceDir $releaseDir -DestinationZip $zipPath
   }
 
   $zipItem = Get-Item -LiteralPath $zipPath

@@ -44,6 +44,12 @@ $zip = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
 try {
   $entryByPath = @{}
   foreach ($entry in $zip.Entries) {
+    if ($entry.FullName.StartsWith('./')) {
+      throw "ZIP entry must not use tar-style './' prefix: $($entry.FullName)"
+    }
+    if ($entry.FullName.Contains('\')) {
+      throw "ZIP entry must use forward slashes only: $($entry.FullName)"
+    }
     $entryByPath[(Normalize-EntryPath -Value $entry.FullName)] = $entry
   }
 

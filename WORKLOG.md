@@ -50,6 +50,13 @@ Historical setup timeline moved to `LOGBOOK.md`.
   - URL: `https://43.99.59.107/downloads/family_teacher.zip`
   - SHA-256: `2500b6fce349573dafc5292e9b78dcc3ef2318c02a8506b7b71ec926e3cb07bb`
 
+## Remote server updates (2026-03-08, Explorer-compatible ZIP republish)
+- Replaced Windows ZIP packaging from `tar -a` to `System.IO.Compression` after the previous archive opened in 7-Zip but failed in Windows Explorer.
+- Revalidated prompt assets and ZIP structure locally, then republished with candidate-first promotion.
+- Canonical download:
+  - URL: `https://43.99.59.107/downloads/family_teacher.zip`
+  - SHA-256: `8e344223866c82c37d742b192f1e5f94c86dff3de4b035acc780a664504807d2`
+
 ## Remote server updates (2026-02-26, progress sync batch)
 - Added API endpoint `POST /api/progress/sync/upload-batch` and deployed to host.
 - Updated `progress_sync.go` and `routes.go`, rebuilt binary with `/usr/local/go/bin/go build`, restarted `family-teacher-api.service`.
