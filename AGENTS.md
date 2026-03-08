@@ -20,4 +20,4 @@
 
 ## Experience updates
 - Canonical experience log moved to `LESSONS.md` to keep AGENTS concise and always-injected context small.
-- App-change handoff rule: do a self-battle before committing, then compile, validate, update memory, push git, and publish the remote app release unless the user explicitly says to skip one of those steps.
+- App-change handoff discipline is defined in `WORKFLOW.md` and `LESSONS.md`: self-review, build, validate, update memory, push, and publish unless the user explicitly skips a step.

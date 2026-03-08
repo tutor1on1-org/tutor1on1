@@ -66,3 +66,4 @@ Validate before returning:
 
 ## Experience updates
 - Canonical experience log moved to `LESSONS.md` to keep AGENTS concise and always-injected context small.
+- App-change handoff discipline is defined in `WORKFLOW.md` and `LESSONS.md`: self-review, build, validate, update memory, push, and publish unless the user explicitly skips a step.

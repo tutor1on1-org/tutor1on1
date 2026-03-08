@@ -32,30 +32,15 @@ Last updated: 2026-03-08
 
 Historical setup timeline moved to `LOGBOOK.md`.
 
-## Remote server updates (2026-03-08, sync manifest + Windows publish)
+## Remote server updates (2026-03-08, current Windows release)
 - Added sync download endpoints:
   - `GET /api/sync/download-manifest`
   - `POST /api/sync/download-fetch`
-- Deployed updated `routes.go` and new `handlers/sync_download.go`, rebuilt binary on host, installed to `/opt/family_teacher_remote/bin/family-teacher-api`, restarted `family-teacher-api.service`.
-- Verified:
-  - local health `http://127.0.0.1:8080/health` returned `{"status":"ok"}`
-  - public health `https://43.99.59.107/health` returned `{"status":"ok"}`
-- Published Windows desktop ZIP:
-  - URL: `https://43.99.59.107/downloads/family_teacher.zip`
-  - SHA-256: `8b2afb71946dede72c0afa16c54a26bf12ea7b7518750fea1bed926b87f17c8c`
-
-## Remote server updates (2026-03-08, teacher course sync + Windows republish)
-- Published refreshed Windows desktop ZIP after teacher course bundle/prompt sync changes.
-- Verified candidate-first promotion and canonical download URL:
-  - URL: `https://43.99.59.107/downloads/family_teacher.zip`
-  - SHA-256: `2500b6fce349573dafc5292e9b78dcc3ef2318c02a8506b7b71ec926e3cb07bb`
-
-## Remote server updates (2026-03-08, Explorer-compatible ZIP republish)
-- Replaced Windows ZIP packaging from `tar -a` to `System.IO.Compression` after the previous archive opened in 7-Zip but failed in Windows Explorer.
-- Revalidated prompt assets and ZIP structure locally, then republished with candidate-first promotion.
-- Canonical download:
+- Deployed updated sync backend, verified local/public health, and republished the canonical Windows desktop ZIP.
+- Current canonical download:
   - URL: `https://43.99.59.107/downloads/family_teacher.zip`
   - SHA-256: `8e344223866c82c37d742b192f1e5f94c86dff3de4b035acc780a664504807d2`
+- Packaging now uses `System.IO.Compression` after replacing `tar -a` for Windows Explorer compatibility.
 
 ## Remote server updates (2026-02-26, progress sync batch)
 - Added API endpoint `POST /api/progress/sync/upload-batch` and deployed to host.

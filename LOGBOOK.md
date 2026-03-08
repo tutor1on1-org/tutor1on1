@@ -56,3 +56,4 @@ Historical timeline. Keep active runbook details in `WORKLOG.md`.
 - Moved sync metadata/state off Windows secure storage and into local Drift/SQLite tables to remove `flutter_secure_storage.dat` contention during large syncs.
 - Added client API coverage for `/api/sync/download-manifest` and `/api/sync/download-fetch`, plus backend handler coverage for ETag and fetch response behavior.
 - Deployed updated backend to `family-teacher-api.service`, verified local and public `/health`, built Windows release, and published canonical `https://43.99.59.107/downloads/family_teacher.zip`.
+- Published initial manifest+fetch release ZIP, then a teacher-course-sync republish, then an Explorer-compatible republish after replacing `tar -a`; canonical SHA settled at `8e344223866c82c37d742b192f1e5f94c86dff3de4b035acc780a664504807d2`.
