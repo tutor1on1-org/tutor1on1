@@ -1,5 +1,5 @@
 # WORKLOG
-Last updated: 2026-02-28
+Last updated: 2026-03-08
 
 ## Remote host (active)
 - Provider: AliCloud ECS
@@ -32,16 +32,24 @@ Last updated: 2026-02-28
 
 Historical setup timeline moved to `LOGBOOK.md`.
 
-## Remote server updates (2026-02-26)
-- Investigated student import failure after download for `special_relativity`.
-- Verified `bundle_version_id=10` downloaded from server and mapped to `/var/lib/family_teacher_remote/storage/bundles/3/1772075735.zip`.
-- Verified server bundle includes `contents.txt` and all required lecture files (no missing lecture IDs from parsed contents).
-- Added server-side bundle validation in `bundles.Upload` to reject invalid uploads:
-  - require `contents.txt` or `context.txt`
-  - parse node IDs from contents
-  - require lecture file per node (`<id>_lecture.txt` or `<id>/lecture.txt`)
-  - ignore AppleDouble/macOS metadata entries (`._*`, `__MACOSX/*`)
-- Deployed updated API binary and restarted `family-teacher-api.service`; health check returned OK.
+## Remote server updates (2026-03-08, sync manifest + Windows publish)
+- Added sync download endpoints:
+  - `GET /api/sync/download-manifest`
+  - `POST /api/sync/download-fetch`
+- Deployed updated `routes.go` and new `handlers/sync_download.go`, rebuilt binary on host, installed to `/opt/family_teacher_remote/bin/family-teacher-api`, restarted `family-teacher-api.service`.
+- Verified:
+  - local health `http://127.0.0.1:8080/health` returned `{"status":"ok"}`
+  - public health `https://43.99.59.107/health` returned `{"status":"ok"}`
+- Published Windows desktop ZIP:
+  - URL: `https://43.99.59.107/downloads/family_teacher.zip`
+  - SHA-256: `8b2afb71946dede72c0afa16c54a26bf12ea7b7518750fea1bed926b87f17c8c`
+
+## Remote server updates (2026-02-26, progress sync batch)
+- Added API endpoint `POST /api/progress/sync/upload-batch` and deployed to host.
+- Updated `progress_sync.go` and `routes.go`, rebuilt binary with `/usr/local/go/bin/go build`, restarted `family-teacher-api.service`.
+- Verified:
+  - health endpoint `https://43.99.59.107/health` returned `{"status":"ok"}`.
+  - batch endpoint responds (unauthorized without token), confirming route is active.
 
 ## Remote server updates (2026-02-26, bundle version controls)
 - Added upload dedupe by hash in API upload flow: if the uploaded bundle hash matches latest version, API returns `status=unchanged` and does not create a new version row.
@@ -55,6 +63,17 @@ Historical setup timeline moved to `LOGBOOK.md`.
   - restarted `family-teacher-api.service`
   - verified `curl -k https://43.99.59.107/health` returned `{"status":"ok"}`
 
+## Remote server updates (2026-02-26)
+- Investigated student import failure after download for `special_relativity`.
+- Verified `bundle_version_id=10` downloaded from server and mapped to `/var/lib/family_teacher_remote/storage/bundles/3/1772075735.zip`.
+- Verified server bundle includes `contents.txt` and all required lecture files (no missing lecture IDs from parsed contents).
+- Added server-side bundle validation in `bundles.Upload` to reject invalid uploads:
+  - require `contents.txt` or `context.txt`
+  - parse node IDs from contents
+  - require lecture file per node (`<id>_lecture.txt` or `<id>/lecture.txt`)
+  - ignore AppleDouble/macOS metadata entries (`._*`, `__MACOSX/*`)
+- Deployed updated API binary and restarted `family-teacher-api.service`; health check returned OK.
+
 ## Root-cause note (2026-02-26, student download import)
 - Investigated repeated student error: `Missing file: ...\\contents.txt (or ...\\context.txt)` immediately after marketplace download.
 - Verified server bundle integrity:
@@ -64,22 +83,3 @@ Historical setup timeline moved to `LOGBOOK.md`.
   - used `extractArchiveToDisk(...)` without `await`.
   - `archive` 3.x extraction API is async, so import sometimes started before extraction finished.
 - Fix: await extraction in both `extractBundleFromFile` and `extractBundleFromBytes`.
-
-## Remote server updates (2026-02-26, progress sync batch)
-- Added API endpoint `POST /api/progress/sync/upload-batch` and deployed to host.
-- Updated `progress_sync.go` and `routes.go`, rebuilt binary with `/usr/local/go/bin/go build`, restarted `family-teacher-api.service`.
-- Verified:
-  - health endpoint `https://43.99.59.107/health` returned `{"status":"ok"}`.
-  - batch endpoint responds (unauthorized without token), confirming route is active.
-
-## Remote server updates (2026-03-08, sync manifest + Windows publish)
-- Added sync download endpoints:
-  - `GET /api/sync/download-manifest`
-  - `POST /api/sync/download-fetch`
-- Deployed updated `routes.go` and new `handlers/sync_download.go`, rebuilt binary on host, installed to `/opt/family_teacher_remote/bin/family-teacher-api`, restarted `family-teacher-api.service`.
-- Verified:
-  - local health `http://127.0.0.1:8080/health` returned `{"status":"ok"}`
-  - public health `https://43.99.59.107/health` returned `{"status":"ok"}`
-- Published Windows desktop ZIP:
-  - URL: `https://43.99.59.107/downloads/family_teacher.zip`
-  - SHA-256: `8b2afb71946dede72c0afa16c54a26bf12ea7b7518750fea1bed926b87f17c8c`

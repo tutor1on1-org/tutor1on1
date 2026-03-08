@@ -42,5 +42,8 @@ Last updated: 2026-03-08
 - Reworked session/progress download sync around a two-step manifest+fetch flow (`/api/sync/download-manifest` + `/api/sync/download-fetch`) so normal catch-up sync downloads indexes first and only fetches stale content.
 - Moved session/progress sync metadata/state out of Windows secure storage and into Drift/SQLite, eliminating the `flutter_secure_storage.dat` bottleneck and file-lock failure mode for large sync sets.
 - Added regression coverage for the new download protocol on both client and backend, deployed the updated API service, and published a new Windows desktop ZIP at `https://43.99.59.107/downloads/family_teacher.zip`.
+- Extended teacher course sync so startup hash-compares local vs latest remote bundle before initializing sync state, background teacher uploads reuse the already-loaded course manifest instead of re-listing teacher courses per local course, and teacher course bundles now sync course/student prompt metadata without carrying teacher-global prompt scopes.
 
 Historical completions were moved to `LOGBOOK.md`.
+
+- 2026-03-08: Added sync download manifest/fetch endpoints, deployed the updated API, verified local/public health, and published `family_teacher.zip` with SHA-256 `8b2afb71946dede72c0afa16c54a26bf12ea7b7518750fea1bed926b87f17c8c`.
