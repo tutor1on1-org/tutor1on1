@@ -10,6 +10,7 @@ import 'package:provider/provider.dart';
 import '../../constants.dart';
 import '../../db/app_database.dart';
 import '../../models/skill_tree.dart';
+import '../progress_display.dart';
 import '../../services/app_services.dart';
 import '../../state/auth_controller.dart';
 import '../tutor_session_page.dart';
@@ -1214,10 +1215,11 @@ class _SkillTreePageState extends State<SkillTreePage> {
   }
 
   int _resolveLitPercent(ProgressEntry entry) {
-    if (entry.litPercent == 0 && entry.lit) {
-      return 100;
-    }
-    return entry.litPercent;
+    return resolveProgressDisplayPercent(
+      litPercent: entry.litPercent,
+      lit: entry.lit,
+      questionLevel: entry.questionLevel,
+    );
   }
 
   Color _branchColor(String nodeId) {

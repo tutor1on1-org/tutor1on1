@@ -84,3 +84,8 @@ Last updated: 2026-03-08
 - Symptom: a fresh sync can show a weaker progress state, or a chapter chunk can silently lose earlier stronger KP progress after only one sibling KP changes.
 - Root cause: progress download/import used overwrite semantics, and chapter chunk upload was built from only recently changed KPs even though the server stores one full snapshot per `(course, student, chapter)`; that allowed weaker or partial chapter state to replace stronger existing state.
 - Prevention: during sync import, keep the stronger of local and incoming progress; when uploading chapter chunks, send the full current chapter snapshot, not only the changed subset; and reject weaker incoming row updates on the legacy server row path.
+
+17. Skill tree display must derive mastery from all stored progress signals
+- Symptom: a leaf in the tree can stay grey while the selected KP row/summary indicates the node is passed.
+- Root cause: tree rendering treated `litPercent` as the only display signal, even though older or migrated progress rows can encode stronger mastery in `lit` or `questionLevel`.
+- Prevention: use one shared display-percent resolver that takes the strongest of `litPercent`, `lit`, and `questionLevel`, and regression-test the mapping.
