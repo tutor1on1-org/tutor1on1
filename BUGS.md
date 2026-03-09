@@ -1,5 +1,5 @@
 # BUGS
-Last updated: 2026-03-08
+Last updated: 2026-03-09
 
 ## Active watch
 - Student import race after bundle download (monitoring): fixed by awaiting archive extraction in client bundle service (`f77e7e0`); keep watching for recurrence in production-like flow.
@@ -85,7 +85,7 @@ Last updated: 2026-03-08
 - Root cause: progress download/import used overwrite semantics, and chapter chunk upload was built from only recently changed KPs even though the server stores one full snapshot per `(course, student, chapter)`; that allowed weaker or partial chapter state to replace stronger existing state.
 - Prevention: during sync import, keep the stronger of local and incoming progress; when uploading chapter chunks, send the full current chapter snapshot, not only the changed subset; and reject weaker incoming row updates on the legacy server row path.
 
-17. Skill tree display must derive mastery from all stored progress signals
+17. Skill tree display must use one canonical display color path
 - Symptom: a leaf in the tree can stay grey while the selected KP row/summary indicates the node is passed.
-- Root cause: tree rendering treated `litPercent` as the only display signal, even though older or migrated progress rows can encode stronger mastery in `lit` or `questionLevel`.
-- Prevention: use one shared display-percent resolver that takes the strongest of `litPercent`, `lit`, and `questionLevel`, and regression-test the mapping.
+- Root cause: the tree leaf used a binary grey/green rule while the detail row used a separate ratio-based color path, so the same KP could render in two different colors even when both views were looking at the same resolved display state.
+- Prevention: define one canonical display-percent resolver, feed it into one shared color-mapping helper, and make both the graph leaf and detail row call that same helper.

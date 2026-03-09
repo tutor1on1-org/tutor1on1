@@ -381,7 +381,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
                           _detailNodesForSelection(selectedNode).map((node) {
                         final text = _nodeDisplayText(node);
                         final isActive = node.id == _selectedId;
-                        final background = _branchColor(node.id);
+                        final background = _nodeColor(node.id);
                         final studentId = targetStudentId;
                         final showTeacherControls = widget.isTeacherView &&
                             isActive &&
@@ -619,14 +619,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
                           if (data == null) {
                             return const SizedBox.shrink();
                           }
-                          final percent = litPercentMap[data.id] ?? 0;
-                          return _buildNodeWidget(
-                            data,
-                            percent >= 100,
-                            isStudent,
-                            db,
-                            currentUser?.id,
-                          );
+                          return _buildNodeWidget(data);
                         },
                       ),
                     ),
@@ -697,18 +690,10 @@ class _SkillTreePageState extends State<SkillTreePage> {
     return _parseResult?.nodes[id];
   }
 
-  Widget _buildNodeWidget(
-    SkillNode node,
-    bool mastered,
-    bool isStudent,
-    AppDatabase db,
-    int? userId,
-  ) {
+  Widget _buildNodeWidget(SkillNode node) {
     final isSelected = _selectedId == node.id;
     final size = _nodeSizeFor(node);
-    final baseColor = _isLeafNode(node)
-        ? (mastered ? Colors.green : Colors.grey)
-        : _branchColor(node.id);
+    final baseColor = _nodeColor(node.id);
     final content = Container(
       width: size,
       height: size,
@@ -1222,15 +1207,9 @@ class _SkillTreePageState extends State<SkillTreePage> {
     );
   }
 
-  Color _branchColor(String nodeId) {
+  Color _nodeColor(String nodeId) {
     final ratio = _nodeProgress[nodeId] ?? 0.0;
-    final clamped = ratio.clamp(0.0, 1.0);
-    return Color.lerp(
-          Colors.grey.shade300,
-          Colors.green.shade300,
-          clamped,
-        ) ??
-        Colors.grey.shade300;
+    return resolveProgressDisplayColor(ratio);
   }
 
   List<SkillNode> _pathToNode(SkillNode node) {

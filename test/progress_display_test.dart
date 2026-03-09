@@ -44,14 +44,14 @@ void main() {
     );
   });
 
-  test('stored stronger percent still wins', () {
+  test('question level takes precedence over raw stored percent', () {
     expect(
       resolveProgressDisplayPercent(
         litPercent: 85,
         lit: false,
         questionLevel: 'easy',
       ),
-      equals(85),
+      equals(33),
     );
   });
 }
