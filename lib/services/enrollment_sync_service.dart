@@ -1221,6 +1221,7 @@ class EnrollmentSyncService {
             db: _db,
             remoteStudentId: targetRemoteUserId,
             usernameHint: targetUsername,
+            teacherId: currentUser.id,
           );
         } else {
           continue;
@@ -1263,6 +1264,7 @@ class EnrollmentSyncService {
             db: _db,
             remoteStudentId: targetRemoteUserId,
             usernameHint: targetUsername,
+            teacherId: currentUser.id,
           );
         } else {
           continue;

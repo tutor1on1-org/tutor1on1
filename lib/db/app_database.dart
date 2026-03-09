@@ -1295,6 +1295,20 @@ ORDER BY l.created_at DESC
     );
   }
 
+  Future<void> updateStudentTeacherId({
+    required int studentId,
+    required int teacherId,
+  }) {
+    return (update(users)
+          ..where(
+              (tbl) => tbl.id.equals(studentId) & tbl.role.equals('student')))
+        .write(
+      UsersCompanion(
+        teacherId: Value(teacherId),
+      ),
+    );
+  }
+
   Future<void> upsertCourseRemoteLink({
     required int courseVersionId,
     required int remoteCourseId,

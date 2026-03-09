@@ -1042,7 +1042,8 @@ class SessionSyncService {
     int remoteUserId,
     SimpleKeyPair keyPair,
   ) async {
-    final includeProgress = currentUser.role == 'student';
+    final includeProgress =
+        currentUser.role == 'student' || currentUser.role == 'teacher';
     final manifestScopeKey = _downloadManifestScopeKey(currentUser);
     final manifestEtag = await _secureStorage.readSyncListEtag(
       remoteUserId: remoteUserId,
@@ -1063,11 +1064,15 @@ class SessionSyncService {
       return;
     }
 
-    final localProgressUpdatedAtByRemoteScope = includeProgress
-        ? await _db.getProgressUpdatedAtByRemoteCourseAndKp(
-            studentId: currentUser.id,
-          )
-        : <String, DateTime>{};
+    final localProgressUpdatedAtByRemoteScope =
+        includeProgress && currentUser.role == 'student'
+            ? _scopeProgressUpdatedAtByStudentRemoteId(
+                await _db.getProgressUpdatedAtByRemoteCourseAndKp(
+                  studentId: currentUser.id,
+                ),
+                currentUser.remoteUserId ?? remoteUserId,
+              )
+            : <String, DateTime>{};
     final sessionFetchIds = <String>[];
     final progressChunkFetchKeys = <ProgressChunkFetchKey>[];
     final progressRowFetchKeys = <ProgressRowFetchKey>[];
@@ -1088,6 +1093,7 @@ class SessionSyncService {
         )) {
           progressChunkFetchKeys.add(
             ProgressChunkFetchKey(
+              studentUserId: item.studentUserId,
               courseId: item.courseId,
               chapterKey: item.chapterKey.trim(),
             ),
@@ -1103,6 +1109,7 @@ class SessionSyncService {
         )) {
           progressRowFetchKeys.add(
             ProgressRowFetchKey(
+              studentUserId: item.studentUserId,
               courseId: item.courseId,
               kpKey: item.kpKey.trim(),
             ),
@@ -1149,8 +1156,11 @@ class SessionSyncService {
               localProgressUpdatedAtByRemoteScope,
         );
       }
-      final chunkScopeKey =
-          '${chunkItem.courseId}:${chunkItem.chapterKey.trim().isEmpty ? 'ungrouped' : chunkItem.chapterKey.trim()}';
+      final chunkScopeKey = _progressChunkDownloadScopeKey(
+        studentRemoteId: chunkItem.studentUserId,
+        courseId: chunkItem.courseId,
+        chapterKey: chunkItem.chapterKey,
+      );
       final itemUpdatedAt = DateTime.tryParse(chunkItem.updatedAt)?.toUtc() ??
           DateTime.now().toUtc();
       final resolvedChunkHash = _resolveSyncHash(
@@ -1227,9 +1237,11 @@ class SessionSyncService {
     required int remoteUserId,
     required ProgressSyncChunkManifestItem item,
   }) async {
-    final chapterKey =
-        item.chapterKey.trim().isEmpty ? 'ungrouped' : item.chapterKey.trim();
-    final scopeKey = '${item.courseId}:$chapterKey';
+    final scopeKey = _progressChunkDownloadScopeKey(
+      studentRemoteId: item.studentUserId,
+      courseId: item.courseId,
+      chapterKey: item.chapterKey,
+    );
     final itemUpdatedAt =
         DateTime.tryParse(item.updatedAt)?.toUtc() ?? DateTime.now().toUtc();
     final syncState = await _secureStorage.readSyncItemState(
@@ -1259,7 +1271,11 @@ class SessionSyncService {
     if (item.courseId <= 0 || kpKey.isEmpty) {
       return false;
     }
-    final scopeKey = '${item.courseId}:$kpKey';
+    final scopeKey = _progressDownloadScopeKey(
+      studentRemoteId: item.studentUserId,
+      courseId: item.courseId,
+      kpKey: kpKey,
+    );
     final itemUpdatedAt =
         DateTime.tryParse(item.updatedAt)?.toUtc() ?? DateTime.now().toUtc();
     final indexedLocalUpdatedAt = localProgressUpdatedAtByRemoteScope[scopeKey];
@@ -1339,7 +1355,11 @@ class SessionSyncService {
     if (item.courseId <= 0 || kpKey.isEmpty) {
       return;
     }
-    final scopeKey = '${item.courseId}:$kpKey';
+    final scopeKey = _progressDownloadScopeKey(
+      studentRemoteId: item.studentUserId,
+      courseId: item.courseId,
+      kpKey: kpKey,
+    );
     final indexedLocalUpdatedAt = localProgressUpdatedAtByRemoteScope[scopeKey];
     if (indexedLocalUpdatedAt != null &&
         !itemUpdatedAt.isAfter(indexedLocalUpdatedAt.toUtc())) {
@@ -1417,14 +1437,19 @@ class SessionSyncService {
       courseVersionId: courseVersionId,
       remoteCourseId: resolved.courseId,
     );
+    final localStudentId = await _resolveLocalStudentId(
+      currentUser: currentUser,
+      studentRemoteId: item.studentUserId,
+      studentUsername: null,
+    );
     await _db.assignStudent(
-      studentId: currentUser.id,
+      studentId: localStudentId,
       courseVersionId: courseVersionId,
     );
     final updatedAt =
         DateTime.tryParse(resolved.updatedAt)?.toUtc() ?? itemUpdatedAt;
     final existingLocalProgress = await _db.getProgress(
-      studentId: currentUser.id,
+      studentId: localStudentId,
       courseVersionId: courseVersionId,
       kpKey: resolved.kpKey,
     );
@@ -1445,7 +1470,7 @@ class SessionSyncService {
       return;
     }
     await _db.upsertProgressFromSync(
-      studentId: currentUser.id,
+      studentId: localStudentId,
       courseVersionId: courseVersionId,
       kpKey: resolved.kpKey,
       lit: resolved.lit,
@@ -1503,7 +1528,7 @@ class SessionSyncService {
       payload['student_remote_user_id'],
       field: 'student_remote_user_id',
     );
-    if (payloadStudentID != remoteUserId) {
+    if (payloadStudentID != chunkItem.studentUserId) {
       throw StateError('Progress chunk payload student mismatch.');
     }
     final payloadCourseID = _parsePayloadInt(
@@ -1706,12 +1731,10 @@ class SessionSyncService {
       }
     }
 
-    if (currentUser.role == 'student') {
-      await _db.assignStudent(
-        studentId: localStudentId,
-        courseVersionId: courseVersionId,
-      );
-    }
+    await _db.assignStudent(
+      studentId: localStudentId,
+      courseVersionId: courseVersionId,
+    );
 
     final existing = await (_db.select(_db.chatSessions)
           ..where((tbl) => tbl.syncId.equals(sessionSyncId)))
@@ -1786,6 +1809,13 @@ class SessionSyncService {
     }
     final existing = await _db.findUserByRemoteId(studentRemoteId);
     if (existing != null) {
+      if (currentUser.role == 'teacher' &&
+          existing.teacherId != currentUser.id) {
+        await _db.updateStudentTeacherId(
+          studentId: existing.id,
+          teacherId: currentUser.id,
+        );
+      }
       return existing.id;
     }
     final username = (studentUsername ?? '').trim();
@@ -1798,6 +1828,35 @@ class SessionSyncService {
       teacherId: currentUser.role == 'teacher' ? currentUser.id : null,
       remoteUserId: studentRemoteId,
     );
+  }
+
+  Map<String, DateTime> _scopeProgressUpdatedAtByStudentRemoteId(
+    Map<String, DateTime> updatedAtByRemoteCourseAndKp,
+    int studentRemoteId,
+  ) {
+    final result = <String, DateTime>{};
+    for (final entry in updatedAtByRemoteCourseAndKp.entries) {
+      result['$studentRemoteId:${entry.key}'] = entry.value.toUtc();
+    }
+    return result;
+  }
+
+  String _progressChunkDownloadScopeKey({
+    required int studentRemoteId,
+    required int courseId,
+    required String chapterKey,
+  }) {
+    final normalizedChapterKey =
+        chapterKey.trim().isEmpty ? 'ungrouped' : chapterKey.trim();
+    return '${studentRemoteId > 0 ? studentRemoteId : 0}:$courseId:$normalizedChapterKey';
+  }
+
+  String _progressDownloadScopeKey({
+    required int studentRemoteId,
+    required int courseId,
+    required String kpKey,
+  }) {
+    return '${studentRemoteId > 0 ? studentRemoteId : 0}:$courseId:${kpKey.trim()}';
   }
 
   Future<int?> _resolveLocalTeacherId({
@@ -2057,7 +2116,7 @@ class SessionSyncService {
     required int remoteUserId,
     required SimpleKeyPair keyPair,
   }) async {
-    if (item.studentUserId != remoteUserId) {
+    if (item.studentUserId <= 0) {
       throw StateError('Progress payload student mismatch.');
     }
     if (item.envelope.trim().isEmpty) {
@@ -2101,7 +2160,7 @@ class SessionSyncService {
       payload['student_remote_user_id'],
       field: 'student_remote_user_id',
     );
-    if (payloadStudentID != remoteUserId) {
+    if (payloadStudentID != item.studentUserId) {
       throw StateError('Progress payload student mismatch.');
     }
     final litPercentRaw = _parsePayloadInt(

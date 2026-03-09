@@ -732,25 +732,25 @@ class _MarketplacePageState extends State<MarketplacePage> {
     setState(() {
       _downloadingCourseIds.add(course.courseId);
     });
-    final services = context.read<AppServices>();
-    final bundleService = CourseBundleService();
-    final enrollment = _enrollmentsByCourse[course.courseId];
-    if (enrollment == null) {
-      _setPersistentMessage(
-        'Cannot download course: enrollment metadata not found. Refresh marketplace and try again.',
-        isError: true,
-      );
-      return;
-    }
-    if (enrollment.teacherId <= 0) {
-      _setPersistentMessage(
-        'Cannot download course: enrollment is missing teacher identity.',
-        isError: true,
-      );
-      return;
-    }
     File? bundleFile;
     try {
+      final services = context.read<AppServices>();
+      final bundleService = CourseBundleService();
+      final enrollment = _enrollmentsByCourse[course.courseId];
+      if (enrollment == null) {
+        _setPersistentMessage(
+          'Cannot download course: enrollment metadata not found. Refresh marketplace and try again.',
+          isError: true,
+        );
+        return;
+      }
+      if (enrollment.teacherId <= 0) {
+        _setPersistentMessage(
+          'Cannot download course: enrollment is missing teacher identity.',
+          isError: true,
+        );
+        return;
+      }
       final localTeacherId =
           await _remoteTeacherIdentity.resolveOrCreateLocalTeacherId(
         db: services.db,

@@ -320,6 +320,7 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
           ? progressItems
               .map(
                 (item) => ProgressSyncManifestItem(
+                  studentUserId: item.studentUserId,
                   courseId: item.courseId,
                   kpKey: item.kpKey,
                   updatedAt: item.updatedAt,
@@ -342,7 +343,7 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
     }
     final sessionIds = request.sessionSyncIds.toSet();
     final progressRowKeys = request.progressRows
-        .map((item) => '${item.courseId}:${item.kpKey}')
+        .map((item) => '${item.studentUserId}:${item.courseId}:${item.kpKey}')
         .toSet();
     return SyncDownloadFetchResult(
       sessions: sessionItems
@@ -350,8 +351,9 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
           .toList(growable: false),
       progressChunks: const <ProgressSyncChunkItem>[],
       progressRows: progressItems
-          .where((item) =>
-              progressRowKeys.contains('${item.courseId}:${item.kpKey}'))
+          .where((item) => progressRowKeys.contains(
+                '${item.studentUserId}:${item.courseId}:${item.kpKey}',
+              ))
           .toList(growable: false),
     );
   }
@@ -974,6 +976,178 @@ void main() {
       expect(progressRows, hasLength(1));
       expect(progressRows.single.kpKey, equals('1.1'));
       expect(progressRows.single.litPercent, equals(70));
+    },
+  );
+
+  test(
+    'teacher sync downloads student sessions and progress into teacher-visible student records',
+    () async {
+      final crypto = SessionCryptoService();
+      final secureStorage = _MemorySecureStorage(accessToken: 'token');
+
+      final localTeacherId = await db.createUser(
+        username: 'teacher_sync',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 901,
+      );
+      final localCourseVersionId = await db.createCourseVersion(
+        teacherId: localTeacherId,
+        subject: 'Geometry',
+        granularity: 1,
+        textbookText: '',
+        sourcePath: r'C:\courses\geometry',
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: localCourseVersionId,
+        remoteCourseId: 100,
+      );
+
+      final teacher = await db.getUserById(localTeacherId);
+      expect(teacher, isNotNull);
+      final remoteTeacherId = teacher!.remoteUserId!;
+
+      final teacherKeyPair = await crypto.generateKeyPair();
+      final teacherPublicKey = await crypto.extractPublicKey(teacherKeyPair);
+      await secureStorage.writeUserPrivateKey(
+        remoteTeacherId,
+        await crypto.encodePrivateKey(teacherKeyPair),
+      );
+      await secureStorage.writeUserPublicKey(
+        remoteTeacherId,
+        crypto.encodePublicKey(teacherPublicKey),
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteTeacherId,
+        domain: 'session_sync_run_progress_upload',
+        runAt: DateTime.now().toUtc(),
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteTeacherId,
+        domain: 'session_sync_run_session_upload',
+        runAt: DateTime.now().toUtc(),
+      );
+
+      const remoteStudentId = 3001;
+      final sessionPayload = <String, dynamic>{
+        'version': 1,
+        'session_sync_id': 'teacher-download-session-1',
+        'course_id': 100,
+        'course_subject': 'Geometry',
+        'kp_key': '2.1',
+        'kp_title': 'Triangles',
+        'session_title': 'Triangle Basics',
+        'started_at': '2026-03-01T10:00:00Z',
+        'ended_at': null,
+        'summary_text': 'Teacher reviewable session',
+        'student_remote_user_id': remoteStudentId,
+        'student_username': 'student_remote',
+        'teacher_remote_user_id': remoteTeacherId,
+        'updated_at': '2026-03-01T10:05:00Z',
+        'messages': <Map<String, String>>[
+          <String, String>{
+            'role': 'assistant',
+            'content': 'Let us review triangles.',
+            'created_at': '2026-03-01T10:00:10Z',
+          },
+        ],
+      };
+      final sessionEnvelope = await _encryptForUser(
+        crypto: crypto,
+        payload: sessionPayload,
+        recipientUserId: remoteTeacherId,
+        recipientPublicKey: teacherPublicKey,
+      );
+
+      final progressPayload = <String, dynamic>{
+        'version': 1,
+        'course_id': 100,
+        'course_subject': 'Geometry',
+        'kp_key': '2.1',
+        'lit': true,
+        'lit_percent': 91,
+        'question_level': 'medium',
+        'summary_text': 'Teacher reviewable progress',
+        'summary_raw_response': '',
+        'summary_valid': true,
+        'teacher_remote_user_id': remoteTeacherId,
+        'student_remote_user_id': remoteStudentId,
+        'updated_at': '2026-03-01T10:06:00Z',
+      };
+      final progressEnvelope = await _encryptForUser(
+        crypto: crypto,
+        payload: progressPayload,
+        recipientUserId: remoteTeacherId,
+        recipientPublicKey: teacherPublicKey,
+      );
+
+      final api = _TestSessionSyncApiService(
+        secureStorage: secureStorage,
+        sessionItems: <SessionSyncItem>[
+          SessionSyncItem(
+            cursorId: 1,
+            sessionSyncId: 'teacher-download-session-1',
+            courseId: 100,
+            teacherUserId: remoteTeacherId,
+            studentUserId: remoteStudentId,
+            senderUserId: remoteStudentId,
+            updatedAt: '2026-03-01T10:05:00Z',
+            envelope: sessionEnvelope.base64Envelope,
+            envelopeHash: sessionEnvelope.hash,
+          ),
+        ],
+        progressItems: <ProgressSyncItem>[
+          ProgressSyncItem(
+            cursorId: 2,
+            courseId: 100,
+            courseSubject: 'Geometry',
+            teacherUserId: remoteTeacherId,
+            studentUserId: remoteStudentId,
+            kpKey: '2.1',
+            lit: false,
+            litPercent: 0,
+            questionLevel: '',
+            summaryText: '',
+            summaryRawResponse: '',
+            summaryValid: null,
+            updatedAt: '2026-03-01T10:06:00Z',
+            envelope: progressEnvelope.base64Envelope,
+            envelopeHash: progressEnvelope.hash,
+          ),
+        ],
+      );
+
+      final userKeyService = UserKeyService(
+        secureStorage: secureStorage,
+        api: api,
+        crypto: crypto,
+      );
+      final syncService = SessionSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        api: api,
+        userKeyService: userKeyService,
+        crypto: crypto,
+      );
+
+      await syncService.syncIfReady(currentUser: teacher);
+
+      final students = await db.watchStudents(localTeacherId).first;
+      expect(students, hasLength(1));
+      final localStudentId = students.single.id;
+      expect(students.single.remoteUserId, equals(remoteStudentId));
+
+      final sessions = await db.getSessionsForStudent(localStudentId);
+      expect(sessions, hasLength(1));
+      expect(sessions.single.courseVersionId, equals(localCourseVersionId));
+
+      final progressRows = await db.getProgressForCourse(
+        studentId: localStudentId,
+        courseVersionId: localCourseVersionId,
+      );
+      expect(progressRows, hasLength(1));
+      expect(progressRows.single.kpKey, equals('2.1'));
+      expect(progressRows.single.litPercent, equals(91));
     },
   );
 
@@ -1826,6 +2000,7 @@ void main() {
             progressChunks: const <ProgressSyncChunkManifestItem>[],
             progressRows: <ProgressSyncManifestItem>[
               ProgressSyncManifestItem(
+                studentUserId: remoteStudentId,
                 courseId: 180,
                 kpKey: '2.1.3',
                 updatedAt: '2026-03-02T12:00:00Z',
@@ -2088,6 +2263,7 @@ void main() {
       ) {
         final updatedAt = baseUpdatedAt.add(Duration(seconds: index));
         return ProgressSyncManifestItem(
+          studentUserId: remoteStudentId,
           courseId: 191,
           kpKey: '2.1.$index',
           updatedAt: updatedAt.toUtc().toIso8601String(),

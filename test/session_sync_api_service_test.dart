@@ -283,10 +283,18 @@ void main() {
       request: SyncDownloadFetchRequest(
         sessionSyncIds: const <String>['s1'],
         progressChunks: <ProgressChunkFetchKey>[
-          ProgressChunkFetchKey(courseId: 55, chapterKey: '1.1'),
+          ProgressChunkFetchKey(
+            studentUserId: 3001,
+            courseId: 55,
+            chapterKey: '1.1',
+          ),
         ],
         progressRows: <ProgressRowFetchKey>[
-          ProgressRowFetchKey(courseId: 55, kpKey: '1.1.1'),
+          ProgressRowFetchKey(
+            studentUserId: 3001,
+            courseId: 55,
+            kpKey: '1.1.1',
+          ),
         ],
       ),
     );
@@ -295,13 +303,21 @@ void main() {
     expect(
       capturedBody['progress_chunks'],
       equals(<Map<String, Object?>>[
-        <String, Object?>{'course_id': 55, 'chapter_key': '1.1'},
+        <String, Object?>{
+          'student_user_id': 3001,
+          'course_id': 55,
+          'chapter_key': '1.1',
+        },
       ]),
     );
     expect(
       capturedBody['progress_rows'],
       equals(<Map<String, Object?>>[
-        <String, Object?>{'course_id': 55, 'kp_key': '1.1.1'},
+        <String, Object?>{
+          'student_user_id': 3001,
+          'course_id': 55,
+          'kp_key': '1.1.1',
+        },
       ]),
     );
     expect(result.sessions, hasLength(1));

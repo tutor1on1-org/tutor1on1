@@ -31,13 +31,15 @@ type syncDownloadFetchRequest struct {
 }
 
 type syncDownloadProgressChunkKey struct {
-	CourseID   int64  `json:"course_id"`
-	ChapterKey string `json:"chapter_key"`
+	StudentUserID int64  `json:"student_user_id"`
+	CourseID      int64  `json:"course_id"`
+	ChapterKey    string `json:"chapter_key"`
 }
 
 type syncDownloadProgressRowKey struct {
-	CourseID int64  `json:"course_id"`
-	KpKey    string `json:"kp_key"`
+	StudentUserID int64  `json:"student_user_id"`
+	CourseID      int64  `json:"course_id"`
+	KpKey         string `json:"kp_key"`
 }
 
 func (h *SyncDownloadHandler) Manifest(c *fiber.Ctx) error {
@@ -143,7 +145,8 @@ func (h *SyncDownloadHandler) listSessionManifest(userID int64) ([]fiber.Map, er
 func (h *SyncDownloadHandler) listProgressManifest(userID int64) ([]fiber.Map, []fiber.Map, error) {
 	var chunkExists int
 	chunkErr := h.cfg.Store.DB.QueryRow(
-		`SELECT 1 FROM progress_sync_chunks WHERE student_user_id = ? LIMIT 1`,
+		`SELECT 1 FROM progress_sync_chunks WHERE teacher_user_id = ? OR student_user_id = ? LIMIT 1`,
+		userID,
 		userID,
 	).Scan(&chunkExists)
 	if chunkErr != nil && chunkErr != sql.ErrNoRows {
@@ -151,10 +154,11 @@ func (h *SyncDownloadHandler) listProgressManifest(userID int64) ([]fiber.Map, [
 	}
 	if chunkErr == nil {
 		rows, err := h.cfg.Store.DB.Query(
-			`SELECT course_id, chapter_key, updated_at, envelope_hash, envelope
+			`SELECT student_user_id, course_id, chapter_key, updated_at, envelope_hash, envelope
 			 FROM progress_sync_chunks
-			 WHERE student_user_id = ?
+			 WHERE teacher_user_id = ? OR student_user_id = ?
 			 ORDER BY updated_at ASC, id ASC`,
+			userID,
 			userID,
 		)
 		if err != nil {
@@ -163,12 +167,13 @@ func (h *SyncDownloadHandler) listProgressManifest(userID int64) ([]fiber.Map, [
 		defer rows.Close()
 		results := []fiber.Map{}
 		for rows.Next() {
+			var studentUserID int64
 			var courseID int64
 			var chapterKey string
 			var updatedAt sql.NullTime
 			var envelopeHash sql.NullString
 			var envelope []byte
-			if err := rows.Scan(&courseID, &chapterKey, &updatedAt, &envelopeHash, &envelope); err != nil {
+			if err := rows.Scan(&studentUserID, &courseID, &chapterKey, &updatedAt, &envelopeHash, &envelope); err != nil {
 				return nil, nil, fiber.NewError(fiber.StatusInternalServerError, "progress sync manifest failed")
 			}
 			hashValue := strings.TrimSpace(envelopeHash.String)
@@ -180,10 +185,11 @@ func (h *SyncDownloadHandler) listProgressManifest(userID int64) ([]fiber.Map, [
 				updatedAtValue = updatedAt.Time.UTC().Format(time.RFC3339)
 			}
 			results = append(results, fiber.Map{
-				"course_id":     courseID,
-				"chapter_key":   chapterKey,
-				"updated_at":    updatedAtValue,
-				"envelope_hash": hashValue,
+				"student_user_id": studentUserID,
+				"course_id":       courseID,
+				"chapter_key":     chapterKey,
+				"updated_at":      updatedAtValue,
+				"envelope_hash":   hashValue,
 			})
 		}
 		if err := rows.Err(); err != nil {
@@ -193,10 +199,11 @@ func (h *SyncDownloadHandler) listProgressManifest(userID int64) ([]fiber.Map, [
 	}
 
 	rows, err := h.cfg.Store.DB.Query(
-		`SELECT course_id, kp_key, updated_at, envelope_hash, envelope
+		`SELECT student_user_id, course_id, kp_key, updated_at, envelope_hash, envelope
 		 FROM progress_sync
-		 WHERE student_user_id = ?
+		 WHERE teacher_user_id = ? OR student_user_id = ?
 		 ORDER BY updated_at ASC, id ASC`,
+		userID,
 		userID,
 	)
 	if err != nil {
@@ -205,12 +212,13 @@ func (h *SyncDownloadHandler) listProgressManifest(userID int64) ([]fiber.Map, [
 	defer rows.Close()
 	results := []fiber.Map{}
 	for rows.Next() {
+		var studentUserID int64
 		var courseID int64
 		var kpKey string
 		var updatedAt sql.NullTime
 		var envelopeHash sql.NullString
 		var envelope []byte
-		if err := rows.Scan(&courseID, &kpKey, &updatedAt, &envelopeHash, &envelope); err != nil {
+		if err := rows.Scan(&studentUserID, &courseID, &kpKey, &updatedAt, &envelopeHash, &envelope); err != nil {
 			return nil, nil, fiber.NewError(fiber.StatusInternalServerError, "progress sync manifest failed")
 		}
 		hashValue := strings.TrimSpace(envelopeHash.String)
@@ -222,10 +230,11 @@ func (h *SyncDownloadHandler) listProgressManifest(userID int64) ([]fiber.Map, [
 			updatedAtValue = updatedAt.Time.UTC().Format(time.RFC3339)
 		}
 		results = append(results, fiber.Map{
-			"course_id":     courseID,
-			"kp_key":        kpKey,
-			"updated_at":    updatedAtValue,
-			"envelope_hash": hashValue,
+			"student_user_id": studentUserID,
+			"course_id":       courseID,
+			"kp_key":          kpKey,
+			"updated_at":      updatedAtValue,
+			"envelope_hash":   hashValue,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -308,15 +317,15 @@ func (h *SyncDownloadHandler) fetchProgressChunks(userID int64, requested []sync
 		return []fiber.Map{}, nil
 	}
 	conditions := make([]string, 0, len(keys))
-	args := []any{userID}
+	args := []any{userID, userID}
 	for _, key := range keys {
-		conditions = append(conditions, "(p.course_id = ? AND p.chapter_key = ?)")
-		args = append(args, key.CourseID, key.ChapterKey)
+		conditions = append(conditions, "(p.student_user_id = ? AND p.course_id = ? AND p.chapter_key = ?)")
+		args = append(args, key.StudentUserID, key.CourseID, key.ChapterKey)
 	}
 	query := `SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.chapter_key, p.item_count, p.updated_at, p.envelope, p.envelope_hash
 		 FROM progress_sync_chunks p
 		 JOIN courses c ON c.id = p.course_id
-		 WHERE p.student_user_id = ? AND (` + strings.Join(conditions, " OR ") + `)
+		 WHERE (p.teacher_user_id = ? OR p.student_user_id = ?) AND (` + strings.Join(conditions, " OR ") + `)
 		 ORDER BY p.updated_at ASC, p.id ASC`
 	rows, err := h.cfg.Store.DB.Query(query, args...)
 	if err != nil {
@@ -381,16 +390,16 @@ func (h *SyncDownloadHandler) fetchProgressRows(userID int64, requested []syncDo
 		return []fiber.Map{}, nil
 	}
 	conditions := make([]string, 0, len(keys))
-	args := []any{userID}
+	args := []any{userID, userID}
 	for _, key := range keys {
-		conditions = append(conditions, "(p.course_id = ? AND p.kp_key = ?)")
-		args = append(args, key.CourseID, key.KpKey)
+		conditions = append(conditions, "(p.student_user_id = ? AND p.course_id = ? AND p.kp_key = ?)")
+		args = append(args, key.StudentUserID, key.CourseID, key.KpKey)
 	}
 	query := `SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.kp_key, p.lit, p.lit_percent,
 		        p.question_level, p.summary_text, p.summary_raw_response, p.summary_valid, p.updated_at, p.envelope, p.envelope_hash
 		 FROM progress_sync p
 		 JOIN courses c ON c.id = p.course_id
-		 WHERE p.student_user_id = ? AND (` + strings.Join(conditions, " OR ") + `)
+		 WHERE (p.teacher_user_id = ? OR p.student_user_id = ?) AND (` + strings.Join(conditions, " OR ") + `)
 		 ORDER BY p.updated_at ASC, p.id ASC`
 	rows, err := h.cfg.Store.DB.Query(query, args...)
 	if err != nil {
@@ -497,17 +506,18 @@ func uniqueProgressChunkKeys(values []syncDownloadProgressChunkKey) []syncDownlo
 	results := []syncDownloadProgressChunkKey{}
 	for _, value := range values {
 		chapterKey := strings.TrimSpace(value.ChapterKey)
-		if value.CourseID <= 0 || chapterKey == "" {
+		if value.StudentUserID <= 0 || value.CourseID <= 0 || chapterKey == "" {
 			continue
 		}
-		compound := strconv.FormatInt(value.CourseID, 10) + "|" + chapterKey
+		compound := strconv.FormatInt(value.StudentUserID, 10) + "|" + strconv.FormatInt(value.CourseID, 10) + "|" + chapterKey
 		if _, exists := seen[compound]; exists {
 			continue
 		}
 		seen[compound] = struct{}{}
 		results = append(results, syncDownloadProgressChunkKey{
-			CourseID:   value.CourseID,
-			ChapterKey: chapterKey,
+			StudentUserID: value.StudentUserID,
+			CourseID:      value.CourseID,
+			ChapterKey:    chapterKey,
 		})
 	}
 	return results
@@ -518,17 +528,18 @@ func uniqueProgressRowKeys(values []syncDownloadProgressRowKey) []syncDownloadPr
 	results := []syncDownloadProgressRowKey{}
 	for _, value := range values {
 		kpKey := strings.TrimSpace(value.KpKey)
-		if value.CourseID <= 0 || kpKey == "" {
+		if value.StudentUserID <= 0 || value.CourseID <= 0 || kpKey == "" {
 			continue
 		}
-		compound := strconv.FormatInt(value.CourseID, 10) + "|" + kpKey
+		compound := strconv.FormatInt(value.StudentUserID, 10) + "|" + strconv.FormatInt(value.CourseID, 10) + "|" + kpKey
 		if _, exists := seen[compound]; exists {
 			continue
 		}
 		seen[compound] = struct{}{}
 		results = append(results, syncDownloadProgressRowKey{
-			CourseID: value.CourseID,
-			KpKey:    kpKey,
+			StudentUserID: value.StudentUserID,
+			CourseID:      value.CourseID,
+			KpKey:         kpKey,
 		})
 	}
 	return results

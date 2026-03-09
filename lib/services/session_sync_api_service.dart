@@ -295,12 +295,14 @@ class SessionSyncManifestItem {
 
 class ProgressSyncChunkManifestItem {
   ProgressSyncChunkManifestItem({
+    required this.studentUserId,
     required this.courseId,
     required this.chapterKey,
     required this.updatedAt,
     required this.envelopeHash,
   });
 
+  final int studentUserId;
   final int courseId;
   final String chapterKey;
   final String updatedAt;
@@ -308,6 +310,7 @@ class ProgressSyncChunkManifestItem {
 
   factory ProgressSyncChunkManifestItem.fromJson(Map<String, dynamic> json) {
     return ProgressSyncChunkManifestItem(
+      studentUserId: (json['student_user_id'] as num?)?.toInt() ?? 0,
       courseId: (json['course_id'] as num?)?.toInt() ?? 0,
       chapterKey: (json['chapter_key'] as String?) ?? '',
       updatedAt: (json['updated_at'] as String?) ?? '',
@@ -318,12 +321,14 @@ class ProgressSyncChunkManifestItem {
 
 class ProgressSyncManifestItem {
   ProgressSyncManifestItem({
+    required this.studentUserId,
     required this.courseId,
     required this.kpKey,
     required this.updatedAt,
     required this.envelopeHash,
   });
 
+  final int studentUserId;
   final int courseId;
   final String kpKey;
   final String updatedAt;
@@ -331,6 +336,7 @@ class ProgressSyncManifestItem {
 
   factory ProgressSyncManifestItem.fromJson(Map<String, dynamic> json) {
     return ProgressSyncManifestItem(
+      studentUserId: (json['student_user_id'] as num?)?.toInt() ?? 0,
       courseId: (json['course_id'] as num?)?.toInt() ?? 0,
       kpKey: (json['kp_key'] as String?) ?? '',
       updatedAt: (json['updated_at'] as String?) ?? '',
@@ -361,14 +367,17 @@ class SyncDownloadFetchRequest {
 
 class ProgressChunkFetchKey {
   ProgressChunkFetchKey({
+    required this.studentUserId,
     required this.courseId,
     required this.chapterKey,
   });
 
+  final int studentUserId;
   final int courseId;
   final String chapterKey;
 
   Map<String, dynamic> toJson() => {
+        'student_user_id': studentUserId,
         'course_id': courseId,
         'chapter_key': chapterKey,
       };
@@ -376,14 +385,17 @@ class ProgressChunkFetchKey {
 
 class ProgressRowFetchKey {
   ProgressRowFetchKey({
+    required this.studentUserId,
     required this.courseId,
     required this.kpKey,
   });
 
+  final int studentUserId;
   final int courseId;
   final String kpKey;
 
   Map<String, dynamic> toJson() => {
+        'student_user_id': studentUserId,
         'course_id': courseId,
         'kp_key': kpKey,
       };

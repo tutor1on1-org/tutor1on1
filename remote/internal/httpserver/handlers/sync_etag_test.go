@@ -824,7 +824,7 @@ func TestDownloadFetchReturnsRequestedPayload(t *testing.T) {
 		"progress-hash",
 	)
 	mock.ExpectQuery(`SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.kp_key, p.lit, p.lit_percent`).
-		WithArgs(userID, int64(55), "1.1.1").
+		WithArgs(userID, userID, userID, int64(55), "1.1.1").
 		WillReturnRows(progressRows)
 
 	app := buildSyncETagTestApp(db, []string{"test-secret"})
@@ -836,7 +836,7 @@ func TestDownloadFetchReturnsRequestedPayload(t *testing.T) {
 		http.MethodPost,
 		"/api/sync/download-fetch",
 		token,
-		`{"session_sync_ids":["s1"],"progress_chunks":[],"progress_rows":[{"course_id":55,"kp_key":"1.1.1"}]}`,
+		`{"session_sync_ids":["s1"],"progress_chunks":[],"progress_rows":[{"student_user_id":3011,"course_id":55,"kp_key":"1.1.1"}]}`,
 	)
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want %d body=%s", status, http.StatusOK, body)

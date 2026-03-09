@@ -10,6 +10,7 @@ class RemoteStudentIdentityService {
     required AppDatabase db,
     required int remoteStudentId,
     String? usernameHint,
+    int? teacherId,
   }) async {
     if (remoteStudentId <= 0) {
       throw StateError(
@@ -24,6 +25,12 @@ class RemoteStudentIdentityService {
           '${existing.id} (${existing.role}).',
         );
       }
+      if (teacherId != null && existing.teacherId != teacherId) {
+        await db.updateStudentTeacherId(
+          studentId: existing.id,
+          teacherId: teacherId,
+        );
+      }
       return existing.id;
     }
     final username = await _buildUniquePlaceholderUsername(
@@ -35,6 +42,7 @@ class RemoteStudentIdentityService {
       username: username,
       pinHash: PinHasher.hash(_placeholderPinSeed),
       role: 'student',
+      teacherId: teacherId,
       remoteUserId: remoteStudentId,
     );
   }

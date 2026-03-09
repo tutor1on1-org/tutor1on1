@@ -25,12 +25,22 @@ class AuthController extends ChangeNotifier {
 
   Future<bool> login(String username, String password) async {
     _lastError = null;
+    final normalizedUsername = username.trim().toLowerCase();
+    final localAdmin = await _db.findUserByUsername(normalizedUsername);
+    if (localAdmin != null &&
+        localAdmin.role == 'admin' &&
+        localAdmin.pinHash == PinHasher.hash(password)) {
+      _currentUser = localAdmin;
+      await activateLogAccess(password);
+      notifyListeners();
+      return true;
+    }
     try {
       final response = await _authApi.login(
-        username: username,
+        username: normalizedUsername,
         password: password,
       );
-      await _persistAuth(response, username, password);
+      await _persistAuth(response, normalizedUsername, password);
       return true;
     } on AuthApiException catch (error) {
       _lastError = error.message;
