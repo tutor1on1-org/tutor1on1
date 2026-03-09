@@ -74,3 +74,8 @@ Last updated: 2026-03-08
 - Symptom: session sync fails with `Bad state: Too many elements` while resolving a user by remote id.
 - Root cause: local auth persisted users by username only, while sync placeholder flows could also create local users keyed by the same `remoteUserId`; because local `users.remoteUserId` was not unique, multiple rows could exist for one remote account and `findUserByRemoteId(...).getSingleOrNull()` exploded.
 - Prevention: enforce uniqueness for non-null `users.remoteUserId`, reconcile auth logins by remote id before username-only create/update, and run a local cleanup pass that merges pre-existing duplicate users before adding the unique index.
+
+15. Windows packaged STT recording fails at start with AAC encoder
+- Symptom: packaged Windows app shows `Recording start failed.` when voice input begins.
+- Root cause: the app requested `AudioEncoder.aacLc` from `record_windows`; encoder support may appear present, but the Windows sink-writer start path for AAC can still fail in packaged environments, while the plugin's WAV/PCM path is the stable capture path.
+- Prevention: use `AudioEncoder.wav` for Windows recording, keep desktop STT capture separate from later MP3 export/transcode, and regression-test the platform encoder selection.

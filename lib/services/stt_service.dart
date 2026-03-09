@@ -8,6 +8,7 @@ import 'package:ffmpeg_kit_flutter_new_full/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new_full/return_code.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:meta/meta.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
@@ -49,6 +50,14 @@ class SttService {
   static const double _silentDbThreshold = -55.0;
   static const double _veryShortDbThreshold = -45.0;
 
+  @visibleForTesting
+  static AudioEncoder selectRecordingEncoder({bool? isWindows}) {
+    if (isWindows ?? Platform.isWindows) {
+      return AudioEncoder.wav;
+    }
+    return AudioEncoder.aacLc;
+  }
+
   Future<SttStartResult> startRecording({int? sessionId}) async {
     if (_recording) {
       return const SttStartResult(started: true);
@@ -76,7 +85,7 @@ class SttService {
         permissionDenied: true,
       );
     }
-    final encoder = AudioEncoder.aacLc;
+    final encoder = selectRecordingEncoder();
     final supported = await _recorder.isEncoderSupported(encoder);
     if (!supported) {
       await _logError(
