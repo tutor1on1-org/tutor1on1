@@ -1461,12 +1461,14 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     _prepareTts();
     try {
       final messages = await db.getMessagesForSession(widget.sessionId);
-      final resolvedPromptName = _resolvePromptNameForSend(messages);
+      final resolvedPromptName = _resolvePromptNameForAction(
+        messages,
+        action: action,
+        preferredStep: _TurnStep.continueTurn,
+      );
       final llmHandle = await sessionService.startTutorAction(
         sessionId: widget.sessionId,
-        mode: action == 'learn' || action == 'review'
-            ? resolvedPromptName
-            : action,
+        mode: resolvedPromptName,
         studentInput: '',
         helpBias: _helpBias?.promptValue,
         courseVersion: widget.courseVersion,
@@ -1545,9 +1547,11 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         fromMessageId: message.id,
       );
       final messages = await db.getMessagesForSession(widget.sessionId);
-      final mode = message.action == 'learn' || message.action == 'review'
-          ? _resolvePromptNameForSend(messages)
-          : (message.action ?? _mode.promptName);
+      final mode = _resolvePromptNameForAction(
+        messages,
+        action: message.action ?? _mode.promptName,
+        preferredStep: _TurnStep.continueTurn,
+      );
       final llmHandle = await sessionService.startTutorAction(
         sessionId: widget.sessionId,
         mode: mode,
@@ -2031,26 +2035,32 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   }
 
   String _resolvePromptNameForSend(List<ChatMessage> messages) {
-    if (_mode == TutorMode.learn) {
-      final hasActiveLearn = _hasActiveTutorTurn(messages, 'learn');
-      if (_step == _TurnStep.continueTurn && !hasActiveLearn) {
-        if (mounted) {
-          setState(() => _step = _TurnStep.newTurn);
-        }
-        _showBriefMessage('Switched to New');
-        return 'learn_init';
-      }
-      return _step == _TurnStep.continueTurn ? 'learn_cont' : 'learn_init';
-    }
-    final hasActiveReview = _hasActiveTutorTurn(messages, 'review');
-    if (_step == _TurnStep.continueTurn && !hasActiveReview) {
+    final action = _mode.promptName;
+    final wantsContinue = _step == _TurnStep.continueTurn;
+    final hasActiveTurn = _hasActiveTutorTurn(messages, action);
+    if (wantsContinue && !hasActiveTurn) {
       if (mounted) {
         setState(() => _step = _TurnStep.newTurn);
       }
       _showBriefMessage('Switched to New');
-      return 'review_init';
     }
-    return _step == _TurnStep.continueTurn ? 'review_cont' : 'review_init';
+    return _resolvePromptNameForAction(
+      messages,
+      action: action,
+      preferredStep: _step,
+    );
+  }
+
+  String _resolvePromptNameForAction(
+    List<ChatMessage> messages, {
+    required String action,
+    required _TurnStep preferredStep,
+  }) {
+    return resolveTutorPromptName(
+      action: action,
+      wantsContinue: preferredStep == _TurnStep.continueTurn,
+      hasActiveTurn: _hasActiveTutorTurn(messages, action),
+    );
   }
 
   bool _hasActiveTutorTurn(List<ChatMessage> messages, String action) {

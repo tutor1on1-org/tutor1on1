@@ -39,3 +39,18 @@ TextEditingValue normalizeDraftForSttRecording(TextEditingValue value) {
     composing: TextRange.empty,
   );
 }
+
+String resolveTutorPromptName({
+  required String action,
+  required bool wantsContinue,
+  required bool hasActiveTurn,
+}) {
+  final normalized = action.trim().toLowerCase();
+  if (normalized == 'learn') {
+    return wantsContinue && hasActiveTurn ? 'learn_cont' : 'learn_init';
+  }
+  if (normalized == 'review') {
+    return wantsContinue && hasActiveTurn ? 'review_cont' : 'review_init';
+  }
+  return normalized;
+}

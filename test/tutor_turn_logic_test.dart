@@ -54,4 +54,34 @@ void main() {
     );
     expect(normalized.composing, TextRange.empty);
   });
+
+  test('prompt resolution stays on the message action branch', () {
+    expect(
+      resolveTutorPromptName(
+        action: 'review',
+        wantsContinue: true,
+        hasActiveTurn: true,
+      ),
+      equals('review_cont'),
+    );
+    expect(
+      resolveTutorPromptName(
+        action: 'learn',
+        wantsContinue: true,
+        hasActiveTurn: false,
+      ),
+      equals('learn_init'),
+    );
+  });
+
+  test('non tutor actions pass through prompt resolution unchanged', () {
+    expect(
+      resolveTutorPromptName(
+        action: 'summary',
+        wantsContinue: true,
+        hasActiveTurn: true,
+      ),
+      equals('summary'),
+    );
+  });
 }

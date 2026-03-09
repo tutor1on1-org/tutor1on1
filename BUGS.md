@@ -99,3 +99,8 @@ Last updated: 2026-03-09
 - Symptom: starting mic recording while a draft answer is already being edited can crash the session page.
 - Root cause: recording started while the text field still owned focus and an active composing range, then the STT flow later rewrote the same controller value; desktop IME/input state can break on that transition.
 - Prevention: normalize the draft input before STT start by clearing the composing range, collapsing selection to the append point, and unfocusing the editor until recording/transcription completes.
+
+20. Message replay must follow the selected message branch, not the current page mode
+- Symptom: refreshing an old assistant answer or editing the last student answer can replay the wrong tutor prompt family after the session mode chip has changed.
+- Root cause: replay/edit resolution looked at the page-global `_mode` and `_step` instead of the target message's own `action`, so a learn message could be regenerated with review prompts, or vice versa.
+- Prevention: resolve replay/edit prompt names from the selected message action plus that action branch's active-turn state, and keep that logic separate from the page-global send path.
