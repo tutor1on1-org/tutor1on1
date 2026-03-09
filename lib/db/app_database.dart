@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../constants.dart';
+import '../security/pin_hasher.dart';
 
 part 'app_database.g.dart';
 
@@ -277,6 +278,12 @@ class SyncMetadataEntries extends Table {
 )
 class AppDatabase extends _$AppDatabase {
   AppDatabase(QueryExecutor executor) : super(executor);
+  static final String _remoteTeacherPlaceholderPinHash =
+      PinHasher.hash('remote_teacher_placeholder');
+  static final String _remoteStudentPlaceholderPinHash =
+      PinHasher.hash('remote_student_placeholder');
+  static final String _remoteUserPlaceholderPinHash =
+      PinHasher.hash('remote_user_placeholder');
 
   factory AppDatabase.open() {
     return AppDatabase(_openConnection());
@@ -287,12 +294,18 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 24;
+  int get schemaVersion => 25;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
         onCreate: (m) async {
           await m.createAll();
+          await customStatement(
+            'CREATE UNIQUE INDEX IF NOT EXISTS '
+            'uq_users_remote_user_id '
+            'ON users(remote_user_id) '
+            'WHERE remote_user_id IS NOT NULL',
+          );
         },
         onUpgrade: (m, from, to) async {
           if (from < 2) {
@@ -394,6 +407,15 @@ class AppDatabase extends _$AppDatabase {
           if (from < 24) {
             await m.createTable(syncItemStates);
             await m.createTable(syncMetadataEntries);
+          }
+          if (from < 25) {
+            await ensureRemoteUserUniqueness();
+            await customStatement(
+              'CREATE UNIQUE INDEX IF NOT EXISTS '
+              'uq_users_remote_user_id '
+              'ON users(remote_user_id) '
+              'WHERE remote_user_id IS NOT NULL',
+            );
           }
         },
       );
@@ -1295,6 +1317,139 @@ ORDER BY l.created_at DESC
     );
   }
 
+  Future<User> upsertAuthenticatedUser({
+    required String username,
+    required String pinHash,
+    required String role,
+    int? remoteUserId,
+  }) async {
+    return transaction(() async {
+      final normalizedUsername = username.trim().toLowerCase();
+      final existingByRemoteId = remoteUserId == null || remoteUserId <= 0
+          ? null
+          : await findUserByRemoteId(remoteUserId);
+      final existingByUsername = await findUserByUsername(normalizedUsername);
+
+      User? target;
+      if (existingByRemoteId != null &&
+          existingByUsername != null &&
+          existingByRemoteId.id != existingByUsername.id) {
+        target = _preferAuthCanonicalUser(
+          existingByUsername,
+          existingByRemoteId,
+        );
+        final duplicate = target.id == existingByUsername.id
+            ? existingByRemoteId
+            : existingByUsername;
+        await mergeUsers(
+          keepUserId: target.id,
+          removeUserId: duplicate.id,
+        );
+      } else {
+        target = existingByUsername ?? existingByRemoteId;
+      }
+
+      if (target == null) {
+        final userId = await createUser(
+          username: normalizedUsername,
+          pinHash: pinHash,
+          role: role,
+          remoteUserId: remoteUserId,
+        );
+        return (await getUserById(userId))!;
+      }
+      final targetId = target.id;
+
+      await (update(users)..where((tbl) => tbl.id.equals(targetId))).write(
+        UsersCompanion(
+          username: Value(normalizedUsername),
+          pinHash: Value(pinHash),
+          role: Value(role),
+          teacherId: const Value(null),
+          remoteUserId:
+              remoteUserId == null ? const Value.absent() : Value(remoteUserId),
+        ),
+      );
+      return (await getUserById(targetId))!;
+    });
+  }
+
+  Future<void> ensureRemoteUserUniqueness() async {
+    final duplicateRows = await customSelect(
+      '''
+SELECT remote_user_id AS remote_user_id
+FROM users
+WHERE remote_user_id IS NOT NULL
+GROUP BY remote_user_id
+HAVING COUNT(*) > 1
+''',
+      readsFrom: {users},
+    ).get();
+    for (final row in duplicateRows) {
+      final remoteUserId = (row.data['remote_user_id'] as num?)?.toInt() ?? 0;
+      if (remoteUserId <= 0) {
+        continue;
+      }
+      final matches = await (select(users)
+            ..where((tbl) => tbl.remoteUserId.equals(remoteUserId))
+            ..orderBy([(tbl) => OrderingTerm(expression: tbl.id)]))
+          .get();
+      if (matches.length <= 1) {
+        continue;
+      }
+      final canonical = _preferMigrationCanonicalUser(matches);
+      for (final duplicate in matches) {
+        if (duplicate.id == canonical.id) {
+          continue;
+        }
+        await mergeUsers(
+          keepUserId: canonical.id,
+          removeUserId: duplicate.id,
+        );
+      }
+    }
+  }
+
+  Future<void> mergeUsers({
+    required int keepUserId,
+    required int removeUserId,
+  }) async {
+    if (keepUserId == removeUserId) {
+      return;
+    }
+    await transaction(() async {
+      final keep = await getUserById(keepUserId);
+      final remove = await getUserById(removeUserId);
+      if (keep == null || remove == null) {
+        return;
+      }
+
+      await _mergeTeacherReferences(
+        keepUserId: keepUserId,
+        removeUserId: removeUserId,
+      );
+      await _mergeStudentReferences(
+        keepUserId: keepUserId,
+        removeUserId: removeUserId,
+      );
+
+      final keepRemoteUserId = keep.remoteUserId ?? remove.remoteUserId;
+      final keepTeacherId = keep.teacherId ?? remove.teacherId;
+      final keepRole =
+          _preferCanonicalRole(primary: keep.role, secondary: remove.role);
+      await (update(users)..where((tbl) => tbl.id.equals(keepUserId))).write(
+        UsersCompanion(
+          role: Value(keepRole),
+          teacherId: Value(keepTeacherId),
+          remoteUserId: keepRemoteUserId == null
+              ? const Value.absent()
+              : Value(keepRemoteUserId),
+        ),
+      );
+      await (delete(users)..where((tbl) => tbl.id.equals(removeUserId))).go();
+    });
+  }
+
   Future<void> updateStudentTeacherId({
     required int studentId,
     required int teacherId,
@@ -1307,6 +1462,146 @@ ORDER BY l.created_at DESC
         teacherId: Value(teacherId),
       ),
     );
+  }
+
+  Future<void> _mergeTeacherReferences({
+    required int keepUserId,
+    required int removeUserId,
+  }) async {
+    await (update(users)..where((tbl) => tbl.teacherId.equals(removeUserId)))
+        .write(
+      UsersCompanion(
+        teacherId: Value(keepUserId),
+      ),
+    );
+    await (update(courseVersions)
+          ..where((tbl) => tbl.teacherId.equals(removeUserId)))
+        .write(
+      CourseVersionsCompanion(
+        teacherId: Value(keepUserId),
+      ),
+    );
+    await (update(llmCalls)..where((tbl) => tbl.teacherId.equals(removeUserId)))
+        .write(
+      LlmCallsCompanion(
+        teacherId: Value(keepUserId),
+      ),
+    );
+    await (update(promptTemplates)
+          ..where((tbl) => tbl.teacherId.equals(removeUserId)))
+        .write(
+      PromptTemplatesCompanion(
+        teacherId: Value(keepUserId),
+      ),
+    );
+    await (update(studentPromptProfiles)
+          ..where((tbl) => tbl.teacherId.equals(removeUserId)))
+        .write(
+      StudentPromptProfilesCompanion(
+        teacherId: Value(keepUserId),
+      ),
+    );
+  }
+
+  Future<void> _mergeStudentReferences({
+    required int keepUserId,
+    required int removeUserId,
+  }) async {
+    final assignments = await (select(studentCourseAssignments)
+          ..where((tbl) => tbl.studentId.equals(removeUserId)))
+        .get();
+    for (final assignment in assignments) {
+      await assignStudent(
+        studentId: keepUserId,
+        courseVersionId: assignment.courseVersionId,
+      );
+    }
+
+    final sourceProgress = await (select(progressEntries)
+          ..where((tbl) => tbl.studentId.equals(removeUserId)))
+        .get();
+    for (final progress in sourceProgress) {
+      final existing = await getProgress(
+        studentId: keepUserId,
+        courseVersionId: progress.courseVersionId,
+        kpKey: progress.kpKey,
+      );
+      if (existing == null) {
+        await (update(progressEntries)
+              ..where((tbl) => tbl.id.equals(progress.id)))
+            .write(
+          ProgressEntriesCompanion(
+            studentId: Value(keepUserId),
+          ),
+        );
+        continue;
+      }
+      final sourceIsNewer = progress.updatedAt.isAfter(existing.updatedAt);
+      await (update(progressEntries)
+            ..where((tbl) => tbl.id.equals(existing.id)))
+          .write(
+        ProgressEntriesCompanion(
+          lit: Value(existing.lit || progress.lit),
+          litPercent: Value(existing.litPercent >= progress.litPercent
+              ? existing.litPercent
+              : progress.litPercent),
+          questionLevel: Value(
+            _mergeQuestionLevel(
+              existing.questionLevel,
+              progress.questionLevel,
+            ),
+          ),
+          summaryText: Value(
+            sourceIsNewer ? progress.summaryText : existing.summaryText,
+          ),
+          summaryRawResponse: Value(
+            sourceIsNewer
+                ? progress.summaryRawResponse
+                : existing.summaryRawResponse,
+          ),
+          summaryValid: Value(
+            sourceIsNewer ? progress.summaryValid : existing.summaryValid,
+          ),
+          updatedAt: Value(
+            sourceIsNewer ? progress.updatedAt : existing.updatedAt,
+          ),
+        ),
+      );
+      await (delete(progressEntries)
+            ..where((tbl) => tbl.id.equals(progress.id)))
+          .go();
+    }
+
+    await (update(chatSessions)
+          ..where((tbl) => tbl.studentId.equals(removeUserId)))
+        .write(
+      ChatSessionsCompanion(
+        studentId: Value(keepUserId),
+      ),
+    );
+    await (update(llmCalls)..where((tbl) => tbl.studentId.equals(removeUserId)))
+        .write(
+      LlmCallsCompanion(
+        studentId: Value(keepUserId),
+      ),
+    );
+    await (update(promptTemplates)
+          ..where((tbl) => tbl.studentId.equals(removeUserId)))
+        .write(
+      PromptTemplatesCompanion(
+        studentId: Value(keepUserId),
+      ),
+    );
+    await (update(studentPromptProfiles)
+          ..where((tbl) => tbl.studentId.equals(removeUserId)))
+        .write(
+      StudentPromptProfilesCompanion(
+        studentId: Value(keepUserId),
+      ),
+    );
+    await (delete(studentCourseAssignments)
+          ..where((tbl) => tbl.studentId.equals(removeUserId)))
+        .go();
   }
 
   Future<void> upsertCourseRemoteLink({
@@ -1977,6 +2272,58 @@ ORDER BY l.created_at DESC
                 studentId: studentId,
               )))
         .go();
+  }
+
+  User _preferAuthCanonicalUser(User left, User right) {
+    final leftPlaceholder = _isPlaceholderUser(left);
+    final rightPlaceholder = _isPlaceholderUser(right);
+    if (leftPlaceholder != rightPlaceholder) {
+      return leftPlaceholder ? right : left;
+    }
+    return left.id <= right.id ? left : right;
+  }
+
+  User _preferMigrationCanonicalUser(List<User> matches) {
+    final sorted = matches.toList()
+      ..sort((left, right) {
+        final leftPlaceholder = _isPlaceholderUser(left);
+        final rightPlaceholder = _isPlaceholderUser(right);
+        if (leftPlaceholder != rightPlaceholder) {
+          return leftPlaceholder ? 1 : -1;
+        }
+        return left.id.compareTo(right.id);
+      });
+    return sorted.first;
+  }
+
+  bool _isPlaceholderUser(User user) {
+    return user.pinHash == _remoteTeacherPlaceholderPinHash ||
+        user.pinHash == _remoteStudentPlaceholderPinHash ||
+        user.pinHash == _remoteUserPlaceholderPinHash;
+  }
+
+  String _preferCanonicalRole({
+    required String primary,
+    required String secondary,
+  }) {
+    final normalizedPrimary = primary.trim().toLowerCase();
+    final normalizedSecondary = secondary.trim().toLowerCase();
+    if (normalizedPrimary == normalizedSecondary) {
+      return normalizedPrimary;
+    }
+    if (normalizedPrimary == 'admin' || normalizedSecondary == 'admin') {
+      return normalizedPrimary == 'admin'
+          ? normalizedPrimary
+          : normalizedSecondary;
+    }
+    if (normalizedPrimary == 'teacher' || normalizedSecondary == 'teacher') {
+      return normalizedPrimary == 'teacher'
+          ? normalizedPrimary
+          : normalizedSecondary;
+    }
+    return normalizedPrimary.isNotEmpty
+        ? normalizedPrimary
+        : normalizedSecondary;
   }
 
   String? _normalizeCourseKey(String? value) {

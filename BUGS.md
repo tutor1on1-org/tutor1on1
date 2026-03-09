@@ -69,3 +69,8 @@ Last updated: 2026-03-08
 - Symptom: session sync becomes very slow and can fail with `PathAccessException ... flutter_secure_storage.dat ... used by another process`.
 - Root cause: thousands of per-item sync states were stored in `flutter_secure_storage`; on Windows the plugin reads/decrypts and rewrites the whole encrypted file for each key operation, which creates heavy local I/O and file-lock races under large sync sets.
 - Prevention: keep secure storage for low-cardinality secrets only, store high-cardinality sync metadata/state in SQLite, and use manifest+fetch sync so normal download sync does not depend on per-row cursor chatter.
+
+14. Duplicate local users for one remote account
+- Symptom: session sync fails with `Bad state: Too many elements` while resolving a user by remote id.
+- Root cause: local auth persisted users by username only, while sync placeholder flows could also create local users keyed by the same `remoteUserId`; because local `users.remoteUserId` was not unique, multiple rows could exist for one remote account and `findUserByRemoteId(...).getSingleOrNull()` exploded.
+- Prevention: enforce uniqueness for non-null `users.remoteUserId`, reconcile auth logins by remote id before username-only create/update, and run a local cleanup pass that merges pre-existing duplicate users before adding the unique index.

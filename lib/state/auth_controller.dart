@@ -8,11 +8,15 @@ import '../services/log_crypto_service.dart';
 import '../services/secure_storage_service.dart';
 
 class AuthController extends ChangeNotifier {
-  AuthController(this._db, this._secureStorage)
-      : _authApi = AuthApiService(
-          baseUrl: kAuthBaseUrl,
-          allowInsecureTls: kAuthAllowInsecureTls,
-        );
+  AuthController(
+    this._db,
+    this._secureStorage, {
+    AuthApiService? authApi,
+  }) : _authApi = authApi ??
+            AuthApiService(
+              baseUrl: kAuthBaseUrl,
+              allowInsecureTls: kAuthAllowInsecureTls,
+            );
 
   final AppDatabase _db;
   final SecureStorageService _secureStorage;
@@ -106,26 +110,13 @@ class AuthController extends ChangeNotifier {
       refreshToken: response.refreshToken,
     );
     final normalizedUsername = username.trim().toLowerCase();
-    final existing = await _db.findUserByUsername(normalizedUsername);
     final hashed = PinHasher.hash(password);
-    if (existing == null) {
-      final userId = await _db.createUser(
-        username: normalizedUsername,
-        pinHash: hashed,
-        role: response.role,
-        teacherId: null,
-        remoteUserId: response.userId > 0 ? response.userId : null,
-      );
-      _currentUser = await _db.getUserById(userId);
-    } else {
-      await _db.updateUserAuth(
-        userId: existing.id,
-        pinHash: hashed,
-        role: response.role,
-        remoteUserId: response.userId > 0 ? response.userId : null,
-      );
-      _currentUser = await _db.getUserById(existing.id);
-    }
+    _currentUser = await _db.upsertAuthenticatedUser(
+      username: normalizedUsername,
+      pinHash: hashed,
+      role: response.role,
+      remoteUserId: response.userId > 0 ? response.userId : null,
+    );
     await activateLogAccess(password);
     notifyListeners();
     return _currentUser;
