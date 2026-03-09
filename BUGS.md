@@ -89,3 +89,13 @@ Last updated: 2026-03-09
 - Symptom: a leaf in the tree can stay grey while the selected KP row/summary indicates the node is passed.
 - Root cause: the tree leaf used a binary grey/green rule while the detail row used a separate ratio-based color path, so the same KP could render in two different colors even when both views were looking at the same resolved display state.
 - Prevention: define one canonical display-percent resolver, feed it into one shared color-mapping helper, and make both the graph leaf and detail row call that same helper.
+
+18. Tutor review flow must not auto-advance to New before the current turn is finished
+- Symptom: sending an answer in review mode can immediately show `Switched to New` before the next LLM reply arrives.
+- Root cause: the page-level pre-send resolver used stricter "active review" rules than the session service, requiring a persisted `question` object instead of following the canonical `turn_state`; that let the UI auto-reset to New while the current review turn was still logically unfinished.
+- Prevention: derive tutor turn activity from one shared helper based on action + `turn_state`, and use that same helper for both assistant suggestion UI and pre-send prompt resolution.
+
+19. STT start must detach the draft editor from active IME composition
+- Symptom: starting mic recording while a draft answer is already being edited can crash the session page.
+- Root cause: recording started while the text field still owned focus and an active composing range, then the STT flow later rewrote the same controller value; desktop IME/input state can break on that transition.
+- Prevention: normalize the draft input before STT start by clearing the composing range, collapsing selection to the append point, and unfocusing the editor until recording/transcription completes.

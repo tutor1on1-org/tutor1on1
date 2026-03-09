@@ -19,6 +19,7 @@ import '../services/tts_chunker.dart';
 import '../services/tts_service.dart';
 import '../services/tts_text_sanitizer.dart';
 import '../state/settings_controller.dart';
+import 'tutor_turn_logic.dart';
 import 'widgets/math_markdown_view.dart';
 
 class ChatSessionPage extends StatefulWidget {
@@ -964,6 +965,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   Future<void> _startSttRecording() async {
     final l10n = AppLocalizations.of(context)!;
     final sttService = context.read<AppServices>().sttService;
+    _prepareDraftForSttRecording();
     _pendingSttAudioPath = null;
     SttStartResult startResult;
     try {
@@ -992,6 +994,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         _sttRecording = false;
         _sttCancelHover = false;
       });
+      _inputFocus.requestFocus();
       _showMessage(
         startResult.permissionDenied
             ? l10n.sttPermissionDenied
@@ -1012,6 +1015,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       _pendingSttAudioPath = null;
       if (mounted) {
         setState(() => _sttRecording = false);
+        _inputFocus.requestFocus();
       }
       return;
     }
@@ -1030,6 +1034,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         return;
       }
       setState(() => _sttTranscribing = false);
+      _inputFocus.requestFocus();
       _showMessage('${l10n.sttFailedMessage} ($error)');
       return;
     }
@@ -1047,8 +1052,17 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       }
     } else {
       _pendingSttAudioPath = null;
+      _inputFocus.requestFocus();
       _showMessage(result.error ?? l10n.sttFailedMessage);
     }
+  }
+
+  void _prepareDraftForSttRecording() {
+    final normalized = normalizeDraftForSttRecording(_inputController.value);
+    if (_inputController.value != normalized) {
+      _inputController.value = normalized;
+    }
+    _inputFocus.unfocus();
   }
 
   void _updateSttCancelHover(Offset globalPosition) {
@@ -1930,14 +1944,12 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       }
       final mode = _normalizeNextMode(parsed['next_mode']) ??
           _normalizeNextStep(parsed['next_step']);
-      final turnState = _normalizeTurnState(parsed['turn_state']);
       final action = message.action ?? '';
-      final step =
-          (action == 'learn' || action == 'review') && turnState != null
-              ? (turnState == 'FINISHED'
-                  ? _TurnStep.newTurn
-                  : _TurnStep.continueTurn)
-              : null;
+      final step = hasActiveTutorTurn(action: action, parsed: parsed)
+          ? _TurnStep.continueTurn
+          : (isFinishedTutorTurn(action: action, parsed: parsed)
+              ? _TurnStep.newTurn
+              : null);
       final nextAction =
           (parsed['next_action'] as String?)?.trim().toUpperCase() ?? '';
       final nextHelpBias =
@@ -1952,8 +1964,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
             : (nextHelpBias == 'HARDER' ? _HelpBias.harder : null),
         clearHelpBias: nextHelpBias == 'UNCHANGED',
         summarySuggested: nextAction == 'SUMMARY',
-        turnFinished: turnState == 'FINISHED' &&
-            (action == 'learn' || action == 'review'),
+        turnFinished: isFinishedTutorTurn(action: action, parsed: parsed),
       );
     }
     return null;
@@ -2019,20 +2030,9 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     return null;
   }
 
-  String? _normalizeTurnState(Object? value) {
-    if (value is! String) {
-      return null;
-    }
-    final normalized = value.trim().toUpperCase();
-    if (normalized == 'UNFINISHED' || normalized == 'FINISHED') {
-      return normalized;
-    }
-    return null;
-  }
-
   String _resolvePromptNameForSend(List<ChatMessage> messages) {
     if (_mode == TutorMode.learn) {
-      final hasActiveLearn = _hasActiveLearnSegment(messages);
+      final hasActiveLearn = _hasActiveTutorTurn(messages, 'learn');
       if (_step == _TurnStep.continueTurn && !hasActiveLearn) {
         if (mounted) {
           setState(() => _step = _TurnStep.newTurn);
@@ -2042,7 +2042,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       }
       return _step == _TurnStep.continueTurn ? 'learn_cont' : 'learn_init';
     }
-    final hasActiveReview = _hasActiveReviewQuestion(messages);
+    final hasActiveReview = _hasActiveTutorTurn(messages, 'review');
     if (_step == _TurnStep.continueTurn && !hasActiveReview) {
       if (mounted) {
         setState(() => _step = _TurnStep.newTurn);
@@ -2053,25 +2053,15 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     return _step == _TurnStep.continueTurn ? 'review_cont' : 'review_init';
   }
 
-  bool _hasActiveLearnSegment(List<ChatMessage> messages) {
-    final assistant = _findLastAssistantForAction(messages, 'learn');
+  bool _hasActiveTutorTurn(List<ChatMessage> messages, String action) {
+    final assistant = _findLastAssistantForAction(messages, action);
     if (assistant == null) {
       return false;
     }
-    final turnState =
-        _normalizeTurnState(_extractMessageJson(assistant)?['turn_state']);
-    return turnState == 'UNFINISHED';
-  }
-
-  bool _hasActiveReviewQuestion(List<ChatMessage> messages) {
-    final assistant = _findLastAssistantForAction(messages, 'review');
-    if (assistant == null) {
-      return false;
-    }
-    final parsed = _extractMessageJson(assistant);
-    final turnState = _normalizeTurnState(parsed?['turn_state']);
-    final question = parsed?['question'];
-    return turnState == 'UNFINISHED' && question is Map<String, dynamic>;
+    return hasActiveTutorTurn(
+      action: action,
+      parsed: _extractMessageJson(assistant),
+    );
   }
 
   ChatMessage? _findLastAssistantForAction(
