@@ -355,6 +355,42 @@ func (h *ProgressSyncHandler) saveUploads(
 			}
 			continue
 		}
+		if existingFound && incomingProgressIsWeaker(
+			existingLitPercent,
+			existingQuestionLevel,
+			litPercent,
+			incomingQuestionLevel,
+		) {
+			oldLitPercent := existingLitPercent
+			oldUpdatedAt := existingUpdatedAt
+			if err := insertProgressSyncAudit(auditStmt, progressSyncAuditRecord{
+				courseID:         item.CourseID,
+				studentUserID:    userID,
+				teacherUserID:    teacherUserID,
+				kpKey:            kpKey,
+				actorUserID:      userID,
+				deviceID:         deviceID,
+				action:           progressSyncAuditActionSkipStale,
+				oldLitPercent:    &oldLitPercent,
+				newLitPercent:    litPercent,
+				oldQuestionLevel: existingQuestionLevel,
+				newQuestionLevel: incomingQuestionLevel,
+				oldUpdatedAt:     &oldUpdatedAt,
+				newUpdatedAt:     updatedAt,
+			}); err != nil {
+				log.Printf(
+					"progress sync audit save failed: action=%s user_id=%d course_id=%d kp_key=%q error=%v",
+					progressSyncAuditActionSkipStale,
+					userID,
+					item.CourseID,
+					kpKey,
+					err,
+				)
+				status, message := classifyProgressSyncSaveError(err)
+				return 0, fiber.NewError(status, message)
+			}
+			continue
+		}
 
 		if existingFound {
 			if _, err := updateStmt.Exec(
@@ -844,6 +880,40 @@ func nullableBoolToInterface(value sql.NullBool) interface{} {
 		return nil
 	}
 	return value.Bool
+}
+
+func incomingProgressIsWeaker(
+	existingLitPercent int,
+	existingQuestionLevel sql.NullString,
+	incomingLitPercent int,
+	incomingQuestionLevel sql.NullString,
+) bool {
+	existingRank := progressStrengthRank(existingLitPercent, existingQuestionLevel.String)
+	incomingRank := progressStrengthRank(incomingLitPercent, incomingQuestionLevel.String)
+	return incomingRank < existingRank
+}
+
+func progressStrengthRank(litPercent int, questionLevel string) int {
+	if litPercent < 0 {
+		litPercent = 0
+	}
+	if litPercent > 100 {
+		litPercent = 100
+	}
+	return litPercent*10 + questionLevelRank(questionLevel)
+}
+
+func questionLevelRank(questionLevel string) int {
+	switch strings.ToLower(strings.TrimSpace(questionLevel)) {
+	case "hard":
+		return 3
+	case "medium":
+		return 2
+	case "easy":
+		return 1
+	default:
+		return 0
+	}
 }
 
 func classifyProgressSyncSaveError(err error) (int, string) {

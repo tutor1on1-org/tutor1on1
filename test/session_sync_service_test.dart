@@ -1152,7 +1152,7 @@ void main() {
   );
 
   test(
-    'session/progress conflict resolution uses last-modified winner',
+    'session keeps newer copy while progress keeps stronger value',
     () async {
       final crypto = SessionCryptoService();
       final secureStorage = _MemorySecureStorage(accessToken: 'token');
@@ -1277,6 +1277,18 @@ void main() {
         summaryValid: false,
         updatedAt: DateTime.parse('2026-03-01T10:00:00Z'),
       );
+      await db.upsertProgressFromSync(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+        kpKey: '1.3',
+        lit: true,
+        litPercent: 100,
+        questionLevel: 'hard',
+        summaryText: 'local strongest progress',
+        summaryRawResponse: '',
+        summaryValid: true,
+        updatedAt: DateTime.parse('2026-03-01T11:00:00Z'),
+      );
 
       Future<SessionSyncItem> buildSessionItem({
         required String syncId,
@@ -1331,6 +1343,7 @@ void main() {
         required String kpKey,
         required String updatedAt,
         required int litPercent,
+        required String questionLevel,
         required int cursorId,
       }) async {
         final payload = <String, dynamic>{
@@ -1340,7 +1353,7 @@ void main() {
           'kp_key': kpKey,
           'lit': litPercent >= 60,
           'lit_percent': litPercent,
-          'question_level': 'medium',
+          'question_level': questionLevel,
           'summary_text': 'remote $kpKey',
           'summary_raw_response': '',
           'summary_valid': true,
@@ -1363,7 +1376,7 @@ void main() {
           kpKey: kpKey,
           lit: litPercent >= 60,
           litPercent: litPercent,
-          questionLevel: 'medium',
+          questionLevel: questionLevel,
           summaryText: 'remote $kpKey',
           summaryRawResponse: '',
           summaryValid: true,
@@ -1396,13 +1409,22 @@ void main() {
             kpKey: '1.1',
             updatedAt: '2026-03-01T08:10:00Z',
             litPercent: 40,
+            questionLevel: 'medium',
             cursorId: 31,
           ),
           await buildProgressItem(
             kpKey: '1.2',
             updatedAt: '2026-03-02T08:10:00Z',
             litPercent: 75,
+            questionLevel: 'medium',
             cursorId: 32,
+          ),
+          await buildProgressItem(
+            kpKey: '1.3',
+            updatedAt: '2026-03-02T08:20:00Z',
+            litPercent: 0,
+            questionLevel: 'easy',
+            cursorId: 33,
           ),
         ],
       );
@@ -1441,6 +1463,8 @@ void main() {
       };
       expect(byKey['1.1']!.litPercent, equals(95));
       expect(byKey['1.2']!.litPercent, equals(75));
+      expect(byKey['1.3']!.litPercent, equals(100));
+      expect(byKey['1.3']!.questionLevel, equals('hard'));
     },
   );
 
@@ -1662,6 +1686,11 @@ void main() {
         summaryValid: true,
         updatedAt: DateTime.parse('2026-03-02T10:02:00Z'),
       );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_progress_upload',
+        runAt: DateTime.parse('2026-03-02T10:00:30Z'),
+      );
 
       final api = _TestSessionSyncApiService(
         secureStorage: secureStorage,
@@ -1700,6 +1729,24 @@ void main() {
       };
       expect(itemCountByChapter['1.1'], equals(2));
       expect(itemCountByChapter['2.1'], equals(1));
+      final chapterOneEntry = api.uploadedProgressChunkEntries.singleWhere(
+        (entry) => entry.chapterKey == '1.1',
+      );
+      final chapterOneEnvelopeJson =
+          utf8.decode(base64Decode(chapterOneEntry.envelope));
+      final chapterOneEnvelope = EncryptedEnvelope.fromJson(
+        jsonDecode(chapterOneEnvelopeJson) as Map<String, dynamic>,
+      );
+      final chapterOnePayload = await crypto.decryptEnvelope(
+        envelope: chapterOneEnvelope,
+        userKeyPair: studentKeyPair,
+        userId: remoteStudentId,
+      );
+      final chapterItems = (chapterOnePayload['items'] as List<dynamic>)
+          .cast<Map<String, dynamic>>();
+      final chapterKeys =
+          chapterItems.map((item) => item['kp_key'] as String).toSet();
+      expect(chapterKeys, equals(<String>{'1.1.1', '1.1.2'}));
     },
   );
 

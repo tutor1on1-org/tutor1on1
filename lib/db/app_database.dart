@@ -881,6 +881,25 @@ ORDER BY s.started_at DESC
     return query.get();
   }
 
+  Future<List<ProgressEntry>> listProgressEntriesForChapterSyncUpload({
+    required int studentId,
+    required int courseVersionId,
+    required String chapterKey,
+  }) {
+    final normalizedChapter = chapterKey.trim();
+    final query = select(progressEntries)
+      ..where((tbl) =>
+          tbl.studentId.equals(studentId) &
+          tbl.courseVersionId.equals(courseVersionId) &
+          tbl.kpKey.isNotValue(kTreeViewStateKpKey));
+    if (normalizedChapter.isNotEmpty && normalizedChapter != 'ungrouped') {
+      query.where((tbl) =>
+          tbl.kpKey.equals(normalizedChapter) |
+          tbl.kpKey.like('$normalizedChapter.%'));
+    }
+    return query.get();
+  }
+
   Future<Map<String, DateTime>> getProgressUpdatedAtByRemoteCourseAndKp({
     required int studentId,
   }) async {
@@ -1132,16 +1151,38 @@ WHERE p.student_id = ? AND p.kp_key <> ?
       );
       return;
     }
+    final mergedLitPercent = existing.litPercent >= clampedPercent
+        ? existing.litPercent
+        : clampedPercent;
+    final mergedQuestionLevel =
+        _mergeQuestionLevel(existing.questionLevel, questionLevel);
+    final mergedLit = existing.lit || lit || mergedLitPercent >= 100;
+    final shouldTakeIncomingDetails = _shouldTakeIncomingProgressDetails(
+      existing: existing,
+      incomingLitPercent: clampedPercent,
+      incomingQuestionLevel: questionLevel,
+      incomingUpdatedAt: updatedAt,
+    );
     await (update(progressEntries)..where((tbl) => tbl.id.equals(existing.id)))
         .write(
       ProgressEntriesCompanion(
-        lit: Value(lit),
-        litPercent: Value(clampedPercent),
-        questionLevel: Value(questionLevel),
-        summaryText: Value(summaryText),
-        summaryRawResponse: Value(summaryRawResponse),
-        summaryValid: Value(summaryValid),
-        updatedAt: Value(updatedAt),
+        lit: Value(mergedLit),
+        litPercent: Value(mergedLitPercent),
+        questionLevel: Value(mergedQuestionLevel),
+        summaryText: Value(
+          shouldTakeIncomingDetails ? summaryText : existing.summaryText,
+        ),
+        summaryRawResponse: Value(
+          shouldTakeIncomingDetails
+              ? summaryRawResponse
+              : existing.summaryRawResponse,
+        ),
+        summaryValid: Value(
+          shouldTakeIncomingDetails ? summaryValid : existing.summaryValid,
+        ),
+        updatedAt: Value(
+          shouldTakeIncomingDetails ? updatedAt : existing.updatedAt,
+        ),
       ),
     );
   }
@@ -2414,6 +2455,34 @@ HAVING COUNT(*) > 1
       default:
         return 0;
     }
+  }
+
+  bool _shouldTakeIncomingProgressDetails({
+    required ProgressEntry existing,
+    required int incomingLitPercent,
+    required String? incomingQuestionLevel,
+    required DateTime incomingUpdatedAt,
+  }) {
+    final existingRank = _progressStrengthRank(
+      litPercent: existing.litPercent,
+      questionLevel: existing.questionLevel,
+    );
+    final incomingRank = _progressStrengthRank(
+      litPercent: incomingLitPercent,
+      questionLevel: incomingQuestionLevel,
+    );
+    if (incomingRank != existingRank) {
+      return incomingRank > existingRank;
+    }
+    return incomingUpdatedAt.isAfter(existing.updatedAt);
+  }
+
+  int _progressStrengthRank({
+    required int litPercent,
+    required String? questionLevel,
+  }) {
+    return litPercent.clamp(0, 100) * 10 +
+        _questionLevelRank(questionLevel);
   }
 }
 

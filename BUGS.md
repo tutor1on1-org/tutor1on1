@@ -79,3 +79,8 @@ Last updated: 2026-03-08
 - Symptom: packaged Windows app shows `Recording start failed.` when voice input begins.
 - Root cause: the app requested `AudioEncoder.aacLc` from `record_windows`; encoder support may appear present, but the Windows sink-writer start path for AAC can still fail in packaged environments, while the plugin's WAV/PCM path is the stable capture path.
 - Prevention: use `AudioEncoder.wav` for Windows recording, keep desktop STT capture separate from later MP3 export/transcode, and regression-test the platform encoder selection.
+
+16. Progress sync must be monotonic across devices
+- Symptom: a fresh sync can show a weaker progress state, or a chapter chunk can silently lose earlier stronger KP progress after only one sibling KP changes.
+- Root cause: progress download/import used overwrite semantics, and chapter chunk upload was built from only recently changed KPs even though the server stores one full snapshot per `(course, student, chapter)`; that allowed weaker or partial chapter state to replace stronger existing state.
+- Prevention: during sync import, keep the stronger of local and incoming progress; when uploading chapter chunks, send the full current chapter snapshot, not only the changed subset; and reject weaker incoming row updates on the legacy server row path.

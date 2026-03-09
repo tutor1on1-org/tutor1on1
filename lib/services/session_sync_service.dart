@@ -335,6 +335,8 @@ class SessionSyncService {
           scopeKey: groupScopeKey,
           remoteCourseId: remoteCourseId,
           chapterKey: chapterKey,
+          courseVersionId: entry.courseVersionId,
+          studentId: entry.studentId,
         ),
       );
       final member = _ProgressChunkMember(
@@ -398,7 +400,26 @@ class SessionSyncService {
       final itemStateWrites = <_SyncStateWrite>[];
       var groupUpdatedAt = DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
       var courseSubject = '';
-      for (final member in group.members) {
+      final chapterEntries = await _db.listProgressEntriesForChapterSyncUpload(
+        studentId: group.studentId,
+        courseVersionId: group.courseVersionId,
+        chapterKey: group.chapterKey,
+      );
+      final fullMembers = chapterEntries
+          .map(
+            (entry) => _ProgressChunkMember(
+              entry: entry,
+              scopeKey: '${group.remoteCourseId}:${entry.kpKey.trim()}',
+              updatedAt: entry.updatedAt.toUtc(),
+              payloadHash: _hashProgressPayloadCore(
+                entry: entry,
+                remoteCourseId: group.remoteCourseId,
+                remoteUserId: remoteUserId,
+              ),
+            ),
+          )
+          .toList(growable: false);
+      for (final member in fullMembers) {
         final entry = member.entry;
         var resolvedSubject = courseSubjectsByVersion[entry.courseVersionId];
         if (resolvedSubject == null) {
@@ -2484,11 +2505,15 @@ class _ProgressChunkGroup {
     required this.scopeKey,
     required this.remoteCourseId,
     required this.chapterKey,
+    required this.courseVersionId,
+    required this.studentId,
   });
 
   final String scopeKey;
   final int remoteCourseId;
   final String chapterKey;
+  final int courseVersionId;
+  final int studentId;
   final List<_ProgressChunkMember> members = <_ProgressChunkMember>[];
   bool hasPendingChanges = false;
   bool blockedByRemoteNewer = false;
