@@ -89,25 +89,45 @@ func (h *SessionSyncHandler) saveUploads(
 		}
 	}()
 
-	stmt, err := tx.Prepare(
-		`INSERT INTO session_text_sync
-		 (session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, chapter_key, updated_at, payload_size, envelope, envelope_hash)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE
-		   course_id = VALUES(course_id),
-		   teacher_user_id = VALUES(teacher_user_id),
-		   student_user_id = VALUES(student_user_id),
-		   sender_user_id = VALUES(sender_user_id),
-		   chapter_key = IF(VALUES(chapter_key) <> '', VALUES(chapter_key), chapter_key),
-		   updated_at = VALUES(updated_at),
-		   payload_size = VALUES(payload_size),
-		   envelope = VALUES(envelope),
-		   envelope_hash = VALUES(envelope_hash)`,
+	selectStmt, err := tx.Prepare(
+		`SELECT updated_at
+		 FROM session_text_sync
+		 WHERE session_sync_id = ?
+		 LIMIT 1
+		 FOR UPDATE`,
 	)
 	if err != nil {
 		return 0, fiber.NewError(fiber.StatusInternalServerError, "session sync save failed")
 	}
-	defer stmt.Close()
+	defer selectStmt.Close()
+
+	insertStmt, err := tx.Prepare(
+		`INSERT INTO session_text_sync
+		 (session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, chapter_key, updated_at, payload_size, envelope, envelope_hash)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	)
+	if err != nil {
+		return 0, fiber.NewError(fiber.StatusInternalServerError, "session sync save failed")
+	}
+	defer insertStmt.Close()
+
+	updateStmt, err := tx.Prepare(
+		`UPDATE session_text_sync
+		 SET course_id = ?,
+		     teacher_user_id = ?,
+		     student_user_id = ?,
+		     sender_user_id = ?,
+		     chapter_key = CASE WHEN ? <> '' THEN ? ELSE chapter_key END,
+		     updated_at = ?,
+		     payload_size = ?,
+		     envelope = ?,
+		     envelope_hash = ?
+		 WHERE session_sync_id = ?`,
+	)
+	if err != nil {
+		return 0, fiber.NewError(fiber.StatusInternalServerError, "session sync save failed")
+	}
+	defer updateStmt.Close()
 
 	teacherUserIDByCourse := map[int64]int64{}
 	enrollmentByStudentCourse := map[string]bool{}
@@ -181,8 +201,46 @@ func (h *SessionSyncHandler) saveUploads(
 		}
 
 		chapterKey := strings.TrimSpace(item.ChapterKey)
-		if _, err := stmt.Exec(
-			strings.TrimSpace(item.SessionSyncID),
+		sessionSyncID := strings.TrimSpace(item.SessionSyncID)
+		var (
+			existingUpdatedAt time.Time
+			existingFound     bool
+		)
+		scanErr := selectStmt.QueryRow(sessionSyncID).Scan(&existingUpdatedAt)
+		switch {
+		case scanErr == nil:
+			existingFound = true
+		case errors.Is(scanErr, sql.ErrNoRows):
+			existingFound = false
+		default:
+			return 0, fiber.NewError(fiber.StatusInternalServerError, "session sync save failed")
+		}
+		if existingFound && !updatedAt.After(existingUpdatedAt) {
+			continue
+		}
+
+		if existingFound {
+			if _, err := updateStmt.Exec(
+				item.CourseID,
+				teacherUserID,
+				item.StudentUserID,
+				userID,
+				chapterKey,
+				chapterKey,
+				updatedAt,
+				len(envelopeBytes),
+				envelopeBytes,
+				strings.TrimSpace(item.EnvelopeHash),
+				sessionSyncID,
+			); err != nil {
+				return 0, fiber.NewError(fiber.StatusInternalServerError, "session sync save failed")
+			}
+			savedCount++
+			continue
+		}
+
+		if _, err := insertStmt.Exec(
+			sessionSyncID,
 			item.CourseID,
 			teacherUserID,
 			item.StudentUserID,

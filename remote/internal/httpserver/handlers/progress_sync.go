@@ -528,16 +528,12 @@ func (h *ProgressSyncHandler) saveChunkUploads(
 		}
 	}()
 
-	stmt, err := tx.Prepare(
-		`INSERT INTO progress_sync_chunks
-		 (course_id, teacher_user_id, student_user_id, chapter_key, item_count, updated_at, envelope, envelope_hash)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE
-		   teacher_user_id = VALUES(teacher_user_id),
-		   item_count = VALUES(item_count),
-		   updated_at = VALUES(updated_at),
-		   envelope = VALUES(envelope),
-		   envelope_hash = VALUES(envelope_hash)`,
+	selectStmt, err := tx.Prepare(
+		`SELECT updated_at
+		 FROM progress_sync_chunks
+		 WHERE course_id = ? AND student_user_id = ? AND chapter_key = ?
+		 LIMIT 1
+		 FOR UPDATE`,
 	)
 	if err != nil {
 		log.Printf(
@@ -549,7 +545,45 @@ func (h *ProgressSyncHandler) saveChunkUploads(
 		status, message := classifyProgressSyncSaveError(err)
 		return 0, fiber.NewError(status, message)
 	}
-	defer stmt.Close()
+	defer selectStmt.Close()
+
+	insertStmt, err := tx.Prepare(
+		`INSERT INTO progress_sync_chunks
+		 (course_id, teacher_user_id, student_user_id, chapter_key, item_count, updated_at, envelope, envelope_hash)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+	)
+	if err != nil {
+		log.Printf(
+			"progress chunk sync insert statement prepare failed: user_id=%d items=%d error=%v",
+			userID,
+			len(items),
+			err,
+		)
+		status, message := classifyProgressSyncSaveError(err)
+		return 0, fiber.NewError(status, message)
+	}
+	defer insertStmt.Close()
+
+	updateStmt, err := tx.Prepare(
+		`UPDATE progress_sync_chunks
+		 SET teacher_user_id = ?,
+		     item_count = ?,
+		     updated_at = ?,
+		     envelope = ?,
+		     envelope_hash = ?
+		 WHERE course_id = ? AND student_user_id = ? AND chapter_key = ?`,
+	)
+	if err != nil {
+		log.Printf(
+			"progress chunk sync update statement prepare failed: user_id=%d items=%d error=%v",
+			userID,
+			len(items),
+			err,
+		)
+		status, message := classifyProgressSyncSaveError(err)
+		return 0, fiber.NewError(status, message)
+	}
+	defer updateStmt.Close()
 
 	teacherUserIDByCourse := map[int64]int64{}
 	enrollmentByCourse := map[int64]bool{}
@@ -602,7 +636,58 @@ func (h *ProgressSyncHandler) saveChunkUploads(
 			return 0, fiber.NewError(fiber.StatusBadRequest, "envelope invalid")
 		}
 
-		if _, err := stmt.Exec(
+		var (
+			existingUpdatedAt time.Time
+			existingFound     bool
+		)
+		scanErr := selectStmt.QueryRow(item.CourseID, userID, chapterKey).Scan(&existingUpdatedAt)
+		switch {
+		case scanErr == nil:
+			existingFound = true
+		case errors.Is(scanErr, sql.ErrNoRows):
+			existingFound = false
+		default:
+			log.Printf(
+				"progress chunk sync existing row lookup failed: user_id=%d course_id=%d chapter_key=%q error=%v",
+				userID,
+				item.CourseID,
+				chapterKey,
+				scanErr,
+			)
+			status, message := classifyProgressSyncSaveError(scanErr)
+			return 0, fiber.NewError(status, message)
+		}
+		if existingFound && !updatedAt.After(existingUpdatedAt) {
+			continue
+		}
+
+		if existingFound {
+			if _, err := updateStmt.Exec(
+				teacherUserID,
+				itemCount,
+				updatedAt,
+				decodedEnvelope,
+				nullableString(item.EnvelopeHash),
+				item.CourseID,
+				userID,
+				chapterKey,
+			); err != nil {
+				log.Printf(
+					"progress chunk sync update failed: user_id=%d course_id=%d chapter_key=%q updated_at=%q error=%v",
+					userID,
+					item.CourseID,
+					chapterKey,
+					item.UpdatedAt,
+					err,
+				)
+				status, message := classifyProgressSyncSaveError(err)
+				return 0, fiber.NewError(status, message)
+			}
+			savedCount++
+			continue
+		}
+
+		if _, err := insertStmt.Exec(
 			item.CourseID,
 			teacherUserID,
 			userID,

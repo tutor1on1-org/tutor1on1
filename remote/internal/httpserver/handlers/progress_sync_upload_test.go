@@ -279,3 +279,60 @@ func TestProgressSyncSaveUploadsSkipsWeakerIncomingUpdate(t *testing.T) {
 
 	assertSQLMockExpectations(t, mock)
 }
+
+func TestProgressSyncSaveChunkUploadsSkipsStaleUpdate(t *testing.T) {
+	db, mock := newHandlerSQLMock(t)
+	defer db.Close()
+
+	handler := NewProgressSyncHandler(
+		Dependencies{
+			Store: &storepkg.Store{DB: db},
+		},
+	)
+
+	userID := int64(11)
+	courseID := int64(10)
+	teacherUserID := int64(9)
+	chapterKey := "1.1"
+	existingUpdatedAt := time.Date(2026, 3, 2, 0, 0, 0, 0, time.UTC)
+
+	mock.ExpectBegin()
+	mock.ExpectPrepare(`SELECT updated_at FROM progress_sync_chunks`)
+	mock.ExpectPrepare(`INSERT INTO progress_sync_chunks`)
+	mock.ExpectPrepare(`UPDATE progress_sync_chunks`)
+	mock.ExpectQuery(`SELECT ta.user_id`).
+		WithArgs(courseID).
+		WillReturnRows(sqlmock.NewRows([]string{"user_id"}).AddRow(teacherUserID))
+	mock.ExpectQuery(`SELECT 1 FROM enrollments`).
+		WithArgs(userID, courseID).
+		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+	mock.ExpectQuery(`SELECT updated_at FROM progress_sync_chunks`).
+		WithArgs(courseID, userID, chapterKey).
+		WillReturnRows(
+			sqlmock.NewRows([]string{"updated_at"}).
+				AddRow(existingUpdatedAt),
+		)
+	mock.ExpectCommit()
+
+	savedCount, err := handler.saveChunkUploads(
+		userID,
+		[]uploadProgressChunkRequest{
+			{
+				CourseID:     courseID,
+				ChapterKey:   chapterKey,
+				ItemCount:    3,
+				UpdatedAt:    "2026-03-01T23:59:00Z",
+				Envelope:     base64.StdEncoding.EncodeToString([]byte("chunk-stale")),
+				EnvelopeHash: "chunk-hash-stale",
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("saveChunkUploads() error = %v", err)
+	}
+	if savedCount != 0 {
+		t.Fatalf("savedCount = %d, want 0", savedCount)
+	}
+
+	assertSQLMockExpectations(t, mock)
+}

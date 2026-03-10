@@ -109,3 +109,8 @@ Last updated: 2026-03-09
 - Symptom: pressing `Shift+Enter` to add a new line can expand the input box upward and cover the newest conversation content until the user scrolls manually.
 - Root cause: the session page auto-scrolled when the message list changed, but not when the composer itself grew taller.
 - Prevention: when the composer line count increases, schedule a scroll-to-bottom after layout so the latest messages stay visible above the input area.
+
+22. Server sync writes must reject stale timestamps for session and chapter snapshots
+- Symptom: two devices can race and an older session/chapter snapshot upload can overwrite newer remote state because the server accepts blind last-writer-wins updates.
+- Root cause: `session_text_sync` and `progress_sync_chunks` upserts replaced existing rows without comparing `updated_at`.
+- Prevention: on the server, lock the existing row, and only update when incoming `updated_at` is strictly newer; stale uploads should be skipped silently so clients stay simple.
