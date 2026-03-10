@@ -100,6 +100,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   bool _applyingTranscription = false;
   bool _summarySuggested = false;
   int? _lastBranchPromptMessageId;
+  int _inputLineCount = 1;
   final GlobalKey _sttCancelKey = GlobalKey();
   final LayerLink _sttButtonLink = LayerLink();
 
@@ -311,12 +312,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                     : (value > current ? value : current),
                               );
                           WidgetsBinding.instance.addPostFrameCallback((_) {
-                            if (!_scrollController.hasClients) {
-                              return;
-                            }
-                            _scrollController.jumpTo(
-                              _scrollController.position.maxScrollExtent,
-                            );
+                            _scrollToBottom(animated: false);
                           });
                           return LayoutBuilder(
                             builder: (context, constraints) {
@@ -1095,10 +1091,53 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   }
 
   void _handleInputChanged() {
+    final nextLineCount = _estimateInputLineCount(_inputController.text);
+    if (nextLineCount > _inputLineCount) {
+      _scheduleScrollToBottom();
+    }
+    _inputLineCount = nextLineCount;
     if (_applyingTranscription) {
       return;
     }
     return;
+  }
+
+  int _estimateInputLineCount(String text) {
+    if (text.isEmpty) {
+      return 1;
+    }
+    final lines = '\n'.allMatches(text).length + 1;
+    if (lines < 1) {
+      return 1;
+    }
+    if (lines > 3) {
+      return 3;
+    }
+    return lines;
+  }
+
+  void _scheduleScrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollToBottom();
+    });
+  }
+
+  void _scrollToBottom({bool animated = true}) {
+    if (!mounted || !_scrollController.hasClients) {
+      return;
+    }
+    final target = _scrollController.position.maxScrollExtent;
+    if (animated) {
+      unawaited(
+        _scrollController.animateTo(
+          target,
+          duration: const Duration(milliseconds: 140),
+          curve: Curves.easeOut,
+        ),
+      );
+      return;
+    }
+    _scrollController.jumpTo(target);
   }
 
   Widget _buildSttCancelOverlay(BuildContext context) {

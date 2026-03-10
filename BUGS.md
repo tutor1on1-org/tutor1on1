@@ -104,3 +104,8 @@ Last updated: 2026-03-09
 - Symptom: refreshing an old assistant answer or editing the last student answer can replay the wrong tutor prompt family after the session mode chip has changed.
 - Root cause: replay/edit resolution looked at the page-global `_mode` and `_step` instead of the target message's own `action`, so a learn message could be regenerated with review prompts, or vice versa.
 - Prevention: resolve replay/edit prompt names from the selected message action plus that action branch's active-turn state, and keep that logic separate from the page-global send path.
+
+21. Composer growth must keep the latest chat content visible
+- Symptom: pressing `Shift+Enter` to add a new line can expand the input box upward and cover the newest conversation content until the user scrolls manually.
+- Root cause: the session page auto-scrolled when the message list changed, but not when the composer itself grew taller.
+- Prevention: when the composer line count increases, schedule a scroll-to-bottom after layout so the latest messages stay visible above the input area.
