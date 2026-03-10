@@ -114,3 +114,8 @@ Last updated: 2026-03-09
 - Symptom: two devices can race and an older session/chapter snapshot upload can overwrite newer remote state because the server accepts blind last-writer-wins updates.
 - Root cause: `session_text_sync` and `progress_sync_chunks` upserts replaced existing rows without comparing `updated_at`.
 - Prevention: on the server, lock the existing row, and only update when incoming `updated_at` is strictly newer; stale uploads should be skipped silently so clients stay simple.
+
+23. Tutor control/evidence must not be reconstructed from degraded chat history
+- Symptom: review answers can auto-switch to `New Learn` before the LLM reply arrives, and summary can claim "no new evidence" even after a correct answer on another device or after sync/import.
+- Root cause: the app inferred control flow (`new/continue`, mode, finished-turn choices) and evidence state by scanning `chat_messages` fields like `action`, `parsed_json`, `turn_state`, and review payload history; sync/import could strip or degrade those message fields, so the app silently rewrote the user's visible state and injected fake-zero summary evidence.
+- Prevention: keep tutor control state and evidence state as explicit session-level durable contracts, sync them separately from chat history, make prompts return one canonical `control` object, and let visible labels map directly to prompt names without hidden history-based rewrites.

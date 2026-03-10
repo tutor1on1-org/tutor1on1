@@ -108,6 +108,10 @@ class ChatSessions extends Table {
   TextColumn get summaryRawResponse => text().nullable()();
   BoolColumn get summaryValid => boolean().nullable()();
   IntColumn get summarizeCallId => integer().nullable()();
+  TextColumn get controlStateJson => text().nullable()();
+  DateTimeColumn get controlStateUpdatedAt => dateTime().nullable()();
+  TextColumn get evidenceStateJson => text().nullable()();
+  DateTimeColumn get evidenceStateUpdatedAt => dateTime().nullable()();
   TextColumn get syncId => text().nullable()();
   DateTimeColumn get syncUpdatedAt => dateTime().nullable()();
   DateTimeColumn get syncUploadedAt => dateTime().nullable()();
@@ -294,7 +298,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 25;
+  int get schemaVersion => 26;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -415,6 +419,18 @@ class AppDatabase extends _$AppDatabase {
               'uq_users_remote_user_id '
               'ON users(remote_user_id) '
               'WHERE remote_user_id IS NOT NULL',
+            );
+          }
+          if (from < 26) {
+            await m.addColumn(chatSessions, chatSessions.controlStateJson);
+            await m.addColumn(
+              chatSessions,
+              chatSessions.controlStateUpdatedAt,
+            );
+            await m.addColumn(chatSessions, chatSessions.evidenceStateJson);
+            await m.addColumn(
+              chatSessions,
+              chatSessions.evidenceStateUpdatedAt,
             );
           }
         },
@@ -743,6 +759,32 @@ ORDER BY c.subject COLLATE NOCASE ASC
   Future<ChatSession?> getSession(int sessionId) {
     return (select(chatSessions)..where((tbl) => tbl.id.equals(sessionId)))
         .getSingleOrNull();
+  }
+
+  Stream<ChatSession?> watchSession(int sessionId) {
+    return (select(chatSessions)..where((tbl) => tbl.id.equals(sessionId)))
+        .watchSingleOrNull();
+  }
+
+  Future<void> updateSessionContracts({
+    required int sessionId,
+    String? controlStateJson,
+    DateTime? controlStateUpdatedAt,
+    String? evidenceStateJson,
+    DateTime? evidenceStateUpdatedAt,
+    bool touchSync = true,
+  }) {
+    final now = DateTime.now();
+    return (update(chatSessions)..where((tbl) => tbl.id.equals(sessionId)))
+        .write(
+      ChatSessionsCompanion(
+        controlStateJson: Value(controlStateJson),
+        controlStateUpdatedAt: Value(controlStateUpdatedAt),
+        evidenceStateJson: Value(evidenceStateJson),
+        evidenceStateUpdatedAt: Value(evidenceStateUpdatedAt),
+        syncUpdatedAt: touchSync ? Value(now) : const Value.absent(),
+      ),
+    );
   }
 
   Future<void> renameSession({

@@ -4,23 +4,81 @@
   "type": "object",
   "required": [
     "teacher_message",
+    "control",
     "answer_state",
     "difficulty_action",
     "recommended_level",
-    "turn_state",
     "question",
     "grading",
     "error_book_update",
     "evidence",
-    "mastery_level",
-    "next_mode",
-    "next_action",
-    "next_help_bias"
+    "mastery_level"
   ],
   "properties": {
     "teacher_message": {
       "type": "string",
       "minLength": 1
+    },
+    "control": {
+      "type": "object",
+      "required": [
+        "version",
+        "mode",
+        "step",
+        "turn_finished",
+        "help_bias",
+        "allowed_actions",
+        "recommended_action"
+      ],
+      "properties": {
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["LEARN", "REVIEW"]
+        },
+        "step": {
+          "type": "string",
+          "enum": ["NEW", "CONTINUE"]
+        },
+        "turn_finished": {
+          "type": "boolean"
+        },
+        "help_bias": {
+          "type": "string",
+          "enum": ["EASIER", "UNCHANGED", "HARDER"]
+        },
+        "allowed_actions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "NEXT_QUESTION",
+              "LEARN",
+              "CONTINUE_LEARNING",
+              "TRY_QUESTION",
+              "SUMMARIZE",
+              "PAUSE"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "recommended_action": {
+          "type": ["string", "null"],
+          "enum": [
+            "NEXT_QUESTION",
+            "LEARN",
+            "CONTINUE_LEARNING",
+            "TRY_QUESTION",
+            "SUMMARIZE",
+            "PAUSE",
+            null
+          ]
+        }
+      },
+      "additionalProperties": false
     },
     "answer_state": {
       "type": "string",
@@ -34,24 +92,27 @@
       "type": "string",
       "enum": ["easy", "medium", "hard"]
     },
-    "turn_state": {
-      "type": "string",
-      "enum": ["UNFINISHED", "FINISHED"]
-    },
     "question": {
-      "type": "object",
-      "required": ["text", "type_id"],
-      "properties": {
-        "text": {
-          "type": "string",
-          "minLength": 1
+      "anyOf": [
+        {
+          "type": "null"
         },
-        "type_id": {
-          "type": "string",
-          "minLength": 1
+        {
+          "type": "object",
+          "required": ["text", "type_id"],
+          "properties": {
+            "text": {
+              "type": "string",
+              "minLength": 1
+            },
+            "type_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": true
         }
-      },
-      "additionalProperties": true
+      ]
     },
     "grading": {
       "anyOf": [
@@ -125,8 +186,7 @@
           "minimum": 0
         },
         "t": {
-          "type": "string",
-          "minLength": 1
+          "type": "string"
         },
         "mt": {
           "type": "array",
@@ -141,18 +201,6 @@
     "mastery_level": {
       "type": "string",
       "enum": ["NOT_PASS", "PASS_EASY", "PASS_MEDIUM", "PASS_HARD"]
-    },
-    "next_mode": {
-      "type": "string",
-      "enum": ["LEARN", "REVIEW"]
-    },
-    "next_action": {
-      "type": "string",
-      "enum": ["NONE", "SUMMARY"]
-    },
-    "next_help_bias": {
-      "type": "string",
-      "enum": ["EASIER", "UNCHANGED", "HARDER"]
     }
   },
   "additionalProperties": false

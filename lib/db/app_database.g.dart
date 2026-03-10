@@ -2576,6 +2576,30 @@ class $ChatSessionsTable extends ChatSessions
   late final GeneratedColumn<int> summarizeCallId = GeneratedColumn<int>(
       'summarize_call_id', aliasedName, true,
       type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _controlStateJsonMeta =
+      const VerificationMeta('controlStateJson');
+  @override
+  late final GeneratedColumn<String> controlStateJson = GeneratedColumn<String>(
+      'control_state_json', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _controlStateUpdatedAtMeta =
+      const VerificationMeta('controlStateUpdatedAt');
+  @override
+  late final GeneratedColumn<DateTime> controlStateUpdatedAt =
+      GeneratedColumn<DateTime>('control_state_updated_at', aliasedName, true,
+          type: DriftSqlType.dateTime, requiredDuringInsert: false);
+  static const VerificationMeta _evidenceStateJsonMeta =
+      const VerificationMeta('evidenceStateJson');
+  @override
+  late final GeneratedColumn<String> evidenceStateJson =
+      GeneratedColumn<String>('evidence_state_json', aliasedName, true,
+          type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _evidenceStateUpdatedAtMeta =
+      const VerificationMeta('evidenceStateUpdatedAt');
+  @override
+  late final GeneratedColumn<DateTime> evidenceStateUpdatedAt =
+      GeneratedColumn<DateTime>('evidence_state_updated_at', aliasedName, true,
+          type: DriftSqlType.dateTime, requiredDuringInsert: false);
   static const VerificationMeta _syncIdMeta = const VerificationMeta('syncId');
   @override
   late final GeneratedColumn<String> syncId = GeneratedColumn<String>(
@@ -2609,6 +2633,10 @@ class $ChatSessionsTable extends ChatSessions
         summaryRawResponse,
         summaryValid,
         summarizeCallId,
+        controlStateJson,
+        controlStateUpdatedAt,
+        evidenceStateJson,
+        evidenceStateUpdatedAt,
         syncId,
         syncUpdatedAt,
         syncUploadedAt
@@ -2698,6 +2726,30 @@ class $ChatSessionsTable extends ChatSessions
           summarizeCallId.isAcceptableOrUnknown(
               data['summarize_call_id']!, _summarizeCallIdMeta));
     }
+    if (data.containsKey('control_state_json')) {
+      context.handle(
+          _controlStateJsonMeta,
+          controlStateJson.isAcceptableOrUnknown(
+              data['control_state_json']!, _controlStateJsonMeta));
+    }
+    if (data.containsKey('control_state_updated_at')) {
+      context.handle(
+          _controlStateUpdatedAtMeta,
+          controlStateUpdatedAt.isAcceptableOrUnknown(
+              data['control_state_updated_at']!, _controlStateUpdatedAtMeta));
+    }
+    if (data.containsKey('evidence_state_json')) {
+      context.handle(
+          _evidenceStateJsonMeta,
+          evidenceStateJson.isAcceptableOrUnknown(
+              data['evidence_state_json']!, _evidenceStateJsonMeta));
+    }
+    if (data.containsKey('evidence_state_updated_at')) {
+      context.handle(
+          _evidenceStateUpdatedAtMeta,
+          evidenceStateUpdatedAt.isAcceptableOrUnknown(
+              data['evidence_state_updated_at']!, _evidenceStateUpdatedAtMeta));
+    }
     if (data.containsKey('sync_id')) {
       context.handle(_syncIdMeta,
           syncId.isAcceptableOrUnknown(data['sync_id']!, _syncIdMeta));
@@ -2751,6 +2803,16 @@ class $ChatSessionsTable extends ChatSessions
           .read(DriftSqlType.bool, data['${effectivePrefix}summary_valid']),
       summarizeCallId: attachedDatabase.typeMapping
           .read(DriftSqlType.int, data['${effectivePrefix}summarize_call_id']),
+      controlStateJson: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}control_state_json']),
+      controlStateUpdatedAt: attachedDatabase.typeMapping.read(
+          DriftSqlType.dateTime,
+          data['${effectivePrefix}control_state_updated_at']),
+      evidenceStateJson: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}evidence_state_json']),
+      evidenceStateUpdatedAt: attachedDatabase.typeMapping.read(
+          DriftSqlType.dateTime,
+          data['${effectivePrefix}evidence_state_updated_at']),
       syncId: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}sync_id']),
       syncUpdatedAt: attachedDatabase.typeMapping.read(
@@ -2781,6 +2843,10 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
   final String? summaryRawResponse;
   final bool? summaryValid;
   final int? summarizeCallId;
+  final String? controlStateJson;
+  final DateTime? controlStateUpdatedAt;
+  final String? evidenceStateJson;
+  final DateTime? evidenceStateUpdatedAt;
   final String? syncId;
   final DateTime? syncUpdatedAt;
   final DateTime? syncUploadedAt;
@@ -2799,6 +2865,10 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
       this.summaryRawResponse,
       this.summaryValid,
       this.summarizeCallId,
+      this.controlStateJson,
+      this.controlStateUpdatedAt,
+      this.evidenceStateJson,
+      this.evidenceStateUpdatedAt,
       this.syncId,
       this.syncUpdatedAt,
       this.syncUploadedAt});
@@ -2834,6 +2904,20 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
     }
     if (!nullToAbsent || summarizeCallId != null) {
       map['summarize_call_id'] = Variable<int>(summarizeCallId);
+    }
+    if (!nullToAbsent || controlStateJson != null) {
+      map['control_state_json'] = Variable<String>(controlStateJson);
+    }
+    if (!nullToAbsent || controlStateUpdatedAt != null) {
+      map['control_state_updated_at'] =
+          Variable<DateTime>(controlStateUpdatedAt);
+    }
+    if (!nullToAbsent || evidenceStateJson != null) {
+      map['evidence_state_json'] = Variable<String>(evidenceStateJson);
+    }
+    if (!nullToAbsent || evidenceStateUpdatedAt != null) {
+      map['evidence_state_updated_at'] =
+          Variable<DateTime>(evidenceStateUpdatedAt);
     }
     if (!nullToAbsent || syncId != null) {
       map['sync_id'] = Variable<String>(syncId);
@@ -2878,6 +2962,18 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
       summarizeCallId: summarizeCallId == null && nullToAbsent
           ? const Value.absent()
           : Value(summarizeCallId),
+      controlStateJson: controlStateJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(controlStateJson),
+      controlStateUpdatedAt: controlStateUpdatedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(controlStateUpdatedAt),
+      evidenceStateJson: evidenceStateJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(evidenceStateJson),
+      evidenceStateUpdatedAt: evidenceStateUpdatedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(evidenceStateUpdatedAt),
       syncId:
           syncId == null && nullToAbsent ? const Value.absent() : Value(syncId),
       syncUpdatedAt: syncUpdatedAt == null && nullToAbsent
@@ -2908,6 +3004,13 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
           serializer.fromJson<String?>(json['summaryRawResponse']),
       summaryValid: serializer.fromJson<bool?>(json['summaryValid']),
       summarizeCallId: serializer.fromJson<int?>(json['summarizeCallId']),
+      controlStateJson: serializer.fromJson<String?>(json['controlStateJson']),
+      controlStateUpdatedAt:
+          serializer.fromJson<DateTime?>(json['controlStateUpdatedAt']),
+      evidenceStateJson:
+          serializer.fromJson<String?>(json['evidenceStateJson']),
+      evidenceStateUpdatedAt:
+          serializer.fromJson<DateTime?>(json['evidenceStateUpdatedAt']),
       syncId: serializer.fromJson<String?>(json['syncId']),
       syncUpdatedAt: serializer.fromJson<DateTime?>(json['syncUpdatedAt']),
       syncUploadedAt: serializer.fromJson<DateTime?>(json['syncUploadedAt']),
@@ -2931,6 +3034,12 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
       'summaryRawResponse': serializer.toJson<String?>(summaryRawResponse),
       'summaryValid': serializer.toJson<bool?>(summaryValid),
       'summarizeCallId': serializer.toJson<int?>(summarizeCallId),
+      'controlStateJson': serializer.toJson<String?>(controlStateJson),
+      'controlStateUpdatedAt':
+          serializer.toJson<DateTime?>(controlStateUpdatedAt),
+      'evidenceStateJson': serializer.toJson<String?>(evidenceStateJson),
+      'evidenceStateUpdatedAt':
+          serializer.toJson<DateTime?>(evidenceStateUpdatedAt),
       'syncId': serializer.toJson<String?>(syncId),
       'syncUpdatedAt': serializer.toJson<DateTime?>(syncUpdatedAt),
       'syncUploadedAt': serializer.toJson<DateTime?>(syncUploadedAt),
@@ -2952,6 +3061,10 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
           Value<String?> summaryRawResponse = const Value.absent(),
           Value<bool?> summaryValid = const Value.absent(),
           Value<int?> summarizeCallId = const Value.absent(),
+          Value<String?> controlStateJson = const Value.absent(),
+          Value<DateTime?> controlStateUpdatedAt = const Value.absent(),
+          Value<String?> evidenceStateJson = const Value.absent(),
+          Value<DateTime?> evidenceStateUpdatedAt = const Value.absent(),
           Value<String?> syncId = const Value.absent(),
           Value<DateTime?> syncUpdatedAt = const Value.absent(),
           Value<DateTime?> syncUploadedAt = const Value.absent()}) =>
@@ -2977,6 +3090,18 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
         summarizeCallId: summarizeCallId.present
             ? summarizeCallId.value
             : this.summarizeCallId,
+        controlStateJson: controlStateJson.present
+            ? controlStateJson.value
+            : this.controlStateJson,
+        controlStateUpdatedAt: controlStateUpdatedAt.present
+            ? controlStateUpdatedAt.value
+            : this.controlStateUpdatedAt,
+        evidenceStateJson: evidenceStateJson.present
+            ? evidenceStateJson.value
+            : this.evidenceStateJson,
+        evidenceStateUpdatedAt: evidenceStateUpdatedAt.present
+            ? evidenceStateUpdatedAt.value
+            : this.evidenceStateUpdatedAt,
         syncId: syncId.present ? syncId.value : this.syncId,
         syncUpdatedAt:
             syncUpdatedAt.present ? syncUpdatedAt.value : this.syncUpdatedAt,
@@ -3011,6 +3136,18 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
       summarizeCallId: data.summarizeCallId.present
           ? data.summarizeCallId.value
           : this.summarizeCallId,
+      controlStateJson: data.controlStateJson.present
+          ? data.controlStateJson.value
+          : this.controlStateJson,
+      controlStateUpdatedAt: data.controlStateUpdatedAt.present
+          ? data.controlStateUpdatedAt.value
+          : this.controlStateUpdatedAt,
+      evidenceStateJson: data.evidenceStateJson.present
+          ? data.evidenceStateJson.value
+          : this.evidenceStateJson,
+      evidenceStateUpdatedAt: data.evidenceStateUpdatedAt.present
+          ? data.evidenceStateUpdatedAt.value
+          : this.evidenceStateUpdatedAt,
       syncId: data.syncId.present ? data.syncId.value : this.syncId,
       syncUpdatedAt: data.syncUpdatedAt.present
           ? data.syncUpdatedAt.value
@@ -3038,6 +3175,10 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
           ..write('summaryRawResponse: $summaryRawResponse, ')
           ..write('summaryValid: $summaryValid, ')
           ..write('summarizeCallId: $summarizeCallId, ')
+          ..write('controlStateJson: $controlStateJson, ')
+          ..write('controlStateUpdatedAt: $controlStateUpdatedAt, ')
+          ..write('evidenceStateJson: $evidenceStateJson, ')
+          ..write('evidenceStateUpdatedAt: $evidenceStateUpdatedAt, ')
           ..write('syncId: $syncId, ')
           ..write('syncUpdatedAt: $syncUpdatedAt, ')
           ..write('syncUploadedAt: $syncUploadedAt')
@@ -3046,24 +3187,29 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
   }
 
   @override
-  int get hashCode => Object.hash(
-      id,
-      studentId,
-      courseVersionId,
-      kpKey,
-      title,
-      startedAt,
-      endedAt,
-      status,
-      summaryText,
-      summaryLit,
-      summaryLitPercent,
-      summaryRawResponse,
-      summaryValid,
-      summarizeCallId,
-      syncId,
-      syncUpdatedAt,
-      syncUploadedAt);
+  int get hashCode => Object.hashAll([
+        id,
+        studentId,
+        courseVersionId,
+        kpKey,
+        title,
+        startedAt,
+        endedAt,
+        status,
+        summaryText,
+        summaryLit,
+        summaryLitPercent,
+        summaryRawResponse,
+        summaryValid,
+        summarizeCallId,
+        controlStateJson,
+        controlStateUpdatedAt,
+        evidenceStateJson,
+        evidenceStateUpdatedAt,
+        syncId,
+        syncUpdatedAt,
+        syncUploadedAt
+      ]);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -3082,6 +3228,10 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
           other.summaryRawResponse == this.summaryRawResponse &&
           other.summaryValid == this.summaryValid &&
           other.summarizeCallId == this.summarizeCallId &&
+          other.controlStateJson == this.controlStateJson &&
+          other.controlStateUpdatedAt == this.controlStateUpdatedAt &&
+          other.evidenceStateJson == this.evidenceStateJson &&
+          other.evidenceStateUpdatedAt == this.evidenceStateUpdatedAt &&
           other.syncId == this.syncId &&
           other.syncUpdatedAt == this.syncUpdatedAt &&
           other.syncUploadedAt == this.syncUploadedAt);
@@ -3102,6 +3252,10 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
   final Value<String?> summaryRawResponse;
   final Value<bool?> summaryValid;
   final Value<int?> summarizeCallId;
+  final Value<String?> controlStateJson;
+  final Value<DateTime?> controlStateUpdatedAt;
+  final Value<String?> evidenceStateJson;
+  final Value<DateTime?> evidenceStateUpdatedAt;
   final Value<String?> syncId;
   final Value<DateTime?> syncUpdatedAt;
   final Value<DateTime?> syncUploadedAt;
@@ -3120,6 +3274,10 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
     this.summaryRawResponse = const Value.absent(),
     this.summaryValid = const Value.absent(),
     this.summarizeCallId = const Value.absent(),
+    this.controlStateJson = const Value.absent(),
+    this.controlStateUpdatedAt = const Value.absent(),
+    this.evidenceStateJson = const Value.absent(),
+    this.evidenceStateUpdatedAt = const Value.absent(),
     this.syncId = const Value.absent(),
     this.syncUpdatedAt = const Value.absent(),
     this.syncUploadedAt = const Value.absent(),
@@ -3139,6 +3297,10 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
     this.summaryRawResponse = const Value.absent(),
     this.summaryValid = const Value.absent(),
     this.summarizeCallId = const Value.absent(),
+    this.controlStateJson = const Value.absent(),
+    this.controlStateUpdatedAt = const Value.absent(),
+    this.evidenceStateJson = const Value.absent(),
+    this.evidenceStateUpdatedAt = const Value.absent(),
     this.syncId = const Value.absent(),
     this.syncUpdatedAt = const Value.absent(),
     this.syncUploadedAt = const Value.absent(),
@@ -3160,6 +3322,10 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
     Expression<String>? summaryRawResponse,
     Expression<bool>? summaryValid,
     Expression<int>? summarizeCallId,
+    Expression<String>? controlStateJson,
+    Expression<DateTime>? controlStateUpdatedAt,
+    Expression<String>? evidenceStateJson,
+    Expression<DateTime>? evidenceStateUpdatedAt,
     Expression<String>? syncId,
     Expression<DateTime>? syncUpdatedAt,
     Expression<DateTime>? syncUploadedAt,
@@ -3180,6 +3346,12 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
         'summary_raw_response': summaryRawResponse,
       if (summaryValid != null) 'summary_valid': summaryValid,
       if (summarizeCallId != null) 'summarize_call_id': summarizeCallId,
+      if (controlStateJson != null) 'control_state_json': controlStateJson,
+      if (controlStateUpdatedAt != null)
+        'control_state_updated_at': controlStateUpdatedAt,
+      if (evidenceStateJson != null) 'evidence_state_json': evidenceStateJson,
+      if (evidenceStateUpdatedAt != null)
+        'evidence_state_updated_at': evidenceStateUpdatedAt,
       if (syncId != null) 'sync_id': syncId,
       if (syncUpdatedAt != null) 'sync_updated_at': syncUpdatedAt,
       if (syncUploadedAt != null) 'sync_uploaded_at': syncUploadedAt,
@@ -3201,6 +3373,10 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
       Value<String?>? summaryRawResponse,
       Value<bool?>? summaryValid,
       Value<int?>? summarizeCallId,
+      Value<String?>? controlStateJson,
+      Value<DateTime?>? controlStateUpdatedAt,
+      Value<String?>? evidenceStateJson,
+      Value<DateTime?>? evidenceStateUpdatedAt,
       Value<String?>? syncId,
       Value<DateTime?>? syncUpdatedAt,
       Value<DateTime?>? syncUploadedAt}) {
@@ -3219,6 +3395,12 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
       summaryRawResponse: summaryRawResponse ?? this.summaryRawResponse,
       summaryValid: summaryValid ?? this.summaryValid,
       summarizeCallId: summarizeCallId ?? this.summarizeCallId,
+      controlStateJson: controlStateJson ?? this.controlStateJson,
+      controlStateUpdatedAt:
+          controlStateUpdatedAt ?? this.controlStateUpdatedAt,
+      evidenceStateJson: evidenceStateJson ?? this.evidenceStateJson,
+      evidenceStateUpdatedAt:
+          evidenceStateUpdatedAt ?? this.evidenceStateUpdatedAt,
       syncId: syncId ?? this.syncId,
       syncUpdatedAt: syncUpdatedAt ?? this.syncUpdatedAt,
       syncUploadedAt: syncUploadedAt ?? this.syncUploadedAt,
@@ -3270,6 +3452,20 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
     if (summarizeCallId.present) {
       map['summarize_call_id'] = Variable<int>(summarizeCallId.value);
     }
+    if (controlStateJson.present) {
+      map['control_state_json'] = Variable<String>(controlStateJson.value);
+    }
+    if (controlStateUpdatedAt.present) {
+      map['control_state_updated_at'] =
+          Variable<DateTime>(controlStateUpdatedAt.value);
+    }
+    if (evidenceStateJson.present) {
+      map['evidence_state_json'] = Variable<String>(evidenceStateJson.value);
+    }
+    if (evidenceStateUpdatedAt.present) {
+      map['evidence_state_updated_at'] =
+          Variable<DateTime>(evidenceStateUpdatedAt.value);
+    }
     if (syncId.present) {
       map['sync_id'] = Variable<String>(syncId.value);
     }
@@ -3299,6 +3495,10 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
           ..write('summaryRawResponse: $summaryRawResponse, ')
           ..write('summaryValid: $summaryValid, ')
           ..write('summarizeCallId: $summarizeCallId, ')
+          ..write('controlStateJson: $controlStateJson, ')
+          ..write('controlStateUpdatedAt: $controlStateUpdatedAt, ')
+          ..write('evidenceStateJson: $evidenceStateJson, ')
+          ..write('evidenceStateUpdatedAt: $evidenceStateUpdatedAt, ')
           ..write('syncId: $syncId, ')
           ..write('syncUpdatedAt: $syncUpdatedAt, ')
           ..write('syncUploadedAt: $syncUploadedAt')
@@ -9352,6 +9552,10 @@ typedef $$ChatSessionsTableCreateCompanionBuilder = ChatSessionsCompanion
   Value<String?> summaryRawResponse,
   Value<bool?> summaryValid,
   Value<int?> summarizeCallId,
+  Value<String?> controlStateJson,
+  Value<DateTime?> controlStateUpdatedAt,
+  Value<String?> evidenceStateJson,
+  Value<DateTime?> evidenceStateUpdatedAt,
   Value<String?> syncId,
   Value<DateTime?> syncUpdatedAt,
   Value<DateTime?> syncUploadedAt,
@@ -9372,6 +9576,10 @@ typedef $$ChatSessionsTableUpdateCompanionBuilder = ChatSessionsCompanion
   Value<String?> summaryRawResponse,
   Value<bool?> summaryValid,
   Value<int?> summarizeCallId,
+  Value<String?> controlStateJson,
+  Value<DateTime?> controlStateUpdatedAt,
+  Value<String?> evidenceStateJson,
+  Value<DateTime?> evidenceStateUpdatedAt,
   Value<String?> syncId,
   Value<DateTime?> syncUpdatedAt,
   Value<DateTime?> syncUploadedAt,
@@ -9430,6 +9638,22 @@ class $$ChatSessionsTableFilterComposer
 
   ColumnFilters<int> get summarizeCallId => $composableBuilder(
       column: $table.summarizeCallId,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get controlStateJson => $composableBuilder(
+      column: $table.controlStateJson,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get controlStateUpdatedAt => $composableBuilder(
+      column: $table.controlStateUpdatedAt,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get evidenceStateJson => $composableBuilder(
+      column: $table.evidenceStateJson,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get evidenceStateUpdatedAt => $composableBuilder(
+      column: $table.evidenceStateUpdatedAt,
       builder: (column) => ColumnFilters(column));
 
   ColumnFilters<String> get syncId => $composableBuilder(
@@ -9499,6 +9723,22 @@ class $$ChatSessionsTableOrderingComposer
       column: $table.summarizeCallId,
       builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<String> get controlStateJson => $composableBuilder(
+      column: $table.controlStateJson,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get controlStateUpdatedAt => $composableBuilder(
+      column: $table.controlStateUpdatedAt,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get evidenceStateJson => $composableBuilder(
+      column: $table.evidenceStateJson,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get evidenceStateUpdatedAt => $composableBuilder(
+      column: $table.evidenceStateUpdatedAt,
+      builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<String> get syncId => $composableBuilder(
       column: $table.syncId, builder: (column) => ColumnOrderings(column));
 
@@ -9562,6 +9802,18 @@ class $$ChatSessionsTableAnnotationComposer
   GeneratedColumn<int> get summarizeCallId => $composableBuilder(
       column: $table.summarizeCallId, builder: (column) => column);
 
+  GeneratedColumn<String> get controlStateJson => $composableBuilder(
+      column: $table.controlStateJson, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get controlStateUpdatedAt => $composableBuilder(
+      column: $table.controlStateUpdatedAt, builder: (column) => column);
+
+  GeneratedColumn<String> get evidenceStateJson => $composableBuilder(
+      column: $table.evidenceStateJson, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get evidenceStateUpdatedAt => $composableBuilder(
+      column: $table.evidenceStateUpdatedAt, builder: (column) => column);
+
   GeneratedColumn<String> get syncId =>
       $composableBuilder(column: $table.syncId, builder: (column) => column);
 
@@ -9612,6 +9864,10 @@ class $$ChatSessionsTableTableManager extends RootTableManager<
             Value<String?> summaryRawResponse = const Value.absent(),
             Value<bool?> summaryValid = const Value.absent(),
             Value<int?> summarizeCallId = const Value.absent(),
+            Value<String?> controlStateJson = const Value.absent(),
+            Value<DateTime?> controlStateUpdatedAt = const Value.absent(),
+            Value<String?> evidenceStateJson = const Value.absent(),
+            Value<DateTime?> evidenceStateUpdatedAt = const Value.absent(),
             Value<String?> syncId = const Value.absent(),
             Value<DateTime?> syncUpdatedAt = const Value.absent(),
             Value<DateTime?> syncUploadedAt = const Value.absent(),
@@ -9631,6 +9887,10 @@ class $$ChatSessionsTableTableManager extends RootTableManager<
             summaryRawResponse: summaryRawResponse,
             summaryValid: summaryValid,
             summarizeCallId: summarizeCallId,
+            controlStateJson: controlStateJson,
+            controlStateUpdatedAt: controlStateUpdatedAt,
+            evidenceStateJson: evidenceStateJson,
+            evidenceStateUpdatedAt: evidenceStateUpdatedAt,
             syncId: syncId,
             syncUpdatedAt: syncUpdatedAt,
             syncUploadedAt: syncUploadedAt,
@@ -9650,6 +9910,10 @@ class $$ChatSessionsTableTableManager extends RootTableManager<
             Value<String?> summaryRawResponse = const Value.absent(),
             Value<bool?> summaryValid = const Value.absent(),
             Value<int?> summarizeCallId = const Value.absent(),
+            Value<String?> controlStateJson = const Value.absent(),
+            Value<DateTime?> controlStateUpdatedAt = const Value.absent(),
+            Value<String?> evidenceStateJson = const Value.absent(),
+            Value<DateTime?> evidenceStateUpdatedAt = const Value.absent(),
             Value<String?> syncId = const Value.absent(),
             Value<DateTime?> syncUpdatedAt = const Value.absent(),
             Value<DateTime?> syncUploadedAt = const Value.absent(),
@@ -9669,6 +9933,10 @@ class $$ChatSessionsTableTableManager extends RootTableManager<
             summaryRawResponse: summaryRawResponse,
             summaryValid: summaryValid,
             summarizeCallId: summarizeCallId,
+            controlStateJson: controlStateJson,
+            controlStateUpdatedAt: controlStateUpdatedAt,
+            evidenceStateJson: evidenceStateJson,
+            evidenceStateUpdatedAt: evidenceStateUpdatedAt,
             syncId: syncId,
             syncUpdatedAt: syncUpdatedAt,
             syncUploadedAt: syncUploadedAt,

@@ -4,25 +4,79 @@
   "type": "object",
   "required": [
     "teacher_message",
-    "turn_state",
+    "control",
     "question",
     "difficulty_level",
     "grading",
     "error_book_update",
     "evidence",
-    "mastery_level",
-    "next_mode",
-    "next_action",
-    "next_help_bias"
+    "mastery_level"
   ],
   "properties": {
     "teacher_message": {
       "type": "string",
       "minLength": 1
     },
-    "turn_state": {
-      "type": "string",
-      "const": "UNFINISHED"
+    "control": {
+      "type": "object",
+      "required": [
+        "version",
+        "mode",
+        "step",
+        "turn_finished",
+        "help_bias",
+        "allowed_actions",
+        "recommended_action"
+      ],
+      "properties": {
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["LEARN", "REVIEW"]
+        },
+        "step": {
+          "type": "string",
+          "enum": ["NEW", "CONTINUE"]
+        },
+        "turn_finished": {
+          "type": "boolean"
+        },
+        "help_bias": {
+          "type": "string",
+          "enum": ["EASIER", "UNCHANGED", "HARDER"]
+        },
+        "allowed_actions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "NEXT_QUESTION",
+              "LEARN",
+              "CONTINUE_LEARNING",
+              "TRY_QUESTION",
+              "SUMMARIZE",
+              "PAUSE"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "recommended_action": {
+          "type": ["string", "null"],
+          "enum": [
+            "NEXT_QUESTION",
+            "LEARN",
+            "CONTINUE_LEARNING",
+            "TRY_QUESTION",
+            "SUMMARIZE",
+            "PAUSE",
+            null
+          ]
+        }
+      },
+      "additionalProperties": false
     },
     "question": {
       "type": "object",
@@ -82,18 +136,6 @@
     "mastery_level": {
       "type": "string",
       "enum": ["NOT_PASS", "PASS_EASY", "PASS_MEDIUM", "PASS_HARD"]
-    },
-    "next_mode": {
-      "type": "string",
-      "const": "REVIEW"
-    },
-    "next_action": {
-      "type": "string",
-      "const": "NONE"
-    },
-    "next_help_bias": {
-      "type": "string",
-      "enum": ["EASIER", "UNCHANGED", "HARDER"]
     }
   },
   "additionalProperties": false

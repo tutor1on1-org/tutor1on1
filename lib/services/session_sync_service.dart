@@ -1780,6 +1780,28 @@ class SessionSyncService {
                 startedAt: Value(startedAt ?? updatedAt),
                 endedAt: Value(endedAt),
                 summaryText: Value(summary),
+                controlStateJson: Value(
+                  (payload['control_state_json'] as String?)?.trim().isEmpty ==
+                          false
+                      ? (payload['control_state_json'] as String).trim()
+                      : null,
+                ),
+                controlStateUpdatedAt: Value(
+                  DateTime.tryParse(
+                    (payload['control_state_updated_at'] as String?) ?? '',
+                  ),
+                ),
+                evidenceStateJson: Value(
+                  (payload['evidence_state_json'] as String?)?.trim().isEmpty ==
+                          false
+                      ? (payload['evidence_state_json'] as String).trim()
+                      : null,
+                ),
+                evidenceStateUpdatedAt: Value(
+                  DateTime.tryParse(
+                    (payload['evidence_state_updated_at'] as String?) ?? '',
+                  ),
+                ),
                 syncId: Value(sessionSyncId),
                 syncUpdatedAt: Value(updatedAt),
                 syncUploadedAt: Value(updatedAt),
@@ -1798,6 +1820,30 @@ class SessionSyncService {
             startedAt: Value(startedAt ?? existing.startedAt),
             endedAt: Value(endedAt),
             summaryText: Value(summary),
+            controlStateJson: Value(
+              (payload['control_state_json'] as String?)?.trim().isEmpty ==
+                      false
+                  ? (payload['control_state_json'] as String).trim()
+                  : existing.controlStateJson,
+            ),
+            controlStateUpdatedAt: Value(
+              DateTime.tryParse(
+                    (payload['control_state_updated_at'] as String?) ?? '',
+                  ) ??
+                  existing.controlStateUpdatedAt,
+            ),
+            evidenceStateJson: Value(
+              (payload['evidence_state_json'] as String?)?.trim().isEmpty ==
+                      false
+                  ? (payload['evidence_state_json'] as String).trim()
+                  : existing.evidenceStateJson,
+            ),
+            evidenceStateUpdatedAt: Value(
+              DateTime.tryParse(
+                    (payload['evidence_state_updated_at'] as String?) ?? '',
+                  ) ??
+                  existing.evidenceStateUpdatedAt,
+            ),
             syncUpdatedAt: Value(updatedAt),
             syncUploadedAt: Value(updatedAt),
           ),
@@ -1813,6 +1859,9 @@ class SessionSyncService {
                 sessionId: sessionId,
                 role: message.role,
                 content: message.content,
+                rawContent: Value(message.rawContent),
+                parsedJson: Value(message.parsedJson),
+                action: Value(message.action),
                 createdAt: Value(message.createdAt),
               ),
             );
@@ -1913,6 +1962,9 @@ class SessionSyncService {
       if (role == null || role.isEmpty || content == null || content.isEmpty) {
         continue;
       }
+      final rawContent = (entry['raw_content'] as String?)?.trim();
+      final parsedJson = (entry['parsed_json'] as String?)?.trim();
+      final action = (entry['action'] as String?)?.trim();
       final createdAt =
           DateTime.tryParse(entry['created_at'] as String? ?? '') ??
               DateTime.now();
@@ -1920,6 +1972,10 @@ class SessionSyncService {
         _SyncMessage(
           role: role,
           content: content,
+          rawContent: rawContent == null || rawContent.isEmpty ? null : rawContent,
+          parsedJson:
+              parsedJson == null || parsedJson.isEmpty ? null : parsedJson,
+          action: action == null || action.isEmpty ? null : action,
           createdAt: createdAt,
         ),
       );
@@ -1950,6 +2006,12 @@ class SessionSyncService {
       'started_at': session.startedAt.toUtc().toIso8601String(),
       'ended_at': session.endedAt?.toUtc().toIso8601String(),
       'summary_text': session.summaryText ?? '',
+      'control_state_json': session.controlStateJson ?? '',
+      'control_state_updated_at':
+          session.controlStateUpdatedAt?.toUtc().toIso8601String(),
+      'evidence_state_json': session.evidenceStateJson ?? '',
+      'evidence_state_updated_at':
+          session.evidenceStateUpdatedAt?.toUtc().toIso8601String(),
       'student_remote_user_id': studentUserId,
       'student_username': studentUsername,
       'teacher_remote_user_id': teacherUserId,
@@ -1959,6 +2021,9 @@ class SessionSyncService {
             (message) => {
               'role': message.role,
               'content': message.content,
+              'raw_content': message.rawContent ?? '',
+              'parsed_json': message.parsedJson ?? '',
+              'action': message.action ?? '',
               'created_at': message.createdAt.toUtc().toIso8601String(),
             },
           )
@@ -2452,11 +2517,17 @@ class _SyncMessage {
   _SyncMessage({
     required this.role,
     required this.content,
+    required this.rawContent,
+    required this.parsedJson,
+    required this.action,
     required this.createdAt,
   });
 
   final String role;
   final String content;
+  final String? rawContent;
+  final String? parsedJson;
+  final String? action;
   final DateTime createdAt;
 }
 

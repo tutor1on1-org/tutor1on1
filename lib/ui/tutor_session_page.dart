@@ -12,6 +12,7 @@ import '../db/app_database.dart';
 import '../llm/llm_models.dart';
 import '../llm/llm_providers.dart';
 import '../models/tutor_action.dart';
+import '../models/tutor_contract.dart';
 import '../services/app_services.dart';
 import '../services/log_crypto_service.dart';
 import '../services/stt_service.dart';
@@ -51,8 +52,10 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   bool _loadingSession = true;
   bool _autoStartAttempted = false;
   TutorMode _mode = TutorMode.learn;
-  _TurnStep _step = _TurnStep.newTurn;
-  _HelpBias? _helpBias;
+  TutorTurnStep _step = TutorTurnStep.newTurn;
+  TutorHelpBias _helpBias = TutorHelpBias.unchanged;
+  List<TutorFinishedAction> _allowedActions = const <TutorFinishedAction>[];
+  TutorFinishedAction? _recommendedAction;
   String? _sessionModel;
   String? _sessionTitle;
   RequestHandle<dynamic>? _pending;
@@ -182,7 +185,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       _sessionTitle = session.title;
     }
     setState(() => _loadingSession = false);
-    await _applyAssistantSuggestionsFromSession(
+    await _applyPersistedSessionControl(
       db,
       showToast: false,
       allowBranchPrompt: false,
@@ -694,21 +697,21 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                             ),
                             _stepChip(
                               label: 'New',
-                              step: _TurnStep.newTurn,
+                              step: TutorTurnStep.newTurn,
                             ),
                             _stepChip(
                               label: 'Continue',
-                              step: _TurnStep.continueTurn,
+                              step: TutorTurnStep.continueTurn,
                             ),
                             _modeChip(TutorMode.learn, l10n),
                             _modeChip(TutorMode.review, l10n),
                             _helpBiasChip(
                               label: 'Easier',
-                              bias: _HelpBias.easier,
+                              bias: TutorHelpBias.easier,
                             ),
                             _helpBiasChip(
                               label: 'Harder',
-                              bias: _HelpBias.harder,
+                              bias: TutorHelpBias.harder,
                             ),
                             const SizedBox(width: 12),
                             Row(
@@ -883,7 +886,13 @@ class _ChatSessionPageState extends State<ChatSessionPage>
           ? null
           : (selected) {
               if (selected) {
-                setState(() => _mode = mode);
+                setState(() {
+                  _mode = mode;
+                  _allowedActions = const <TutorFinishedAction>[];
+                  _recommendedAction = null;
+                  _summarySuggested = false;
+                });
+                unawaited(_persistVisibleControl(turnFinished: false));
               }
             },
     );
@@ -891,7 +900,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
 
   Widget _stepChip({
     required String label,
-    required _TurnStep step,
+    required TutorTurnStep step,
   }) {
     return ChoiceChip(
       label: Text(label),
@@ -902,14 +911,20 @@ class _ChatSessionPageState extends State<ChatSessionPage>
               if (!selected) {
                 return;
               }
-              setState(() => _step = step);
+              setState(() {
+                _step = step;
+                _allowedActions = const <TutorFinishedAction>[];
+                _recommendedAction = null;
+                _summarySuggested = false;
+              });
+              unawaited(_persistVisibleControl(turnFinished: false));
             },
     );
   }
 
   Widget _helpBiasChip({
     required String label,
-    required _HelpBias bias,
+    required TutorHelpBias bias,
   }) {
     final selected = _helpBias == bias;
     return FilterChip(
@@ -919,8 +934,12 @@ class _ChatSessionPageState extends State<ChatSessionPage>
           ? null
           : (next) {
               setState(() {
-                _helpBias = next ? bias : null;
+                _helpBias = next ? bias : TutorHelpBias.unchanged;
+                _allowedActions = const <TutorFinishedAction>[];
+                _recommendedAction = null;
+                _summarySuggested = false;
               });
+              unawaited(_persistVisibleControl(turnFinished: false));
             },
     );
   }
@@ -1226,8 +1245,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     final db = context.read<AppDatabase>();
     final sessionService = context.read<AppServices>().sessionService;
     final sttService = context.read<AppServices>().sttService;
-    final messages = await db.getMessagesForSession(widget.sessionId);
-    final resolvedPromptName = _resolvePromptNameForSend(messages);
+    final resolvedPromptName = _resolvePromptNameForSend();
     final modelOverride = _resolveModelOverride();
     _prepareTts();
     final pendingAudioPath = _pendingSttAudioPath;
@@ -1252,11 +1270,12 @@ class _ChatSessionPageState extends State<ChatSessionPage>
           };
     _pendingSttAudioPath = null;
     try {
+      await _persistVisibleControl(turnFinished: false);
       final llmHandle = await sessionService.startTutorAction(
         sessionId: widget.sessionId,
         mode: resolvedPromptName,
         studentInput: trimmedInput,
-        helpBias: _helpBias?.promptValue,
+        helpBias: _helpBias.wireValue,
         courseVersion: widget.courseVersion,
         node: widget.node,
         modelOverride: modelOverride,
@@ -1276,7 +1295,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       if (_ttsEnabled) {
         await _flushDisplay();
       }
-      await _applyAssistantSuggestionsFromSession(
+      await _applyPersistedSessionControl(
         db,
         showToast: true,
         allowBranchPrompt: true,
@@ -1306,6 +1325,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     final sessionService = context.read<AppServices>().sessionService;
     final modelOverride = _resolveModelOverride();
     try {
+      await _persistVisibleControl(turnFinished: true);
       final summarizeHandle = await sessionService.startSummarize(
         sessionId: widget.sessionId,
         courseVersion: widget.courseVersion,
@@ -1334,7 +1354,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         );
       }
       if (result.success) {
-        await _applyAssistantSuggestionsFromSession(
+        await _applyPersistedSessionControl(
           db,
           showToast: true,
           allowBranchPrompt: false,
@@ -1499,17 +1519,16 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     final modelOverride = _resolveModelOverride();
     _prepareTts();
     try {
-      final messages = await db.getMessagesForSession(widget.sessionId);
       final resolvedPromptName = _resolvePromptNameForAction(
-        messages,
         action: action,
-        preferredStep: _TurnStep.continueTurn,
+        preferredStep: TutorTurnStep.continueTurn,
       );
+      await _persistVisibleControl(turnFinished: false);
       final llmHandle = await sessionService.startTutorAction(
         sessionId: widget.sessionId,
         mode: resolvedPromptName,
         studentInput: '',
-        helpBias: _helpBias?.promptValue,
+        helpBias: _helpBias.wireValue,
         courseVersion: widget.courseVersion,
         node: widget.node,
         modelOverride: modelOverride,
@@ -1527,7 +1546,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       if (_ttsEnabled) {
         await _flushDisplay();
       }
-      await _applyAssistantSuggestionsFromSession(
+      await _applyPersistedSessionControl(
         db,
         showToast: true,
         allowBranchPrompt: true,
@@ -1585,17 +1604,16 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         sessionId: widget.sessionId,
         fromMessageId: message.id,
       );
-      final messages = await db.getMessagesForSession(widget.sessionId);
       final mode = _resolvePromptNameForAction(
-        messages,
         action: message.action ?? _mode.promptName,
-        preferredStep: _TurnStep.continueTurn,
+        preferredStep: TutorTurnStep.continueTurn,
       );
+      await _persistVisibleControl(turnFinished: false);
       final llmHandle = await sessionService.startTutorAction(
         sessionId: widget.sessionId,
         mode: mode,
         studentInput: updated.trim(),
-        helpBias: _helpBias?.promptValue,
+        helpBias: _helpBias.wireValue,
         courseVersion: widget.courseVersion,
         node: widget.node,
         modelOverride: modelOverride,
@@ -1613,7 +1631,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       if (_ttsEnabled) {
         await _flushDisplay();
       }
-      await _applyAssistantSuggestionsFromSession(
+      await _applyPersistedSessionControl(
         db,
         showToast: true,
         allowBranchPrompt: true,
@@ -1911,106 +1929,65 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     return '$hour:$minute:$second';
   }
 
-  Future<void> _applyAssistantSuggestionsFromSession(
+  Future<void> _applyPersistedSessionControl(
     AppDatabase db, {
     required bool showToast,
     required bool allowBranchPrompt,
   }) async {
+    final session = await db.getSession(widget.sessionId);
     final messages = await db.getMessagesForSession(widget.sessionId);
     if (!mounted) {
       return;
     }
-    final suggestion = _extractAssistantSuggestion(messages);
-    if (suggestion == null) {
-      return;
-    }
+    final control = _loadControlStateFromSession(session);
+    final nextSummarySuggested =
+        control.recommendedAction == TutorFinishedAction.summarize;
     final updates = <String>[];
-    var nextMode = _mode;
-    var nextStep = _step;
-    var nextHelpBias = _helpBias;
-    var nextSummarySuggested = suggestion.summarySuggested;
-
-    if (suggestion.mode != null && suggestion.mode != _mode) {
-      nextMode = suggestion.mode!;
-      updates.add(_labelForMode(nextMode));
+    if (control.mode != _mode) {
+      updates.add(_labelForMode(control.mode));
     }
-    if (suggestion.step != null && suggestion.step != _step) {
-      nextStep = suggestion.step!;
-      updates.add(_labelForStep(nextStep));
+    if (control.step != _step) {
+      updates.add(_labelForStep(control.step));
     }
-    if (suggestion.clearHelpBias && _helpBias != null) {
-      nextHelpBias = null;
-      updates.add('Unchanged');
-    } else if (suggestion.helpBias != null &&
-        suggestion.helpBias != _helpBias) {
-      nextHelpBias = suggestion.helpBias;
-      updates.add(_labelForHelpBias(nextHelpBias));
+    if (control.helpBias != _helpBias) {
+      updates.add(_labelForHelpBias(control.helpBias));
     }
-    if (nextSummarySuggested != _summarySuggested ||
-        nextMode != _mode ||
-        nextStep != _step ||
-        nextHelpBias != _helpBias) {
+    if (control.mode != _mode ||
+        control.step != _step ||
+        control.helpBias != _helpBias ||
+        nextSummarySuggested != _summarySuggested ||
+        !_sameFinishedActions(control.allowedActions, _allowedActions) ||
+        control.recommendedAction != _recommendedAction) {
       setState(() {
-        _mode = nextMode;
-        _step = nextStep;
-        _helpBias = nextHelpBias;
+        _mode = control.mode;
+        _step = control.step;
+        _helpBias = control.helpBias;
+        _allowedActions = List<TutorFinishedAction>.unmodifiable(
+          control.allowedActions,
+        );
+        _recommendedAction = control.recommendedAction;
         _summarySuggested = nextSummarySuggested;
       });
     }
     if (showToast && updates.isNotEmpty) {
       _showBriefMessage('Switched to ${updates.join(' / ')}');
     }
+    final lastAssistant = _findLatestAssistantMessage(messages);
     if (!allowBranchPrompt ||
-        !suggestion.turnFinished ||
-        suggestion.messageId == _lastBranchPromptMessageId) {
+        !control.turnFinished ||
+        control.allowedActions.isEmpty ||
+        lastAssistant == null ||
+        lastAssistant.action == 'summary' ||
+        lastAssistant.id == _lastBranchPromptMessageId) {
       return;
     }
-    _lastBranchPromptMessageId = suggestion.messageId;
+    _lastBranchPromptMessageId = lastAssistant.id;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
         return;
       }
-      unawaited(_showFinishedTurnActions(suggestion));
+      unawaited(_showFinishedTurnActions(control));
     });
-  }
-
-  _AssistantUiSuggestion? _extractAssistantSuggestion(
-      List<ChatMessage> messages) {
-    for (var i = messages.length - 1; i >= 0; i--) {
-      final message = messages[i];
-      if (message.role != 'assistant') {
-        continue;
-      }
-      final parsed = _extractMessageJson(message);
-      if (parsed == null) {
-        continue;
-      }
-      final mode = _normalizeNextMode(parsed['next_mode']) ??
-          _normalizeNextStep(parsed['next_step']);
-      final action = message.action ?? '';
-      final step = hasActiveTutorTurn(action: action, parsed: parsed)
-          ? _TurnStep.continueTurn
-          : (isFinishedTutorTurn(action: action, parsed: parsed)
-              ? _TurnStep.newTurn
-              : null);
-      final nextAction =
-          (parsed['next_action'] as String?)?.trim().toUpperCase() ?? '';
-      final nextHelpBias =
-          (parsed['next_help_bias'] as String?)?.trim().toUpperCase() ?? '';
-      return _AssistantUiSuggestion(
-        messageId: message.id,
-        action: action,
-        mode: mode,
-        step: step,
-        helpBias: nextHelpBias == 'EASIER'
-            ? _HelpBias.easier
-            : (nextHelpBias == 'HARDER' ? _HelpBias.harder : null),
-        clearHelpBias: nextHelpBias == 'UNCHANGED',
-        summarySuggested: nextAction == 'SUMMARY',
-        turnFinished: isFinishedTutorTurn(action: action, parsed: parsed),
-      );
-    }
-    return null;
   }
 
   Map<String, dynamic>? _extractMessageJson(ChatMessage message) {
@@ -2045,199 +2022,241 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     }
   }
 
-  TutorMode? _normalizeNextMode(Object? value) {
-    if (value is! String) {
-      return null;
-    }
-    final normalized = value.trim().toUpperCase();
-    if (normalized == 'LEARN') {
-      return TutorMode.learn;
-    }
-    if (normalized == 'REVIEW') {
-      return TutorMode.review;
-    }
-    return null;
+  TutorControlState _loadControlStateFromSession(ChatSession? session) {
+    return TutorControlState.fromJsonText(session?.controlStateJson) ??
+        TutorControlState.defaultForMode(_mode);
   }
 
-  TutorMode? _normalizeNextStep(Object? value) {
-    if (value is! String) {
-      return null;
-    }
-    final normalized = value.trim().toUpperCase().replaceAll('-', '_');
-    if (normalized == 'RELEARN') {
-      return TutorMode.learn;
-    }
-    if (normalized == 'CONTINUE_REVIEW') {
-      return TutorMode.review;
-    }
-    return null;
+  Future<void> _persistVisibleControl({
+    required bool turnFinished,
+    List<TutorFinishedAction>? allowedActions,
+    TutorFinishedAction? recommendedAction,
+  }) {
+    return _persistControlState(
+      TutorControlState(
+        version: TutorControlState.currentVersion,
+        mode: _mode,
+        step: _step,
+        turnFinished: turnFinished,
+        helpBias: _helpBias,
+        allowedActions:
+            turnFinished ? (allowedActions ?? _allowedActions) : const [],
+        recommendedAction: turnFinished ? recommendedAction : null,
+      ),
+    );
   }
 
-  String _resolvePromptNameForSend(List<ChatMessage> messages) {
-    final action = _mode.promptName;
-    final wantsContinue = _step == _TurnStep.continueTurn;
-    final hasActiveTurn = _hasActiveTutorTurn(messages, action);
-    if (wantsContinue && !hasActiveTurn) {
-      if (mounted) {
-        setState(() => _step = _TurnStep.newTurn);
+  Future<void> _persistControlState(TutorControlState control) async {
+    final db = context.read<AppDatabase>();
+    try {
+      await db.updateSessionContracts(
+        sessionId: widget.sessionId,
+        controlStateJson: control.toJsonText(),
+        controlStateUpdatedAt: DateTime.now(),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
       }
-      _showBriefMessage('Switched to New');
+      await _showErrorDialog(
+        title: 'Failed to save tutor state',
+        message: error.toString(),
+      );
     }
+  }
+
+  String _resolvePromptNameForSend() {
     return _resolvePromptNameForAction(
-      messages,
-      action: action,
+      action: _mode.promptName,
       preferredStep: _step,
     );
   }
 
-  String _resolvePromptNameForAction(
-    List<ChatMessage> messages, {
+  String _resolvePromptNameForAction({
     required String action,
-    required _TurnStep preferredStep,
+    required TutorTurnStep preferredStep,
   }) {
-    return resolveTutorPromptName(
-      action: action,
-      wantsContinue: preferredStep == _TurnStep.continueTurn,
-      hasActiveTurn: _hasActiveTutorTurn(messages, action),
-    );
-  }
-
-  bool _hasActiveTutorTurn(List<ChatMessage> messages, String action) {
-    final assistant = _findLastAssistantForAction(messages, action);
-    if (assistant == null) {
-      return false;
+    final normalized = action.trim().toLowerCase();
+    if (normalized == 'learn') {
+      return preferredStep == TutorTurnStep.continueTurn
+          ? 'learn_cont'
+          : 'learn_init';
     }
-    return hasActiveTutorTurn(
-      action: action,
-      parsed: _extractMessageJson(assistant),
-    );
+    if (normalized == 'review') {
+      return preferredStep == TutorTurnStep.continueTurn
+          ? 'review_cont'
+          : 'review_init';
+    }
+    return normalized;
   }
 
-  ChatMessage? _findLastAssistantForAction(
-      List<ChatMessage> messages, String action) {
+  ChatMessage? _findLatestAssistantMessage(List<ChatMessage> messages) {
     for (var i = messages.length - 1; i >= 0; i--) {
       final message = messages[i];
-      if (message.role == 'assistant' && message.action == action) {
+      if (message.role == 'assistant') {
         return message;
       }
     }
     return null;
   }
 
+  bool _sameFinishedActions(
+    List<TutorFinishedAction> left,
+    List<TutorFinishedAction> right,
+  ) {
+    if (left.length != right.length) {
+      return false;
+    }
+    for (var i = 0; i < left.length; i++) {
+      if (left[i] != right[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   String _labelForMode(TutorMode mode) {
     return mode == TutorMode.learn ? 'Learn' : 'Review';
   }
 
-  String _labelForStep(_TurnStep step) {
-    return step == _TurnStep.newTurn ? 'New' : 'Continue';
+  String _labelForStep(TutorTurnStep step) {
+    return step == TutorTurnStep.newTurn ? 'New' : 'Continue';
   }
 
-  String _labelForHelpBias(_HelpBias? bias) {
-    if (bias == _HelpBias.easier) {
+  String _labelForHelpBias(TutorHelpBias bias) {
+    if (bias == TutorHelpBias.easier) {
       return 'Easier';
     }
-    if (bias == _HelpBias.harder) {
+    if (bias == TutorHelpBias.harder) {
       return 'Harder';
     }
     return 'Unchanged';
   }
 
-  Future<void> _showFinishedTurnActions(
-      _AssistantUiSuggestion suggestion) async {
+  String _labelForFinishedAction(TutorFinishedAction action) {
+    switch (action) {
+      case TutorFinishedAction.nextQuestion:
+        return 'Another question';
+      case TutorFinishedAction.learn:
+        return 'Learn';
+      case TutorFinishedAction.continueLearning:
+        return 'Continue learning';
+      case TutorFinishedAction.tryQuestion:
+        return 'Try a question';
+      case TutorFinishedAction.summarize:
+        return 'Summarize';
+      case TutorFinishedAction.pause:
+        return 'Pause';
+    }
+  }
+
+  Future<void> _showFinishedTurnActions(TutorControlState control) async {
     if (!mounted) {
       return;
     }
-    final choice = await showDialog<_FinishedAction>(
+    final choice = await showDialog<TutorFinishedAction>(
       context: context,
       builder: (context) {
-        final isReview = suggestion.action == 'review';
-        final recommended = _recommendedFinishedAction(suggestion);
-        final firstChoice = isReview
-            ? _FinishedAction.nextQuestion
-            : _FinishedAction.continueLearning;
-        final firstLabel = isReview ? 'Another question' : 'Continue learning';
-        final secondChoice =
-            isReview ? _FinishedAction.learn : _FinishedAction.tryQuestion;
-        final secondLabel = isReview ? 'Learn' : 'Try a question';
         return AlertDialog(
           title: const Text('Next step'),
-          actions: [
-            _finishedActionButton(
-              choice: firstChoice,
-              label: firstLabel,
-              recommended: recommended,
-            ),
-            _finishedActionButton(
-              choice: secondChoice,
-              label: secondLabel,
-              recommended: recommended,
-            ),
-            _finishedActionButton(
-              choice: _FinishedAction.summarize,
-              label: 'Summarize',
-              recommended: recommended,
-            ),
-            _finishedActionButton(
-              choice: _FinishedAction.pause,
-              label: 'Pause',
-              recommended: recommended,
-            ),
-          ],
+          actions: control.allowedActions
+              .map(
+                (action) => _finishedActionButton(
+                  choice: action,
+                  label: _labelForFinishedAction(action),
+                  recommended: control.recommendedAction,
+                ),
+              )
+              .toList(growable: false),
         );
       },
     );
     if (choice == null || !mounted) {
       return;
     }
+    await _applyFinishedTurnChoice(choice);
+  }
+
+  Future<void> _applyFinishedTurnChoice(TutorFinishedAction choice) async {
     switch (choice) {
-      case _FinishedAction.nextQuestion:
+      case TutorFinishedAction.nextQuestion:
         setState(() {
           _mode = TutorMode.review;
-          _step = _TurnStep.newTurn;
+          _step = TutorTurnStep.newTurn;
+          _allowedActions = const <TutorFinishedAction>[];
+          _recommendedAction = null;
           _summarySuggested = false;
         });
+        await _persistVisibleControl(turnFinished: false);
         await _sendMessage(allowEmpty: true);
         break;
-      case _FinishedAction.learn:
+      case TutorFinishedAction.learn:
         setState(() {
           _mode = TutorMode.learn;
-          _step = _TurnStep.continueTurn;
+          _step = TutorTurnStep.continueTurn;
+          _allowedActions = const <TutorFinishedAction>[];
+          _recommendedAction = null;
           _summarySuggested = false;
         });
+        await _persistVisibleControl(turnFinished: false);
         await _sendMessage(allowEmpty: true);
         break;
-      case _FinishedAction.continueLearning:
+      case TutorFinishedAction.continueLearning:
         setState(() {
           _mode = TutorMode.learn;
-          _step = _TurnStep.newTurn;
+          _step = TutorTurnStep.newTurn;
+          _allowedActions = const <TutorFinishedAction>[];
+          _recommendedAction = null;
           _summarySuggested = false;
         });
+        await _persistVisibleControl(turnFinished: false);
         await _sendMessage(allowEmpty: true);
         break;
-      case _FinishedAction.tryQuestion:
+      case TutorFinishedAction.tryQuestion:
         setState(() {
           _mode = TutorMode.review;
-          _step = _TurnStep.newTurn;
+          _step = TutorTurnStep.newTurn;
+          _allowedActions = const <TutorFinishedAction>[];
+          _recommendedAction = null;
           _summarySuggested = false;
         });
+        await _persistVisibleControl(turnFinished: false);
         await _sendMessage(allowEmpty: true);
         break;
-      case _FinishedAction.summarize:
-        setState(() => _summarySuggested = false);
+      case TutorFinishedAction.summarize:
+        setState(() {
+          _allowedActions = const <TutorFinishedAction>[];
+          _recommendedAction = null;
+          _summarySuggested = false;
+        });
+        await _persistVisibleControl(
+          turnFinished: true,
+          allowedActions: const <TutorFinishedAction>[],
+          recommendedAction: null,
+        );
         await _requestSummary();
         break;
-      case _FinishedAction.pause:
-        setState(() => _summarySuggested = false);
+      case TutorFinishedAction.pause:
+        setState(() {
+          _allowedActions = const <TutorFinishedAction>[];
+          _recommendedAction = null;
+          _summarySuggested = false;
+        });
+        await _persistVisibleControl(
+          turnFinished: true,
+          allowedActions: const <TutorFinishedAction>[],
+          recommendedAction: null,
+        );
         break;
     }
   }
 
   Widget _finishedActionButton({
-    required _FinishedAction choice,
+    required TutorFinishedAction choice,
     required String label,
-    required _FinishedAction recommended,
+    required TutorFinishedAction? recommended,
   }) {
-    final isRecommended = choice == recommended;
+    final isRecommended = recommended != null && choice == recommended;
     final child = Text(label);
     if (isRecommended) {
       return ElevatedButton(
@@ -2249,21 +2268,6 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       onPressed: () => Navigator.of(context).pop(choice),
       child: child,
     );
-  }
-
-  _FinishedAction _recommendedFinishedAction(
-      _AssistantUiSuggestion suggestion) {
-    if (suggestion.summarySuggested) {
-      return _FinishedAction.summarize;
-    }
-    if (suggestion.action == 'review') {
-      return suggestion.mode == TutorMode.learn
-          ? _FinishedAction.learn
-          : _FinishedAction.nextQuestion;
-    }
-    return suggestion.mode == TutorMode.review
-        ? _FinishedAction.tryQuestion
-        : _FinishedAction.continueLearning;
   }
 
   List<_ErrorBookPreviewItem> _buildErrorBookPreview(
@@ -2905,50 +2909,6 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       action: _mode.promptName,
     );
   }
-}
-
-enum _TurnStep {
-  newTurn,
-  continueTurn,
-}
-
-enum _HelpBias {
-  easier('EASIER'),
-  harder('HARDER');
-
-  const _HelpBias(this.promptValue);
-  final String promptValue;
-}
-
-enum _FinishedAction {
-  nextQuestion,
-  learn,
-  continueLearning,
-  tryQuestion,
-  summarize,
-  pause,
-}
-
-class _AssistantUiSuggestion {
-  const _AssistantUiSuggestion({
-    required this.messageId,
-    required this.action,
-    required this.mode,
-    required this.step,
-    required this.helpBias,
-    required this.clearHelpBias,
-    required this.summarySuggested,
-    required this.turnFinished,
-  });
-
-  final int messageId;
-  final String action;
-  final TutorMode? mode;
-  final _TurnStep? step;
-  final _HelpBias? helpBias;
-  final bool clearHelpBias;
-  final bool summarySuggested;
-  final bool turnFinished;
 }
 
 class _SendIntent extends Intent {

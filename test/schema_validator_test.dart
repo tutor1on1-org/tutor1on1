@@ -5,6 +5,24 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:family_teacher/llm/prompt_repository.dart';
 import 'package:family_teacher/llm/schema_validator.dart';
 
+Map<String, Object?> _control({
+  required String mode,
+  required String step,
+  required bool turnFinished,
+  List<String> allowedActions = const <String>[],
+  String? recommendedAction,
+}) {
+  return <String, Object?>{
+    'version': 1,
+    'mode': mode,
+    'step': step,
+    'turn_finished': turnFinished,
+    'help_bias': 'UNCHANGED',
+    'allowed_actions': allowedActions,
+    'recommended_action': recommendedAction,
+  };
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -13,9 +31,16 @@ void main() {
     final schema = await repo.loadSchema('summarize');
     final validator = SchemaValidator();
     final sample = {
-      'summary_text': 'Reviewed the node and completed one check.',
-      'master_level': 'easy',
-      'lit': true,
+      'teacher_message': 'You can move on.',
+      'control': _control(
+        mode: 'REVIEW',
+        step: 'NEW',
+        turnFinished: true,
+        allowedActions: const ['PAUSE'],
+        recommendedAction: 'PAUSE',
+      ),
+      'mastery_level': 'PASS_HARD',
+      'next_step': 'MOVE_ON',
     };
     final result = await validator.validateJson(
       schemaMap: schema,
@@ -33,7 +58,7 @@ void main() {
       final wrapped = '''
 Model output:
 ```json
-{"teacher_message":"Nice work.","mastery_level":"PASS_MEDIUM","next_step":"MOVE_ON"}
+{"teacher_message":"Nice work.","control":{"version":1,"mode":"REVIEW","step":"NEW","turn_finished":true,"help_bias":"UNCHANGED","allowed_actions":["NEXT_QUESTION","LEARN","PAUSE"],"recommended_action":"NEXT_QUESTION"},"mastery_level":"PASS_MEDIUM","next_step":"MOVE_ON"}
 ```
 ''';
       final result = await validator.validateJson(
@@ -49,8 +74,8 @@ Model output:
     final schema = await repo.loadSchema('summarize');
     final validator = SchemaValidator();
     final invalid = {
-      'summary_text': 'Reviewed the node.',
-      'master_level': 'easy',
+      'teacher_message': 'Reviewed the node.',
+      'mastery_level': 'PASS_EASY',
     };
     final result = await validator.validateJson(
       schemaMap: schema,
@@ -68,10 +93,11 @@ Model output:
     final sample = {
       'teacher_message': 'Let us focus on one idea, then a quick check.',
       'understanding': 'PARTIAL',
-      'next_mode': 'LEARN',
-      'next_action': 'NONE',
-      'next_help_bias': 'UNCHANGED',
-      'turn_state': 'UNFINISHED',
+      'control': _control(
+        mode: 'LEARN',
+        step: 'CONTINUE',
+        turnFinished: false,
+      ),
     };
     final result = await validator.validateJson(
       schemaMap: schema,
@@ -86,7 +112,11 @@ Model output:
     final validator = SchemaValidator();
     final invalid = {
       'teacher_message': 'Try this.',
-      'turn_state': 'UNFINISHED',
+      'control': _control(
+        mode: 'REVIEW',
+        step: 'CONTINUE',
+        turnFinished: false,
+      ),
       'grading': null,
       'error_book_update': null,
       'evidence': {
@@ -97,9 +127,6 @@ Model output:
         'mt': <String>[],
       },
       'mastery_level': 'NOT_PASS',
-      'next_mode': 'REVIEW',
-      'next_action': 'NONE',
-      'next_help_bias': 'UNCHANGED',
     };
     final result = await validator.validateJson(
       schemaMap: schema,
@@ -115,9 +142,13 @@ Model output:
     final validator = SchemaValidator();
     final invalid = {
       'teacher_message': 'Try one more step.',
+      'control': _control(
+        mode: 'REVIEW',
+        step: 'CONTINUE',
+        turnFinished: false,
+      ),
       'difficulty_action': 'HOLD',
       'recommended_level': 'easy',
-      'turn_state': 'UNFINISHED',
       'question': {
         'text': 'What is 3 + 4?',
         'type_id': 'OTHER',
@@ -132,9 +163,6 @@ Model output:
         'mt': <String>[],
       },
       'mastery_level': 'NOT_PASS',
-      'next_mode': 'REVIEW',
-      'next_action': 'NONE',
-      'next_help_bias': 'UNCHANGED',
     };
     final result = await validator.validateJson(
       schemaMap: schema,
@@ -150,10 +178,14 @@ Model output:
     final validator = SchemaValidator();
     final valid = {
       'teacher_message': 'Please provide your final numeric result.',
+      'control': _control(
+        mode: 'REVIEW',
+        step: 'CONTINUE',
+        turnFinished: false,
+      ),
       'answer_state': 'PARTIAL_ATTEMPT',
       'difficulty_action': 'HOLD',
       'recommended_level': 'easy',
-      'turn_state': 'UNFINISHED',
       'question': {
         'text': 'What is 3 + 4?',
         'type_id': 'OTHER',
@@ -168,9 +200,6 @@ Model output:
         'mt': <String>[],
       },
       'mastery_level': 'NOT_PASS',
-      'next_mode': 'REVIEW',
-      'next_action': 'NONE',
-      'next_help_bias': 'UNCHANGED',
     };
     final result = await validator.validateJson(
       schemaMap: schema,

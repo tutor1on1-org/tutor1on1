@@ -12,6 +12,8 @@ import '../llm/llm_models.dart';
 import '../llm/llm_providers.dart';
 import '../llm/llm_service.dart';
 import '../llm/prompt_renderer.dart';
+import '../models/tutor_action.dart';
+import '../models/tutor_contract.dart';
 import '../llm/prompt_repository.dart';
 import 'llm_log_repository.dart';
 import 'settings_repository.dart';
@@ -166,6 +168,12 @@ class SessionService {
             kpKey: kpKey,
             title: Value(resolvedTitle),
             status: const Value('active'),
+            controlStateJson: Value(
+              TutorControlState.defaultForMode(TutorMode.learn).toJsonText(),
+            ),
+            controlStateUpdatedAt: Value(DateTime.now()),
+            evidenceStateJson: Value(TutorEvidenceState.initial().toJsonText()),
+            evidenceStateUpdatedAt: Value(DateTime.now()),
             syncId: Value(_uuid.v4()),
             syncUpdatedAt: Value(DateTime.now()),
           ),
@@ -302,6 +310,11 @@ class SessionService {
   }) async {
     final actionMode = _resolveActionMode(mode);
     final session = await _db.getSession(sessionId);
+    final controlState = _loadSessionControlState(
+      session,
+      fallbackMode: actionMode == 'review' ? TutorMode.review : TutorMode.learn,
+    );
+    final evidenceState = _loadSessionEvidenceState(session);
     final progress = session == null
         ? null
         : await _db.getProgress(
@@ -320,6 +333,7 @@ class SessionService {
       messages: messages,
       studentInput: studentInput,
       studentIntent: resolvedStudentIntent,
+      sessionControl: controlState,
     );
     final promptName = promptResolution.promptName;
     final history = _buildHistory(messages);
@@ -330,7 +344,7 @@ class SessionService {
     final prevJsonText = promptResolution.prevJson == null
         ? '{}'
         : jsonEncode(promptResolution.prevJson);
-    final lastEvidence = _extractLatestEvidence(messages);
+    final lastEvidence = evidenceState.lastEvidence;
     final lastEvidenceText = jsonEncode(
       lastEvidence ??
           {
@@ -343,19 +357,23 @@ class SessionService {
     );
     final masteryFromProgress =
         _questionLevelToMasteryLevel(progress?.questionLevel);
-    final masteryFromPrev = _normalizeMasteryLevel(
-      promptResolution.prevJson?['mastery_level'],
-    );
+    final masteryFromPrev =
+        evidenceState.lastMasteryLevel ??
+            _normalizeMasteryLevel(promptResolution.prevJson?['mastery_level']);
     final currentDifficultyLevel = _normalizeLevel(progress?.questionLevel) ??
         _masteryLevelToQuestionLevel(masteryFromPrev) ??
         'easy';
     final currentMasteryLevel =
         masteryFromProgress ?? masteryFromPrev ?? 'NOT_PASS';
-    final practiceHistorySummary = _buildPracticeHistorySummary(messages);
+    final practiceHistorySummary = _buildPracticeHistorySummary(
+      messages,
+      evidenceState: evidenceState,
+    );
     final errorBookSummary = _buildErrorBookSummary(
       messages: messages,
       progress: progress,
       previousJson: promptResolution.prevJson,
+      evidenceState: evidenceState,
     );
     final courseKey = _normalizeCourseKey(courseVersion.sourcePath);
     final studentPromptContext = await _db.resolveStudentPromptContext(
@@ -385,6 +403,11 @@ class SessionService {
       'kp_description': node.description,
       'conversation_history': history,
       'session_history': history,
+      'control_state_json': controlState.toJsonText(),
+      'evidence_state_json': evidenceState.toJsonText(),
+      'evidence_policy': evidenceState.policy,
+      'new_graded_review_evidence_available':
+          evidenceState.hasNewGradedReviewEvidence ? 'true' : 'false',
       'student_input': studentInput.trim(),
       'student_intent': resolvedStudentIntent,
       'help_bias': resolvedHelpBias,
@@ -613,6 +636,9 @@ class SessionService {
     required _StructuredPayloadResolution resolution,
     int? assistantMessageId,
   }) async {
+    final parsed = resolution.payload.parsedJson == null
+        ? null
+        : _tryDecodeJsonObject(resolution.payload.parsedJson!);
     if (assistantMessageId == null) {
       await _db.into(_db.chatMessages).insert(
             ChatMessagesCompanion.insert(
@@ -632,6 +658,27 @@ class SessionService {
         parsedJson: resolution.payload.parsedJson,
       );
     }
+    final session = await _db.getSession(request.sessionId);
+    final currentControl = _loadSessionControlState(
+      session,
+      fallbackMode:
+          request.actionMode == 'review' ? TutorMode.review : TutorMode.learn,
+    );
+    final nextControl =
+        TutorControlState.fromAssistantPayload(parsed) ?? currentControl;
+    final currentEvidence = _loadSessionEvidenceState(session);
+    final nextEvidence = TutorEvidenceState.updateFromAssistantPayload(
+      current: currentEvidence,
+      actionMode: request.actionMode,
+      parsed: parsed,
+    );
+    await _db.updateSessionContracts(
+      sessionId: request.sessionId,
+      controlStateJson: nextControl.toJsonText(),
+      controlStateUpdatedAt: DateTime.now(),
+      evidenceStateJson: nextEvidence.toJsonText(),
+      evidenceStateUpdatedAt: DateTime.now(),
+    );
     await _updateReviewDifficultyIfNeeded(
       actionMode: request.actionMode,
       studentId: request.llmContext.studentId,
@@ -678,6 +725,11 @@ class SessionService {
     void Function()? onPromptWarning,
   }) async {
     final session = await _db.getSession(sessionId);
+    final currentControl = _loadSessionControlState(
+      session,
+      fallbackMode: TutorMode.learn,
+    );
+    final evidenceState = _loadSessionEvidenceState(session);
     final progress = session == null
         ? null
         : await _db.getProgress(
@@ -687,9 +739,9 @@ class SessionService {
           );
     final messages = await _db.getMessagesForSession(sessionId);
     final cachedSummary = _buildCachedSummaryResult(
-      messages: messages,
       session: session,
       progress: progress,
+      evidenceState: evidenceState,
     );
     if (cachedSummary != null) {
       await _llmLogRepository.appendEntry(
@@ -712,7 +764,7 @@ class SessionService {
       );
     }
     final history = _buildHistory(messages);
-    final lastEvidence = _extractLatestEvidence(messages);
+    final lastEvidence = evidenceState.lastEvidence;
     final courseKey = _normalizeCourseKey(courseVersion.sourcePath);
     final studentPromptContext = await _db.resolveStudentPromptContext(
       teacherId: courseVersion.teacherId,
@@ -746,14 +798,22 @@ class SessionService {
       'student_summary': progress?.summaryText ?? session?.summaryText ?? '',
       'student_profile': studentPromptContext.profileText,
       'student_preferences': studentPromptContext.preferencesText,
+      'control_state_json':
+          currentControl.toJsonText(),
+      'evidence_state_json': evidenceState.toJsonText(),
+      'evidence_policy': evidenceState.policy,
+      'new_graded_review_evidence_available':
+          evidenceState.hasNewGradedReviewEvidence ? 'true' : 'false',
       'practice_history_summary': _buildPracticeHistorySummary(
         messages,
+        evidenceState: evidenceState,
         reviewOnly: true,
         maxMessages: 20,
       ),
       'error_book_summary': _buildErrorBookSummary(
         messages: messages,
         progress: progress,
+        evidenceState: evidenceState,
       ),
       'last_evidence': jsonEncode(
         lastEvidence ??
@@ -766,7 +826,9 @@ class SessionService {
             },
       ),
       'current_mastery_level':
-          _questionLevelToMasteryLevel(progress?.questionLevel) ?? 'NOT_PASS',
+          _questionLevelToMasteryLevel(progress?.questionLevel) ??
+              evidenceState.lastMasteryLevel ??
+              'NOT_PASS',
     };
     final renderResult = _renderWithHistoryLimit(
       template: template,
@@ -835,6 +897,13 @@ class SessionService {
           _masteryLevelToQuestionLevel(stabilizedMasteryLevel) ??
               masterLevel ??
               _masteryLevelToQuestionLevel(masteryLevel);
+      final nextControl =
+          TutorControlState.fromAssistantPayload(parsed) ?? currentControl;
+      final nextEvidence = TutorEvidenceState.updateFromAssistantPayload(
+        current: evidenceState,
+        actionMode: 'summary',
+        parsed: parsed,
+      );
 
       await _db.transaction(() async {
         final studentId = session?.studentId;
@@ -862,6 +931,10 @@ class SessionService {
             summaryRawResponse: Value(rawResponse),
             summaryValid: Value(summaryValid),
             status: const Value('active'),
+            controlStateJson: Value(nextControl.toJsonText()),
+            controlStateUpdatedAt: Value(DateTime.now()),
+            evidenceStateJson: Value(nextEvidence.toJsonText()),
+            evidenceStateUpdatedAt: Value(DateTime.now()),
           ),
         );
 
@@ -1019,7 +1092,44 @@ class SessionService {
         'Response preview: ${_summarizeResponseForError(responseText)}',
       );
     }
+    final control = parsed['control'];
+    if (control is! Map<String, dynamic>) {
+      throw StateError(
+        'LLM response for "$promptName" is missing "control". '
+        'Response preview: ${_summarizeResponseForError(responseText)}',
+      );
+    }
+    final controlState = TutorControlState.fromJson(control);
+    if (controlState == null) {
+      throw StateError(
+        'LLM response for "$promptName" has invalid "control". '
+        'Response preview: ${_summarizeResponseForError(responseText)}',
+      );
+    }
+    if (!controlState.turnFinished &&
+        (controlState.allowedActions.isNotEmpty ||
+            controlState.recommendedAction != null)) {
+      throw StateError(
+        'LLM response for "$promptName" cannot expose finished actions while turn_finished=false. '
+        'Response preview: ${_summarizeResponseForError(responseText)}',
+      );
+    }
+    if (controlState.recommendedAction != null &&
+        !controlState.allowedActions.contains(controlState.recommendedAction)) {
+      throw StateError(
+        'LLM response for "$promptName" has recommended_action outside allowed_actions. '
+        'Response preview: ${_summarizeResponseForError(responseText)}',
+      );
+    }
     if (promptName == 'review_init') {
+      if (controlState.mode != TutorMode.review ||
+          controlState.step != TutorTurnStep.continueTurn ||
+          controlState.turnFinished) {
+        throw StateError(
+          'LLM response for "$promptName" has invalid review-init control state. '
+          'Response preview: ${_summarizeResponseForError(responseText)}',
+        );
+      }
       final question = parsed['question'];
       if (question is! Map) {
         throw StateError(
@@ -1079,14 +1189,35 @@ class SessionService {
         );
       }
       final question = parsed['question'];
-      if (question is! Map) {
+      if (question != null && question is! Map) {
         throw StateError(
           'LLM response for "$promptName" has invalid "question". '
           'Response preview: ${_summarizeResponseForError(responseText)}',
         );
       }
-      final turnState = _normalizeTurnState(parsed['turn_state']);
-      if (answerState == 'FINAL_ANSWER' && turnState != 'FINISHED') {
+      if (!controlState.turnFinished && question is! Map) {
+        throw StateError(
+          'LLM response for "$promptName" requires a question while the review turn is still active. '
+          'Response preview: ${_summarizeResponseForError(responseText)}',
+        );
+      }
+      if (question is Map) {
+        final questionText = question['text'];
+        final questionType = question['type_id'];
+        if (questionText is! String || questionText.trim().isEmpty) {
+          throw StateError(
+            'LLM response for "$promptName" is missing question.text. '
+            'Response preview: ${_summarizeResponseForError(responseText)}',
+          );
+        }
+        if (questionType is! String || questionType.trim().isEmpty) {
+          throw StateError(
+            'LLM response for "$promptName" is missing question.type_id. '
+            'Response preview: ${_summarizeResponseForError(responseText)}',
+          );
+        }
+      }
+      if (answerState == 'FINAL_ANSWER' && !controlState.turnFinished) {
         throw StateError(
           'LLM response for "$promptName" requires turn_state=FINISHED when answer_state=FINAL_ANSWER. '
           'Response preview: ${_summarizeResponseForError(responseText)}',
@@ -1104,6 +1235,12 @@ class SessionService {
         );
       }
     }
+    if (promptName == 'summary' && !controlState.turnFinished) {
+      throw StateError(
+        'LLM response for "$promptName" must be a finished control state. '
+        'Response preview: ${_summarizeResponseForError(responseText)}',
+      );
+    }
   }
 
   Set<String> _requiredStructuredKeys(String promptName) {
@@ -1113,25 +1250,23 @@ class SessionService {
         return {
           'teacher_message',
           'understanding',
-          'next_mode',
-          'turn_state',
+          'control',
         };
       case 'review_init':
         return {
           'teacher_message',
-          'turn_state',
+          'control',
           'question',
           'difficulty_level',
           'grading',
           'error_book_update',
           'evidence',
           'mastery_level',
-          'next_mode',
         };
       case 'review_cont':
         return {
           'teacher_message',
-          'turn_state',
+          'control',
           'answer_state',
           'difficulty_action',
           'recommended_level',
@@ -1140,11 +1275,11 @@ class SessionService {
           'error_book_update',
           'evidence',
           'mastery_level',
-          'next_mode',
         };
       case 'summary':
         return {
           'teacher_message',
+          'control',
           'mastery_level',
           'next_step',
         };
@@ -1383,6 +1518,7 @@ class SessionService {
     required List<ChatMessage> messages,
     required String studentInput,
     required String studentIntent,
+    required TutorControlState sessionControl,
   }) {
     final normalized = mode.trim().toLowerCase();
     if (normalized == 'learn_init' ||
@@ -1407,15 +1543,12 @@ class SessionService {
         messages: messages,
         actionMode: actionMode,
       );
-      final previousTurnState =
-          _normalizeTurnState(previous?.json?['turn_state']);
       String promptName;
+      final continueRequested = sessionControl.step == TutorTurnStep.continueTurn;
       if (actionMode == 'learn') {
-        promptName =
-            previousTurnState == 'UNFINISHED' ? 'learn_cont' : 'learn_init';
+        promptName = continueRequested ? 'learn_cont' : 'learn_init';
       } else {
-        promptName =
-            previousTurnState == 'UNFINISHED' ? 'review_cont' : 'review_init';
+        promptName = continueRequested ? 'review_cont' : 'review_init';
       }
       return _TutorPromptResolution(
         promptName: promptName,
@@ -1466,8 +1599,25 @@ class SessionService {
     return _buildHistory(messages.sublist(from));
   }
 
+  TutorControlState _loadSessionControlState(
+    ChatSession? session, {
+    required TutorMode fallbackMode,
+  }) {
+    final stored = TutorControlState.fromJsonText(session?.controlStateJson);
+    if (stored != null) {
+      return stored;
+    }
+    return TutorControlState.defaultForMode(fallbackMode);
+  }
+
+  TutorEvidenceState _loadSessionEvidenceState(ChatSession? session) {
+    return TutorEvidenceState.fromJsonText(session?.evidenceStateJson) ??
+        TutorEvidenceState.initial();
+  }
+
   String _buildPracticeHistorySummary(
     List<ChatMessage> messages, {
+    TutorEvidenceState? evidenceState,
     bool reviewOnly = false,
     int maxMessages = 6,
   }) {
@@ -1481,6 +1631,9 @@ class SessionService {
         ? source.sublist(source.length - maxMessages)
         : source;
     if (tail.isEmpty) {
+      if (reviewOnly && evidenceState?.hasNewGradedReviewEvidence == true) {
+        return 'A graded review happened recently, but the raw review history is unavailable on this device.';
+      }
       return 'No practice history yet.';
     }
     return _buildHistory(tail);
@@ -1490,6 +1643,7 @@ class SessionService {
     required List<ChatMessage> messages,
     ProgressEntry? progress,
     Map<String, dynamic>? previousJson,
+    TutorEvidenceState? evidenceState,
   }) {
     final aggregated = _aggregateErrorBook(messages);
     if (aggregated != null && aggregated.isNotEmpty) {
@@ -1498,6 +1652,14 @@ class SessionService {
     final errorBookUpdate = previousJson?['error_book_update'];
     if (errorBookUpdate is Map<String, dynamic> && errorBookUpdate.isNotEmpty) {
       return jsonEncode(errorBookUpdate);
+    }
+    if (evidenceState?.lastEvidence != null) {
+      return jsonEncode(
+        <String, dynamic>{
+          'source': 'evidence_state',
+          'last_evidence': evidenceState!.lastEvidence,
+        },
+      );
     }
     if ((progress?.summaryText ?? '').trim().isNotEmpty) {
       return progress!.summaryText!.trim();
@@ -1586,32 +1748,6 @@ class SessionService {
     return 'OTHER';
   }
 
-  Map<String, dynamic>? _extractLatestEvidence(List<ChatMessage> messages) {
-    for (var i = messages.length - 1; i >= 0; i--) {
-      final message = messages[i];
-      if (message.role != 'assistant') {
-        continue;
-      }
-      final parsed = _extractMessageJson(message);
-      final evidence = parsed?['evidence'];
-      if (evidence is Map<String, dynamic>) {
-        return evidence;
-      }
-    }
-    return null;
-  }
-
-  String? _normalizeTurnState(Object? value) {
-    if (value is! String) {
-      return null;
-    }
-    final normalized = value.trim().toUpperCase();
-    if (normalized == 'UNFINISHED' || normalized == 'FINISHED') {
-      return normalized;
-    }
-    return null;
-  }
-
   String _resolveStudentIntent({
     required String? requestedIntent,
     required String studentInput,
@@ -1686,7 +1822,8 @@ class SessionService {
       kpKey: kpKey,
     );
     final currentLevel = _normalizeLevel(progress?.questionLevel) ?? 'easy';
-    final turnState = _normalizeTurnState(parsed['turn_state']);
+    final controlState = TutorControlState.fromAssistantPayload(parsed);
+    final turnFinished = controlState?.turnFinished ?? false;
     final grading = parsed['grading'];
     final isCorrect = grading is Map<String, dynamic> &&
         grading['is_correct'] is bool &&
@@ -1700,7 +1837,7 @@ class SessionService {
         studentIntent == 'TOO_EASY' || studentIntent == 'BORED';
     if (studentWantsHarder) {
       nextLevel = _nextDifficultyLevel(currentLevel);
-    } else if (turnState == 'FINISHED' && isCorrect) {
+    } else if (turnFinished && isCorrect) {
       nextLevel = _nextDifficultyLevel(currentLevel);
     } else if (difficultyAction == 'DOWN') {
       nextLevel = _previousDifficultyLevel(currentLevel);
@@ -1930,21 +2067,14 @@ class SessionService {
   }
 
   SummarizeResult? _buildCachedSummaryResult({
-    required List<ChatMessage> messages,
     required ChatSession? session,
     required ProgressEntry? progress,
+    required TutorEvidenceState evidenceState,
   }) {
-    if (messages.isEmpty || session == null) {
+    if (session == null) {
       return null;
     }
-    final lastSummaryIndex = _findLastSummaryAssistantIndex(messages);
-    if (lastSummaryIndex == null) {
-      return null;
-    }
-    if (_hasGradedReviewAfter(
-      messages: messages,
-      summaryIndex: lastSummaryIndex,
-    )) {
+    if (evidenceState.hasNewGradedReviewEvidence) {
       return null;
     }
     final summaryText =
@@ -1965,47 +2095,6 @@ class SessionService {
       masterLevel: _normalizeLevel(progress?.questionLevel),
       nextStep: lit == true ? 'MOVE_ON' : 'CONTINUE_REVIEW',
     );
-  }
-
-  int? _findLastSummaryAssistantIndex(List<ChatMessage> messages) {
-    for (var i = messages.length - 1; i >= 0; i--) {
-      final message = messages[i];
-      if (message.role != 'assistant') {
-        continue;
-      }
-      if (_resolveActionMode(message.action ?? '') == 'summary') {
-        return i;
-      }
-    }
-    return null;
-  }
-
-  bool _hasGradedReviewAfter({
-    required List<ChatMessage> messages,
-    required int summaryIndex,
-  }) {
-    if (summaryIndex >= messages.length - 1) {
-      return false;
-    }
-    for (var i = summaryIndex + 1; i < messages.length; i++) {
-      final message = messages[i];
-      if (message.role != 'assistant') {
-        continue;
-      }
-      if (_resolveActionMode(message.action ?? '') != 'review') {
-        continue;
-      }
-      final parsed = _extractMessageJson(message);
-      if (parsed == null) {
-        continue;
-      }
-      final turnState = _normalizeTurnState(parsed['turn_state']);
-      final grading = parsed['grading'];
-      if (turnState == 'FINISHED' && grading is Map<String, dynamic>) {
-        return true;
-      }
-    }
-    return false;
   }
 
   Future<Map<String, dynamic>?> _loadStructuredSchema(String promptName) async {

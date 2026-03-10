@@ -380,6 +380,89 @@ LlmCallResult _llmOk({
   );
 }
 
+Map<String, Object?> _control({
+  required String mode,
+  required String step,
+  required bool turnFinished,
+  String helpBias = 'UNCHANGED',
+  List<String> allowedActions = const <String>[],
+  String? recommendedAction,
+}) {
+  return <String, Object?>{
+    'version': 1,
+    'mode': mode,
+    'step': step,
+    'turn_finished': turnFinished,
+    'help_bias': helpBias,
+    'allowed_actions': allowedActions,
+    'recommended_action': recommendedAction,
+  };
+}
+
+Map<String, Object?> _learnUnfinishedControl({
+  String helpBias = 'UNCHANGED',
+}) {
+  return _control(
+    mode: 'LEARN',
+    step: 'CONTINUE',
+    turnFinished: false,
+    helpBias: helpBias,
+  );
+}
+
+Map<String, Object?> _reviewUnfinishedControl({
+  String helpBias = 'UNCHANGED',
+}) {
+  return _control(
+    mode: 'REVIEW',
+    step: 'CONTINUE',
+    turnFinished: false,
+    helpBias: helpBias,
+  );
+}
+
+Map<String, Object?> _reviewFinishedControl({
+  String mode = 'REVIEW',
+  String helpBias = 'UNCHANGED',
+  List<String> allowedActions = const <String>[
+    'NEXT_QUESTION',
+    'LEARN',
+    'SUMMARIZE',
+    'PAUSE',
+  ],
+  String recommendedAction = 'NEXT_QUESTION',
+}) {
+  return _control(
+    mode: mode,
+    step: 'NEW',
+    turnFinished: true,
+    helpBias: helpBias,
+    allowedActions: allowedActions,
+    recommendedAction: recommendedAction,
+  );
+}
+
+Map<String, Object?> _learnFinishedControl({
+  String mode = 'LEARN',
+  String helpBias = 'UNCHANGED',
+  List<String> allowedActions = const <String>[
+    'CONTINUE_LEARNING',
+    'TRY_QUESTION',
+    'SUMMARIZE',
+    'PAUSE',
+  ],
+  String recommendedAction = 'CONTINUE_LEARNING',
+}) {
+  return _control(
+    mode: mode,
+    step: 'NEW',
+    turnFinished: true,
+    helpBias: helpBias,
+    allowedActions: allowedActions,
+    recommendedAction: recommendedAction,
+  );
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -418,8 +501,7 @@ void main() {
     final response = jsonEncode(<String, Object?>{
       'teacher_message': 'Great start. Let us continue.',
       'understanding': 'PARTIAL',
-      'next_mode': 'LEARN',
-      'turn_state': 'UNFINISHED',
+      'control': _learnUnfinishedControl(),
     });
     llmService.queueCall(
       Future<LlmCallResult>.value(
@@ -478,7 +560,7 @@ void main() {
               parsedJson: Value(
                 jsonEncode(<String, Object?>{
                   'teacher_message': 'Check your sign handling.',
-                  'turn_state': 'FINISHED',
+                  'control': _reviewFinishedControl(),
                   'answer_state': 'FINAL_ANSWER',
                   'question': {
                     'text': 'Solve x + 2 = 5',
@@ -503,7 +585,6 @@ void main() {
                     'mt': <String>['sign_error'],
                   },
                   'mastery_level': 'NOT_PASS',
-                  'next_mode': 'REVIEW',
                 }),
               ),
               action: const Value('review'),
@@ -523,8 +604,7 @@ void main() {
             responseText: jsonEncode(<String, Object?>{
               'teacher_message': 'Let us fix the sign rule together.',
               'understanding': 'PARTIAL',
-              'next_mode': 'LEARN',
-              'turn_state': 'UNFINISHED',
+              'control': _learnUnfinishedControl(),
             }),
             callHash: 'intent_error_book_call',
           ),
@@ -561,9 +641,8 @@ void main() {
         _llmOk(
           responseText: jsonEncode(<String, Object?>{
             'teacher_message': 'Second pass.',
-            'understanding': 'GOOD',
-            'next_mode': 'LEARN',
-            'turn_state': 'UNFINISHED',
+            'understanding': 'PARTIAL',
+            'control': _learnUnfinishedControl(),
           }),
           callHash: 'call_learn_2',
         ),
@@ -593,8 +672,7 @@ void main() {
         responseText: jsonEncode(<String, Object?>{
           'teacher_message': 'Single flight response.',
           'understanding': 'PARTIAL',
-          'next_mode': 'LEARN',
-          'turn_state': 'UNFINISHED',
+          'control': _learnUnfinishedControl(),
         }),
         callHash: 'call_learn_pending',
       ),
@@ -628,10 +706,10 @@ void main() {
               parsedJson: Value(
                 jsonEncode(<String, Object?>{
                   'teacher_message': 'Completed question feedback.',
+                  'control': _reviewFinishedControl(),
                   'answer_state': 'FINAL_ANSWER',
                   'difficulty_action': 'HOLD',
                   'recommended_level': 'medium',
-                  'turn_state': 'FINISHED',
                   'question': {
                     'text': 'Solve 2x + 1 = 9',
                     'type_id': 'ALGEBRA',
@@ -650,7 +728,6 @@ void main() {
                     'mt': <String>[],
                   },
                   'mastery_level': 'PASS_MEDIUM',
-                  'next_mode': 'REVIEW',
                 }),
               ),
               action: const Value('review'),
@@ -662,7 +739,7 @@ void main() {
           _llmOk(
             responseText: jsonEncode(<String, Object?>{
               'teacher_message': 'Here is your next question: ...',
-              'turn_state': 'UNFINISHED',
+              'control': _reviewUnfinishedControl(),
               'question': {
                 'text': 'Solve 2x + 1 = 9',
                 'type_id': 'ALGEBRA',
@@ -678,9 +755,6 @@ void main() {
                 'mt': <String>[],
               },
               'mastery_level': 'PASS_MEDIUM',
-              'next_mode': 'REVIEW',
-              'next_action': 'NONE',
-              'next_help_bias': 'UNCHANGED',
             }),
             callHash: 'review_init_after_finish',
           ),
@@ -721,8 +795,7 @@ void main() {
           responseText: jsonEncode(<String, Object?>{
             'teacher_message': 'Recovered after retry.',
             'understanding': 'PARTIAL',
-            'next_mode': 'LEARN',
-            'turn_state': 'UNFINISHED',
+            'control': _learnUnfinishedControl(),
           }),
           callHash: 'good_call',
         ),
@@ -779,9 +852,11 @@ void main() {
         _llmOk(
           responseText: jsonEncode(<String, Object?>{
             'teacher_message': 'Fallback model succeeded.',
-            'understanding': 'GOOD',
-            'next_mode': 'LEARN',
-            'turn_state': 'FINISHED',
+            'understanding': 'READY',
+            'control': _learnFinishedControl(
+              mode: 'REVIEW',
+              recommendedAction: 'TRY_QUESTION',
+            ),
           }),
           model: 'gpt-5.2-2025-12-11',
           callHash: 'retry_3',
@@ -913,10 +988,12 @@ void main() {
                 jsonEncode(<String, Object?>{
                   'teacher_message':
                       'Do you want another question or summarize?',
+                  'control': _reviewFinishedControl(
+                    recommendedAction: 'SUMMARIZE',
+                  ),
                   'answer_state': 'FINAL_ANSWER',
                   'difficulty_action': 'HOLD',
                   'recommended_level': 'hard',
-                  'turn_state': 'FINISHED',
                   'question': null,
                   'grading': null,
                   'error_book_update': null,
@@ -928,7 +1005,6 @@ void main() {
                     'mt': <String>[],
                   },
                   'mastery_level': 'PASS_HARD',
-                  'next_mode': 'REVIEW',
                 }),
               ),
               action: const Value('review'),
@@ -975,10 +1051,10 @@ void main() {
               parsedJson: Value(
                 jsonEncode(<String, Object?>{
                   'teacher_message': 'Recent review result',
+                  'control': _reviewFinishedControl(),
                   'answer_state': 'FINAL_ANSWER',
                   'difficulty_action': 'HOLD',
                   'recommended_level': 'hard',
-                  'turn_state': 'FINISHED',
                   'question': null,
                   'grading': {
                     'is_correct': false,
@@ -994,7 +1070,6 @@ void main() {
                     'mt': <String>[],
                   },
                   'mastery_level': 'PASS_HARD',
-                  'next_mode': 'REVIEW',
                 }),
               ),
               action: const Value('review'),
@@ -1005,6 +1080,17 @@ void main() {
           _llmOk(
             responseText: jsonEncode(<String, Object?>{
               'teacher_message': 'Need major relearn.',
+              'control': _control(
+                mode: 'REVIEW',
+                step: 'NEW',
+                turnFinished: true,
+                allowedActions: const <String>[
+                  'NEXT_QUESTION',
+                  'LEARN',
+                  'PAUSE',
+                ],
+                recommendedAction: 'NEXT_QUESTION',
+              ),
               'mastery_level': 'PASS_EASY',
               'next_step': 'CONTINUE_REVIEW',
             }),
@@ -1039,6 +1125,13 @@ void main() {
     );
     final summaryPayload = jsonEncode(<String, Object?>{
       'teacher_message': 'Student can move to next topic.',
+      'control': _control(
+        mode: 'REVIEW',
+        step: 'NEW',
+        turnFinished: true,
+        allowedActions: const <String>['PAUSE'],
+        recommendedAction: 'PAUSE',
+      ),
       'mastery_level': 'PASS_HARD',
       'next_step': 'MOVE_ON',
     });
