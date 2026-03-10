@@ -840,32 +840,42 @@ class SessionService {
     }
     final rendered = renderResult.rendered;
 
+    final context = LlmCallContext(
+      teacherId: courseVersion.teacherId,
+      studentId: session?.studentId,
+      courseVersionId: courseVersion.id,
+      sessionId: sessionId,
+      kpKey: node.kpKey,
+      action: 'summary',
+    );
     final handle = _llmService.startCall(
       promptName: 'summary',
       renderedPrompt: rendered,
       schemaMap: schema,
       modelOverride: modelOverride,
-      context: LlmCallContext(
-        teacherId: courseVersion.teacherId,
-        studentId: session?.studentId,
-        courseVersionId: courseVersion.id,
-        sessionId: sessionId,
-        kpKey: node.kpKey,
-        action: 'summary',
-      ),
+      context: context,
     );
     final future = handle.future.then((result) async {
       if (result.responseText.trim().isEmpty) {
         throw StateError('LLM returned an empty response.');
       }
-
-      final parsed = _tryDecodeJsonObject(result.responseText);
-      final summaryText = parsed?['summary_text'];
-      final teacherMessage = parsed?['teacher_message'];
-      final lit = parsed?['lit'];
-      final masteryLevel = _normalizeMasteryLevel(parsed?['mastery_level']);
-      final masterLevel = _normalizeLevel(parsed?['master_level']);
-      final nextStep = _normalizeNextStep(parsed?['next_step']);
+      final resolution = await _resolveStructuredPayload(
+        promptName: 'summary',
+        renderedPrompt: rendered,
+        modelOverride: modelOverride,
+        context: context,
+        schemaMap: schema,
+        responseText: result.responseText,
+        result: result,
+      );
+      final parsedJsonText = resolution.payload.parsedJson;
+      final parsed =
+          parsedJsonText == null ? null : _tryDecodeJsonObject(parsedJsonText);
+      if (parsed == null) {
+        throw StateError('Structured summary payload is missing parsed JSON.');
+      }
+      final masteryLevel = _normalizeMasteryLevel(parsed['mastery_level']);
+      final nextStep = _normalizeNextStep(parsed['next_step']);
       final currentMasteryLevel =
           _questionLevelToMasteryLevel(progress?.questionLevel);
       final stabilizedMasteryLevel = _stabilizeSummaryMastery(
@@ -873,30 +883,23 @@ class SessionService {
         currentMasteryLevel: currentMasteryLevel,
         lastEvidence: lastEvidence,
       );
-      final litPercent = _masteryLevelToPercent(stabilizedMasteryLevel) ??
-          _masterLevelToPercent(masterLevel);
-      final resolvedLit =
-          lit is bool ? lit : (litPercent == null ? null : litPercent >= 100);
-      final summaryValue =
-          summaryText is String && summaryText.trim().isNotEmpty
-              ? summaryText
-              : (teacherMessage is String && teacherMessage.trim().isNotEmpty
-                  ? teacherMessage
-                  : null);
-      final summary = summaryValue ?? result.responseText;
-      final parsedJson = parsed == null ? null : jsonEncode(parsed);
-      final summaryValid = (summaryText is String &&
-              summaryText.trim().isNotEmpty &&
-              lit is bool &&
-              masterLevel != null) ||
-          (teacherMessage is String &&
-              teacherMessage.trim().isNotEmpty &&
-              stabilizedMasteryLevel != null);
-      final rawResponse = summaryValid ? null : result.responseText;
+      if (stabilizedMasteryLevel == null) {
+        throw StateError(
+          'Structured summary payload is missing a valid mastery level.',
+        );
+      }
+      final litPercent = _masteryLevelToPercent(stabilizedMasteryLevel);
+      if (litPercent == null) {
+        throw StateError(
+          'Structured summary payload could not be converted to lit percent.',
+        );
+      }
+      final resolvedLit = litPercent >= 100;
+      final summary = resolution.payload.displayText;
+      final summaryValid = true;
+      final rawResponse = null;
       final questionLevel =
-          _masteryLevelToQuestionLevel(stabilizedMasteryLevel) ??
-              masterLevel ??
-              _masteryLevelToQuestionLevel(masteryLevel);
+          _masteryLevelToQuestionLevel(stabilizedMasteryLevel);
       final nextControl =
           TutorControlState.fromAssistantPayload(parsed) ?? currentControl;
       final nextEvidence = TutorEvidenceState.updateFromAssistantPayload(
@@ -943,8 +946,8 @@ class SessionService {
                 sessionId: sessionId,
                 role: 'assistant',
                 content: summary,
-                rawContent: Value(result.responseText),
-                parsedJson: Value(parsedJson),
+                rawContent: Value(resolution.payload.rawText),
+                parsedJson: Value(resolution.payload.parsedJson),
                 action: const Value('summary'),
               ),
             );
@@ -953,11 +956,11 @@ class SessionService {
 
       return SummarizeResult(
         success: true,
-        message: summaryValid ? 'Summary stored.' : 'Summary saved (unparsed).',
+        message: 'Summary stored.',
         lit: resolvedLit,
         litPercent: litPercent,
         summaryText: summary,
-        masterLevel: masterLevel ?? questionLevel,
+        masterLevel: questionLevel,
         masteryLevel: stabilizedMasteryLevel,
         nextStep: nextStep,
       );
@@ -1426,19 +1429,6 @@ class SessionService {
       case 'PASS_MEDIUM':
         return 66;
       case 'PASS_HARD':
-        return 100;
-      default:
-        return null;
-    }
-  }
-
-  int? _masterLevelToPercent(String? masterLevel) {
-    switch (masterLevel) {
-      case 'easy':
-        return 33;
-      case 'medium':
-        return 66;
-      case 'hard':
         return 100;
       default:
         return null;

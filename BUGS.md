@@ -119,3 +119,8 @@ Last updated: 2026-03-09
 - Symptom: review answers can auto-switch to `New Learn` before the LLM reply arrives, and summary can claim "no new evidence" even after a correct answer on another device or after sync/import.
 - Root cause: the app inferred control flow (`new/continue`, mode, finished-turn choices) and evidence state by scanning `chat_messages` fields like `action`, `parsed_json`, `turn_state`, and review payload history; sync/import could strip or degrade those message fields, so the app silently rewrote the user's visible state and injected fake-zero summary evidence.
 - Prevention: keep tutor control state and evidence state as explicit session-level durable contracts, sync them separately from chat history, make prompts return one canonical `control` object, and let visible labels map directly to prompt names without hidden history-based rewrites.
+
+24. Summary must use the shared structured tutor payload pipeline
+- Symptom: pressing `Summary` can show `Summary saved (unparsed)` even though the reply should have produced a normal pass/fail result.
+- Root cause: `startSummarize()` was still manually reparsing raw `responseText` and treating malformed structured output as a successful but "unparsed" summary, instead of going through the same validated/retryable structured payload resolver used by `learn_*` and `review_*`.
+- Prevention: make `summary` use `_resolveStructuredPayload(...)` and the parsed payload returned by the validator/retry pipeline; malformed summary JSON should retry or fail, not silently save as a pseudo-success.

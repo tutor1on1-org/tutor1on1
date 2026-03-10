@@ -884,6 +884,78 @@ void main() {
     expect(retryLogs.last.attempt, equals(2));
   });
 
+  test(
+    'startSummarize retries structured parse failure instead of saving unparsed summary',
+    () async {
+      final fixture = await _createTutorFixture(
+        db: db,
+        service: service,
+      );
+      llmService.queueCall(
+        Future<LlmCallResult>.value(
+          _llmOk(
+            responseText: 'not valid json',
+            callHash: 'summary_retry_bad',
+          ),
+        ),
+      );
+      llmService.queueCall(
+        Future<LlmCallResult>.value(
+          _llmOk(
+            responseText: jsonEncode(<String, Object?>{
+              'teacher_message': 'Keep relearning this skill before more review.',
+              'control': _control(
+                mode: 'LEARN',
+                step: 'NEW',
+                turnFinished: true,
+                allowedActions: const <String>[
+                  'CONTINUE_LEARNING',
+                  'TRY_QUESTION',
+                  'PAUSE',
+                ],
+                recommendedAction: 'CONTINUE_LEARNING',
+              ),
+              'mastery_level': 'NOT_PASS',
+              'next_step': 'RELEARN',
+            }),
+            callHash: 'summary_retry_good',
+          ),
+        ),
+      );
+
+      final handle = await service.startSummarize(
+        sessionId: fixture.sessionId,
+        courseVersion: fixture.courseVersion,
+        node: fixture.node,
+      );
+      final result = await handle.future;
+
+      expect(result.success, isTrue);
+      expect(
+        result.summaryText,
+        equals('Keep relearning this skill before more review.'),
+      );
+      expect(result.litPercent, equals(0));
+      expect(llmService.callInvocations.length, equals(2));
+
+      final retryLogs = llmLogRepository.entries
+          .where((entry) => entry.status == 'retry')
+          .toList();
+      expect(retryLogs, isNotEmpty);
+
+      final session = await db.getSession(fixture.sessionId);
+      expect(session, isNotNull);
+      expect(session!.summaryValid, isTrue);
+      expect(session.summaryRawResponse, isNull);
+
+      final summaryMessages = await db.getMessagesForSession(fixture.sessionId);
+      final summary = summaryMessages.last;
+      expect(summary.action, equals('summary'));
+      expect(summary.rawContent, isNotNull);
+      expect(summary.parsedJson, isNotNull);
+    },
+  );
+
   test('startSummarize returns cached summary without LLM call', () async {
     final fixture = await _createTutorFixture(
       db: db,
