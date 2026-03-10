@@ -1885,6 +1885,21 @@ class SessionService {
     }
   }
 
+  String? _percentToMasteryLevel(int? litPercent) {
+    switch (litPercent) {
+      case 100:
+        return 'PASS_HARD';
+      case 66:
+        return 'PASS_MEDIUM';
+      case 33:
+        return 'PASS_EASY';
+      case 0:
+        return 'NOT_PASS';
+      default:
+        return null;
+    }
+  }
+
   Future<String> _loadLectureTextIfPresent({
     required CourseVersion courseVersion,
     required String kpKey,
@@ -2072,9 +2087,16 @@ class SessionService {
     if (summaryText.isEmpty) {
       return null;
     }
-    final masteryLevel = _questionLevelToMasteryLevel(progress?.questionLevel);
+    final cachedLitPercent =
+        progress?.litPercent ?? session.summaryLitPercent;
+    final masteryLevel =
+        _questionLevelToMasteryLevel(progress?.questionLevel) ??
+        _percentToMasteryLevel(cachedLitPercent);
     final litPercent = _masteryLevelToPercent(masteryLevel);
-    final lit = litPercent == null ? null : litPercent >= 100;
+    if (litPercent == null) {
+      return null;
+    }
+    final lit = litPercent >= 100;
     return SummarizeResult(
       success: true,
       message: 'Summary unchanged. Reused cached result.',

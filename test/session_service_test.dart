@@ -1013,6 +1013,91 @@ void main() {
   });
 
   test(
+    'startSummarize bypasses cache when cached summary has no mastery result',
+    () async {
+      final fixture = await _createTutorFixture(
+        db: db,
+        service: service,
+      );
+      await (db.update(db.chatSessions)
+            ..where((tbl) => tbl.id.equals(fixture.sessionId)))
+          .write(
+        const ChatSessionsCompanion(
+          summaryText: Value('Old summary without mastery'),
+          summaryLit: Value(null),
+          summaryLitPercent: Value(null),
+        ),
+      );
+
+      llmService.queueCall(
+        Future<LlmCallResult>.value(
+          _llmOk(
+            responseText: jsonEncode(<String, Object?>{
+              'teacher_message': 'Student is not yet secure on this skill.',
+              'control': _control(
+                mode: 'REVIEW',
+                step: 'NEW',
+                turnFinished: true,
+                allowedActions: const <String>[
+                  'NEXT_QUESTION',
+                  'PAUSE',
+                ],
+                recommendedAction: 'NEXT_QUESTION',
+              ),
+              'mastery_level': 'NOT_PASS',
+              'next_step': 'CONTINUE_REVIEW',
+            }),
+            callHash: 'summary_cache_fallback',
+          ),
+        ),
+      );
+
+      final handle = await service.startSummarize(
+        sessionId: fixture.sessionId,
+        courseVersion: fixture.courseVersion,
+        node: fixture.node,
+      );
+      final result = await handle.future;
+
+      expect(result.success, isTrue);
+      expect(result.litPercent, equals(0));
+      expect(result.message, equals('Summary stored.'));
+      expect(llmService.callInvocations.length, equals(1));
+    },
+  );
+
+  test(
+    'startSummarize reuses cached session summary percent when progress row is absent',
+    () async {
+      final fixture = await _createTutorFixture(
+        db: db,
+        service: service,
+      );
+      await (db.update(db.chatSessions)
+            ..where((tbl) => tbl.id.equals(fixture.sessionId)))
+          .write(
+        const ChatSessionsCompanion(
+          summaryText: Value('Session cached summary'),
+          summaryLit: Value(true),
+          summaryLitPercent: Value(100),
+        ),
+      );
+
+      final handle = await service.startSummarize(
+        sessionId: fixture.sessionId,
+        courseVersion: fixture.courseVersion,
+        node: fixture.node,
+      );
+      final result = await handle.future;
+
+      expect(result.success, isTrue);
+      expect(result.message, equals('Summary unchanged. Reused cached result.'));
+      expect(result.litPercent, equals(100));
+      expect(llmService.callInvocations, isEmpty);
+    },
+  );
+
+  test(
     'startSummarize reuses cache when no graded review happened after last summary',
     () async {
       final fixture = await _createTutorFixture(
