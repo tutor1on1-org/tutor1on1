@@ -124,3 +124,8 @@ Last updated: 2026-03-09
 - Symptom: pressing `Summary` can show `Summary saved (unparsed)` even though the reply should have produced a normal pass/fail result.
 - Root cause: `startSummarize()` was still manually reparsing raw `responseText` and treating malformed structured output as a successful but "unparsed" summary, instead of going through the same validated/retryable structured payload resolver used by `learn_*` and `review_*`.
 - Prevention: make `summary` use `_resolveStructuredPayload(...)` and the parsed payload returned by the validator/retry pipeline; malformed summary JSON should retry or fail, not silently save as a pseudo-success.
+
+25. Summary cache must not claim success without a concrete mastery result
+- Symptom: pressing `Summary` can still show `Summary saved (unparsed)` in a current build, even after the structured summary parser was unified.
+- Root cause: `startSummarize()` had a cached-summary early return that reused old summary text when no new graded review evidence existed, but that cache path derived mastery only from `progress.questionLevel`; when cached text existed without a stored level/percent, it returned `success=true` with `litPercent=null`, which reactivated the UI's unparsed-success branch.
+- Prevention: keep one postcondition for summary success. Cache is only an optimization layer; it may reuse an existing summary only when it can also return a concrete mastery result (`litPercent`/pass-fail). Otherwise it must fall through to the normal LLM summary path.
