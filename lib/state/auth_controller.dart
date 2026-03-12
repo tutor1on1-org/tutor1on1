@@ -30,15 +30,6 @@ class AuthController extends ChangeNotifier {
   Future<bool> login(String username, String password) async {
     _lastError = null;
     final normalizedUsername = username.trim().toLowerCase();
-    final localAdmin = await _db.findUserByUsername(normalizedUsername);
-    if (localAdmin != null &&
-        localAdmin.role == 'admin' &&
-        localAdmin.pinHash == PinHasher.hash(password)) {
-      _currentUser = localAdmin;
-      await activateLogAccess(password);
-      notifyListeners();
-      return true;
-    }
     try {
       final response = await _authApi.login(
         username: normalizedUsername,
@@ -47,6 +38,15 @@ class AuthController extends ChangeNotifier {
       await _persistAuth(response, normalizedUsername, password);
       return true;
     } on AuthApiException catch (error) {
+      final localAdmin = await _db.findUserByUsername(normalizedUsername);
+      if (localAdmin != null &&
+          localAdmin.role == 'admin' &&
+          localAdmin.pinHash == PinHasher.hash(password)) {
+        _currentUser = localAdmin;
+        await activateLogAccess(password);
+        notifyListeners();
+        return true;
+      }
       _lastError = error.message;
       return false;
     }
@@ -57,6 +57,7 @@ class AuthController extends ChangeNotifier {
     required String email,
     required String password,
     required String displayName,
+    List<int> subjectLabelIds = const <int>[],
     String? bio,
     String? avatarUrl,
     String? contact,
@@ -69,6 +70,7 @@ class AuthController extends ChangeNotifier {
         email: email,
         password: password,
         displayName: displayName,
+        subjectLabelIds: subjectLabelIds,
         bio: bio,
         avatarUrl: avatarUrl,
         contact: contact,

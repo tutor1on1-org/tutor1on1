@@ -29,6 +29,39 @@ class MarketplaceListResult<T> {
   final bool notModified;
 }
 
+class SubjectLabelSummary {
+  SubjectLabelSummary({
+    required this.subjectLabelId,
+    required this.slug,
+    required this.name,
+    required this.isActive,
+  });
+
+  final int subjectLabelId;
+  final String slug;
+  final String name;
+  final bool isActive;
+
+  factory SubjectLabelSummary.fromJson(Map<String, dynamic> json) {
+    return SubjectLabelSummary(
+      subjectLabelId: (json['subject_label_id'] as num?)?.toInt() ?? 0,
+      slug: (json['slug'] as String?) ?? '',
+      name: (json['name'] as String?) ?? '',
+      isActive: (json['is_active'] as bool?) ?? true,
+    );
+  }
+}
+
+List<SubjectLabelSummary> _decodeSubjectLabelsList(dynamic raw) {
+  if (raw is! List) {
+    return const <SubjectLabelSummary>[];
+  }
+  return raw
+      .whereType<Map<String, dynamic>>()
+      .map(SubjectLabelSummary.fromJson)
+      .toList();
+}
+
 class CatalogCourse {
   CatalogCourse({
     required this.courseId,
@@ -41,6 +74,7 @@ class CatalogCourse {
     required this.visibility,
     required this.publishedAt,
     required this.latestBundleVersionId,
+    this.subjectLabels = const <SubjectLabelSummary>[],
   });
 
   final int courseId;
@@ -53,6 +87,7 @@ class CatalogCourse {
   final String visibility;
   final String publishedAt;
   final int? latestBundleVersionId;
+  final List<SubjectLabelSummary> subjectLabels;
 
   factory CatalogCourse.fromJson(Map<String, dynamic> json) {
     return CatalogCourse(
@@ -67,6 +102,7 @@ class CatalogCourse {
       publishedAt: (json['published_at'] as String?) ?? '',
       latestBundleVersionId:
           (json['latest_bundle_version_id'] as num?)?.toInt(),
+      subjectLabels: _decodeSubjectLabelsList(json['subject_labels']),
     );
   }
 }
@@ -289,9 +325,11 @@ class TeacherCourseSummary {
     required this.grade,
     required this.description,
     required this.visibility,
+    this.approvalStatus = '',
     required this.publishedAt,
     required this.latestBundleVersionId,
     required this.status,
+    this.subjectLabels = const <SubjectLabelSummary>[],
   });
 
   final int courseId;
@@ -299,9 +337,11 @@ class TeacherCourseSummary {
   final String grade;
   final String description;
   final String visibility;
+  final String approvalStatus;
   final String publishedAt;
   final int? latestBundleVersionId;
   final String status;
+  final List<SubjectLabelSummary> subjectLabels;
 
   factory TeacherCourseSummary.fromJson(Map<String, dynamic> json) {
     return TeacherCourseSummary(
@@ -310,10 +350,179 @@ class TeacherCourseSummary {
       grade: (json['grade'] as String?) ?? '',
       description: (json['description'] as String?) ?? '',
       visibility: (json['visibility'] as String?) ?? '',
+      approvalStatus: (json['approval_status'] as String?) ?? '',
       publishedAt: (json['published_at'] as String?) ?? '',
       latestBundleVersionId:
           (json['latest_bundle_version_id'] as num?)?.toInt(),
       status: (json['status'] as String?) ?? '',
+      subjectLabels: _decodeSubjectLabelsList(json['subject_labels']),
+    );
+  }
+}
+
+class AdminUserSummary {
+  AdminUserSummary({
+    required this.userId,
+    required this.username,
+    required this.email,
+    required this.role,
+    required this.teacherId,
+    required this.teacherStatus,
+    required this.teacherSubjectLabels,
+  });
+
+  final int userId;
+  final String username;
+  final String email;
+  final String role;
+  final int? teacherId;
+  final String teacherStatus;
+  final List<SubjectLabelSummary> teacherSubjectLabels;
+
+  factory AdminUserSummary.fromJson(Map<String, dynamic> json) {
+    return AdminUserSummary(
+      userId: (json['user_id'] as num?)?.toInt() ?? 0,
+      username: (json['username'] as String?) ?? '',
+      email: (json['email'] as String?) ?? '',
+      role: (json['role'] as String?) ?? '',
+      teacherId: (json['teacher_id'] as num?)?.toInt(),
+      teacherStatus: (json['teacher_status'] as String?) ?? '',
+      teacherSubjectLabels:
+          _decodeSubjectLabelsList(json['teacher_subject_labels']),
+    );
+  }
+}
+
+class SubjectAdminAssignmentSummary {
+  SubjectAdminAssignmentSummary({
+    required this.teacherId,
+    required this.userId,
+    required this.username,
+  });
+
+  final int teacherId;
+  final int userId;
+  final String username;
+
+  factory SubjectAdminAssignmentSummary.fromJson(Map<String, dynamic> json) {
+    return SubjectAdminAssignmentSummary(
+      teacherId: (json['teacher_id'] as num?)?.toInt() ?? 0,
+      userId: (json['user_id'] as num?)?.toInt() ?? 0,
+      username: (json['username'] as String?) ?? '',
+    );
+  }
+}
+
+class AdminSubjectLabelSummary {
+  AdminSubjectLabelSummary({
+    required this.subjectLabelId,
+    required this.slug,
+    required this.name,
+    required this.isActive,
+    required this.subjectAdmins,
+  });
+
+  final int subjectLabelId;
+  final String slug;
+  final String name;
+  final bool isActive;
+  final List<SubjectAdminAssignmentSummary> subjectAdmins;
+
+  factory AdminSubjectLabelSummary.fromJson(Map<String, dynamic> json) {
+    final rawAdmins = json['subject_admins'];
+    final admins = rawAdmins is List
+        ? rawAdmins
+            .whereType<Map<String, dynamic>>()
+            .map(SubjectAdminAssignmentSummary.fromJson)
+            .toList()
+        : <SubjectAdminAssignmentSummary>[];
+    return AdminSubjectLabelSummary(
+      subjectLabelId: (json['subject_label_id'] as num?)?.toInt() ?? 0,
+      slug: (json['slug'] as String?) ?? '',
+      name: (json['name'] as String?) ?? '',
+      isActive: (json['is_active'] as bool?) ?? true,
+      subjectAdmins: admins,
+    );
+  }
+}
+
+class TeacherRegistrationApprovalRequest {
+  TeacherRegistrationApprovalRequest({
+    required this.requestId,
+    required this.userId,
+    required this.teacherId,
+    required this.username,
+    required this.displayName,
+    required this.status,
+    required this.createdAt,
+    required this.subjectLabels,
+  });
+
+  final int requestId;
+  final int userId;
+  final int teacherId;
+  final String username;
+  final String displayName;
+  final String status;
+  final String createdAt;
+  final List<SubjectLabelSummary> subjectLabels;
+
+  factory TeacherRegistrationApprovalRequest.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    return TeacherRegistrationApprovalRequest(
+      requestId: (json['request_id'] as num?)?.toInt() ?? 0,
+      userId: (json['user_id'] as num?)?.toInt() ?? 0,
+      teacherId: (json['teacher_id'] as num?)?.toInt() ?? 0,
+      username: (json['username'] as String?) ?? '',
+      displayName: (json['display_name'] as String?) ?? '',
+      status: (json['status'] as String?) ?? '',
+      createdAt: (json['created_at'] as String?) ?? '',
+      subjectLabels: _decodeSubjectLabelsList(json['subject_labels']),
+    );
+  }
+}
+
+class CourseUploadApprovalRequest {
+  CourseUploadApprovalRequest({
+    required this.requestId,
+    required this.courseId,
+    required this.bundleId,
+    required this.bundleVersionId,
+    required this.courseSubject,
+    required this.teacherId,
+    required this.teacherName,
+    required this.status,
+    required this.requestedVisibility,
+    required this.createdAt,
+    required this.subjectLabels,
+  });
+
+  final int requestId;
+  final int courseId;
+  final int bundleId;
+  final int bundleVersionId;
+  final String courseSubject;
+  final int teacherId;
+  final String teacherName;
+  final String status;
+  final String requestedVisibility;
+  final String createdAt;
+  final List<SubjectLabelSummary> subjectLabels;
+
+  factory CourseUploadApprovalRequest.fromJson(Map<String, dynamic> json) {
+    return CourseUploadApprovalRequest(
+      requestId: (json['request_id'] as num?)?.toInt() ?? 0,
+      courseId: (json['course_id'] as num?)?.toInt() ?? 0,
+      bundleId: (json['bundle_id'] as num?)?.toInt() ?? 0,
+      bundleVersionId: (json['bundle_version_id'] as num?)?.toInt() ?? 0,
+      courseSubject: (json['course_subject'] as String?) ?? '',
+      teacherId: (json['teacher_id'] as num?)?.toInt() ?? 0,
+      teacherName: (json['teacher_name'] as String?) ?? '',
+      status: (json['status'] as String?) ?? '',
+      requestedVisibility: (json['requested_visibility'] as String?) ?? '',
+      createdAt: (json['created_at'] as String?) ?? '',
+      subjectLabels: _decodeSubjectLabelsList(json['subject_labels']),
     );
   }
 }
@@ -378,13 +587,23 @@ class MarketplaceApiService {
 
   Future<List<CatalogCourse>> listCourses({
     String? query,
+    List<int> subjectLabelIds = const <int>[],
   }) async {
     final params = <String, String>{};
     if ((query ?? '').trim().isNotEmpty) {
       params['q'] = query!.trim();
     }
+    final normalizedLabelIds = subjectLabelIds.where((id) => id > 0).toList();
+    if (normalizedLabelIds.isNotEmpty) {
+      params['subject_label_ids'] = normalizedLabelIds.join(',');
+    }
     final response = await _get('/api/catalog/courses', params: params);
     return _decodeList(response, (json) => CatalogCourse.fromJson(json));
+  }
+
+  Future<List<SubjectLabelSummary>> listSubjectLabels() async {
+    final response = await _getPublic('/api/subject-labels');
+    return _decodeList(response, (json) => SubjectLabelSummary.fromJson(json));
   }
 
   Future<List<EnrollmentRequestSummary>> listStudentRequests() async {
@@ -540,11 +759,13 @@ class MarketplaceApiService {
     required String subject,
     String? grade,
     String? description,
+    List<int> subjectLabelIds = const <int>[],
   }) async {
     final response = await _post('/api/teacher/courses', {
       'subject': subject.trim(),
       'grade': grade?.trim() ?? '',
       'description': description?.trim() ?? '',
+      'subject_label_ids': subjectLabelIds,
     });
     if (response is! Map<String, dynamic>) {
       throw MarketplaceApiException('Unexpected response format.');
@@ -561,8 +782,171 @@ class MarketplaceApiService {
     });
   }
 
+  Future<TeacherCourseSummary> updateCourseSubjectLabels({
+    required int courseId,
+    required List<int> subjectLabelIds,
+  }) async {
+    final response =
+        await _post('/api/teacher/courses/$courseId/subject-labels', {
+      'subject_label_ids': subjectLabelIds,
+    });
+    if (response is! Map<String, dynamic>) {
+      throw MarketplaceApiException('Unexpected response format.');
+    }
+    final refreshed = await listTeacherCourses();
+    return refreshed.firstWhere(
+      (course) => course.courseId == courseId,
+      orElse: () => TeacherCourseSummary(
+        courseId: courseId,
+        subject: '',
+        grade: '',
+        description: '',
+        visibility: 'private',
+        publishedAt: '',
+        latestBundleVersionId: null,
+        status: 'updated',
+        approvalStatus: '',
+        subjectLabels: _decodeSubjectLabelsList(response['subject_labels']),
+      ),
+    );
+  }
+
   Future<void> deleteTeacherCourse(int courseId) async {
     await _post('/api/teacher/courses/$courseId/delete', {});
+  }
+
+  Future<List<AdminUserSummary>> listAdminUsers() async {
+    final response = await _get('/api/admin/users');
+    return _decodeList(response, (json) => AdminUserSummary.fromJson(json));
+  }
+
+  Future<void> deleteAdminTeacher(int userId) async {
+    await _post('/api/admin/users/$userId/delete', {});
+  }
+
+  Future<List<AdminSubjectLabelSummary>> listAdminSubjectLabels() async {
+    final response = await _get('/api/admin/subject-labels');
+    return _decodeList(
+      response,
+      (json) => AdminSubjectLabelSummary.fromJson(json),
+    );
+  }
+
+  Future<void> createAdminSubjectLabel({
+    required String name,
+    bool isActive = true,
+  }) async {
+    await _post('/api/admin/subject-labels', {
+      'name': name.trim(),
+      'is_active': isActive,
+    });
+  }
+
+  Future<void> updateAdminSubjectLabel({
+    required int subjectLabelId,
+    required String name,
+    required bool isActive,
+  }) async {
+    await _post('/api/admin/subject-labels/$subjectLabelId', {
+      'name': name.trim(),
+      'is_active': isActive,
+    });
+  }
+
+  Future<void> assignSubjectAdmin({
+    required int subjectLabelId,
+    required int teacherUserId,
+  }) async {
+    await _post('/api/admin/subject-labels/$subjectLabelId/subject-admins', {
+      'teacher_user_id': teacherUserId,
+    });
+  }
+
+  Future<void> removeSubjectAdmin({
+    required int subjectLabelId,
+    required int teacherUserId,
+  }) async {
+    await _post(
+      '/api/admin/subject-labels/$subjectLabelId/subject-admins/$teacherUserId/delete',
+      {},
+    );
+  }
+
+  Future<List<TeacherRegistrationApprovalRequest>>
+      listAdminTeacherRegistrationRequests() async {
+    final response = await _get('/api/admin/teacher-registration-requests');
+    return _decodeList(
+      response,
+      (json) => TeacherRegistrationApprovalRequest.fromJson(json),
+    );
+  }
+
+  Future<void> approveAdminTeacherRegistration(int requestId) async {
+    await _post(
+        '/api/admin/teacher-registration-requests/$requestId/approve', {});
+  }
+
+  Future<void> rejectAdminTeacherRegistration(int requestId) async {
+    await _post(
+        '/api/admin/teacher-registration-requests/$requestId/reject', {});
+  }
+
+  Future<List<TeacherRegistrationApprovalRequest>>
+      listSubjectAdminTeacherRegistrationRequests() async {
+    final response =
+        await _get('/api/subject-admin/teacher-registration-requests');
+    return _decodeList(
+      response,
+      (json) => TeacherRegistrationApprovalRequest.fromJson(json),
+    );
+  }
+
+  Future<void> approveSubjectAdminTeacherRegistration(int requestId) async {
+    await _post(
+        '/api/subject-admin/teacher-registration-requests/$requestId/approve',
+        {});
+  }
+
+  Future<void> rejectSubjectAdminTeacherRegistration(int requestId) async {
+    await _post(
+        '/api/subject-admin/teacher-registration-requests/$requestId/reject',
+        {});
+  }
+
+  Future<List<CourseUploadApprovalRequest>>
+      listAdminCourseUploadRequests() async {
+    final response = await _get('/api/admin/course-upload-requests');
+    return _decodeList(
+      response,
+      (json) => CourseUploadApprovalRequest.fromJson(json),
+    );
+  }
+
+  Future<void> approveAdminCourseUpload(int requestId) async {
+    await _post('/api/admin/course-upload-requests/$requestId/approve', {});
+  }
+
+  Future<void> rejectAdminCourseUpload(int requestId) async {
+    await _post('/api/admin/course-upload-requests/$requestId/reject', {});
+  }
+
+  Future<List<CourseUploadApprovalRequest>>
+      listSubjectAdminCourseUploadRequests() async {
+    final response = await _get('/api/subject-admin/course-upload-requests');
+    return _decodeList(
+      response,
+      (json) => CourseUploadApprovalRequest.fromJson(json),
+    );
+  }
+
+  Future<void> approveSubjectAdminCourseUpload(int requestId) async {
+    await _post(
+        '/api/subject-admin/course-upload-requests/$requestId/approve', {});
+  }
+
+  Future<void> rejectSubjectAdminCourseUpload(int requestId) async {
+    await _post(
+        '/api/subject-admin/course-upload-requests/$requestId/reject', {});
   }
 
   Future<EnsureBundleResult> ensureBundle(
@@ -716,6 +1100,20 @@ class MarketplaceApiService {
     Map<String, String>? params,
   }) async {
     final response = await _getResponse(path, params: params);
+    return _decodeResponse(response);
+  }
+
+  Future<dynamic> _getPublic(
+    String path, {
+    Map<String, String>? params,
+  }) async {
+    final uri = Uri.parse('$_baseUrl$path').replace(queryParameters: params);
+    http.Response response;
+    try {
+      response = await _client.get(uri);
+    } on Exception catch (error) {
+      throw MarketplaceApiException('Request failed: $error');
+    }
     return _decodeResponse(response);
   }
 

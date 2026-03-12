@@ -18,9 +18,10 @@ func NewTeacherCoursesHandler(deps Dependencies) *TeacherCoursesHandler {
 }
 
 type createCourseRequest struct {
-	Subject     string `json:"subject"`
-	Grade       string `json:"grade"`
-	Description string `json:"description"`
+	Subject         string  `json:"subject"`
+	Grade           string  `json:"grade"`
+	Description     string  `json:"description"`
+	SubjectLabelIDs []int64 `json:"subject_label_ids"`
 }
 
 type publishCourseRequest struct {
@@ -28,14 +29,16 @@ type publishCourseRequest struct {
 }
 
 type teacherCourseSummary struct {
-	CourseID              int64  `json:"course_id"`
-	Subject               string `json:"subject"`
-	Grade                 string `json:"grade"`
-	Description           string `json:"description"`
-	Visibility            string `json:"visibility"`
-	PublishedAt           string `json:"published_at"`
-	LatestBundleVersionID int64  `json:"latest_bundle_version_id"`
-	Status                string `json:"status,omitempty"`
+	CourseID              int64                 `json:"course_id"`
+	Subject               string                `json:"subject"`
+	Grade                 string                `json:"grade"`
+	Description           string                `json:"description"`
+	Visibility            string                `json:"visibility"`
+	ApprovalStatus        string                `json:"approval_status"`
+	PublishedAt           string                `json:"published_at"`
+	LatestBundleVersionID int64                 `json:"latest_bundle_version_id"`
+	SubjectLabels         []subjectLabelSummary `json:"subject_labels"`
+	Status                string                `json:"status,omitempty"`
 }
 
 func (h *TeacherCoursesHandler) ListCourses(c *fiber.Ctx) error {
@@ -53,7 +56,7 @@ func (h *TeacherCoursesHandler) ListCourses(c *fiber.Ctx) error {
 
 	rows, err := h.cfg.Store.DB.Query(
 		`SELECT c.id, c.subject, c.grade, c.description,
-		        ce.visibility, ce.published_at,
+		        ce.visibility, ce.approval_status, ce.published_at,
 		        (
 		          SELECT bv.id FROM bundles b
 		          JOIN bundle_versions bv ON bv.bundle_id = b.id
@@ -82,13 +85,14 @@ func (h *TeacherCoursesHandler) ListCourses(c *fiber.Ctx) error {
 	results := []teacherCourseSummary{}
 	for rows.Next() {
 		var (
-			courseID   int64
-			subjectVal string
-			gradeVal   sql.NullString
-			descVal    sql.NullString
-			visibility string
-			published  sql.NullTime
-			latest     sql.NullInt64
+			courseID       int64
+			subjectVal     string
+			gradeVal       sql.NullString
+			descVal        sql.NullString
+			visibility     string
+			approvalStatus string
+			published      sql.NullTime
+			latest         sql.NullInt64
 		)
 		if err := rows.Scan(
 			&courseID,
@@ -96,6 +100,7 @@ func (h *TeacherCoursesHandler) ListCourses(c *fiber.Ctx) error {
 			&gradeVal,
 			&descVal,
 			&visibility,
+			&approvalStatus,
 			&published,
 			&latest,
 		); err != nil {
@@ -111,12 +116,21 @@ func (h *TeacherCoursesHandler) ListCourses(c *fiber.Ctx) error {
 			Grade:                 gradeVal.String,
 			Description:           descVal.String,
 			Visibility:            visibility,
+			ApprovalStatus:        approvalStatus,
 			PublishedAt:           publishedAt,
 			LatestBundleVersionID: latest.Int64,
+			SubjectLabels:         nil,
 		})
 	}
 	if err := rows.Err(); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "course list failed")
+	}
+	for index := range results {
+		labels, err := listCourseSubjectLabels(h.cfg.Store.DB, results[index].CourseID)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "course labels failed")
+		}
+		results[index].SubjectLabels = labels
 	}
 	return respondJSONWithETag(c, results)
 }
@@ -195,14 +209,25 @@ func (h *TeacherCoursesHandler) CreateCourse(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "course insert failed")
 	}
 	if _, err := tx.Exec(
-		"INSERT INTO course_catalog_entries (course_id, teacher_id, visibility) VALUES (?, ?, 'private')",
+		"INSERT INTO course_catalog_entries (course_id, teacher_id, visibility, approval_status) VALUES (?, ?, 'private', 'pending')",
 		courseID,
 		teacherID,
 	); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "catalog insert failed")
 	}
+	labelIDs, err := resolveSubjectLabelIDsTx(tx, req.SubjectLabelIDs)
+	if err != nil {
+		return err
+	}
+	if err := replaceCourseSubjectLabelsTx(tx, courseID, labelIDs); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "course labels save failed")
+	}
 	if err := tx.Commit(); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
+	}
+	labels, err := listCourseSubjectLabels(h.cfg.Store.DB, courseID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "course labels failed")
 	}
 	return c.JSON(teacherCourseSummary{
 		CourseID:              courseID,
@@ -210,8 +235,10 @@ func (h *TeacherCoursesHandler) CreateCourse(c *fiber.Ctx) error {
 		Grade:                 grade,
 		Description:           description,
 		Visibility:            "private",
+		ApprovalStatus:        "pending",
 		PublishedAt:           "",
 		LatestBundleVersionID: 0,
+		SubjectLabels:         labels,
 		Status:                "created",
 	})
 }
@@ -251,6 +278,24 @@ func (h *TeacherCoursesHandler) PublishCourse(c *fiber.Ctx) error {
 		if !hasBundle {
 			return fiber.NewError(fiber.StatusBadRequest, "bundle required before publish")
 		}
+		var approvalStatus string
+		row := h.cfg.Store.DB.QueryRow(
+			`SELECT ce.approval_status
+			 FROM course_catalog_entries ce
+			 JOIN courses c ON ce.course_id = c.id
+			 WHERE ce.course_id = ? AND c.teacher_id = ?`,
+			courseID,
+			teacherID,
+		)
+		if err := row.Scan(&approvalStatus); err != nil {
+			if err == sql.ErrNoRows {
+				return fiber.NewError(fiber.StatusNotFound, "course not found")
+			}
+			return fiber.NewError(fiber.StatusInternalServerError, "approval lookup failed")
+		}
+		if approvalStatus != "approved" {
+			return fiber.NewError(fiber.StatusBadRequest, "course approval required before publish")
+		}
 	}
 	publishedAt := sql.NullTime{}
 	if visibility == "public" || visibility == "unlisted" {
@@ -276,6 +321,63 @@ func (h *TeacherCoursesHandler) PublishCourse(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"course_id":  courseID,
 		"visibility": visibility,
+	})
+}
+
+func (h *TeacherCoursesHandler) UpdateCourseSubjectLabels(c *fiber.Ctx) error {
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	}
+	teacherID, err := getTeacherAccountID(h.cfg.Store.DB, userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return fiber.NewError(fiber.StatusForbidden, "teacher account required")
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, "teacher lookup failed")
+	}
+	courseID, err := parseInt64Param(c, "id")
+	if err != nil {
+		return err
+	}
+	var req createCourseRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+	}
+	courseExists, err := h.courseExistsByID(courseID, teacherID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "course lookup failed")
+	}
+	if !courseExists {
+		return fiber.NewError(fiber.StatusNotFound, "course not found")
+	}
+	tx, err := h.cfg.Store.DB.Begin()
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	labelIDs, err := resolveSubjectLabelIDsTx(tx, req.SubjectLabelIDs)
+	if err != nil {
+		return err
+	}
+	if err := replaceCourseSubjectLabelsTx(tx, courseID, labelIDs); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "course labels save failed")
+	}
+	if err := tx.Commit(); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
+	}
+	labels, err := listCourseSubjectLabels(h.cfg.Store.DB, courseID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "course labels failed")
+	}
+	return c.JSON(fiber.Map{
+		"course_id":      courseID,
+		"subject_labels": labels,
+		"status":         "updated",
 	})
 }
 
@@ -500,7 +602,9 @@ func (h *TeacherCoursesHandler) lookupTeacherCourseByNameKey(
 ) (teacherCourseSummary, bool, error) {
 	row := h.cfg.Store.DB.QueryRow(
 		`SELECT c.id, c.subject, c.grade, c.description,
-		        COALESCE(ce.visibility, 'private') AS visibility, ce.published_at,
+		        COALESCE(ce.visibility, 'private') AS visibility,
+		        COALESCE(ce.approval_status, 'pending') AS approval_status,
+		        ce.published_at,
 		        (
 		          SELECT bv.id FROM bundles b
 		          JOIN bundle_versions bv ON bv.bundle_id = b.id
@@ -517,13 +621,14 @@ func (h *TeacherCoursesHandler) lookupTeacherCourseByNameKey(
 		courseNameKey,
 	)
 	var (
-		courseID   int64
-		subjectVal string
-		gradeVal   sql.NullString
-		descVal    sql.NullString
-		visibility string
-		published  sql.NullTime
-		latest     sql.NullInt64
+		courseID       int64
+		subjectVal     string
+		gradeVal       sql.NullString
+		descVal        sql.NullString
+		visibility     string
+		approvalStatus string
+		published      sql.NullTime
+		latest         sql.NullInt64
 	)
 	if err := row.Scan(
 		&courseID,
@@ -531,6 +636,7 @@ func (h *TeacherCoursesHandler) lookupTeacherCourseByNameKey(
 		&gradeVal,
 		&descVal,
 		&visibility,
+		&approvalStatus,
 		&published,
 		&latest,
 	); err != nil {
@@ -543,14 +649,20 @@ func (h *TeacherCoursesHandler) lookupTeacherCourseByNameKey(
 	if published.Valid {
 		publishedAt = published.Time.Format(timeLayout)
 	}
+	labels, err := listCourseSubjectLabels(h.cfg.Store.DB, courseID)
+	if err != nil {
+		return teacherCourseSummary{}, false, err
+	}
 	return teacherCourseSummary{
 		CourseID:              courseID,
 		Subject:               subjectVal,
 		Grade:                 gradeVal.String,
 		Description:           descVal.String,
 		Visibility:            visibility,
+		ApprovalStatus:        approvalStatus,
 		PublishedAt:           publishedAt,
 		LatestBundleVersionID: latest.Int64,
+		SubjectLabels:         labels,
 	}, true, nil
 }
 
@@ -677,8 +789,8 @@ func (h *TeacherCoursesHandler) resolveOrCreateCourseByName(
 			return 0, err
 		}
 		if _, insertErr := tx.Exec(
-			`INSERT INTO course_catalog_entries (course_id, teacher_id, visibility)
-			 VALUES (?, ?, 'private')`,
+			`INSERT INTO course_catalog_entries (course_id, teacher_id, visibility, approval_status)
+			 VALUES (?, ?, 'private', 'pending')`,
 			courseID,
 			teacherID,
 		); insertErr != nil {

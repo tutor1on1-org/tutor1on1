@@ -3,6 +3,7 @@ import 'package:family_teacher/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
 import '../../services/app_services.dart';
+import '../../services/marketplace_api_service.dart';
 import '../../state/auth_controller.dart';
 import '../../state/settings_controller.dart';
 import '../app_settings_page.dart';
@@ -28,6 +29,16 @@ class _WelcomePageState extends State<WelcomePage> {
   final _studentPassword = TextEditingController();
   final _studentRecoveryEmail = TextEditingController();
   bool _teacherContactPublished = false;
+  List<SubjectLabelSummary> _subjectLabels = const <SubjectLabelSummary>[];
+  final Set<int> _selectedTeacherSubjectLabelIds = <int>{};
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _loadSubjectLabels();
+    });
+  }
 
   @override
   void dispose() {
@@ -44,6 +55,28 @@ class _WelcomePageState extends State<WelcomePage> {
     _studentPassword.dispose();
     _studentRecoveryEmail.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadSubjectLabels() async {
+    final services = context.read<AppServices>();
+    final api = MarketplaceApiService(secureStorage: services.secureStorage);
+    try {
+      final labels = await api.listSubjectLabels();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _subjectLabels = labels;
+        if (_selectedTeacherSubjectLabelIds.isEmpty) {
+          final others = labels.where((label) => label.slug == 'others');
+          if (others.isNotEmpty) {
+            _selectedTeacherSubjectLabelIds.add(others.first.subjectLabelId);
+          }
+        }
+      });
+    } catch (_) {
+      // Registration stays usable even if subject labels cannot be fetched.
+    }
   }
 
   @override
@@ -182,6 +215,38 @@ class _WelcomePageState extends State<WelcomePage> {
           decoration: InputDecoration(labelText: l10n.contactLabel),
           textInputAction: TextInputAction.done,
         ),
+        const SizedBox(height: 8),
+        const Text(
+          'Subject labels',
+          style: TextStyle(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 8),
+        if (_subjectLabels.isEmpty)
+          const Text('Loading subject labels...')
+        else
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final label in _subjectLabels)
+                FilterChip(
+                  label: Text(label.name),
+                  selected: _selectedTeacherSubjectLabelIds
+                      .contains(label.subjectLabelId),
+                  onSelected: (selected) {
+                    setState(() {
+                      if (selected) {
+                        _selectedTeacherSubjectLabelIds
+                            .add(label.subjectLabelId);
+                      } else {
+                        _selectedTeacherSubjectLabelIds
+                            .remove(label.subjectLabelId);
+                      }
+                    });
+                  },
+                ),
+            ],
+          ),
         SwitchListTile(
           value: _teacherContactPublished,
           contentPadding: EdgeInsets.zero,
@@ -375,6 +440,7 @@ class _WelcomePageState extends State<WelcomePage> {
       email: recoveryEmail,
       password: password,
       displayName: displayName,
+      subjectLabelIds: _selectedTeacherSubjectLabelIds.toList(growable: false),
       bio: _teacherBio.text,
       avatarUrl: _teacherAvatarUrl.text,
       contact: _teacherContact.text,

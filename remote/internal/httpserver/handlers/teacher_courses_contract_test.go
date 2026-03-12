@@ -33,10 +33,14 @@ func TestCreateCourseReturnsExistingForNormalizedTeacherCourseKey(t *testing.T) 
 				"grade",
 				"description",
 				"visibility",
+				"approval_status",
 				"published_at",
 				"latest_bundle_version_id",
-			}).AddRow(int64(501), "Algebra", nil, nil, "private", nil, nil),
+			}).AddRow(int64(501), "Algebra", nil, nil, "private", "pending", nil, nil),
 		)
+	mock.ExpectQuery(`SELECT sl.id, sl.slug, sl.name, sl.is_active\s+FROM course_subject_labels csl`).
+		WithArgs(int64(501)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "slug", "name", "is_active"}))
 
 	app := buildTeacherContractTestApp(db, []string{"test-secret"})
 	token := signTestJWT(t, "test-secret", userID, true)

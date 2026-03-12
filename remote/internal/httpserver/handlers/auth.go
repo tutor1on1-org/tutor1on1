@@ -20,8 +20,8 @@ import (
 )
 
 type Dependencies struct {
-	Config config.Config
-	Store  *db.Store
+	Config  config.Config
+	Store   *db.Store
 	Storage *storage.Service
 	Mailer  *mailer.Service
 }
@@ -47,14 +47,15 @@ type registerRequest struct {
 }
 
 type registerTeacherRequest struct {
-	Username         string `json:"username"`
-	Email            string `json:"email"`
-	Password         string `json:"password"`
-	DisplayName      string `json:"display_name"`
-	Bio              string `json:"bio"`
-	AvatarURL        string `json:"avatar_url"`
-	Contact          string `json:"contact"`
-	ContactPublished bool   `json:"contact_published"`
+	Username         string  `json:"username"`
+	Email            string  `json:"email"`
+	Password         string  `json:"password"`
+	DisplayName      string  `json:"display_name"`
+	Bio              string  `json:"bio"`
+	AvatarURL        string  `json:"avatar_url"`
+	Contact          string  `json:"contact"`
+	ContactPublished bool    `json:"contact_published"`
+	SubjectLabelIDs  []int64 `json:"subject_label_ids"`
 }
 
 type loginRequest struct {
@@ -161,7 +162,7 @@ func (h *AuthHandler) RegisterTeacher(c *fiber.Ctx) error {
 	res, err = tx.Exec(
 		`INSERT INTO teacher_accounts
 		 (user_id, display_name, bio, avatar_url, contact, contact_published, status)
-		 VALUES (?, ?, ?, ?, ?, ?, 'active')`,
+		 VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
 		userID,
 		displayName,
 		nullableString(req.Bio),
@@ -176,10 +177,25 @@ func (h *AuthHandler) RegisterTeacher(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "teacher insert failed")
 	}
+	labelIDs, err := resolveSubjectLabelIDsTx(tx, req.SubjectLabelIDs)
+	if err != nil {
+		return err
+	}
+	if err := replaceTeacherSubjectLabelsTx(tx, teacherID, labelIDs); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "teacher labels save failed")
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO teacher_registration_requests (user_id, teacher_id, status)
+		 VALUES (?, ?, 'pending')`,
+		userID,
+		teacherID,
+	); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "teacher request insert failed")
+	}
 	if err := tx.Commit(); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
 	}
-	return h.issueTokensWithRole(c, userID, "teacher", &teacherID)
+	return h.issueTokensWithRole(c, userID, "teacher_pending", &teacherID)
 }
 
 func (h *AuthHandler) Login(c *fiber.Ctx) error {
@@ -493,15 +509,33 @@ func (h *AuthHandler) getUserIDByEmail(email string) (int64, error) {
 }
 
 func (h *AuthHandler) getUserRole(userID int64) (string, *int64, error) {
+	admin, err := isAdminUser(h.store.DB, userID)
+	if err != nil {
+		return "", nil, err
+	}
+	if admin {
+		return "admin", nil, nil
+	}
 	var teacherID int64
-	row := h.store.DB.QueryRow("SELECT id FROM teacher_accounts WHERE user_id = ? LIMIT 1", userID)
-	if err := row.Scan(&teacherID); err != nil {
+	var status string
+	row := h.store.DB.QueryRow(
+		"SELECT id, status FROM teacher_accounts WHERE user_id = ? LIMIT 1",
+		userID,
+	)
+	if err := row.Scan(&teacherID, &status); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "student", nil, nil
 		}
 		return "", nil, err
 	}
-	return "teacher", &teacherID, nil
+	switch strings.TrimSpace(strings.ToLower(status)) {
+	case "active":
+		return "teacher", &teacherID, nil
+	case "rejected":
+		return "teacher_rejected", &teacherID, nil
+	default:
+		return "teacher_pending", &teacherID, nil
+	}
 }
 
 func normalizeEmail(value string) string {

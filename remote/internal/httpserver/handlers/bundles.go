@@ -37,6 +37,7 @@ type bundleVersionPruneTarget struct {
 
 type bundleCourseInfo struct {
 	teacherUserID int64
+	courseID      int64
 	courseName    string
 }
 
@@ -198,6 +199,41 @@ func (h *BundlesHandler) Upload(c *fiber.Ctx) error {
 				_ = tx.Rollback()
 				_ = h.removeStoredFile(relPath)
 				return fiber.NewError(fiber.StatusInternalServerError, "bundle prune failed")
+			}
+		}
+		var approvalStatus string
+		statusRow := tx.QueryRow(
+			`SELECT approval_status
+			 FROM course_catalog_entries
+			 WHERE course_id = ?
+			 LIMIT 1`,
+			info.courseID,
+		)
+		if err := statusRow.Scan(&approvalStatus); err != nil {
+			_ = tx.Rollback()
+			_ = h.removeStoredFile(relPath)
+			return fiber.NewError(fiber.StatusInternalServerError, "course approval lookup failed")
+		}
+		if strings.TrimSpace(strings.ToLower(approvalStatus)) != "approved" {
+			if _, err := tx.Exec(
+				`INSERT INTO course_upload_requests
+				 (course_id, bundle_id, bundle_version_id, requested_visibility, status)
+				 VALUES (?, ?, ?, 'public', 'pending')
+				 ON DUPLICATE KEY UPDATE
+				   bundle_id = VALUES(bundle_id),
+				   bundle_version_id = VALUES(bundle_version_id),
+				   requested_visibility = VALUES(requested_visibility),
+				   status = 'pending',
+				   resolved_at = NULL,
+				   resolved_by_user_id = NULL,
+				   created_at = CURRENT_TIMESTAMP`,
+				info.courseID,
+				bundleID,
+				insertID,
+			); err != nil {
+				_ = tx.Rollback()
+				_ = h.removeStoredFile(relPath)
+				return fiber.NewError(fiber.StatusInternalServerError, "course upload request save failed")
 			}
 		}
 		if err = tx.Commit(); err != nil {
@@ -500,7 +536,7 @@ func (h *BundlesHandler) Download(c *fiber.Ctx) error {
 
 func (h *BundlesHandler) getBundleCourseInfo(bundleID int64) (bundleCourseInfo, error) {
 	row := h.cfg.Store.DB.QueryRow(
-		`SELECT ta.user_id, c.subject
+		`SELECT ta.user_id, c.id, c.subject
 		 FROM bundles b
 		 JOIN courses c ON c.id = b.course_id
 		 JOIN teacher_accounts ta ON b.teacher_id = ta.id
@@ -509,13 +545,15 @@ func (h *BundlesHandler) getBundleCourseInfo(bundleID int64) (bundleCourseInfo, 
 	)
 	var (
 		teacherUserID int64
+		courseID      int64
 		courseName    string
 	)
-	if err := row.Scan(&teacherUserID, &courseName); err != nil {
+	if err := row.Scan(&teacherUserID, &courseID, &courseName); err != nil {
 		return bundleCourseInfo{}, err
 	}
 	return bundleCourseInfo{
 		teacherUserID: teacherUserID,
+		courseID:      courseID,
 		courseName:    courseName,
 	}, nil
 }

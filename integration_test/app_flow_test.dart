@@ -62,6 +62,7 @@ class _FakeAuthController extends AuthController {
     String? avatarUrl,
     String? contact,
     required bool contactPublished,
+    List<int> subjectLabelIds = const <int>[],
   }) async {
     return _register(
       username: username,

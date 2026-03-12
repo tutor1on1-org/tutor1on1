@@ -7,10 +7,12 @@ class ResolvedUploadTarget {
   ResolvedUploadTarget({
     required this.remoteCourseId,
     required this.bundleId,
+    required this.approvalStatus,
   });
 
   final int remoteCourseId;
   final int bundleId;
+  final String approvalStatus;
 }
 
 class TeacherMarketplaceUploadService {
@@ -26,12 +28,14 @@ class TeacherMarketplaceUploadService {
   Future<ResolvedUploadTarget> resolveUploadTarget({
     required int courseVersionId,
     required String courseSubject,
+    required List<int> subjectLabelIds,
   }) async {
     final storedRemoteCourseId = await _db.getRemoteCourseId(courseVersionId);
     var remoteCourseId = storedRemoteCourseId;
     final teacherCourses = await _marketplaceApi.listTeacherCourses();
     final normalizedCourseName = _normalizeCourseName(courseSubject);
     TeacherCourseSummary? sameNameCourse;
+    TeacherCourseSummary? resolvedCourse;
     for (final remoteCourse in teacherCourses) {
       if (_normalizeCourseName(remoteCourse.subject) == normalizedCourseName) {
         sameNameCourse = remoteCourse;
@@ -40,6 +44,7 @@ class TeacherMarketplaceUploadService {
     }
     if (sameNameCourse != null) {
       remoteCourseId = sameNameCourse.courseId;
+      resolvedCourse = sameNameCourse;
       if (storedRemoteCourseId != remoteCourseId) {
         await _db.upsertCourseRemoteLink(
           courseVersionId: courseVersionId,
@@ -47,8 +52,13 @@ class TeacherMarketplaceUploadService {
         );
       }
     } else if (remoteCourseId != null && remoteCourseId > 0) {
-      final remoteExists = teacherCourses
-          .any((remoteCourse) => remoteCourse.courseId == remoteCourseId);
+      final matchingById = teacherCourses
+          .where((remoteCourse) => remoteCourse.courseId == remoteCourseId)
+          .toList(growable: false);
+      final remoteExists = matchingById.isNotEmpty;
+      if (remoteExists) {
+        resolvedCourse = matchingById.first;
+      }
       if (!remoteExists) {
         remoteCourseId = null;
       }
@@ -58,6 +68,7 @@ class TeacherMarketplaceUploadService {
         subject: courseSubject,
         grade: '',
         description: 'Uploaded from Family Teacher app.',
+        subjectLabelIds: subjectLabelIds,
       );
       remoteCourseId = created.courseId;
       await _db.upsertCourseRemoteLink(
@@ -78,6 +89,7 @@ class TeacherMarketplaceUploadService {
       return ResolvedUploadTarget(
         remoteCourseId: ensured.courseId,
         bundleId: ensured.bundleId,
+        approvalStatus: resolvedCourse?.approvalStatus ?? 'pending',
       );
     } on MarketplaceApiException catch (error) {
       if (error.statusCode != 404) {
@@ -87,6 +99,7 @@ class TeacherMarketplaceUploadService {
         subject: courseSubject,
         grade: '',
         description: 'Uploaded from Family Teacher app.',
+        subjectLabelIds: subjectLabelIds,
       );
       remoteCourseId = created.courseId;
       await _db.upsertCourseRemoteLink(
@@ -104,6 +117,7 @@ class TeacherMarketplaceUploadService {
       return ResolvedUploadTarget(
         remoteCourseId: ensured.courseId,
         bundleId: ensured.bundleId,
+        approvalStatus: created.approvalStatus,
       );
     }
   }
@@ -119,10 +133,15 @@ class TeacherMarketplaceUploadService {
       courseName: courseSubject,
       bundleFile: bundleFile,
     );
-    await _marketplaceApi.updateCourseVisibility(
-      courseId: target.remoteCourseId,
-      visibility: visibility,
-    );
+    if (target.approvalStatus == 'approved') {
+      await _marketplaceApi.updateCourseVisibility(
+        courseId: target.remoteCourseId,
+        visibility: visibility,
+      );
+      uploadResponse['approval_status'] = 'approved';
+    } else {
+      uploadResponse['approval_status'] = 'pending';
+    }
     return uploadResponse;
   }
 

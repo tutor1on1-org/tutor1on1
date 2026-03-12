@@ -19,6 +19,7 @@ import 'marketplace_page.dart';
 import 'prompt_settings_page.dart';
 import 'skill_tree_page.dart';
 import 'student_sessions_page.dart';
+import 'subject_admin_page.dart';
 import 'teacher_enrollment_requests_page.dart';
 import '../widgets/server_sync_overlay.dart';
 
@@ -41,6 +42,8 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
   bool _persistentMessageIsError = false;
   late MarketplaceApiService _marketplaceApi;
   late TeacherMarketplaceUploadService _uploadService;
+  List<TeacherCourseSummary> _remoteTeacherCourses = [];
+  List<SubjectLabelSummary> _subjectLabels = [];
 
   @override
   void initState() {
@@ -53,6 +56,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       marketplaceApi: _marketplaceApi,
     );
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _refreshMarketplaceState();
       await _startSync();
       _startAutoSync();
     });
@@ -104,6 +108,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         message: showOverlay ? 'Syncing sessions from server...' : '',
       );
       await services.sessionSyncService.syncIfReady(currentUser: user);
+      await _refreshMarketplaceState();
     } catch (error) {
       if (!mounted) {
         return;
@@ -115,6 +120,22 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     } finally {
       _setSyncState(syncing: false, message: '');
       _syncInProgress = false;
+    }
+  }
+
+  Future<void> _refreshMarketplaceState() async {
+    try {
+      final teacherCourses = await _marketplaceApi.listTeacherCourses();
+      final subjectLabels = await _marketplaceApi.listSubjectLabels();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _remoteTeacherCourses = teacherCourses;
+        _subjectLabels = subjectLabels;
+      });
+    } catch (_) {
+      // Keep the teacher home usable even if marketplace metadata refresh fails.
     }
   }
 
@@ -204,6 +225,16 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                       },
                       child: Text(l10n.promptTemplatesButton),
                     ),
+                    ElevatedButton(
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const SubjectAdminPage(),
+                          ),
+                        );
+                      },
+                      child: const Text('Subject Admin'),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 16),
@@ -264,6 +295,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                               course.sourcePath!.trim().isNotEmpty;
                           return _CourseTile(
                             course: course,
+                            remoteCourse: _findRemoteCourse(course.subject),
                             isLoaded: isLoaded,
                             isUploading:
                                 _uploadingCourseIds.contains(course.id),
@@ -280,6 +312,8 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                             onDelete: () =>
                                 _confirmDeleteCourse(context, course),
                             onVersions: () => _openBundleVersionsPage(course),
+                            onEditLabels: () =>
+                                _editCourseSubjectLabels(course),
                             onUpload: isLoaded
                                 ? () =>
                                     _uploadCourseToMarketplace(teacher, course)
@@ -408,6 +442,11 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       final target = await _uploadService.resolveUploadTarget(
         courseVersionId: course.id,
         courseSubject: course.subject,
+        subjectLabelIds: _resolveRemoteCourse(course.subject)
+                ?.subjectLabels
+                .map((label) => label.subjectLabelId)
+                .toList(growable: false) ??
+            const <int>[],
       );
       final remoteCourseId = target.remoteCourseId;
       final bundleService = CourseBundleService();
@@ -473,11 +512,21 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
             isError: false,
           );
         } else {
-          _setPersistentMessage(
-            l10n.marketplaceUploadSuccess,
-            isError: false,
-          );
+          final approvalStatus =
+              (uploadResponse['approval_status'] as String?) ?? '';
+          if (approvalStatus == 'pending') {
+            _setPersistentMessage(
+              'Upload saved. Waiting for subject-admin approval before the course can be public.',
+              isError: false,
+            );
+          } else {
+            _setPersistentMessage(
+              l10n.marketplaceUploadSuccess,
+              isError: false,
+            );
+          }
         }
+        await _refreshMarketplaceState();
       }
     } catch (error) {
       _setPersistentMessage(l10n.marketplaceUploadFailed('$error'));
@@ -490,6 +539,117 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
           _uploadingCourseIds.remove(course.id);
         });
       }
+    }
+  }
+
+  TeacherCourseSummary? _findRemoteCourse(String subject) {
+    final normalized = _normalizeCourseName(_stripVersionSuffix(subject));
+    for (final course in _remoteTeacherCourses) {
+      final remoteNormalized =
+          _normalizeCourseName(_stripVersionSuffix(course.subject));
+      if (remoteNormalized == normalized) {
+        return course;
+      }
+    }
+    return null;
+  }
+
+  TeacherCourseSummary? _resolveRemoteCourse(String subject) {
+    return _findRemoteCourse(subject);
+  }
+
+  Future<void> _editCourseSubjectLabels(CourseVersion course) async {
+    final existing = _resolveRemoteCourse(course.subject);
+    final availableLabels = _subjectLabels;
+    if (availableLabels.isEmpty) {
+      _setPersistentMessage(
+        'No subject labels available. Ask admin to create labels first.',
+        isError: true,
+      );
+      return;
+    }
+    final selected = <int>{
+      for (final label
+          in existing?.subjectLabels ?? const <SubjectLabelSummary>[])
+        label.subjectLabelId,
+    };
+    if (selected.isEmpty) {
+      final others = availableLabels.where((label) => label.slug == 'others');
+      if (others.isNotEmpty) {
+        selected.add(others.first.subjectLabelId);
+      }
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('Subject labels - ${course.subject}'),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final label in availableLabels)
+                    CheckboxListTile(
+                      value: selected.contains(label.subjectLabelId),
+                      title: Text(label.name),
+                      controlAffinity: ListTileControlAffinity.leading,
+                      onChanged: (checked) {
+                        setDialogState(() {
+                          if (checked == true) {
+                            selected.add(label.subjectLabelId);
+                          } else {
+                            selected.remove(label.subjectLabelId);
+                          }
+                        });
+                      },
+                    ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: selected.isEmpty
+                  ? null
+                  : () => Navigator.of(context).pop(true),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+    try {
+      final target = existing ??
+          await _marketplaceApi.createTeacherCourse(
+            subject: course.subject,
+            grade: '',
+            description: 'Uploaded from Family Teacher app.',
+            subjectLabelIds: selected.toList(growable: false),
+          );
+      await context.read<AppDatabase>().upsertCourseRemoteLink(
+            courseVersionId: course.id,
+            remoteCourseId: target.courseId,
+          );
+      await _marketplaceApi.updateCourseSubjectLabels(
+        courseId: target.courseId,
+        subjectLabelIds: selected.toList(growable: false),
+      );
+      await _refreshMarketplaceState();
+      _setPersistentMessage(
+        'Course subject labels updated.',
+        isError: false,
+      );
+    } catch (error) {
+      _setPersistentMessage('Failed to update subject labels: $error');
     }
   }
 
@@ -932,20 +1092,24 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
 class _CourseTile extends StatelessWidget {
   const _CourseTile({
     required this.course,
+    required this.remoteCourse,
     required this.isLoaded,
     required this.isUploading,
     required this.onReload,
     required this.onDelete,
     required this.onVersions,
+    required this.onEditLabels,
     required this.onUpload,
   });
 
   final CourseVersion course;
+  final TeacherCourseSummary? remoteCourse;
   final bool isLoaded;
   final bool isUploading;
   final VoidCallback onReload;
   final VoidCallback onDelete;
   final VoidCallback onVersions;
+  final VoidCallback onEditLabels;
   final VoidCallback? onUpload;
 
   @override
@@ -953,41 +1117,59 @@ class _CourseTile extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     final displaySubject =
         course.subject.trim().replaceFirst(RegExp(r'_(\d{10,})$'), '');
+    final labelText =
+        remoteCourse == null || remoteCourse!.subjectLabels.isEmpty
+            ? 'No subject labels'
+            : remoteCourse!.subjectLabels.map((label) => label.name).join(', ');
+    final approvalText =
+        remoteCourse == null || remoteCourse!.approvalStatus.isEmpty
+            ? ''
+            : 'Approval: ${remoteCourse!.approvalStatus}';
     return Card(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: Text(
-                displaySubject,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+            Text(
+              displaySubject,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
-            const SizedBox(width: 8),
-            TextButton(
-              key: Key('course_edit_${course.id}'),
-              onPressed: onReload,
-              child: Text(l10n.reloadCourseButton),
-            ),
-            TextButton(
-              onPressed: onVersions,
-              child: const Text('Bundle Versions'),
-            ),
-            IconButton(
-              tooltip: l10n.deleteCourseButton,
-              icon: const Icon(Icons.delete),
-              onPressed: onDelete,
-            ),
-            const SizedBox(width: 8),
-            ElevatedButton(
-              onPressed: isUploading ? null : onUpload,
-              child: Text(
-                isUploading
-                    ? l10n.marketplaceUploadingLabel
-                    : l10n.marketplaceUploadButton,
-              ),
+            const SizedBox(height: 6),
+            Text('Labels: $labelText'),
+            if (approvalText.isNotEmpty) Text(approvalText),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                TextButton(
+                  key: Key('course_edit_${course.id}'),
+                  onPressed: onReload,
+                  child: Text(l10n.reloadCourseButton),
+                ),
+                TextButton(
+                  onPressed: onEditLabels,
+                  child: const Text('Subject Labels'),
+                ),
+                TextButton(
+                  onPressed: onVersions,
+                  child: const Text('Bundle Versions'),
+                ),
+                IconButton(
+                  tooltip: l10n.deleteCourseButton,
+                  icon: const Icon(Icons.delete),
+                  onPressed: onDelete,
+                ),
+                const Spacer(),
+                ElevatedButton(
+                  onPressed: isUploading ? null : onUpload,
+                  child: Text(
+                    isUploading
+                        ? l10n.marketplaceUploadingLabel
+                        : l10n.marketplaceUploadButton,
+                  ),
+                ),
+              ],
             ),
           ],
         ),

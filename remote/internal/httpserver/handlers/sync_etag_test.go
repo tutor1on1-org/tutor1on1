@@ -609,6 +609,7 @@ func TestTeacherCoursesListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"grade",
 		"description",
 		"visibility",
+		"approval_status",
 		"published_at",
 		"latest_bundle_version_id",
 	}).AddRow(
@@ -617,12 +618,16 @@ func TestTeacherCoursesListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"Grade 5",
 		"Desc",
 		"private",
+		"pending",
 		nil,
 		int64(2),
 	)
-	mock.ExpectQuery(`SELECT c.id, c.subject, c.grade, c.description`).
+	mock.ExpectQuery(`SELECT c.id, c.subject, c.grade, c.description,\s*ce.visibility, ce.approval_status, ce.published_at`).
 		WithArgs(teacherID, teacherID).
 		WillReturnRows(rows)
+	mock.ExpectQuery(`SELECT sl.id, sl.slug, sl.name, sl.is_active\s+FROM course_subject_labels csl`).
+		WithArgs(int64(88)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "slug", "name", "is_active"}))
 	mock.ExpectQuery(`SELECT id FROM teacher_accounts WHERE user_id = \? AND status = 'active' LIMIT 1`).
 		WithArgs(userID).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(teacherID))
@@ -632,6 +637,7 @@ func TestTeacherCoursesListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"grade",
 		"description",
 		"visibility",
+		"approval_status",
 		"published_at",
 		"latest_bundle_version_id",
 	}).AddRow(
@@ -640,12 +646,16 @@ func TestTeacherCoursesListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"Grade 5",
 		"Desc",
 		"private",
+		"pending",
 		nil,
 		int64(2),
 	)
-	mock.ExpectQuery(`SELECT c.id, c.subject, c.grade, c.description`).
+	mock.ExpectQuery(`SELECT c.id, c.subject, c.grade, c.description,\s*ce.visibility, ce.approval_status, ce.published_at`).
 		WithArgs(teacherID, teacherID).
 		WillReturnRows(rows2)
+	mock.ExpectQuery(`SELECT sl.id, sl.slug, sl.name, sl.is_active\s+FROM course_subject_labels csl`).
+		WithArgs(int64(88)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "slug", "name", "is_active"}))
 
 	app := buildSyncETagTestApp(db, []string{"test-secret"})
 	token := signTestJWT(t, "test-secret", userID, true)

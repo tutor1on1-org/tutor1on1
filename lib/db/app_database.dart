@@ -478,6 +478,15 @@ class AppDatabase extends _$AppDatabase {
         .getSingleOrNull();
   }
 
+  Future<void> updateUsername({
+    required int userId,
+    required String username,
+  }) {
+    return (update(users)..where((tbl) => tbl.id.equals(userId))).write(
+      UsersCompanion(username: Value(username)),
+    );
+  }
+
   Stream<List<User>> watchStudents(int teacherId) {
     return (select(users)
           ..where((tbl) =>
@@ -2523,8 +2532,7 @@ HAVING COUNT(*) > 1
     required int litPercent,
     required String? questionLevel,
   }) {
-    return litPercent.clamp(0, 100) * 10 +
-        _questionLevelRank(questionLevel);
+    return litPercent.clamp(0, 100) * 10 + _questionLevelRank(questionLevel);
   }
 }
 

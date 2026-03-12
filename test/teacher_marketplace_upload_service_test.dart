@@ -49,6 +49,7 @@ class _FakeMarketplaceApiService extends MarketplaceApiService {
     required String subject,
     String? grade,
     String? description,
+    List<int> subjectLabelIds = const <int>[],
   }) async {
     createTeacherCourseCalls += 1;
     if (_createCourseResponses.isEmpty) {
@@ -163,6 +164,7 @@ void main() {
       final target = await service.resolveUploadTarget(
         courseVersionId: courseVersionId,
         courseSubject: 'Algebra',
+        subjectLabelIds: const <int>[1, 2],
       );
 
       expect(target.bundleId, equals(333));
@@ -196,6 +198,7 @@ void main() {
           target: ResolvedUploadTarget(
             remoteCourseId: 444,
             bundleId: 333,
+            approvalStatus: 'approved',
           ),
           courseSubject: 'Algebra',
           bundleFile: bundleFile,

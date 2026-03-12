@@ -6,6 +6,7 @@ import 'services/app_services.dart';
 import 'state/auth_controller.dart';
 import 'state/settings_controller.dart';
 import 'ui/pages/admin_home_page.dart';
+import 'ui/pages/teacher_pending_page.dart';
 import 'ui/pages/student_home_page.dart';
 import 'ui/pages/teacher_home_page.dart';
 import 'ui/pages/welcome_page.dart';
@@ -78,6 +79,9 @@ class AuthGate extends StatelessWidget {
         }
         if (user.role == 'teacher') {
           return const TeacherHomePage();
+        }
+        if (user.role == 'teacher_pending' || user.role == 'teacher_rejected') {
+          return TeacherPendingPage(role: user.role);
         }
         return const StudentHomePage();
       },

@@ -30,7 +30,7 @@ func (h *CatalogHandler) ListTeachers(c *fiber.Ctx) error {
 	}
 	q := strings.TrimSpace(c.Query("q"))
 	args := []interface{}{}
-query := `
+	query := `
 SELECT t.id, t.display_name, t.bio, t.avatar_url, t.contact, t.contact_published
 FROM teacher_accounts t
 WHERE t.status = 'active'
@@ -58,12 +58,12 @@ WHERE t.status = 'active'
 	defer rows.Close()
 
 	type teacherSummary struct {
-		ID              int64  `json:"teacher_id"`
-		DisplayName     string `json:"display_name"`
-		Bio             string `json:"bio"`
-		AvatarURL       string `json:"avatar_url"`
-		Contact         string `json:"contact"`
-		ContactPublished bool  `json:"contact_published"`
+		ID               int64  `json:"teacher_id"`
+		DisplayName      string `json:"display_name"`
+		Bio              string `json:"bio"`
+		AvatarURL        string `json:"avatar_url"`
+		Contact          string `json:"contact"`
+		ContactPublished bool   `json:"contact_published"`
 	}
 
 	results := []teacherSummary{}
@@ -111,11 +111,12 @@ func (h *CatalogHandler) ListCourses(c *fiber.Ctx) error {
 	}
 	q := strings.TrimSpace(c.Query("q"))
 	subject := strings.TrimSpace(c.Query("subject"))
+	subjectLabelIDsRaw := strings.TrimSpace(c.Query("subject_label_ids"))
 	grade := strings.TrimSpace(c.Query("grade"))
 	teacherID := strings.TrimSpace(c.Query("teacher_id"))
 
 	args := []interface{}{}
-query := `
+	query := `
 SELECT c.id, c.subject, c.grade, c.description,
        c.teacher_id, t.display_name, t.avatar_url,
        ce.visibility, ce.published_at,
@@ -136,6 +137,7 @@ JOIN teacher_accounts t ON c.teacher_id = t.id
 JOIN course_catalog_entries ce ON ce.course_id = c.id
 WHERE t.status = 'active'
   AND ce.visibility = 'public'
+  AND ce.approval_status = 'approved'
   AND EXISTS (
     SELECT 1
     FROM bundles b
@@ -154,6 +156,19 @@ WHERE t.status = 'active'
 	if subject != "" {
 		query += " AND c.subject LIKE ?"
 		args = append(args, "%"+subject+"%")
+	}
+	if subjectLabelIDsRaw != "" {
+		labelIDs, parseErr := parseCSVInt64(subjectLabelIDsRaw)
+		if parseErr != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "subject_label_ids invalid")
+		}
+		if len(labelIDs) > 0 {
+			query += " AND EXISTS (SELECT 1 FROM course_subject_labels csl WHERE csl.course_id = c.id AND csl.subject_label_id IN (" +
+				placeholdersForInt64(labelIDs) + "))"
+			for _, id := range labelIDs {
+				args = append(args, id)
+			}
+		}
 	}
 	if grade != "" {
 		query += " AND c.grade = ?"
@@ -174,31 +189,32 @@ WHERE t.status = 'active'
 	defer rows.Close()
 
 	type courseSummary struct {
-		CourseID              int64  `json:"course_id"`
-		Subject               string `json:"subject"`
-		Grade                 string `json:"grade"`
-		Description           string `json:"description"`
-		TeacherID             int64  `json:"teacher_id"`
-		TeacherName           string `json:"teacher_name"`
-		TeacherAvatarURL      string `json:"teacher_avatar_url"`
-		Visibility            string `json:"visibility"`
-		PublishedAt           string `json:"published_at"`
-		LatestBundleVersionID int64  `json:"latest_bundle_version_id"`
+		CourseID              int64                 `json:"course_id"`
+		Subject               string                `json:"subject"`
+		Grade                 string                `json:"grade"`
+		Description           string                `json:"description"`
+		TeacherID             int64                 `json:"teacher_id"`
+		TeacherName           string                `json:"teacher_name"`
+		TeacherAvatarURL      string                `json:"teacher_avatar_url"`
+		Visibility            string                `json:"visibility"`
+		PublishedAt           string                `json:"published_at"`
+		LatestBundleVersionID int64                 `json:"latest_bundle_version_id"`
+		SubjectLabels         []subjectLabelSummary `json:"subject_labels"`
 	}
 
 	results := []courseSummary{}
 	for rows.Next() {
 		var (
-			courseID   int64
-			subjectVal string
-			gradeVal   sql.NullString
-			descVal    sql.NullString
-			teacherIDVal int64
-			teacherName string
+			courseID      int64
+			subjectVal    string
+			gradeVal      sql.NullString
+			descVal       sql.NullString
+			teacherIDVal  int64
+			teacherName   string
 			teacherAvatar sql.NullString
-			visibility string
-			publishedAt sql.NullTime
-			latestBundle sql.NullInt64
+			visibility    string
+			publishedAt   sql.NullTime
+			latestBundle  sql.NullInt64
 		)
 		if err := rows.Scan(
 			&courseID,
@@ -231,7 +247,35 @@ WHERE t.status = 'active'
 			LatestBundleVersionID: latestBundle.Int64,
 		})
 	}
+	for index := range results {
+		labels, err := listCourseSubjectLabels(h.cfg.Store.DB, results[index].CourseID)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "course labels failed")
+		}
+		results[index].SubjectLabels = labels
+	}
 	return c.JSON(results)
 }
 
 const timeLayout = "2006-01-02 15:04:05"
+
+func parseCSVInt64(raw string) ([]int64, error) {
+	parts := strings.Split(raw, ",")
+	results := make([]int64, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		value, err := strconv.ParseInt(trimmed, 10, 64)
+		if err != nil || value <= 0 {
+			return nil, err
+		}
+		results = append(results, value)
+	}
+	return dedupePositiveInt64s(results), nil
+}
+
+func placeholdersForInt64(values []int64) string {
+	return strings.TrimRight(strings.Repeat("?,", len(values)), ",")
+}

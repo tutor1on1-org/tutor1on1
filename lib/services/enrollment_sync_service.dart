@@ -308,6 +308,7 @@ class EnrollmentSyncService {
           await _remoteTeacherIdentity.resolveOrCreateLocalTeacherId(
         db: _db,
         remoteTeacherId: enrollment.teacherId,
+        usernameHint: enrollment.teacherName,
       );
       activeRemoteCourseIds.add(enrollment.courseId);
       final latestBundleVersionId = enrollment.latestBundleVersionId;

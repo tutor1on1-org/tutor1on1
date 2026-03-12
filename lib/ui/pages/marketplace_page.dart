@@ -38,9 +38,11 @@ class _MarketplacePageState extends State<MarketplacePage> {
   String? _persistentMessage;
   bool _persistentMessageIsError = false;
   List<CatalogCourse> _courses = [];
+  List<SubjectLabelSummary> _subjectLabels = [];
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   String _gradeFilter = '';
+  final Set<int> _selectedSubjectLabelIds = <int>{};
   int _currentPage = 1;
   final Map<int, EnrollmentRequestSummary> _requestsByCourse = {};
   final Map<int, EnrollmentSummary> _enrollmentsByCourse = {};
@@ -71,6 +73,7 @@ class _MarketplacePageState extends State<MarketplacePage> {
     try {
       final role = context.read<AuthController>().currentUser?.role;
       final isStudent = role == 'student';
+      final subjectLabels = await _api.listSubjectLabels();
       final allCourses = await _api.listCourses();
       final requestMap = <int, EnrollmentRequestSummary>{};
       final enrolledIds = <int>{};
@@ -117,6 +120,7 @@ class _MarketplacePageState extends State<MarketplacePage> {
       }
       setState(() {
         _courses = courses;
+        _subjectLabels = subjectLabels;
         _studentActionsEnabled = isStudent;
         _currentPage = 1;
         _requestsByCourse
@@ -187,6 +191,13 @@ class _MarketplacePageState extends State<MarketplacePage> {
     final gradeFilter = _gradeFilter.trim().toLowerCase();
     final filtered = <CatalogCourse>[];
     for (final course in courses) {
+      if (_selectedSubjectLabelIds.isNotEmpty) {
+        final courseLabelIds =
+            course.subjectLabels.map((label) => label.subjectLabelId).toSet();
+        if (!_selectedSubjectLabelIds.any(courseLabelIds.contains)) {
+          continue;
+        }
+      }
       final grade = course.grade.trim().toLowerCase();
       if (gradeFilter.isNotEmpty && grade != gradeFilter) {
         continue;
@@ -237,6 +248,7 @@ class _MarketplacePageState extends State<MarketplacePage> {
     setState(() {
       _searchQuery = '';
       _gradeFilter = '';
+      _selectedSubjectLabelIds.clear();
       _currentPage = 1;
     });
   }
@@ -395,8 +407,9 @@ class _MarketplacePageState extends State<MarketplacePage> {
             (grade) => grade.toLowerCase() == _gradeFilter.trim().toLowerCase())
         ? _gradeFilter
         : '';
-    final hasFilters =
-        _searchQuery.trim().isNotEmpty || _gradeFilter.trim().isNotEmpty;
+    final hasFilters = _searchQuery.trim().isNotEmpty ||
+        _gradeFilter.trim().isNotEmpty ||
+        _selectedSubjectLabelIds.isNotEmpty;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
       child: Column(
@@ -457,6 +470,35 @@ class _MarketplacePageState extends State<MarketplacePage> {
               ),
             ],
           ),
+          if (_subjectLabels.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final label in _subjectLabels)
+                    FilterChip(
+                      label: Text(label.name),
+                      selected: _selectedSubjectLabelIds
+                          .contains(label.subjectLabelId),
+                      onSelected: (selected) {
+                        setState(() {
+                          if (selected) {
+                            _selectedSubjectLabelIds.add(label.subjectLabelId);
+                          } else {
+                            _selectedSubjectLabelIds
+                                .remove(label.subjectLabelId);
+                          }
+                          _currentPage = 1;
+                        });
+                      },
+                    ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 6),
           Align(
             alignment: Alignment.centerLeft,
@@ -527,6 +569,10 @@ class _MarketplacePageState extends State<MarketplacePage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(l10n.marketplaceTeacherLine(course.teacherName)),
+              if (course.subjectLabels.isNotEmpty)
+                Text(
+                  'Labels: ${course.subjectLabels.map((label) => label.name).join(', ')}',
+                ),
               if (course.grade.isNotEmpty)
                 Text(l10n.marketplaceGradeLine(course.grade)),
               if (course.description.isNotEmpty) Text(course.description),
@@ -570,6 +616,10 @@ class _MarketplacePageState extends State<MarketplacePage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(l10n.marketplaceTeacherLine(course.teacherName)),
+            if (course.subjectLabels.isNotEmpty)
+              Text(
+                'Labels: ${course.subjectLabels.map((label) => label.name).join(', ')}',
+              ),
             if (course.grade.isNotEmpty)
               Text(l10n.marketplaceGradeLine(course.grade)),
             if (course.description.isNotEmpty) Text(course.description),

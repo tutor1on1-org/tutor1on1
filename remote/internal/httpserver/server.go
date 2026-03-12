@@ -33,6 +33,9 @@ func New(cfg config.Config, store *db.Store) (*Server, error) {
 		Storage: storageSvc,
 		Mailer:  mailer.New(cfg),
 	}
+	if err := handlers.EnsureDefaultAdmin(store.DB); err != nil {
+		return nil, err
+	}
 	registerRoutes(app, handlerDeps)
 
 	return &Server{app: app}, nil

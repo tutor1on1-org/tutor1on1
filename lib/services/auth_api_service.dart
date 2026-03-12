@@ -84,6 +84,7 @@ class AuthApiService {
     required String email,
     required String password,
     required String displayName,
+    List<int> subjectLabelIds = const <int>[],
     String? bio,
     String? avatarUrl,
     String? contact,
@@ -98,6 +99,7 @@ class AuthApiService {
       'avatar_url': avatarUrl?.trim() ?? '',
       'contact': contact?.trim() ?? '',
       'contact_published': contactPublished,
+      'subject_label_ids': subjectLabelIds,
     });
   }
 

@@ -919,7 +919,75 @@ void main() {
       final localTeacher = await db.findUserByRemoteId(9101);
       expect(localTeacher, isNotNull);
       expect(localTeacher!.role, equals('teacher'));
+      expect(localTeacher.username, equals('remote_teacher'));
       expect(repaired.teacherId, equals(localTeacher.id));
+    },
+  );
+
+  test(
+    'student sync renames existing remote teacher placeholder to provided teacher name',
+    () async {
+      final studentId = await db.createUser(
+        username: 'student_teacher_name_fix',
+        pinHash: 'hash',
+        role: 'student',
+        remoteUserId: 953,
+      );
+      final placeholderTeacherId = await db.createUser(
+        username: 'remote_teacher_9102',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 9102,
+      );
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: placeholderTeacherId,
+        subject: 'Statistics',
+        granularity: 1,
+        textbookText: '',
+        sourcePath: r'C:\courses\statistics',
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 8102,
+      );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+      );
+
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+
+      final secureStorage = _TestSecureStorageService();
+      final api = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+        enrollments: <EnrollmentSummary>[
+          EnrollmentSummary(
+            enrollmentId: 12,
+            courseId: 8102,
+            teacherId: 9102,
+            status: 'approved',
+            assignedAt: '2026-02-28T00:00:00Z',
+            courseSubject: 'Statistics',
+            teacherName: 'dennis',
+            latestBundleVersionId: null,
+          ),
+        ],
+      );
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService: CourseService(db),
+        marketplaceApi: api,
+        promptRepository: PromptRepository(db: db),
+      );
+
+      await service.syncIfReady(currentUser: student!);
+
+      final localTeacher = await db.findUserByRemoteId(9102);
+      expect(localTeacher, isNotNull);
+      expect(localTeacher!.id, equals(placeholderTeacherId));
+      expect(localTeacher.username, equals('dennis'));
     },
   );
 
