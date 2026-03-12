@@ -7,11 +7,9 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 if ([string]::IsNullOrWhiteSpace($BaseUrl)) {
-  $BaseUrl = 'https://43.99.59.107'
+  $BaseUrl = 'https://api.tutor1on1.org'
 }
 $BaseUrl = $BaseUrl.TrimEnd('/')
-
-[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
 Add-Type -AssemblyName System.Net.Http
 
 function Invoke-Json {

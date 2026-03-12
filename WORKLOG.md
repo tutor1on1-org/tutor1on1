@@ -1,9 +1,10 @@
 # WORKLOG
-Last updated: 2026-03-08
+Last updated: 2026-03-12
 
 ## Remote host (active)
 - Provider: AliCloud ECS
-- Host: `43.99.59.107`
+- API host: `api.tutor1on1.org`
+- SSH host: `43.99.59.107`
 - API service: `family-teacher-api.service`
 - Nginx reverse proxy: HTTPS entry, internal file serving via `X-Accel-Redirect`
 
@@ -23,7 +24,12 @@ Last updated: 2026-03-08
 - Service status: `sudo systemctl status family-teacher-api.service`
 - API logs: `sudo tail -n 200 /var/log/family_teacher_remote/app.log`
 - Nginx logs: `sudo tail -n 200 /var/log/nginx/access.log`
-- Health check: `curl -k https://43.99.59.107/health`
+- Health check: `curl https://api.tutor1on1.org/health`
+
+## TLS notes
+- Canonical public API origin is `https://api.tutor1on1.org`.
+- Public TLS is managed by `certbot` on the host with the nginx plugin.
+- Port `80/tcp` must stay open in both Alibaba security group and host firewall for HTTP-01 issuance and renewal.
 
 ## Deployment steps (quick)
 1. Build and replace API binary in `/opt/family_teacher_remote/bin/`.
