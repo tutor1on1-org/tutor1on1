@@ -20,7 +20,7 @@ Build the Windows app, package it as `family_teacher.zip`, upload it to the remo
 7. Verify candidate SHA-256 and candidate URL (`/downloads/family_teacher_candidate.zip`) before promotion.
 8. Promote candidate to canonical `/var/lib/family_teacher_remote/public/family_teacher.zip`.
 9. Delete old versioned ZIP files that match `family_teacher*.zip` except the canonical file.
-10. Verify canonical SHA-256 and URL (`https://43.99.59.107/downloads/family_teacher.zip`).
+10. Verify canonical SHA-256 and URL (`https://api.tutor1on1.org/downloads/family_teacher.zip`).
 
 ## Run
 ```powershell

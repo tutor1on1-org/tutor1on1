@@ -86,7 +86,7 @@ Default safeguards:
 ### Auth API smoke test
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/test_auth.ps1
-powershell -ExecutionPolicy Bypass -File scripts/test_auth.ps1 -BaseUrl "https://43.99.59.107"
+powershell -ExecutionPolicy Bypass -File scripts/test_auth.ps1 -BaseUrl "https://api.tutor1on1.org"
 ```
 Optional env inputs:
 - `FT_REMOTE_BASE_URL`
@@ -95,7 +95,7 @@ Optional env inputs:
 ### Teacher/Student enrollment+bundle smoke flow
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/smoke_teacher_student_flow.ps1
-powershell -ExecutionPolicy Bypass -File scripts/smoke_teacher_student_flow.ps1 -BaseUrl "https://43.99.59.107"
+powershell -ExecutionPolicy Bypass -File scripts/smoke_teacher_student_flow.ps1 -BaseUrl "https://api.tutor1on1.org"
 ```
 What it validates:
 - teacher register -> create course -> ensure bundle -> upload -> publish
@@ -180,7 +180,7 @@ sqlc generate
 ```bash
 /usr/local/go/bin/go build -o /opt/family_teacher_remote/bin/family-teacher-api /opt/family_teacher_remote/remote/cmd/server
 /usr/bin/systemctl restart family-teacher-api.service
-curl -k https://43.99.59.107/health
+curl https://api.tutor1on1.org/health
 ```
 
 ## Test-case creation shortcuts
