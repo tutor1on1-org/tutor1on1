@@ -1,38 +1,211 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
-
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
-  -->
-  <base href="$FLUTTER_BASE_HREF">
-
   <meta charset="UTF-8">
+  <meta content="width=device-width, initial-scale=1.0" name="viewport">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta
+    name="description"
+    content="Tutor1on1 is a desktop learning app where teachers publish structured courses and students study through guided tutor sessions, enrollment workflows, and private progress sync."
+  >
+  <meta
+    name="keywords"
+    content="Tutor1on1, family teacher, desktop learning app, structured courses, AI tutoring, teacher workflow, student review"
+  >
+  <meta content="#f4efe6" name="theme-color">
+  <meta property="og:title" content="Tutor1on1">
+  <meta
+    property="og:description"
+    content="Structured course publishing, guided tutor sessions, and progress sync in one desktop app."
+  >
+  <meta property="og:type" content="website">
 
-  <!-- iOS meta tags & icons -->
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="family_teacher">
+  <title>Tutor1on1</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Manrope:wght@400;500;700;800&display=swap"
+    rel="stylesheet"
+  >
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
-
-  <!-- Favicon -->
-  <link rel="icon" type="image/png" href="favicon.png"/>
-
-  <title>family_teacher</title>
+  <link rel="icon" type="image/png" href="favicon.png">
   <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <script src="flutter_bootstrap.js" async></script>
+  <div class="page-shell">
+    <header class="topbar">
+      <a class="brand" href="#hero" aria-label="Tutor1on1 home">
+        <span class="brand-mark">T1</span>
+        <span class="brand-copy">
+          <strong>Tutor1on1</strong>
+          <span>Structured tutoring for real courses</span>
+        </span>
+      </a>
+      <nav class="topnav" aria-label="Primary">
+        <a href="#how-it-works">How it works</a>
+        <a href="#built-for">Who it is for</a>
+        <a href="#sync">Why it holds up</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero reveal" id="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Desktop learning platform</p>
+          <h1>One app for course publishing, guided tutoring, and student progress.</h1>
+          <p class="hero-text">
+            Tutor1on1 gives teachers a way to publish structured lessons and gives
+            students a guided study loop with enrollments, review sessions, and
+            private sync across devices.
+          </p>
+          <div class="hero-actions">
+            <a
+              class="button button-primary"
+              href="https://api.tutor1on1.org/downloads/family_teacher.zip"
+            >
+              Download desktop app
+            </a>
+            <a class="button button-secondary" href="#how-it-works">See the workflow</a>
+          </div>
+          <ul class="hero-points" aria-label="Key benefits">
+            <li>Teachers publish structured course bundles</li>
+            <li>Students learn through guided tutor sessions</li>
+            <li>Progress sync stays private and encrypted end to end</li>
+          </ul>
+        </div>
+
+        <div class="hero-panel">
+          <div class="panel-card panel-primary">
+            <span class="panel-label">Teacher side</span>
+            <h2>Publish once, teach repeatedly.</h2>
+            <p>
+              Prepare course versions locally, upload validated bundles, approve
+              enrollments, and review student progress without rebuilding your
+              workflow around a generic chat box.
+            </p>
+          </div>
+          <div class="panel-card panel-secondary">
+            <span class="panel-label">Student side</span>
+            <h2>Study with structure.</h2>
+            <p>
+              Browse courses, request enrollment, download approved content, and
+              move between learn, review, and summary modes with continuity.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section reveal" id="how-it-works">
+        <div class="section-heading">
+          <p class="eyebrow">How it works</p>
+          <h2>Built around an actual teaching pipeline.</h2>
+        </div>
+        <div class="steps">
+          <article class="step-card">
+            <span class="step-number">01</span>
+            <h3>Teachers prepare a course</h3>
+            <p>
+              Course bundles are authored locally, validated, versioned, and
+              published with a marketplace-ready workflow.
+            </p>
+          </article>
+          <article class="step-card">
+            <span class="step-number">02</span>
+            <h3>Students enroll and download</h3>
+            <p>
+              Enrollment approval and bundle delivery are first-class parts of the
+              product, not afterthoughts.
+            </p>
+          </article>
+          <article class="step-card">
+            <span class="step-number">03</span>
+            <h3>Learning sessions become durable progress</h3>
+            <p>
+              Guided sessions feed review state, summaries, and cross-device sync
+              so progress survives beyond one chat window.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section section-split reveal" id="built-for">
+        <div class="split-card teacher">
+          <p class="eyebrow">For teachers</p>
+          <h2>Manage courses like products, not loose files.</h2>
+          <ul class="feature-list">
+            <li>Local course versioning</li>
+            <li>Bundle validation before upload</li>
+            <li>Enrollment review and approval</li>
+            <li>Progress visibility without reading raw ciphertext</li>
+          </ul>
+        </div>
+        <div class="split-card student">
+          <p class="eyebrow">For students</p>
+          <h2>Move from first exposure to review with less friction.</h2>
+          <ul class="feature-list">
+            <li>Catalog discovery and enrollment requests</li>
+            <li>Guided learn and review sessions</li>
+            <li>Offline-capable local data</li>
+            <li>Multi-device continuity when sync is enabled</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="section reveal" id="sync">
+        <div class="section-heading compact">
+          <p class="eyebrow">Why it holds up</p>
+          <h2>Not just tutoring. Operational reliability too.</h2>
+        </div>
+        <div class="signal-grid">
+          <article class="signal-card">
+            <h3>Structured course flow</h3>
+            <p>
+              Publishing, enrollment, bundle delivery, and study are all connected
+              instead of stitched together by manual side channels.
+            </p>
+          </article>
+          <article class="signal-card">
+            <h3>Encrypted sync model</h3>
+            <p>
+              Session payloads stay encrypted while the platform still tracks the
+              metadata needed for continuity and administration.
+            </p>
+          </article>
+          <article class="signal-card">
+            <h3>Desktop-first focus</h3>
+            <p>
+              The app is designed for serious study sessions, longer writing, and
+              content management rather than thumb-first mobile compromises.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="cta reveal">
+        <div class="cta-card">
+          <div>
+            <p class="eyebrow">Ready to try it</p>
+            <h2>Start with the desktop app.</h2>
+          </div>
+          <a
+            class="button button-primary"
+            href="https://api.tutor1on1.org/downloads/family_teacher.zip"
+          >
+            Download Tutor1on1
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Tutor1on1</p>
+      <p>Structured courses, guided sessions, and private progress sync.</p>
+      <p>&copy; <span id="current-year"></span> Tutor1on1</p>
+    </footer>
+  </div>
+
+  <script src="site.js"></script>
 </body>
 </html>
