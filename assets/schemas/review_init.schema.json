@@ -5,7 +5,6 @@
   "required": [
     "teacher_message",
     "control",
-    "question",
     "difficulty_level",
     "grading",
     "error_book_update",
@@ -77,21 +76,6 @@
         }
       },
       "additionalProperties": false
-    },
-    "question": {
-      "type": "object",
-      "required": ["text", "type_id"],
-      "properties": {
-        "text": {
-          "type": "string",
-          "minLength": 1
-        },
-        "type_id": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "additionalProperties": true
     },
     "difficulty_level": {
       "type": "string",

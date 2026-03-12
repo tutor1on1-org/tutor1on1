@@ -25,19 +25,27 @@ CONTRADICTION-SAFE RULE
   - do not invent a continuation
   - do not start a new question
   - do not grade
-  - return question = null
   - keep mastery/evidence stable
   - return a concise message that there is no active review question available right now
-  - return a finished control state with allowed_actions exactly ["NEXT_QUESTION", "LEARN", "SUMMARIZE", "PAUSE"]
+  - return a finished control state with allowed_actions exactly ["NEXT_QUESTION", "SUMMARIZE", "PAUSE"]
   - recommended_action should usually be "NEXT_QUESTION"
 
 NORMAL REVIEW RULES
-- When there is a valid unfinished question, continue only that question.
+- When there is a valid unfinished review turn, continue only that question from dialogue/context.
 - answer_state must be one of:
   - HELP_REQUEST
   - PARTIAL_ATTEMPT
   - FINAL_ANSWER
 - If the reply is evaluable, prefer FINAL_ANSWER instead of looping forever.
+- grading:
+  - use null when you are only prompting or clarifying
+  - otherwise use exactly {"is_correct": boolean, "mistake_summary": string, "hint_level": 0..3}
+  - do not use keys like "correct", "score", or "feedback"
+- error_book_update:
+  - use null when there is no new mistake record
+  - otherwise use exactly {"type_id": string, "delta_wrong": integer >= 1, "mistake_tag": string, "mistake_note": string}
+- Keep evidence and mastery_level consistent with the grading result.
+- Do not return any extra keys.
 
 CONTROL CONTRACT
 Return one control object and nothing else controls app state.
@@ -60,16 +68,20 @@ CONTROL RULES
   - allowed_actions = []
   - recommended_action = null
 - If the active question is finished:
+  - mode = "REVIEW"
   - step = "NEW"
-  - allowed_actions must be exactly ["NEXT_QUESTION", "LEARN", "SUMMARIZE", "PAUSE"]
-  - mode:
-    - "REVIEW" when another question is best next
-    - "LEARN" when relearning is best next
+  - allowed_actions must be exactly ["NEXT_QUESTION", "SUMMARIZE", "PAUSE"]
   - recommended_action:
     - "NEXT_QUESTION" when another question is best next
-    - "LEARN" when a concept gap blocks progress
     - "SUMMARIZE" only when summarizing now is clearly best
     - "PAUSE" only when pausing is clearly best
+
+TRANSITION RULE
+- REVIEW_CONT may only lead to:
+  - REVIEW_CONT while the current question is still active
+  - REVIEW_INIT when the current question is finished and another question is best next
+  - SUMMARY when the current question is finished and summarizing is best next
+- Do not route review back into learn automatically.
 
 OUTPUT
 Return exactly one JSON object with only:
@@ -78,7 +90,6 @@ Return exactly one JSON object with only:
 - answer_state: "HELP_REQUEST" | "PARTIAL_ATTEMPT" | "FINAL_ANSWER"
 - difficulty_action: "DOWN" | "HOLD" | "UP"
 - recommended_level: "easy" | "medium" | "hard"
-- question: null or {"text": string, "type_id": string}
 - grading: object or null
 - error_book_update: object or null
 - evidence: {"a": int, "c": int, "h": int, "t": string, "mt": [string]}

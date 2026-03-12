@@ -167,8 +167,7 @@ class TutorControlState {
     if (recommendedRaw != null && recommendedRaw is! String) {
       return null;
     }
-    final recommended =
-        TutorFinishedAction.fromWire(recommendedRaw as String?);
+    final recommended = TutorFinishedAction.fromWire(recommendedRaw as String?);
     if (recommendedRaw is String &&
         recommendedRaw.trim().isNotEmpty &&
         recommended == null) {
@@ -211,8 +210,7 @@ class TutorControlState {
       }
     }
     final mode = _modeFromWire(
-      (parsed['next_mode'] as String?) ??
-          (parsed['next_step'] as String?),
+      (parsed['next_mode'] as String?) ?? (parsed['next_step'] as String?),
     );
     final turnState = (parsed['turn_state'] as String?)?.trim().toUpperCase();
     final helpBias = TutorHelpBias.fromWire(
@@ -231,8 +229,9 @@ class TutorControlState {
       allowedActions: finished
           ? _legacyAllowedActionsForMode(mode)
           : const <TutorFinishedAction>[],
-      recommendedAction:
-          finished ? _legacyRecommendedAction(parsed: parsed, mode: mode) : null,
+      recommendedAction: finished
+          ? _legacyRecommendedAction(parsed: parsed, mode: mode)
+          : null,
     );
   }
 
@@ -392,20 +391,19 @@ class TutorEvidenceState {
   }) {
     final normalizedAction = actionMode.trim().toUpperCase();
     if (normalizedAction == 'REVIEW' && parsed != null) {
+      final control = TutorControlState.fromAssistantPayload(parsed);
       final turnState = (parsed['turn_state'] as String?)?.trim().toUpperCase();
       final grading = parsed['grading'];
       final evidence = parsed['evidence'];
       final masteryLevel = (parsed['mastery_level'] as String?)?.trim();
-      final isGradedFinal =
-          turnState == 'FINISHED' && grading is Map<String, dynamic>;
+      final turnFinished = control?.turnFinished ?? (turnState == 'FINISHED');
+      final isGradedFinal = turnFinished && grading is Map<String, dynamic>;
       return current.copyWith(
-        gradedReviewCount:
-            current.gradedReviewCount + (isGradedFinal ? 1 : 0),
+        gradedReviewCount: current.gradedReviewCount + (isGradedFinal ? 1 : 0),
         lastAssessedAction: 'REVIEW',
-        lastMasteryLevel:
-            masteryLevel != null && masteryLevel.isNotEmpty
-                ? masteryLevel
-                : current.lastMasteryLevel,
+        lastMasteryLevel: masteryLevel != null && masteryLevel.isNotEmpty
+            ? masteryLevel
+            : current.lastMasteryLevel,
         lastEvidence: evidence is Map<String, dynamic>
             ? Map<String, dynamic>.from(evidence)
             : current.lastEvidence,

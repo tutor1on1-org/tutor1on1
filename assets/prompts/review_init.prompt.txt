@@ -31,13 +31,18 @@ RULES
 - Pick one best next question.
 - You may lightly modify wording or numbers to reduce repetition.
 - If the pool is empty, write one concise question from the kp.
+- teacher_message must contain the full student-visible question.
+- Do not use placeholder intros like "Try this one:" or "Next question:" without the question text.
 - Keep teacher_message concise.
+- grading must be null.
+- error_book_update must be null.
+- Do not return any extra keys.
 
 EVIDENCE
 - Start from prev_json.evidence when valid.
 - Else start from last_evidence when valid.
 - Else use {"a":0,"c":0,"h":0,"t":"","mt":[]}.
-- Set t to the chosen question.type_id.
+- Set evidence.t to the chosen question type.
 
 CANONICAL CONTROL CONTRACT
 Return one control object and nothing else controls app state.
@@ -56,7 +61,6 @@ OUTPUT
 Return exactly one JSON object with only:
 - teacher_message: string
 - control: object following the contract above
-- question: {"text": string, "type_id": string}
 - difficulty_level: "easy" | "medium" | "hard"
 - grading: null
 - error_book_update: null

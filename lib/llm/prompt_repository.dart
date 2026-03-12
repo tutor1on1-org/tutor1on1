@@ -17,8 +17,7 @@ class PromptRepository {
   final Map<String, String> _systemPromptCache = {};
   final Map<String, Map<String, dynamic>> _schemaCache = {};
   final Map<String, String> _textbookCache = {};
-  static const Map<String, String> _emergencyPromptFallbacks =
-      <String, String>{
+  static const Map<String, String> _emergencyPromptFallbacks = <String, String>{
     'learn_init': '''
 You are a one-on-one teacher. Task: LEARN_INIT.
 
@@ -32,6 +31,7 @@ control must be the canonical contract:
 {"version":1,"mode":"LEARN|REVIEW","step":"NEW|CONTINUE","turn_finished":bool,"help_bias":"EASIER|UNCHANGED|HARDER","allowed_actions":[...],"recommended_action":string|null}
 
 If teaching continues, control must be LEARN/CONTINUE/turn_finished=false with empty allowed_actions.
+If learning is finished, control must be REVIEW/NEW/turn_finished=true with allowed_actions ["NEXT_QUESTION"] and recommended_action "NEXT_QUESTION".
 Return a valid response following the LEARN_INIT output schema.
 ''',
     'learn_cont': '''
@@ -45,6 +45,7 @@ Return JSON with:
 - control
 
 Use the same canonical control contract as LEARN_INIT.
+If learning is finished, control must be REVIEW/NEW/turn_finished=true with allowed_actions ["NEXT_QUESTION"] and recommended_action "NEXT_QUESTION".
 Return a valid response following the LEARN_CONT output schema.
 ''',
     'review_init': '''
@@ -54,7 +55,6 @@ Ask exactly one new practice question for the same knowledge point.
 Return JSON with:
 - teacher_message
 - control
-- question
 - difficulty_level
 - grading
 - error_book_update
@@ -62,25 +62,28 @@ Return JSON with:
 - mastery_level
 
 control must be REVIEW/CONTINUE/turn_finished=false with empty allowed_actions.
+grading must be null. error_book_update must be null. Do not return extra keys.
 Return a valid response following the REVIEW_INIT output schema.
 ''',
     'review_cont': '''
 You are a one-on-one teacher. Task: REVIEW_CONT.
 
 Continue the same active review question.
-If prev_json is missing, stale, finished, or wrong-mode, do not invent a continuation and do not start a new question. Return question=null and a finished control state whose allowed_actions are ["NEXT_QUESTION","LEARN","SUMMARIZE","PAUSE"].
+If prev_json is missing, stale, finished, or wrong-mode, do not invent a continuation and do not start a new question. Return a finished control state whose allowed_actions are ["NEXT_QUESTION","SUMMARIZE","PAUSE"].
 Return JSON with:
 - teacher_message
 - control
 - answer_state
 - difficulty_action
 - recommended_level
-- question
 - grading
 - error_book_update
 - evidence
 - mastery_level
 
+Finished review turns must stay in REVIEW/NEW. Do not route review directly back into learn.
+If grading is not null, it must be exactly {"is_correct": boolean, "mistake_summary": string, "hint_level": 0..3}. Do not use keys like "correct", "score", or "feedback".
+If error_book_update is not null, it must be exactly {"type_id": string, "delta_wrong": integer >= 1, "mistake_tag": string, "mistake_note": string}.
 Return a valid response following the REVIEW_CONT output schema.
 ''',
     'summary': '''

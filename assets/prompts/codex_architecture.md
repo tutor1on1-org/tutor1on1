@@ -106,7 +106,7 @@ LLM responsibilities:
 - Select ONE best question from the provided pool.
 - Avoid repetition.
 - Optionally make light modifications (numbers/wording).
-- Assign a stable `type_id`.
+- Put the full student-visible question in `teacher_message`.
 
 Inputs provided by the App:
 - presented_questions   (program-filled; full candidate pool)
@@ -115,7 +115,6 @@ Inputs provided by the App:
 - practice_history_summary (program-filled, LLM-generated previously)
 
 JSON fields parsed by the App:
-- question
 - turn_state
 - next_mode
 - evidence

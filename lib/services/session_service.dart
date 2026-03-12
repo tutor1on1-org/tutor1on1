@@ -357,9 +357,8 @@ class SessionService {
     );
     final masteryFromProgress =
         _questionLevelToMasteryLevel(progress?.questionLevel);
-    final masteryFromPrev =
-        evidenceState.lastMasteryLevel ??
-            _normalizeMasteryLevel(promptResolution.prevJson?['mastery_level']);
+    final masteryFromPrev = evidenceState.lastMasteryLevel ??
+        _normalizeMasteryLevel(promptResolution.prevJson?['mastery_level']);
     final currentDifficultyLevel = _normalizeLevel(progress?.questionLevel) ??
         _masteryLevelToQuestionLevel(masteryFromPrev) ??
         'easy';
@@ -724,6 +723,7 @@ class SessionService {
     String? modelOverride,
     void Function()? onPromptWarning,
   }) async {
+    const llmPromptName = 'summarize';
     final session = await _db.getSession(sessionId);
     final currentControl = _loadSessionControlState(
       session,
@@ -745,7 +745,7 @@ class SessionService {
     );
     if (cachedSummary != null) {
       await _llmLogRepository.appendEntry(
-        promptName: 'summary',
+        promptName: llmPromptName,
         model: '',
         baseUrl: await _resolveCurrentBaseUrl(),
         mode: 'APP',
@@ -798,8 +798,7 @@ class SessionService {
       'student_summary': progress?.summaryText ?? session?.summaryText ?? '',
       'student_profile': studentPromptContext.profileText,
       'student_preferences': studentPromptContext.preferencesText,
-      'control_state_json':
-          currentControl.toJsonText(),
+      'control_state_json': currentControl.toJsonText(),
       'evidence_state_json': evidenceState.toJsonText(),
       'evidence_policy': evidenceState.policy,
       'new_graded_review_evidence_available':
@@ -849,7 +848,7 @@ class SessionService {
       action: 'summary',
     );
     final handle = _llmService.startCall(
-      promptName: 'summary',
+      promptName: llmPromptName,
       renderedPrompt: rendered,
       schemaMap: schema,
       modelOverride: modelOverride,
@@ -860,7 +859,7 @@ class SessionService {
         throw StateError('LLM returned an empty response.');
       }
       final resolution = await _resolveStructuredPayload(
-        promptName: 'summary',
+        promptName: llmPromptName,
         renderedPrompt: rendered,
         modelOverride: modelOverride,
         context: context,
@@ -1133,33 +1132,31 @@ class SessionService {
           'Response preview: ${_summarizeResponseForError(responseText)}',
         );
       }
-      final question = parsed['question'];
-      if (question is! Map) {
-        throw StateError(
-          'LLM response for "$promptName" has invalid "question". '
-          'Response preview: ${_summarizeResponseForError(responseText)}',
-        );
-      }
-      final questionText = question['text'];
-      final questionType = question['type_id'];
-      if (questionText is! String || questionText.trim().isEmpty) {
-        throw StateError(
-          'LLM response for "$promptName" is missing question.text. '
-          'Response preview: ${_summarizeResponseForError(responseText)}',
-        );
-      }
-      if (questionType is! String || questionType.trim().isEmpty) {
-        throw StateError(
-          'LLM response for "$promptName" is missing question.type_id. '
-          'Response preview: ${_summarizeResponseForError(responseText)}',
-        );
-      }
       final difficultyLevel = _normalizeLevel(parsed['difficulty_level']);
       if (difficultyLevel == null) {
         throw StateError(
           'LLM response for "$promptName" has invalid "difficulty_level". '
           'Response preview: ${_summarizeResponseForError(responseText)}',
         );
+      }
+    }
+    if (promptName == 'learn_init' || promptName == 'learn_cont') {
+      if (!controlState.turnFinished) {
+        if (controlState.mode != TutorMode.learn ||
+            controlState.step != TutorTurnStep.continueTurn) {
+          throw StateError(
+            'LLM response for "$promptName" has invalid active learn control state. '
+            'Response preview: ${_summarizeResponseForError(responseText)}',
+          );
+        }
+      } else {
+        if (controlState.mode != TutorMode.review ||
+            controlState.step != TutorTurnStep.newTurn) {
+          throw StateError(
+            'LLM response for "$promptName" must finish into REVIEW/NEW. '
+            'Response preview: ${_summarizeResponseForError(responseText)}',
+          );
+        }
       }
     }
     if (promptName == 'review_cont') {
@@ -1191,38 +1188,17 @@ class SessionService {
           'Response preview: ${_summarizeResponseForError(responseText)}',
         );
       }
-      final question = parsed['question'];
-      if (question != null && question is! Map) {
-        throw StateError(
-          'LLM response for "$promptName" has invalid "question". '
-          'Response preview: ${_summarizeResponseForError(responseText)}',
-        );
-      }
-      if (!controlState.turnFinished && question is! Map) {
-        throw StateError(
-          'LLM response for "$promptName" requires a question while the review turn is still active. '
-          'Response preview: ${_summarizeResponseForError(responseText)}',
-        );
-      }
-      if (question is Map) {
-        final questionText = question['text'];
-        final questionType = question['type_id'];
-        if (questionText is! String || questionText.trim().isEmpty) {
-          throw StateError(
-            'LLM response for "$promptName" is missing question.text. '
-            'Response preview: ${_summarizeResponseForError(responseText)}',
-          );
-        }
-        if (questionType is! String || questionType.trim().isEmpty) {
-          throw StateError(
-            'LLM response for "$promptName" is missing question.type_id. '
-            'Response preview: ${_summarizeResponseForError(responseText)}',
-          );
-        }
-      }
       if (answerState == 'FINAL_ANSWER' && !controlState.turnFinished) {
         throw StateError(
           'LLM response for "$promptName" requires turn_state=FINISHED when answer_state=FINAL_ANSWER. '
+          'Response preview: ${_summarizeResponseForError(responseText)}',
+        );
+      }
+      if (controlState.turnFinished &&
+          (controlState.mode != TutorMode.review ||
+              controlState.step != TutorTurnStep.newTurn)) {
+        throw StateError(
+          'LLM response for "$promptName" must finish into REVIEW/NEW. '
           'Response preview: ${_summarizeResponseForError(responseText)}',
         );
       }
@@ -1238,7 +1214,8 @@ class SessionService {
         );
       }
     }
-    if (promptName == 'summary' && !controlState.turnFinished) {
+    if ((promptName == 'summary' || promptName == 'summarize') &&
+        !controlState.turnFinished) {
       throw StateError(
         'LLM response for "$promptName" must be a finished control state. '
         'Response preview: ${_summarizeResponseForError(responseText)}',
@@ -1259,7 +1236,6 @@ class SessionService {
         return {
           'teacher_message',
           'control',
-          'question',
           'difficulty_level',
           'grading',
           'error_book_update',
@@ -1273,13 +1249,13 @@ class SessionService {
           'answer_state',
           'difficulty_action',
           'recommended_level',
-          'question',
           'grading',
           'error_book_update',
           'evidence',
           'mastery_level',
         };
       case 'summary':
+      case 'summarize':
         return {
           'teacher_message',
           'control',
@@ -1534,7 +1510,8 @@ class SessionService {
         actionMode: actionMode,
       );
       String promptName;
-      final continueRequested = sessionControl.step == TutorTurnStep.continueTurn;
+      final continueRequested =
+          sessionControl.step == TutorTurnStep.continueTurn;
       if (actionMode == 'learn') {
         promptName = continueRequested ? 'learn_cont' : 'learn_init';
       } else {
@@ -2054,7 +2031,7 @@ class SessionService {
     if (teacherMessage is String && teacherMessage.trim().isNotEmpty) {
       return teacherMessage.trim();
     }
-    if (promptName == 'summary') {
+    if (promptName == 'summary' || promptName == 'summarize') {
       final summaryText = parsed['summary_text'];
       if (summaryText is String && summaryText.trim().isNotEmpty) {
         return summaryText.trim();
@@ -2068,7 +2045,8 @@ class SessionService {
         promptName == 'learn_cont' ||
         promptName == 'review_init' ||
         promptName == 'review_cont' ||
-        promptName == 'summary';
+        promptName == 'summary' ||
+        promptName == 'summarize';
   }
 
   SummarizeResult? _buildCachedSummaryResult({
@@ -2087,11 +2065,10 @@ class SessionService {
     if (summaryText.isEmpty) {
       return null;
     }
-    final cachedLitPercent =
-        progress?.litPercent ?? session.summaryLitPercent;
+    final cachedLitPercent = progress?.litPercent ?? session.summaryLitPercent;
     final masteryLevel =
         _questionLevelToMasteryLevel(progress?.questionLevel) ??
-        _percentToMasteryLevel(cachedLitPercent);
+            _percentToMasteryLevel(cachedLitPercent);
     final litPercent = _masteryLevelToPercent(masteryLevel);
     if (litPercent == null) {
       return null;
@@ -2120,6 +2097,7 @@ class SessionService {
       case 'review_cont':
         return _promptRepository.loadSchema('review_cont');
       case 'summary':
+      case 'summarize':
         return _promptRepository.loadSchema('summarize');
       default:
         return null;

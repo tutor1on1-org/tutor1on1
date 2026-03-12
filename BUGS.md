@@ -1,5 +1,5 @@
 # BUGS
-Last updated: 2026-03-09
+Last updated: 2026-03-11
 
 ## Active watch
 - Student import race after bundle download (monitoring): fixed by awaiting archive extraction in client bundle service (`f77e7e0`); keep watching for recurrence in production-like flow.
@@ -129,3 +129,18 @@ Last updated: 2026-03-09
 - Symptom: pressing `Summary` can still show `Summary saved (unparsed)` in a current build, even after the structured summary parser was unified.
 - Root cause: `startSummarize()` had a cached-summary early return that reused old summary text when no new graded review evidence existed, but that cache path derived mastery only from `progress.questionLevel`; when cached text existed without a stored level/percent, it returned `success=true` with `litPercent=null`, which reactivated the UI's unparsed-success branch.
 - Prevention: keep one postcondition for summary success. Cache is only an optimization layer; it may reuse an existing summary only when it can also return a concrete mastery result (`litPercent`/pass-fail). Otherwise it must fall through to the normal LLM summary path.
+
+26. Review question ownership must not be split across visible text and hidden structured fields
+- Symptom: `review_init` can return `teacher_message` like `Try this one:` while putting the actual question only in a separate `question.text` field, so the student sees no usable question.
+- Root cause: the review prompt/schema allowed two plausible question carriers (`teacher_message` and `question.text`) without declaring one canonical student-visible owner, so the LLM chose the cheaper split response.
+- Prevention: keep the full student-visible review question in `teacher_message` and avoid parallel hidden question payloads unless the contract clearly defines them as derived/internal only.
+
+27. Summary evidence can silently stay at zero after a finished review
+- Symptom: pressing `Summary` after a graded review can act like there is no new evidence, reuse stale cache, or leave mastery at `0` even though the last review turn was finished and graded.
+- Root cause: evidence accounting still looked at legacy `turn_state == FINISHED` instead of the canonical structured `control.turn_finished`, so newer review payloads never incremented `graded_review_count`.
+- Prevention: derive review evidence updates from the same canonical control object used by the rest of the tutor flow, and keep a regression test that a finished graded review increments `graded_review_count`.
+
+28. Student devices can show placeholder remote teacher names in logs/UI
+- Symptom: LLM logs or course ownership can show `remote_teacher_<id>` instead of the real teacher name, even when the server already knows the teacher name.
+- Root cause: student enrollment sync created remote teacher placeholder users from `teacher_id` only and never renamed them when `teacher_name` became available.
+- Prevention: pass `teacher_name` into remote teacher resolution and upgrade placeholder usernames to the real server teacher name whenever the local record is still placeholder-only.

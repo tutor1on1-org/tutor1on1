@@ -10,6 +10,7 @@ import 'package:family_teacher/db/app_database.dart';
 import 'package:family_teacher/llm/llm_models.dart';
 import 'package:family_teacher/llm/llm_service.dart';
 import 'package:family_teacher/llm/prompt_repository.dart';
+import 'package:family_teacher/models/tutor_contract.dart';
 import 'package:family_teacher/services/llm_log_repository.dart' as llm_logs;
 import 'package:family_teacher/services/session_service.dart';
 import 'package:family_teacher/services/settings_repository.dart';
@@ -562,10 +563,6 @@ void main() {
                   'teacher_message': 'Check your sign handling.',
                   'control': _reviewFinishedControl(),
                   'answer_state': 'FINAL_ANSWER',
-                  'question': {
-                    'text': 'Solve x + 2 = 5',
-                    'type_id': 'ALGEBRA',
-                  },
                   'grading': {
                     'is_correct': false,
                     'mistake_summary': 'Sign error',
@@ -710,10 +707,6 @@ void main() {
                   'answer_state': 'FINAL_ANSWER',
                   'difficulty_action': 'HOLD',
                   'recommended_level': 'medium',
-                  'question': {
-                    'text': 'Solve 2x + 1 = 9',
-                    'type_id': 'ALGEBRA',
-                  },
                   'grading': {
                     'is_correct': true,
                     'mistake_summary': 'Good',
@@ -738,12 +731,8 @@ void main() {
         Future<LlmCallResult>.value(
           _llmOk(
             responseText: jsonEncode(<String, Object?>{
-              'teacher_message': 'Here is your next question: ...',
+              'teacher_message': 'Solve 2x + 1 = 9.',
               'control': _reviewUnfinishedControl(),
-              'question': {
-                'text': 'Solve 2x + 1 = 9',
-                'type_id': 'ALGEBRA',
-              },
               'difficulty_level': 'medium',
               'grading': null,
               'error_book_update': null,
@@ -774,6 +763,202 @@ void main() {
           llmService.callInvocations.single.promptName, equals('review_init'));
     },
   );
+
+  test('learn_init rejects finished control that stays in LEARN', () async {
+    final fixture = await _createTutorFixture(
+      db: db,
+      service: service,
+    );
+    for (var i = 0; i < 3; i++) {
+      llmService.queueCall(
+        Future<LlmCallResult>.value(
+          _llmOk(
+            responseText: jsonEncode(<String, Object?>{
+              'teacher_message': 'You are ready.',
+              'understanding': 'READY',
+              'control': _learnFinishedControl(
+                mode: 'LEARN',
+                recommendedAction: 'CONTINUE_LEARNING',
+              ),
+            }),
+            callHash: 'invalid_learn_finish_mode_$i',
+          ),
+        ),
+      );
+    }
+
+    final handle = await service.startTutorAction(
+      sessionId: fixture.sessionId,
+      mode: 'learn_init',
+      studentInput: '',
+      courseVersion: fixture.courseVersion,
+      node: fixture.node,
+    );
+
+    await expectLater(
+      handle.future,
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.toString(),
+          'message',
+          contains('must finish into REVIEW/NEW'),
+        ),
+      ),
+    );
+  });
+
+  test(
+    'finished review uses control.turn_finished to record graded evidence and trigger summarize LLM call',
+    () async {
+      final fixture = await _createTutorFixture(
+        db: db,
+        service: service,
+      );
+      llmService.queueCall(
+        Future<LlmCallResult>.value(
+          _llmOk(
+            responseText: jsonEncode(<String, Object?>{
+              'teacher_message': 'Correct. Nice work.',
+              'control': _reviewFinishedControl(
+                recommendedAction: 'SUMMARIZE',
+              ),
+              'answer_state': 'FINAL_ANSWER',
+              'difficulty_action': 'HOLD',
+              'recommended_level': 'easy',
+              'grading': {
+                'is_correct': true,
+                'mistake_summary': '',
+                'hint_level': 0,
+              },
+              'error_book_update': null,
+              'evidence': {
+                'a': 1,
+                'c': 1,
+                'h': 0,
+                't': 'OTHER',
+                'mt': <String>[],
+              },
+              'mastery_level': 'PASS_EASY',
+            }),
+            callHash: 'review_finish_for_summary',
+          ),
+        ),
+      );
+
+      final reviewHandle = await service.startTutorAction(
+        sessionId: fixture.sessionId,
+        mode: 'review_cont',
+        studentInput: '7',
+        courseVersion: fixture.courseVersion,
+        node: fixture.node,
+      );
+      await reviewHandle.future;
+
+      final refreshedSession = await db.getSession(fixture.sessionId);
+      final evidenceState = TutorEvidenceState.fromJsonText(
+        refreshedSession?.evidenceStateJson,
+      );
+      expect(evidenceState, isNotNull);
+      expect(evidenceState!.gradedReviewCount, equals(1));
+      expect(evidenceState.hasNewGradedReviewEvidence, isTrue);
+
+      llmService.queueCall(
+        Future<LlmCallResult>.value(
+          _llmOk(
+            responseText: jsonEncode(<String, Object?>{
+              'teacher_message': 'Ready for another review question.',
+              'control': _control(
+                mode: 'REVIEW',
+                step: 'NEW',
+                turnFinished: true,
+                allowedActions: const <String>[
+                  'NEXT_QUESTION',
+                  'LEARN',
+                  'PAUSE',
+                ],
+                recommendedAction: 'NEXT_QUESTION',
+              ),
+              'mastery_level': 'PASS_EASY',
+              'next_step': 'CONTINUE_REVIEW',
+            }),
+            callHash: 'summarize_after_review_finish',
+          ),
+        ),
+      );
+
+      final summarizeHandle = await service.startSummarize(
+        sessionId: fixture.sessionId,
+        courseVersion: fixture.courseVersion,
+        node: fixture.node,
+      );
+      final summarizeResult = await summarizeHandle.future;
+
+      expect(summarizeResult.success, isTrue);
+      expect(llmService.callInvocations.length, equals(2));
+      expect(llmService.callInvocations.last.promptName, equals('summarize'));
+    },
+  );
+
+  test('review_cont rejects finished control that routes back into LEARN',
+      () async {
+    final fixture = await _createTutorFixture(
+      db: db,
+      service: service,
+    );
+    for (var i = 0; i < 3; i++) {
+      llmService.queueCall(
+        Future<LlmCallResult>.value(
+          _llmOk(
+            responseText: jsonEncode(<String, Object?>{
+              'teacher_message': 'That answer shows a gap.',
+              'control': _reviewFinishedControl(
+                mode: 'LEARN',
+                allowedActions: const <String>['LEARN', 'SUMMARIZE', 'PAUSE'],
+                recommendedAction: 'LEARN',
+              ),
+              'answer_state': 'FINAL_ANSWER',
+              'difficulty_action': 'DOWN',
+              'recommended_level': 'easy',
+              'grading': {
+                'is_correct': false,
+                'mistake_summary': 'Concept gap',
+                'hint_level': 1,
+              },
+              'error_book_update': null,
+              'evidence': {
+                'a': 1,
+                'c': 0,
+                'h': 1,
+                't': 'OTHER',
+                'mt': <String>[],
+              },
+              'mastery_level': 'NOT_PASS',
+            }),
+            callHash: 'invalid_review_finish_mode_$i',
+          ),
+        ),
+      );
+    }
+
+    final handle = await service.startTutorAction(
+      sessionId: fixture.sessionId,
+      mode: 'review_cont',
+      studentInput: '7',
+      courseVersion: fixture.courseVersion,
+      node: fixture.node,
+    );
+
+    await expectLater(
+      handle.future,
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.toString(),
+          'message',
+          contains('must finish into REVIEW/NEW'),
+        ),
+      ),
+    );
+  });
 
   test('startTutorAction retries structured parse failure and logs retry',
       () async {
@@ -903,7 +1088,8 @@ void main() {
         Future<LlmCallResult>.value(
           _llmOk(
             responseText: jsonEncode(<String, Object?>{
-              'teacher_message': 'Keep relearning this skill before more review.',
+              'teacher_message':
+                  'Keep relearning this skill before more review.',
               'control': _control(
                 mode: 'LEARN',
                 step: 'NEW',
@@ -1009,7 +1195,7 @@ void main() {
         .where((entry) => entry.status == 'cache_hit')
         .toList();
     expect(cacheLogs.length, equals(1));
-    expect(cacheLogs.single.promptName, equals('summary'));
+    expect(cacheLogs.single.promptName, equals('summarize'));
   });
 
   test(
@@ -1091,7 +1277,8 @@ void main() {
       final result = await handle.future;
 
       expect(result.success, isTrue);
-      expect(result.message, equals('Summary unchanged. Reused cached result.'));
+      expect(
+          result.message, equals('Summary unchanged. Reused cached result.'));
       expect(result.litPercent, equals(100));
       expect(llmService.callInvocations, isEmpty);
     },
@@ -1151,7 +1338,6 @@ void main() {
                   'answer_state': 'FINAL_ANSWER',
                   'difficulty_action': 'HOLD',
                   'recommended_level': 'hard',
-                  'question': null,
                   'grading': null,
                   'error_book_update': null,
                   'evidence': {
@@ -1212,7 +1398,6 @@ void main() {
                   'answer_state': 'FINAL_ANSWER',
                   'difficulty_action': 'HOLD',
                   'recommended_level': 'hard',
-                  'question': null,
                   'grading': {
                     'is_correct': false,
                     'mistake_summary': 'minor miss',

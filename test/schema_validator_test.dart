@@ -106,17 +106,21 @@ Model output:
     expect(result.isValid, isTrue);
   });
 
-  test('review_init schema validation rejects missing question', () async {
+  test(
+      'review_init schema validation accepts visible question in teacher_message',
+      () async {
     final repo = PromptRepository();
     final schema = await repo.loadSchema('review_init');
     final validator = SchemaValidator();
-    final invalid = {
-      'teacher_message': 'Try this.',
+    final valid = {
+      'teacher_message':
+          'In a histogram, the class interval 20-30 has frequency density 4.5. What is the frequency for this class?',
       'control': _control(
         mode: 'REVIEW',
         step: 'CONTINUE',
         turnFinished: false,
       ),
+      'difficulty_level': 'easy',
       'grading': null,
       'error_book_update': null,
       'evidence': {
@@ -130,10 +134,9 @@ Model output:
     };
     final result = await validator.validateJson(
       schemaMap: schema,
-      responseText: jsonEncode(invalid),
+      responseText: jsonEncode(valid),
     );
-    expect(result.isValid, isFalse);
-    expect(result.error, isNotNull);
+    expect(result.isValid, isTrue);
   });
 
   test('review_cont schema validation requires answer_state', () async {
@@ -149,10 +152,6 @@ Model output:
       ),
       'difficulty_action': 'HOLD',
       'recommended_level': 'easy',
-      'question': {
-        'text': 'What is 3 + 4?',
-        'type_id': 'OTHER',
-      },
       'grading': null,
       'error_book_update': null,
       'evidence': {
@@ -186,10 +185,6 @@ Model output:
       'answer_state': 'PARTIAL_ATTEMPT',
       'difficulty_action': 'HOLD',
       'recommended_level': 'easy',
-      'question': {
-        'text': 'What is 3 + 4?',
-        'type_id': 'OTHER',
-      },
       'grading': null,
       'error_book_update': null,
       'evidence': {
