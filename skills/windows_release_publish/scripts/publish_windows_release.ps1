@@ -4,7 +4,7 @@ param(
   [string]$RemoteUser = 'ecs-user',
   [string]$KeyPath = 'C:\Users\kl\.ssh\id_rsa',
   [string]$RemotePublicDir = '/var/lib/family_teacher_remote/public',
-  [string]$DownloadBaseUrl = 'https://43.99.59.107/downloads',
+  [string]$DownloadBaseUrl = 'https://api.tutor1on1.org/downloads',
   [string]$ZipName = 'family_teacher.zip',
   [switch]$SkipBuild,
   [switch]$SkipUpload,
