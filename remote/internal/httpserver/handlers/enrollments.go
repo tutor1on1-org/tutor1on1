@@ -339,7 +339,7 @@ func (h *EnrollmentHandler) ListEnrollments(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
 	rows, err := h.cfg.Store.DB.Query(
-		`SELECT e.id, e.course_id, e.teacher_id, e.status, e.assigned_at,
+		`SELECT e.id, e.course_id, t.user_id, e.status, e.assigned_at,
 		        c.subject, t.display_name,
 		        (
 		          SELECT bv.id FROM bundles b
@@ -347,7 +347,21 @@ func (h *EnrollmentHandler) ListEnrollments(c *fiber.Ctx) error {
 		          WHERE b.course_id = e.course_id
 		          ORDER BY bv.version DESC, bv.id DESC
 		          LIMIT 1
-		        ) AS latest_bundle_version_id
+		        ) AS latest_bundle_version_id,
+		        (
+		          SELECT bv.hash FROM bundles b
+		          JOIN bundle_versions bv ON bv.bundle_id = b.id
+		          WHERE b.course_id = e.course_id
+		          ORDER BY bv.version DESC, bv.id DESC
+		          LIMIT 1
+		        ) AS latest_bundle_hash,
+		        (
+		          SELECT bv.oss_path FROM bundles b
+		          JOIN bundle_versions bv ON bv.bundle_id = b.id
+		          WHERE b.course_id = e.course_id
+		          ORDER BY bv.version DESC, bv.id DESC
+		          LIMIT 1
+		        ) AS latest_bundle_oss_path
 		 FROM enrollments e
 		 JOIN courses c ON e.course_id = c.id
 		 JOIN teacher_accounts t ON e.teacher_id = t.id
@@ -369,6 +383,7 @@ func (h *EnrollmentHandler) ListEnrollments(c *fiber.Ctx) error {
 		CourseName            string `json:"course_subject"`
 		TeacherName           string `json:"teacher_name"`
 		LatestBundleVersionID int64  `json:"latest_bundle_version_id"`
+		LatestBundleHash      string `json:"latest_bundle_hash"`
 	}
 
 	results := []enrollmentSummary{}
@@ -382,6 +397,8 @@ func (h *EnrollmentHandler) ListEnrollments(c *fiber.Ctx) error {
 			subject      string
 			teacherName  string
 			latestBundle sql.NullInt64
+			latestHash   sql.NullString
+			latestRel    sql.NullString
 		)
 		if err := rows.Scan(
 			&id,
@@ -392,7 +409,19 @@ func (h *EnrollmentHandler) ListEnrollments(c *fiber.Ctx) error {
 			&subject,
 			&teacherName,
 			&latestBundle,
+			&latestHash,
+			&latestRel,
 		); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "enrollment list failed")
+		}
+		resolvedHash, _, _, hashErr := ensureStoredBundleHash(
+			h.cfg.Store.DB,
+			h.cfg.Storage,
+			latestBundle.Int64,
+			latestHash.String,
+			latestRel.String,
+		)
+		if hashErr != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "enrollment list failed")
 		}
 		results = append(results, enrollmentSummary{
@@ -404,6 +433,7 @@ func (h *EnrollmentHandler) ListEnrollments(c *fiber.Ctx) error {
 			CourseName:            subject,
 			TeacherName:           teacherName,
 			LatestBundleVersionID: latestBundle.Int64,
+			LatestBundleHash:      resolvedHash,
 		})
 	}
 	if err := rows.Err(); err != nil {

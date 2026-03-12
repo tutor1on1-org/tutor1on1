@@ -48,6 +48,58 @@ type latestBundleInfo struct {
 	relPath string
 }
 
+func ensureStoredBundleHash(
+	db *sql.DB,
+	bundleStorage *storage.Service,
+	bundleVersionID int64,
+	currentHash string,
+	relPath string,
+) (string, bool, int64, error) {
+	hashVal := strings.TrimSpace(currentHash)
+	if bundleStorage == nil {
+		return hashVal, false, 0, nil
+	}
+	absPath := strings.TrimSpace(bundleStorage.BundleAbsolutePath(relPath))
+	if absPath == "" {
+		return hashVal, false, 0, nil
+	}
+	info, statErr := os.Stat(absPath)
+	if statErr != nil {
+		if errors.Is(statErr, os.ErrNotExist) {
+			return hashVal, true, 0, nil
+		}
+		return "", false, 0, statErr
+	}
+	sizeBytes := info.Size()
+	if hashVal != "" {
+		return hashVal, false, sizeBytes, nil
+	}
+	semanticHash, hashErr := computeBundleSemanticHash(absPath)
+	if hashErr != nil {
+		return "", false, 0, hashErr
+	}
+	if bundleVersionID > 0 {
+		if _, updateErr := db.Exec(
+			"UPDATE bundle_versions SET hash = ? WHERE id = ?",
+			semanticHash,
+			bundleVersionID,
+		); updateErr != nil {
+			return "", false, 0, updateErr
+		}
+	}
+	return semanticHash, false, sizeBytes, nil
+}
+
+func bundleHashResolutionError(err error) error {
+	if errors.Is(err, os.ErrNotExist) {
+		return fiber.NewError(fiber.StatusInternalServerError, "bundle file stat failed")
+	}
+	if _, ok := err.(*os.PathError); ok {
+		return fiber.NewError(fiber.StatusInternalServerError, "bundle file stat failed")
+	}
+	return fiber.NewError(fiber.StatusInternalServerError, "bundle hash rebuild failed")
+}
+
 func NewBundlesHandler(deps Dependencies) *BundlesHandler {
 	return &BundlesHandler{
 		cfg:     deps,
@@ -326,21 +378,17 @@ func (h *BundlesHandler) ListTeacherCourseBundleVersions(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusInternalServerError, "bundle version list failed")
 		}
 
-		sizeBytes := int64(0)
-		fileMissing := false
-		if h.storage != nil {
-			absPath := h.storage.BundleAbsolutePath(relPathVal)
-			info, statErr := os.Stat(absPath)
-			if statErr != nil {
-				if errors.Is(statErr, os.ErrNotExist) {
-					fileMissing = true
-				} else {
-					return fiber.NewError(fiber.StatusInternalServerError, "bundle file stat failed")
-				}
-			} else {
-				sizeBytes = info.Size()
-			}
+		resolvedHash, fileMissing, sizeBytes, hashErr := ensureStoredBundleHash(
+			h.cfg.Store.DB,
+			h.storage,
+			bundleVersionID,
+			hashVal,
+			relPathVal,
+		)
+		if hashErr != nil {
+			return bundleHashResolutionError(hashErr)
 		}
+		hashVal = resolvedHash
 
 		created := ""
 		if createdAt.Valid {
@@ -363,6 +411,82 @@ func (h *BundlesHandler) ListTeacherCourseBundleVersions(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(results)
+}
+
+func (h *BundlesHandler) GetLatestCourseBundleInfo(c *fiber.Ctx) error {
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	}
+	courseID, err := parseInt64Query(c, "course_id")
+	if err != nil {
+		return err
+	}
+
+	row := h.cfg.Store.DB.QueryRow(
+		`SELECT bv.id, b.id, bv.version, bv.hash, bv.oss_path, b.teacher_id, ta.user_id
+		 FROM bundle_versions bv
+		 JOIN bundles b ON b.id = bv.bundle_id
+		 JOIN courses c ON c.id = b.course_id
+		 JOIN teacher_accounts ta ON ta.id = c.teacher_id
+		 WHERE c.id = ?
+		 ORDER BY bv.version DESC, bv.id DESC
+		 LIMIT 1`,
+		courseID,
+	)
+	var (
+		bundleVersionID int64
+		bundleID        int64
+		versionVal      int
+		hashVal         string
+		relPathVal      string
+		teacherID       int64
+		teacherUserID   int64
+	)
+	if err := row.Scan(
+		&bundleVersionID,
+		&bundleID,
+		&versionVal,
+		&hashVal,
+		&relPathVal,
+		&teacherID,
+		&teacherUserID,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "bundle version not found")
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, "bundle lookup failed")
+	}
+
+	if userID != teacherUserID {
+		enrolled, enrollErr := h.isEnrolled(userID, courseID, teacherID)
+		if enrollErr != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "bundle access check failed")
+		}
+		if !enrolled {
+			return fiber.NewError(fiber.StatusForbidden, "bundle access denied")
+		}
+	}
+
+	resolvedHash, fileMissing, _, hashErr := ensureStoredBundleHash(
+		h.cfg.Store.DB,
+		h.storage,
+		bundleVersionID,
+		hashVal,
+		relPathVal,
+	)
+	if hashErr != nil {
+		return bundleHashResolutionError(hashErr)
+	}
+
+	return c.JSON(fiber.Map{
+		"course_id":         courseID,
+		"bundle_id":         bundleID,
+		"bundle_version_id": bundleVersionID,
+		"version":           versionVal,
+		"hash":              resolvedHash,
+		"file_missing":      fileMissing,
+	})
 }
 
 func (h *BundlesHandler) DeleteTeacherCourseBundleVersion(c *fiber.Ctx) error {

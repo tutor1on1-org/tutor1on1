@@ -274,6 +274,13 @@ class CourseBundleService {
   }
 
   Future<String> computeBundleSemanticHash(File bundleFile) async {
+    return computeBundleSemanticHashFromBundle(bundleFile);
+  }
+
+  Future<String> computeBundleSemanticHashFromBundle(
+    File bundleFile, {
+    Map<String, dynamic>? promptMetadataOverride,
+  }) async {
     if (!bundleFile.existsSync()) {
       throw StateError('Bundle file not found: ${bundleFile.path}');
     }
@@ -297,9 +304,20 @@ class CourseBundleService {
         }
         var data = _entryBytes(entry);
         if (name == promptMetadataEntryPath) {
+          if (promptMetadataOverride != null) {
+            continue;
+          }
           data = _normalizePromptMetadataBytes(data);
         }
         files.add(_BundleSemanticFile(name: name, data: data));
+      }
+      if (promptMetadataOverride != null) {
+        files.add(
+          _BundleSemanticFile(
+            name: promptMetadataEntryPath,
+            data: normalizePromptMetadataJson(promptMetadataOverride),
+          ),
+        );
       }
       files.sort((left, right) => left.name.compareTo(right.name));
 
@@ -317,6 +335,70 @@ class CourseBundleService {
         throw StateError('Failed to compute semantic hash.');
       }
       return digest.toString();
+    } finally {
+      input.close();
+    }
+  }
+
+  Future<File> cloneBundleWithPromptMetadata({
+    required File sourceBundle,
+    Map<String, dynamic>? promptMetadata,
+    String? label,
+  }) async {
+    if (!sourceBundle.existsSync()) {
+      throw StateError('Bundle file not found: ${sourceBundle.path}');
+    }
+    final targetPath = await createTempBundlePath(label: label);
+    final targetFile = File(targetPath);
+    final input = InputFileStream(sourceBundle.path);
+    try {
+      final sourceArchive = ZipDecoder().decodeBuffer(input);
+      final archive = Archive();
+      for (final entry in sourceArchive.files) {
+        if (!entry.isFile) {
+          continue;
+        }
+        final normalizedName = _normalizeArchivePath(entry.name);
+        if (normalizedName.isEmpty) {
+          continue;
+        }
+        if (normalizedName == promptMetadataEntryPath) {
+          if (promptMetadata == null) {
+            archive.addFile(
+              ArchiveFile(
+                entry.name,
+                entry.size,
+                _entryBytes(entry),
+              ),
+            );
+          }
+          continue;
+        }
+        archive.addFile(
+          ArchiveFile(
+            entry.name,
+            entry.size,
+            _entryBytes(entry),
+          ),
+        );
+      }
+      if (promptMetadata != null) {
+        final normalizedBytes = normalizePromptMetadataJson(promptMetadata);
+        archive.addFile(
+          ArchiveFile(
+            promptMetadataEntryPath,
+            normalizedBytes.length,
+            normalizedBytes,
+          ),
+        );
+      }
+      final bytes = ZipEncoder().encode(archive);
+      if (bytes == null) {
+        throw StateError('Failed to encode cached course bundle.');
+      }
+      await targetFile.writeAsBytes(bytes, flush: true);
+      await validateBundleForImport(targetFile);
+      return targetFile;
     } finally {
       input.close();
     }
@@ -546,6 +628,12 @@ class CourseBundleService {
   List<int> _normalizePromptMetadataBytes(List<int> rawData) {
     final decoded = jsonDecode(utf8.decode(rawData));
     final cleaned = _removeGeneratedFields(decoded);
+    final canonical = _canonicalJsonEncode(cleaned);
+    return utf8.encode(canonical);
+  }
+
+  List<int> normalizePromptMetadataJson(Map<String, dynamic> value) {
+    final cleaned = _removeGeneratedFields(value);
     final canonical = _canonicalJsonEncode(cleaned);
     return utf8.encode(canonical);
   }

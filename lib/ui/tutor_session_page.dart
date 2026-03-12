@@ -1974,12 +1974,14 @@ class _ChatSessionPageState extends State<ChatSessionPage>
 
   Future<void> _persistControlState(TutorControlState control) async {
     final db = context.read<AppDatabase>();
+    final services = context.read<AppServices>();
     try {
       await db.updateSessionContracts(
         sessionId: widget.sessionId,
         controlStateJson: control.toJsonText(),
         controlStateUpdatedAt: DateTime.now(),
       );
+      await services.sessionUploadCacheService.captureSession(widget.sessionId);
     } catch (error) {
       if (!mounted) {
         return;

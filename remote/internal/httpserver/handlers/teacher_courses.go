@@ -37,6 +37,7 @@ type teacherCourseSummary struct {
 	ApprovalStatus        string                `json:"approval_status"`
 	PublishedAt           string                `json:"published_at"`
 	LatestBundleVersionID int64                 `json:"latest_bundle_version_id"`
+	LatestBundleHash      string                `json:"latest_bundle_hash"`
 	SubjectLabels         []subjectLabelSummary `json:"subject_labels"`
 	Status                string                `json:"status,omitempty"`
 }
@@ -63,7 +64,21 @@ func (h *TeacherCoursesHandler) ListCourses(c *fiber.Ctx) error {
 		          WHERE b.course_id = c.id
 		          ORDER BY bv.version DESC
 		          LIMIT 1
-		        ) AS latest_bundle_version_id
+		        ) AS latest_bundle_version_id,
+		        (
+		          SELECT bv.hash FROM bundles b
+		          JOIN bundle_versions bv ON bv.bundle_id = b.id
+		          WHERE b.course_id = c.id
+		          ORDER BY bv.version DESC, bv.id DESC
+		          LIMIT 1
+		        ) AS latest_bundle_hash,
+		        (
+		          SELECT bv.oss_path FROM bundles b
+		          JOIN bundle_versions bv ON bv.bundle_id = b.id
+		          WHERE b.course_id = c.id
+		          ORDER BY bv.version DESC, bv.id DESC
+		          LIMIT 1
+		        ) AS latest_bundle_oss_path
 		 FROM courses c
 		 JOIN (
 		   SELECT teacher_id, course_name_key, MAX(id) AS latest_course_id
@@ -93,6 +108,8 @@ func (h *TeacherCoursesHandler) ListCourses(c *fiber.Ctx) error {
 			approvalStatus string
 			published      sql.NullTime
 			latest         sql.NullInt64
+			latestHash     sql.NullString
+			latestRelPath  sql.NullString
 		)
 		if err := rows.Scan(
 			&courseID,
@@ -103,7 +120,19 @@ func (h *TeacherCoursesHandler) ListCourses(c *fiber.Ctx) error {
 			&approvalStatus,
 			&published,
 			&latest,
+			&latestHash,
+			&latestRelPath,
 		); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "course list failed")
+		}
+		resolvedHash, _, _, hashErr := ensureStoredBundleHash(
+			h.cfg.Store.DB,
+			h.cfg.Storage,
+			latest.Int64,
+			latestHash.String,
+			latestRelPath.String,
+		)
+		if hashErr != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "course list failed")
 		}
 		publishedAt := ""
@@ -119,6 +148,7 @@ func (h *TeacherCoursesHandler) ListCourses(c *fiber.Ctx) error {
 			ApprovalStatus:        approvalStatus,
 			PublishedAt:           publishedAt,
 			LatestBundleVersionID: latest.Int64,
+			LatestBundleHash:      resolvedHash,
 			SubjectLabels:         nil,
 		})
 	}
@@ -611,7 +641,21 @@ func (h *TeacherCoursesHandler) lookupTeacherCourseByNameKey(
 		          WHERE b.course_id = c.id
 		          ORDER BY bv.version DESC, bv.id DESC
 		          LIMIT 1
-		        ) AS latest_bundle_version_id
+		        ) AS latest_bundle_version_id,
+		        (
+		          SELECT bv.hash FROM bundles b
+		          JOIN bundle_versions bv ON bv.bundle_id = b.id
+		          WHERE b.course_id = c.id
+		          ORDER BY bv.version DESC, bv.id DESC
+		          LIMIT 1
+		        ) AS latest_bundle_hash,
+		        (
+		          SELECT bv.oss_path FROM bundles b
+		          JOIN bundle_versions bv ON bv.bundle_id = b.id
+		          WHERE b.course_id = c.id
+		          ORDER BY bv.version DESC, bv.id DESC
+		          LIMIT 1
+		        ) AS latest_bundle_oss_path
 		 FROM courses c
 		 LEFT JOIN course_catalog_entries ce ON ce.course_id = c.id
 		 WHERE c.teacher_id = ? AND c.course_name_key = ?
@@ -629,6 +673,8 @@ func (h *TeacherCoursesHandler) lookupTeacherCourseByNameKey(
 		approvalStatus string
 		published      sql.NullTime
 		latest         sql.NullInt64
+		latestHash     sql.NullString
+		latestRelPath  sql.NullString
 	)
 	if err := row.Scan(
 		&courseID,
@@ -639,11 +685,23 @@ func (h *TeacherCoursesHandler) lookupTeacherCourseByNameKey(
 		&approvalStatus,
 		&published,
 		&latest,
+		&latestHash,
+		&latestRelPath,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return teacherCourseSummary{}, false, nil
 		}
 		return teacherCourseSummary{}, false, err
+	}
+	resolvedHash, _, _, hashErr := ensureStoredBundleHash(
+		h.cfg.Store.DB,
+		h.cfg.Storage,
+		latest.Int64,
+		latestHash.String,
+		latestRelPath.String,
+	)
+	if hashErr != nil {
+		return teacherCourseSummary{}, false, hashErr
 	}
 	publishedAt := ""
 	if published.Valid {
@@ -662,6 +720,7 @@ func (h *TeacherCoursesHandler) lookupTeacherCourseByNameKey(
 		ApprovalStatus:        approvalStatus,
 		PublishedAt:           publishedAt,
 		LatestBundleVersionID: latest.Int64,
+		LatestBundleHash:      resolvedHash,
 		SubjectLabels:         labels,
 	}, true, nil
 }

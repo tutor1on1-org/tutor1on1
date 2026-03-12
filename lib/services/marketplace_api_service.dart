@@ -193,6 +193,7 @@ class EnrollmentSummary {
     required this.courseSubject,
     required this.teacherName,
     required this.latestBundleVersionId,
+    this.latestBundleHash = '',
   });
 
   final int enrollmentId;
@@ -203,6 +204,7 @@ class EnrollmentSummary {
   final String courseSubject;
   final String teacherName;
   final int? latestBundleVersionId;
+  final String latestBundleHash;
 
   factory EnrollmentSummary.fromJson(Map<String, dynamic> json) {
     return EnrollmentSummary(
@@ -215,6 +217,7 @@ class EnrollmentSummary {
       teacherName: (json['teacher_name'] as String?) ?? '',
       latestBundleVersionId:
           (json['latest_bundle_version_id'] as num?)?.toInt(),
+      latestBundleHash: (json['latest_bundle_hash'] as String?) ?? '',
     );
   }
 }
@@ -328,6 +331,7 @@ class TeacherCourseSummary {
     this.approvalStatus = '',
     required this.publishedAt,
     required this.latestBundleVersionId,
+    this.latestBundleHash = '',
     required this.status,
     this.subjectLabels = const <SubjectLabelSummary>[],
   });
@@ -340,6 +344,7 @@ class TeacherCourseSummary {
   final String approvalStatus;
   final String publishedAt;
   final int? latestBundleVersionId;
+  final String latestBundleHash;
   final String status;
   final List<SubjectLabelSummary> subjectLabels;
 
@@ -354,6 +359,7 @@ class TeacherCourseSummary {
       publishedAt: (json['published_at'] as String?) ?? '',
       latestBundleVersionId:
           (json['latest_bundle_version_id'] as num?)?.toInt(),
+      latestBundleHash: (json['latest_bundle_hash'] as String?) ?? '',
       status: (json['status'] as String?) ?? '',
       subjectLabels: _decodeSubjectLabelsList(json['subject_labels']),
     );
@@ -557,6 +563,35 @@ class TeacherBundleVersionSummary {
       createdAt: (json['created_at'] as String?) ?? '',
       sizeBytes: (json['size_bytes'] as num?)?.toInt() ?? 0,
       isLatest: (json['is_latest'] as bool?) ?? false,
+      fileMissing: (json['file_missing'] as bool?) ?? false,
+    );
+  }
+}
+
+class LatestCourseBundleInfo {
+  LatestCourseBundleInfo({
+    required this.courseId,
+    required this.bundleId,
+    required this.bundleVersionId,
+    required this.version,
+    required this.hash,
+    required this.fileMissing,
+  });
+
+  final int courseId;
+  final int bundleId;
+  final int bundleVersionId;
+  final int version;
+  final String hash;
+  final bool fileMissing;
+
+  factory LatestCourseBundleInfo.fromJson(Map<String, dynamic> json) {
+    return LatestCourseBundleInfo(
+      courseId: (json['course_id'] as num?)?.toInt() ?? 0,
+      bundleId: (json['bundle_id'] as num?)?.toInt() ?? 0,
+      bundleVersionId: (json['bundle_version_id'] as num?)?.toInt() ?? 0,
+      version: (json['version'] as num?)?.toInt() ?? 0,
+      hash: (json['hash'] as String?) ?? '',
       fileMissing: (json['file_missing'] as bool?) ?? false,
     );
   }
@@ -985,6 +1020,17 @@ class MarketplaceApiService {
       response,
       (json) => TeacherBundleVersionSummary.fromJson(json),
     );
+  }
+
+  Future<LatestCourseBundleInfo> getLatestCourseBundleInfo(int courseId) async {
+    final response = await _get(
+      '/api/bundles/latest-info',
+      params: <String, String>{'course_id': courseId.toString()},
+    );
+    if (response is! Map<String, dynamic>) {
+      throw MarketplaceApiException('Unexpected response format.');
+    }
+    return LatestCourseBundleInfo.fromJson(response);
   }
 
   Future<void> deleteTeacherBundleVersion({

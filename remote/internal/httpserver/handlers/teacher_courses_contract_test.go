@@ -36,7 +36,9 @@ func TestCreateCourseReturnsExistingForNormalizedTeacherCourseKey(t *testing.T) 
 				"approval_status",
 				"published_at",
 				"latest_bundle_version_id",
-			}).AddRow(int64(501), "Algebra", nil, nil, "private", "pending", nil, nil),
+				"latest_bundle_hash",
+				"latest_bundle_oss_path",
+			}).AddRow(int64(501), "Algebra", nil, nil, "private", "pending", nil, nil, nil, nil),
 		)
 	mock.ExpectQuery(`SELECT sl.id, sl.slug, sl.name, sl.is_active\s+FROM course_subject_labels csl`).
 		WithArgs(int64(501)).
@@ -113,6 +115,46 @@ func TestDeleteLastBundleVersionAutoUnpublishesCourse(t *testing.T) {
 	assertSQLMockExpectations(t, mock)
 }
 
+func TestGetLatestCourseBundleInfoReturnsHashForTeacher(t *testing.T) {
+	db, mock := newHandlerSQLMock(t)
+	defer db.Close()
+
+	userID := int64(1703)
+	courseID := int64(88)
+
+	mock.ExpectQuery(`(?s)SELECT bv.id, b.id, bv.version, bv.hash, bv.oss_path, b.teacher_id, ta.user_id.*WHERE c.id = \?.*LIMIT 1`).
+		WithArgs(courseID).
+		WillReturnRows(
+			sqlmock.NewRows([]string{
+				"id",
+				"bundle_id",
+				"version",
+				"hash",
+				"oss_path",
+				"teacher_id",
+				"user_id",
+			}).AddRow(int64(501), int64(601), 3, "hash-123", "bundles/88/3.zip", int64(2703), userID),
+		)
+
+	app := buildTeacherContractTestApp(db, []string{"test-secret"})
+	token := signTestJWT(t, "test-secret", userID, true)
+	status, body, _ := callAPI(
+		t,
+		app,
+		http.MethodGet,
+		"/api/bundles/latest-info?course_id=88",
+		token,
+		"",
+	)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body=%q)", status, http.StatusOK, body)
+	}
+	if !strings.Contains(body, `"hash":"hash-123"`) {
+		t.Fatalf("body = %q, want hash payload", body)
+	}
+	assertSQLMockExpectations(t, mock)
+}
+
 func buildTeacherContractTestApp(db *sql.DB, jwtSecrets []string) *fiber.App {
 	deps := Dependencies{
 		Config: config.Config{
@@ -125,6 +167,7 @@ func buildTeacherContractTestApp(db *sql.DB, jwtSecrets []string) *fiber.App {
 
 	app := fiber.New()
 	app.Post("/api/teacher/courses", teacherCourses.CreateCourse)
+	app.Get("/api/bundles/latest-info", bundles.GetLatestCourseBundleInfo)
 	app.Post(
 		"/api/teacher/courses/:id/bundle-versions/:versionId/delete",
 		bundles.DeleteTeacherCourseBundleVersion,

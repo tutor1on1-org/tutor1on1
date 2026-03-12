@@ -521,6 +521,8 @@ func TestEnrollmentListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"subject",
 		"display_name",
 		"latest_bundle_version_id",
+		"latest_bundle_hash",
+		"latest_bundle_oss_path",
 	}).AddRow(
 		int64(1),
 		int64(66),
@@ -530,8 +532,10 @@ func TestEnrollmentListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"Physics",
 		"Teacher A",
 		int64(5),
+		nil,
+		nil,
 	)
-	mock.ExpectQuery(`SELECT e.id, e.course_id, e.teacher_id, e.status, e.assigned_at`).
+	mock.ExpectQuery(`SELECT e.id, e.course_id, t.user_id, e.status, e.assigned_at`).
 		WithArgs(userID).
 		WillReturnRows(rows)
 	rows2 := sqlmock.NewRows([]string{
@@ -543,6 +547,8 @@ func TestEnrollmentListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"subject",
 		"display_name",
 		"latest_bundle_version_id",
+		"latest_bundle_hash",
+		"latest_bundle_oss_path",
 	}).AddRow(
 		int64(1),
 		int64(66),
@@ -552,8 +558,10 @@ func TestEnrollmentListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"Physics",
 		"Teacher A",
 		int64(5),
+		nil,
+		nil,
 	)
-	mock.ExpectQuery(`SELECT e.id, e.course_id, e.teacher_id, e.status, e.assigned_at`).
+	mock.ExpectQuery(`SELECT e.id, e.course_id, t.user_id, e.status, e.assigned_at`).
 		WithArgs(userID).
 		WillReturnRows(rows2)
 
@@ -612,6 +620,8 @@ func TestTeacherCoursesListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"approval_status",
 		"published_at",
 		"latest_bundle_version_id",
+		"latest_bundle_hash",
+		"latest_bundle_oss_path",
 	}).AddRow(
 		int64(88),
 		"Chemistry",
@@ -621,6 +631,8 @@ func TestTeacherCoursesListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"pending",
 		nil,
 		int64(2),
+		nil,
+		nil,
 	)
 	mock.ExpectQuery(`SELECT c.id, c.subject, c.grade, c.description,\s*ce.visibility, ce.approval_status, ce.published_at`).
 		WithArgs(teacherID, teacherID).
@@ -640,6 +652,8 @@ func TestTeacherCoursesListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"approval_status",
 		"published_at",
 		"latest_bundle_version_id",
+		"latest_bundle_hash",
+		"latest_bundle_oss_path",
 	}).AddRow(
 		int64(88),
 		"Chemistry",
@@ -649,6 +663,8 @@ func TestTeacherCoursesListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"pending",
 		nil,
 		int64(2),
+		nil,
+		nil,
 	)
 	mock.ExpectQuery(`SELECT c.id, c.subject, c.grade, c.description,\s*ce.visibility, ce.approval_status, ce.published_at`).
 		WithArgs(teacherID, teacherID).

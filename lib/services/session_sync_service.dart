@@ -11,6 +11,7 @@ import '../security/pin_hasher.dart';
 import 'remote_teacher_identity_service.dart';
 import 'session_crypto_service.dart';
 import 'session_sync_api_service.dart';
+import 'session_upload_cache_service.dart';
 import 'sync_state_repository.dart';
 import 'user_key_service.dart';
 
@@ -21,17 +22,20 @@ class SessionSyncService {
     required SessionSyncApiService api,
     required UserKeyService userKeyService,
     SessionCryptoService? crypto,
+    SessionUploadCacheService? sessionUploadCacheService,
   })  : _db = db,
         _secureStorage = secureStorage,
         _api = api,
         _userKeyService = userKeyService,
-        _crypto = crypto ?? SessionCryptoService();
+        _crypto = crypto ?? SessionCryptoService(),
+        _sessionUploadCacheService = sessionUploadCacheService;
 
   final AppDatabase _db;
   final SyncStateRepository _secureStorage;
   final SessionSyncApiService _api;
   final UserKeyService _userKeyService;
   final SessionCryptoService _crypto;
+  final SessionUploadCacheService? _sessionUploadCacheService;
   final RemoteTeacherIdentityService _remoteTeacherIdentity =
       const RemoteTeacherIdentityService();
   static final Uuid _uuid = Uuid();
@@ -943,24 +947,12 @@ class SessionSyncService {
         studentUserId: remoteUserId,
       );
       keysByCourse[remoteCourseId] = resolvedKeys;
-      final courseVersion =
-          await _db.getCourseVersionById(syncSession.courseVersionId);
-      if (courseVersion == null) {
-        continue;
-      }
-      final node = await _db.getCourseNodeByKey(
-          syncSession.courseVersionId, syncSession.kpKey);
-      final messages = await _db.getMessagesForSession(syncSession.id);
-      final payload = _buildPayload(
-        session: syncSession,
-        courseVersion: courseVersion,
-        node: node,
-        messages: messages,
+      final payload = await _prepareSessionUploadPayload(
+        currentUser: currentUser,
+        syncSession: syncSession,
         remoteCourseId: remoteCourseId,
-        teacherUserId: resolvedKeys.teacherUserId,
-        studentUserId: resolvedKeys.studentUserId,
-        studentUsername: currentUser.username,
-        updatedAt: syncUpdatedAt,
+        resolvedKeys: resolvedKeys,
+        syncUpdatedAt: syncUpdatedAt,
       );
       final payloadHash = _hashCanonicalJson(payload);
       if (syncState != null && syncState.contentHash == payloadHash) {
@@ -1972,7 +1964,8 @@ class SessionSyncService {
         _SyncMessage(
           role: role,
           content: content,
-          rawContent: rawContent == null || rawContent.isEmpty ? null : rawContent,
+          rawContent:
+              rawContent == null || rawContent.isEmpty ? null : rawContent,
           parsedJson:
               parsedJson == null || parsedJson.isEmpty ? null : parsedJson,
           action: action == null || action.isEmpty ? null : action,
@@ -2028,6 +2021,123 @@ class SessionSyncService {
             },
           )
           .toList(),
+    };
+  }
+
+  Future<Map<String, dynamic>> _prepareSessionUploadPayload({
+    required User currentUser,
+    required ChatSession syncSession,
+    required int remoteCourseId,
+    required CourseKeyBundle resolvedKeys,
+    required DateTime syncUpdatedAt,
+  }) async {
+    if (_sessionUploadCacheService != null) {
+      var cachedSnapshot = await _sessionUploadCacheService.readSession(
+        sessionId: syncSession.id,
+        syncUpdatedAt: syncUpdatedAt,
+      );
+      if (cachedSnapshot == null) {
+        await _sessionUploadCacheService.captureSession(syncSession.id);
+        cachedSnapshot = await _sessionUploadCacheService.readSession(
+          sessionId: syncSession.id,
+          syncUpdatedAt: syncUpdatedAt,
+        );
+      }
+      if (cachedSnapshot == null) {
+        throw StateError(
+          'Session upload cache is missing for session ${syncSession.id}.',
+        );
+      }
+      return _buildPayloadFromCache(
+        snapshot: cachedSnapshot,
+        remoteCourseId: remoteCourseId,
+        teacherUserId: resolvedKeys.teacherUserId,
+        studentUserId: resolvedKeys.studentUserId,
+        studentUsername: currentUser.username,
+      );
+    }
+    return _buildLiveSessionPayload(
+      session: syncSession,
+      remoteCourseId: remoteCourseId,
+      teacherUserId: resolvedKeys.teacherUserId,
+      studentUserId: resolvedKeys.studentUserId,
+      studentUsername: currentUser.username,
+      updatedAt: syncUpdatedAt,
+    );
+  }
+
+  Future<Map<String, dynamic>> _buildLiveSessionPayload({
+    required ChatSession session,
+    required int remoteCourseId,
+    required int teacherUserId,
+    required int studentUserId,
+    required String studentUsername,
+    required DateTime updatedAt,
+  }) async {
+    final courseVersion =
+        await _db.getCourseVersionById(session.courseVersionId);
+    if (courseVersion == null) {
+      throw StateError(
+        'Course version ${session.courseVersionId} is missing for session '
+        '${session.id}.',
+      );
+    }
+    final node =
+        await _db.getCourseNodeByKey(session.courseVersionId, session.kpKey);
+    final messages = await _db.getMessagesForSession(session.id);
+    return _buildPayload(
+      session: session,
+      courseVersion: courseVersion,
+      node: node,
+      messages: messages,
+      remoteCourseId: remoteCourseId,
+      teacherUserId: teacherUserId,
+      studentUserId: studentUserId,
+      studentUsername: studentUsername,
+      updatedAt: updatedAt,
+    );
+  }
+
+  Map<String, dynamic> _buildPayloadFromCache({
+    required SessionUploadCacheSnapshot snapshot,
+    required int remoteCourseId,
+    required int teacherUserId,
+    required int studentUserId,
+    required String studentUsername,
+  }) {
+    return {
+      'version': 1,
+      'session_sync_id': snapshot.syncId,
+      'course_id': remoteCourseId,
+      'course_subject': snapshot.courseSubject,
+      'kp_key': snapshot.kpKey,
+      'kp_title': snapshot.kpTitle,
+      'session_title': snapshot.sessionTitle,
+      'started_at': snapshot.startedAt.toUtc().toIso8601String(),
+      'ended_at': snapshot.endedAt?.toUtc().toIso8601String(),
+      'summary_text': snapshot.summaryText,
+      'control_state_json': snapshot.controlStateJson,
+      'control_state_updated_at':
+          snapshot.controlStateUpdatedAt?.toUtc().toIso8601String(),
+      'evidence_state_json': snapshot.evidenceStateJson,
+      'evidence_state_updated_at':
+          snapshot.evidenceStateUpdatedAt?.toUtc().toIso8601String(),
+      'student_remote_user_id': studentUserId,
+      'student_username': studentUsername,
+      'teacher_remote_user_id': teacherUserId,
+      'updated_at': snapshot.syncUpdatedAt.toUtc().toIso8601String(),
+      'messages': snapshot.messages
+          .map(
+            (message) => {
+              'role': message.role,
+              'content': message.content,
+              'raw_content': message.rawContent ?? '',
+              'parsed_json': message.parsedJson ?? '',
+              'action': message.action ?? '',
+              'created_at': message.createdAt.toUtc().toIso8601String(),
+            },
+          )
+          .toList(growable: false),
     };
   }
 

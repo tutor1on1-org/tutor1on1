@@ -16,6 +16,7 @@ import '../models/tutor_action.dart';
 import '../models/tutor_contract.dart';
 import '../llm/prompt_repository.dart';
 import 'llm_log_repository.dart';
+import 'session_upload_cache_service.dart';
 import 'settings_repository.dart';
 
 class SummarizeResult {
@@ -120,14 +121,16 @@ class SessionService {
     this._llmService,
     this._promptRepository,
     this._settingsRepository,
-    this._llmLogRepository,
-  );
+    this._llmLogRepository, {
+    SessionUploadCacheService? sessionUploadCacheService,
+  }) : _sessionUploadCacheService = sessionUploadCacheService;
 
   final AppDatabase _db;
   final LlmService _llmService;
   final PromptRepository _promptRepository;
   final SettingsRepository _settingsRepository;
   final LlmLogRepository _llmLogRepository;
+  final SessionUploadCacheService? _sessionUploadCacheService;
   final PromptRenderer _renderer = PromptRenderer();
   final Map<String, LlmRequestHandle> _inflightTutorByKey = {};
   static final Uuid _uuid = Uuid();
@@ -161,7 +164,7 @@ class SessionService {
       title: title,
       courseVersionId: courseVersionId,
     );
-    return _db.into(_db.chatSessions).insert(
+    final sessionId = await _db.into(_db.chatSessions).insert(
           ChatSessionsCompanion.insert(
             studentId: studentId,
             courseVersionId: courseVersionId,
@@ -178,6 +181,10 @@ class SessionService {
             syncUpdatedAt: Value(DateTime.now()),
           ),
         );
+    if (_sessionUploadCacheService != null) {
+      await _sessionUploadCacheService.captureSession(sessionId);
+    }
+    return sessionId;
   }
 
   Future<String> _resolveSessionTitle({
@@ -223,6 +230,9 @@ class SessionService {
         syncUpdatedAt: Value(DateTime.now()),
       ),
     );
+    if (_sessionUploadCacheService != null) {
+      await _sessionUploadCacheService.captureSession(sessionId);
+    }
   }
 
   Future<LlmRequestHandle> startTutorAction({
@@ -2200,7 +2210,12 @@ class SessionService {
           ..where((tbl) => tbl.id.equals(sessionId)))
         .write(
       ChatSessionsCompanion(syncUpdatedAt: Value(DateTime.now())),
-    );
+    )
+        .then((_) async {
+      if (_sessionUploadCacheService != null) {
+        await _sessionUploadCacheService.captureSession(sessionId);
+      }
+    });
   }
 }
 

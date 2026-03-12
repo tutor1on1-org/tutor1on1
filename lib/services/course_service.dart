@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import '../constants.dart';
 import '../db/app_database.dart';
 import '../models/skill_tree.dart';
+import 'course_artifact_service.dart';
 
 class CourseLoadResult {
   CourseLoadResult({
@@ -67,9 +68,11 @@ class CourseLoadPreview {
 }
 
 class CourseService {
-  CourseService(this._db);
+  CourseService(this._db, {CourseArtifactService? courseArtifactService})
+      : _courseArtifactService = courseArtifactService;
 
   final AppDatabase _db;
+  final CourseArtifactService? _courseArtifactService;
   static final RegExp _idPattern = RegExp(r'^(\d+(?:\.\d+)*)\s*(.+)$');
 
   Future<CourseLoadResult> loadCourseFromFolder({
@@ -462,6 +465,13 @@ GROUP BY kp_key
             .go();
       }
     });
+
+    if (_courseArtifactService != null) {
+      await _courseArtifactService.rebuildCourseArtifacts(
+        courseVersionId: courseId,
+        folderPath: preview.normalizedPath!,
+      );
+    }
 
     final course = await _db.getCourseVersionById(courseId);
     return CourseLoadResult(

@@ -31,7 +31,7 @@ func (h *CatalogHandler) ListTeachers(c *fiber.Ctx) error {
 	q := strings.TrimSpace(c.Query("q"))
 	args := []interface{}{}
 	query := `
-SELECT t.id, t.display_name, t.bio, t.avatar_url, t.contact, t.contact_published
+SELECT t.user_id, t.display_name, t.bio, t.avatar_url, t.contact, t.contact_published
 FROM teacher_accounts t
 WHERE t.status = 'active'
   AND EXISTS (
@@ -118,7 +118,7 @@ func (h *CatalogHandler) ListCourses(c *fiber.Ctx) error {
 	args := []interface{}{}
 	query := `
 SELECT c.id, c.subject, c.grade, c.description,
-       c.teacher_id, t.display_name, t.avatar_url,
+       t.user_id, t.display_name, t.avatar_url,
        ce.visibility, ce.published_at,
        (
          SELECT bv.id FROM bundles b
@@ -150,7 +150,7 @@ WHERE t.status = 'active'
 		if err != nil || parsedID <= 0 {
 			return fiber.NewError(fiber.StatusBadRequest, "teacher_id invalid")
 		}
-		query += " AND c.teacher_id = ?"
+		query += " AND t.user_id = ?"
 		args = append(args, parsedID)
 	}
 	if subject != "" {

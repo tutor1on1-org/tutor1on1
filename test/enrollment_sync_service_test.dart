@@ -9,6 +9,7 @@ import 'package:path_provider_platform_interface/path_provider_platform_interfac
 
 import 'package:family_teacher/db/app_database.dart';
 import 'package:family_teacher/llm/prompt_repository.dart';
+import 'package:family_teacher/services/course_artifact_service.dart';
 import 'package:family_teacher/services/course_bundle_service.dart';
 import 'package:family_teacher/services/course_service.dart';
 import 'package:family_teacher/services/enrollment_sync_service.dart';
@@ -132,6 +133,8 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
     List<EnrollmentSummary>? enrollments,
     List<EnrollmentDeletionEvent>? deletionEvents,
     List<TeacherCourseSummary>? teacherCourses,
+    Map<int, LatestCourseBundleInfo>? latestCourseBundleInfoByCourseId,
+    this.latestCourseBundleInfoNotFound = false,
     Map<int, List<TeacherBundleVersionSummary>>?
         teacherBundleVersionsByCourseId,
     Map<int, File>? bundleFilesByVersionId,
@@ -144,6 +147,8 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   })  : _enrollments = enrollments ?? const <EnrollmentSummary>[],
         _deletionEvents = deletionEvents ?? const <EnrollmentDeletionEvent>[],
         _teacherCourses = teacherCourses ?? const <TeacherCourseSummary>[],
+        _latestCourseBundleInfoByCourseId = latestCourseBundleInfoByCourseId ??
+            const <int, LatestCourseBundleInfo>{},
         _teacherBundleVersionsByCourseId = teacherBundleVersionsByCourseId ??
             const <int, List<TeacherBundleVersionSummary>>{},
         _bundleFilesByVersionId = bundleFilesByVersionId ?? const <int, File>{},
@@ -159,6 +164,8 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   final List<EnrollmentSummary> _enrollments;
   final List<EnrollmentDeletionEvent> _deletionEvents;
   final List<TeacherCourseSummary> _teacherCourses;
+  final Map<int, LatestCourseBundleInfo> _latestCourseBundleInfoByCourseId;
+  final bool latestCourseBundleInfoNotFound;
   final Map<int, List<TeacherBundleVersionSummary>>
       _teacherBundleVersionsByCourseId;
   final Map<int, File> _bundleFilesByVersionId;
@@ -169,6 +176,7 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   final String? enrollmentsEtag;
   final String? teacherCoursesEtag;
   final List<_UploadedBundleRecord> uploadedBundles = <_UploadedBundleRecord>[];
+  int downloadBundleCalls = 0;
   int? lastDeletionSinceId;
   String? lastEnrollmentsIfNoneMatch;
   String? lastTeacherCoursesIfNoneMatch;
@@ -177,6 +185,7 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   int listTeacherCoursesDeltaCalls = 0;
   int listTeacherCoursesCalls = 0;
   int listTeacherBundleVersionsCalls = 0;
+  int latestCourseBundleInfoCalls = 0;
 
   @override
   Future<List<EnrollmentSummary>> listEnrollments() async {
@@ -240,10 +249,27 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   }
 
   @override
+  Future<LatestCourseBundleInfo> getLatestCourseBundleInfo(int courseId) async {
+    latestCourseBundleInfoCalls++;
+    if (latestCourseBundleInfoNotFound) {
+      throw MarketplaceApiException(
+        'Cannot GET /api/bundles/latest-info',
+        statusCode: 404,
+      );
+    }
+    final info = _latestCourseBundleInfoByCourseId[courseId];
+    if (info == null) {
+      throw StateError('Missing latest bundle info for course $courseId.');
+    }
+    return info;
+  }
+
+  @override
   Future<File> downloadBundleToFile({
     required int bundleVersionId,
     required String targetPath,
   }) async {
+    downloadBundleCalls++;
     final source = _bundleFilesByVersionId[bundleVersionId];
     if (source == null || !source.existsSync()) {
       throw StateError(
@@ -372,6 +398,87 @@ void main() {
   });
 
   test(
+    'teacher sync reclaims remote-linked courses from stale placeholder teacher',
+    () async {
+      final teacherId = await db.createUser(
+        username: 'dennis',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 9,
+      );
+      final placeholderTeacherId = await db.createUser(
+        username: 'dennis_1',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 5,
+      );
+      final studentId = await db.createUser(
+        username: 'albert',
+        pinHash: 'hash',
+        role: 'student',
+        teacherId: placeholderTeacherId,
+        remoteUserId: 11,
+      );
+      final localDir = await _createCourseFolder(
+        label: 'teacher_reclaim_placeholder',
+        rootTitle: 'MATH',
+      );
+      tempPaths.add(localDir.path);
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: placeholderTeacherId,
+        subject: 'MATH',
+        granularity: 1,
+        textbookText: '1 MATH',
+        sourcePath: localDir.path,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 9105,
+      );
+      final teacher = await db.getUserById(teacherId);
+      expect(teacher, isNotNull);
+
+      final secureStorage = _TestSecureStorageService();
+      final api = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+        teacherCourses: <TeacherCourseSummary>[
+          TeacherCourseSummary(
+            courseId: 9105,
+            subject: 'MATH',
+            grade: '',
+            description: '',
+            visibility: 'private',
+            publishedAt: '',
+            latestBundleVersionId: null,
+            status: 'active',
+          ),
+        ],
+      );
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService: CourseService(db),
+        marketplaceApi: api,
+        promptRepository: PromptRepository(db: db),
+        courseArtifactService: CourseArtifactService(),
+      );
+
+      await service.syncIfReady(currentUser: teacher!);
+
+      final repairedCourse = await db.getCourseVersionById(courseVersionId);
+      expect(repairedCourse, isNotNull);
+      expect(repairedCourse!.teacherId, equals(teacherId));
+
+      final repairedStudent = await db.getUserById(studentId);
+      expect(repairedStudent, isNotNull);
+      expect(repairedStudent!.teacherId, equals(teacherId));
+
+      final staleTeacher = await db.getUserById(placeholderTeacherId);
+      expect(staleTeacher, isNull);
+    },
+  );
+
+  test(
     'teacher sync reuses suffix-named local course via normalized subject',
     () async {
       final teacherId = await db.createUser(
@@ -398,6 +505,8 @@ void main() {
         remoteDir.path,
       );
       tempFiles.add(remoteBundle.path);
+      final remoteHash =
+          await CourseBundleService().computeBundleSemanticHash(remoteBundle);
 
       final secureStorage = _TestSecureStorageService();
       final api = _TestMarketplaceApiService(
@@ -411,9 +520,20 @@ void main() {
             visibility: 'private',
             publishedAt: '',
             latestBundleVersionId: 3,
+            latestBundleHash: '',
             status: 'active',
           ),
         ],
+        latestCourseBundleInfoByCourseId: <int, LatestCourseBundleInfo>{
+          91: LatestCourseBundleInfo(
+            courseId: 91,
+            bundleId: 9,
+            bundleVersionId: 3,
+            version: 3,
+            hash: remoteHash,
+            fileMissing: false,
+          ),
+        },
         bundleFilesByVersionId: <int, File>{3: remoteBundle},
       );
       final service = EnrollmentSyncService(
@@ -422,6 +542,7 @@ void main() {
         courseService: CourseService(db),
         marketplaceApi: api,
         promptRepository: PromptRepository(db: db),
+        courseArtifactService: CourseArtifactService(),
       );
 
       await service.syncIfReady(currentUser: teacher!);
@@ -438,6 +559,7 @@ void main() {
       final allTeacherCourses = await db.getCourseVersionsForTeacher(teacherId);
       expect(allTeacherCourses.length, equals(1));
       expect(allTeacherCourses.first.id, equals(localCourseId));
+      expect(api.latestCourseBundleInfoCalls, equals(1));
     },
   );
 
@@ -528,24 +650,10 @@ void main() {
             visibility: 'private',
             publishedAt: '',
             latestBundleVersionId: 301,
+            latestBundleHash: remoteHash,
             status: 'active',
           ),
         ],
-        teacherBundleVersionsByCourseId: <int,
-            List<TeacherBundleVersionSummary>>{
-          9101: <TeacherBundleVersionSummary>[
-            TeacherBundleVersionSummary(
-              bundleVersionId: 301,
-              bundleId: 91,
-              version: 3,
-              hash: remoteHash,
-              createdAt: '2026-03-08T00:00:00Z',
-              sizeBytes: remoteBundle.lengthSync(),
-              isLatest: true,
-              fileMissing: false,
-            ),
-          ],
-        },
         bundleFilesByVersionId: <int, File>{301: remoteBundle},
       );
       final service = EnrollmentSyncService(
@@ -554,6 +662,7 @@ void main() {
         courseService: CourseService(db),
         marketplaceApi: api,
         promptRepository: PromptRepository(db: db),
+        courseArtifactService: CourseArtifactService(),
       );
 
       await service.syncIfReady(currentUser: teacher!);
@@ -602,7 +711,7 @@ void main() {
       );
       expect(studentProfile, isNotNull);
       expect(studentProfile!.preferredTone, equals('calm'));
-      expect(api.listTeacherBundleVersionsCalls, equals(1));
+      expect(api.listTeacherBundleVersionsCalls, equals(0));
     },
   );
 
@@ -719,6 +828,7 @@ void main() {
         courseService: CourseService(db),
         marketplaceApi: api,
         promptRepository: PromptRepository(db: db),
+        courseArtifactService: CourseArtifactService(),
       );
 
       await service.syncIfReady(currentUser: teacher!);
@@ -837,6 +947,7 @@ void main() {
         courseService: CourseService(db),
         marketplaceApi: api,
         promptRepository: PromptRepository(db: db),
+        courseArtifactService: CourseArtifactService(),
       );
 
       await service.syncIfReady(currentUser: student!);
@@ -855,6 +966,198 @@ void main() {
       );
       expect(movedProgress, isNotNull);
       expect(movedProgress!.lit, isTrue);
+    },
+  );
+
+  test(
+    'student sync reuses cached bundle hash and skips remote download',
+    () async {
+      final studentId = await db.createUser(
+        username: 'student_cached_hash',
+        pinHash: 'hash',
+        role: 'student',
+        remoteUserId: 961,
+      );
+      final localTeacherId = await db.createUser(
+        username: 'remote_teacher_cached',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 9911,
+      );
+      final localDir = await _createCourseFolder(
+        label: 'student_cached_hash_local',
+        rootTitle: 'Cached Topic',
+      );
+      tempPaths.add(localDir.path);
+      final remoteBundle = await CourseBundleService().createBundleFromFolder(
+        localDir.path,
+      );
+      tempFiles.add(remoteBundle.path);
+      final remoteHash =
+          await CourseBundleService().computeBundleSemanticHash(remoteBundle);
+
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: localTeacherId,
+        subject: 'Cached Course',
+        granularity: 1,
+        textbookText: '1 Cached Topic',
+        sourcePath: localDir.path,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 8105,
+      );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+      );
+
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+
+      final secureStorage = _TestSecureStorageService();
+      await secureStorage.writeInstalledCourseBundleVersion(
+        remoteUserId: 961,
+        remoteCourseId: 8105,
+        versionId: 55,
+      );
+      final now = DateTime.now().toUtc();
+      await secureStorage.writeSyncItemState(
+        remoteUserId: 961,
+        domain: 'enrollment_sync_student_bundle',
+        scopeKey: 'course:8105',
+        contentHash: remoteHash,
+        lastChangedAt: now,
+        lastSyncedAt: now,
+      );
+      final api = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+        enrollments: <EnrollmentSummary>[
+          EnrollmentSummary(
+            enrollmentId: 15,
+            courseId: 8105,
+            teacherId: 9911,
+            status: 'approved',
+            assignedAt: '2026-03-01T00:00:00Z',
+            courseSubject: 'Cached Course',
+            teacherName: 'remote_teacher_cached',
+            latestBundleVersionId: 55,
+            latestBundleHash: '',
+          ),
+        ],
+        latestCourseBundleInfoByCourseId: <int, LatestCourseBundleInfo>{
+          8105: LatestCourseBundleInfo(
+            courseId: 8105,
+            bundleId: 81,
+            bundleVersionId: 55,
+            version: 55,
+            hash: remoteHash,
+            fileMissing: false,
+          ),
+        },
+      );
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService: CourseService(db),
+        marketplaceApi: api,
+        promptRepository: PromptRepository(db: db),
+        courseArtifactService: CourseArtifactService(),
+      );
+
+      await service.syncIfReady(currentUser: student!);
+
+      expect(api.downloadBundleCalls, equals(0));
+      expect(
+        await secureStorage.readInstalledCourseBundleVersion(
+          remoteUserId: 961,
+          remoteCourseId: 8105,
+        ),
+        equals(55),
+      );
+      expect(api.latestCourseBundleInfoCalls, equals(1));
+      final assigned = await db.getAssignedCoursesForStudent(studentId);
+      expect(assigned.map((course) => course.id), contains(courseVersionId));
+    },
+  );
+
+  test(
+    'student sync tolerates missing latest-info endpoint on older server',
+    () async {
+      final studentId = await db.createUser(
+        username: 'student_legacy_hash_api',
+        pinHash: 'hash',
+        role: 'student',
+        remoteUserId: 962,
+      );
+      final localTeacherId = await db.createUser(
+        username: 'remote_teacher_legacy_hash_api',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 9912,
+      );
+      final localDir = await _createCourseFolder(
+        label: 'student_legacy_hash_api_local',
+        rootTitle: 'Legacy Topic',
+      );
+      tempPaths.add(localDir.path);
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: localTeacherId,
+        subject: 'Legacy Course',
+        granularity: 1,
+        textbookText: '1 Legacy Topic',
+        sourcePath: localDir.path,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 8106,
+      );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+      );
+
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+
+      final secureStorage = _TestSecureStorageService();
+      await secureStorage.writeInstalledCourseBundleVersion(
+        remoteUserId: 962,
+        remoteCourseId: 8106,
+        versionId: 56,
+      );
+      final api = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+        latestCourseBundleInfoNotFound: true,
+        enrollments: <EnrollmentSummary>[
+          EnrollmentSummary(
+            enrollmentId: 16,
+            courseId: 8106,
+            teacherId: 9912,
+            status: 'approved',
+            assignedAt: '2026-03-02T00:00:00Z',
+            courseSubject: 'Legacy Course',
+            teacherName: 'remote_teacher_legacy_hash_api',
+            latestBundleVersionId: 56,
+            latestBundleHash: '',
+          ),
+        ],
+      );
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService: CourseService(db),
+        marketplaceApi: api,
+        promptRepository: PromptRepository(db: db),
+        courseArtifactService: CourseArtifactService(),
+      );
+
+      await service.syncIfReady(currentUser: student!);
+
+      expect(api.latestCourseBundleInfoCalls, equals(1));
+      expect(api.downloadBundleCalls, equals(0));
+      final assigned = await db.getAssignedCoursesForStudent(studentId);
+      expect(assigned.map((course) => course.id), contains(courseVersionId));
     },
   );
 
@@ -908,6 +1211,7 @@ void main() {
         courseService: CourseService(db),
         marketplaceApi: api,
         promptRepository: PromptRepository(db: db),
+        courseArtifactService: CourseArtifactService(),
       );
 
       await service.syncIfReady(currentUser: student!);
@@ -980,6 +1284,7 @@ void main() {
         courseService: CourseService(db),
         marketplaceApi: api,
         promptRepository: PromptRepository(db: db),
+        courseArtifactService: CourseArtifactService(),
       );
 
       await service.syncIfReady(currentUser: student!);
@@ -1046,6 +1351,7 @@ void main() {
         courseService: CourseService(db),
         marketplaceApi: api,
         promptRepository: PromptRepository(db: db),
+        courseArtifactService: CourseArtifactService(),
       );
 
       await service.syncIfReady(currentUser: student!);
@@ -1130,6 +1436,7 @@ void main() {
         courseService: CourseService(db),
         marketplaceApi: api,
         promptRepository: PromptRepository(db: db),
+        courseArtifactService: CourseArtifactService(),
       );
 
       await service.syncIfReady(currentUser: student!);
@@ -1239,6 +1546,7 @@ void main() {
         courseService: CourseService(db),
         marketplaceApi: api,
         promptRepository: PromptRepository(db: db),
+        courseArtifactService: CourseArtifactService(),
       );
 
       await service.syncIfReady(currentUser: teacher!);
@@ -1300,6 +1608,7 @@ void main() {
       courseService: CourseService(db),
       marketplaceApi: api,
       promptRepository: PromptRepository(db: db),
+      courseArtifactService: CourseArtifactService(),
     );
 
     await service.syncIfReady(currentUser: student!);
@@ -1344,6 +1653,7 @@ void main() {
         courseService: CourseService(db),
         marketplaceApi: api,
         promptRepository: PromptRepository(db: db),
+        courseArtifactService: CourseArtifactService(),
       );
 
       await service.syncIfReady(currentUser: student!);
@@ -1381,6 +1691,7 @@ void main() {
       courseService: CourseService(db),
       marketplaceApi: api,
       promptRepository: PromptRepository(db: db),
+      courseArtifactService: CourseArtifactService(),
     );
 
     await service.syncIfReady(currentUser: teacher!);

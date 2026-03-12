@@ -3,6 +3,7 @@ import '../llm/llm_service.dart';
 import '../llm/prompt_repository.dart';
 import '../llm/schema_validator.dart';
 import 'backup_service.dart';
+import 'course_artifact_service.dart';
 import 'course_service.dart';
 import 'enrollment_sync_service.dart';
 import 'llm_call_repository.dart';
@@ -11,6 +12,7 @@ import 'marketplace_api_service.dart';
 import 'session_crypto_service.dart';
 import 'session_sync_api_service.dart';
 import 'session_sync_service.dart';
+import 'session_upload_cache_service.dart';
 import 'secure_storage_service.dart';
 import 'settings_repository.dart';
 import 'session_service.dart';
@@ -30,10 +32,12 @@ class AppServices {
     required this.schemaValidator,
     required this.llmService,
     required this.backupService,
+    required this.courseArtifactService,
     required this.courseService,
     required this.sessionService,
     required this.enrollmentSyncService,
     required this.sessionSyncService,
+    required this.sessionUploadCacheService,
     required this.sttService,
     required this.ttsService,
     required this.ttsLogRepository,
@@ -47,10 +51,12 @@ class AppServices {
   final SchemaValidator schemaValidator;
   final LlmService llmService;
   final BackupService backupService;
+  final CourseArtifactService courseArtifactService;
   final CourseService courseService;
   final SessionService sessionService;
   final EnrollmentSyncService enrollmentSyncService;
   final SessionSyncService sessionSyncService;
+  final SessionUploadCacheService sessionUploadCacheService;
   final SttService sttService;
   final TtsService ttsService;
   final TtsLogRepository ttsLogRepository;
@@ -86,7 +92,11 @@ class AppServices {
       schemaValidator,
     );
     final backupService = BackupService(db);
-    final courseService = CourseService(db);
+    final courseArtifactService = CourseArtifactService();
+    final courseService = CourseService(
+      db,
+      courseArtifactService: courseArtifactService,
+    );
     final marketplaceApi = MarketplaceApiService(secureStorage: secureStorage);
     final enrollmentSyncService = EnrollmentSyncService(
       db: db,
@@ -94,13 +104,16 @@ class AppServices {
       courseService: courseService,
       marketplaceApi: marketplaceApi,
       promptRepository: promptRepository,
+      courseArtifactService: courseArtifactService,
     );
+    final sessionUploadCacheService = SessionUploadCacheService(db: db);
     final sessionService = SessionService(
       db,
       llmService,
       promptRepository,
       settingsRepository,
       llmLogRepository,
+      sessionUploadCacheService: sessionUploadCacheService,
     );
     final sessionSyncApi = SessionSyncApiService(secureStorage: secureStorage);
     final cryptoService = SessionCryptoService();
@@ -116,6 +129,7 @@ class AppServices {
       api: sessionSyncApi,
       userKeyService: userKeyService,
       crypto: cryptoService,
+      sessionUploadCacheService: sessionUploadCacheService,
     );
     final ttsLogRepository = TtsLogRepository(settingsRepository, db: db);
     final ttsService =
@@ -131,10 +145,12 @@ class AppServices {
       schemaValidator: schemaValidator,
       llmService: llmService,
       backupService: backupService,
+      courseArtifactService: courseArtifactService,
       courseService: courseService,
       sessionService: sessionService,
       enrollmentSyncService: enrollmentSyncService,
       sessionSyncService: sessionSyncService,
+      sessionUploadCacheService: sessionUploadCacheService,
       sttService: sttService,
       ttsService: ttsService,
       ttsLogRepository: ttsLogRepository,

@@ -45,6 +45,7 @@ func registerRoutes(app *fiber.App, deps handlers.Dependencies) {
 	api.Post("/auth/revoke", authLimiterRefresh.Handler(middleware.KeyByIP), auth.Revoke)
 	api.Post("/bundles/upload", bundles.Upload)
 	api.Get("/bundles/download", bundles.Download)
+	api.Get("/bundles/latest-info", bundles.GetLatestCourseBundleInfo)
 
 	api.Get("/catalog/teachers", catalogLimiter.Handler(middleware.KeyByIP), catalog.ListTeachers)
 	api.Get("/catalog/courses", catalogLimiter.Handler(middleware.KeyByIP), catalog.ListCourses)

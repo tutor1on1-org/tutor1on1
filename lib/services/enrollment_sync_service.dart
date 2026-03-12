@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 
 import '../db/app_database.dart';
 import '../llm/prompt_repository.dart';
+import 'course_artifact_service.dart';
 import 'course_bundle_service.dart';
 import 'course_service.dart';
 import 'marketplace_api_service.dart';
@@ -18,17 +19,20 @@ class EnrollmentSyncService {
     required CourseService courseService,
     required MarketplaceApiService marketplaceApi,
     required PromptRepository promptRepository,
+    CourseArtifactService? courseArtifactService,
   })  : _db = db,
         _secureStorage = secureStorage,
         _courseService = courseService,
         _api = marketplaceApi,
-        _promptRepository = promptRepository;
+        _promptRepository = promptRepository,
+        _courseArtifactService = courseArtifactService;
 
   final AppDatabase _db;
   final SecureStorageService _secureStorage;
   final CourseService _courseService;
   final MarketplaceApiService _api;
   final PromptRepository _promptRepository;
+  final CourseArtifactService? _courseArtifactService;
   final RemoteTeacherIdentityService _remoteTeacherIdentity =
       const RemoteTeacherIdentityService();
   final RemoteStudentIdentityService _remoteStudentIdentity =
@@ -38,6 +42,8 @@ class EnrollmentSyncService {
   static const Duration _syncMinInterval = Duration(seconds: 60);
   static const String _syncDomainDeletionEvents = 'enrollment_sync_deletions';
   static const String _syncDomainStudentEnrollments = 'enrollment_sync_student';
+  static const String _syncDomainStudentCourseBundles =
+      'enrollment_sync_student_bundle';
   static const String _syncDomainTeacherCourses = 'enrollment_sync_teacher';
   static const String _syncDomainTeacherCourseUpload =
       'enrollment_sync_teacher_upload';
@@ -323,11 +329,6 @@ class EnrollmentSyncService {
         }
         continue;
       }
-      final existingInstalledVersion =
-          await _secureStorage.readInstalledCourseBundleVersion(
-        remoteUserId: remoteUserId,
-        remoteCourseId: enrollment.courseId,
-      );
       var existingCourseVersionId =
           await _db.getCourseVersionIdForRemoteCourse(enrollment.courseId);
       if (existingCourseVersionId != null) {
@@ -336,18 +337,38 @@ class EnrollmentSyncService {
           expectedTeacherId: localTeacherId,
         );
       }
-      final shouldDownload = existingCourseVersionId == null ||
-          existingInstalledVersion == null ||
-          latestBundleVersionId > existingInstalledVersion;
-      if (shouldDownload) {
-        final imported = await _downloadAndImportCourse(
+      final remoteBundle = await _resolveRemoteBundleInfo(
+        remoteCourseId: enrollment.courseId,
+        courseSubject: enrollment.courseSubject,
+        latestBundleVersionId: latestBundleVersionId,
+        latestBundleHash: enrollment.latestBundleHash,
+      );
+      final syncedCourse = await _syncRemoteCourseFromServer(
+        remoteUserId: remoteUserId,
+        remoteCourseId: enrollment.courseId,
+        courseSubject: enrollment.courseSubject,
+        latestBundleVersionId: remoteBundle.bundleVersionId,
+        latestBundleHash: remoteBundle.hash,
+        readLocalHash: (_, __) => _readStudentCourseSyncHash(
+          remoteUserId: remoteUserId,
+          remoteCourseId: enrollment.courseId,
+        ),
+        onHashesMatch: (_, __) async {},
+        importRemoteCourse: (resolvedCourseVersionId) =>
+            _downloadAndImportCourse(
           enrollment: enrollment,
-          bundleVersionId: latestBundleVersionId,
-          existingCourseVersionId: existingCourseVersionId,
+          bundleVersionId: remoteBundle.bundleVersionId,
+          existingCourseVersionId: resolvedCourseVersionId,
           localTeacherId: localTeacherId,
-        );
-        existingCourseVersionId = imported.id;
-      }
+        ),
+        onHashesDiffer: (localCourse, __, ___) => _downloadAndImportCourse(
+          enrollment: enrollment,
+          bundleVersionId: remoteBundle.bundleVersionId,
+          existingCourseVersionId: localCourse.id,
+          localTeacherId: localTeacherId,
+        ),
+      );
+      existingCourseVersionId = syncedCourse.id;
       await _ensureCourseTeacher(
         courseVersionId: existingCourseVersionId,
         expectedTeacherId: localTeacherId,
@@ -364,10 +385,11 @@ class EnrollmentSyncService {
         courseVersionId: existingCourseVersionId,
         expectedSubject: enrollment.courseSubject,
       );
-      await _secureStorage.writeInstalledCourseBundleVersion(
+      await _writeStudentCourseSyncState(
         remoteUserId: remoteUserId,
         remoteCourseId: enrollment.courseId,
-        versionId: latestBundleVersionId,
+        bundleVersionId: remoteBundle.bundleVersionId,
+        bundleHash: remoteBundle.hash,
       );
     }
 
@@ -581,6 +603,12 @@ class EnrollmentSyncService {
         localRemoteIdByCourseVersion[localCourseVersionId] =
             remoteCourse.courseId;
       }
+      await _claimTeacherCourseOwnership(
+        currentUser: currentUser,
+        courseVersionId: localCourseVersionId,
+        localCourses: localCourses,
+        localRemoteIdByCourseVersion: localRemoteIdByCourseVersion,
+      );
       await _ensureCourseSubject(
         courseVersionId: localCourseVersionId,
         expectedSubject: remoteCourse.subject,
@@ -599,105 +627,247 @@ class EnrollmentSyncService {
       if (latestBundleVersionId <= 0) {
         continue;
       }
-      final courseVersionId =
-          await _db.getCourseVersionIdForRemoteCourse(remoteCourse.courseId);
-      final installedVersion =
-          await _secureStorage.readInstalledCourseBundleVersion(
+      final remoteBundle = await _resolveRemoteBundleInfo(
+        remoteCourseId: remoteCourse.courseId,
+        courseSubject: remoteCourse.subject,
+        latestBundleVersionId: latestBundleVersionId,
+        latestBundleHash: remoteCourse.latestBundleHash,
+      );
+      await _syncRemoteCourseFromServer(
         remoteUserId: remoteUserId,
         remoteCourseId: remoteCourse.courseId,
-      );
-      final localCourse = courseVersionId == null
-          ? null
-          : await _db.getCourseVersionById(courseVersionId);
-      final localSourcePath = (localCourse?.sourcePath ?? '').trim();
-      final hasLocalSource = localSourcePath.isNotEmpty;
-      final canBuildLocalBundle =
-          hasLocalSource && Directory(localSourcePath).existsSync();
-
-      if (courseVersionId == null || !canBuildLocalBundle) {
-        if (installedVersion != null &&
-            latestBundleVersionId <= installedVersion) {
-          continue;
-        }
-        await _downloadAndImportTeacherCourse(
-          currentUser: currentUser,
-          remoteUserId: remoteUserId,
+        courseSubject: remoteCourse.subject,
+        latestBundleVersionId: remoteBundle.bundleVersionId,
+        latestBundleHash: remoteBundle.hash,
+        readLocalHash: (localCourse, _) => _computeTeacherCourseSyncHash(
+          teacher: currentUser,
+          course: localCourse,
           remoteCourseId: remoteCourse.courseId,
-          courseSubject: remoteCourse.subject,
-          bundleVersionId: latestBundleVersionId,
-          existingCourseVersionId: courseVersionId,
-        );
-        continue;
-      }
-      if (!initializeOnly &&
-          installedVersion != null &&
-          latestBundleVersionId <= installedVersion) {
-        continue;
-      }
-
-      final latestRemoteBundle = await _readLatestTeacherBundleVersion(
-        remoteCourseId: remoteCourse.courseId,
-        bundleVersionId: latestBundleVersionId,
-      );
-      if (latestRemoteBundle == null ||
-          latestRemoteBundle.hash.trim().isEmpty) {
-        await _downloadAndImportTeacherCourse(
-          currentUser: currentUser,
-          remoteUserId: remoteUserId,
-          remoteCourseId: remoteCourse.courseId,
-          courseSubject: remoteCourse.subject,
-          bundleVersionId: latestBundleVersionId,
-          existingCourseVersionId: courseVersionId,
-        );
-        continue;
-      }
-
-      final localHash = await _computeTeacherCourseSyncHash(
-        teacher: currentUser,
-        course: localCourse!,
-        remoteCourseId: remoteCourse.courseId,
-      );
-      if (latestRemoteBundle.hash.trim() == localHash) {
-        await _initializeTeacherCourseSyncState(
+        ),
+        onHashesMatch: (localCourse, __) => _initializeTeacherCourseSyncState(
           currentUser: currentUser,
           remoteUserId: remoteUserId,
           remoteCourseId: remoteCourse.courseId,
           localCourse: localCourse,
-          bundleVersionId: latestBundleVersionId,
-        );
-        continue;
-      }
-      if (initializeOnly || installedVersion == null) {
-        await _downloadAndImportTeacherCourse(
+          bundleVersionId: remoteBundle.bundleVersionId,
+        ),
+        importRemoteCourse: (resolvedCourseVersionId) =>
+            _downloadAndImportTeacherCourse(
           currentUser: currentUser,
           remoteUserId: remoteUserId,
           remoteCourseId: remoteCourse.courseId,
           courseSubject: remoteCourse.subject,
-          bundleVersionId: latestBundleVersionId,
-          existingCourseVersionId: courseVersionId,
-        );
-        continue;
-      }
-      final syncState = await _secureStorage.readSyncItemState(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainTeacherCourseUpload,
-        scopeKey: _teacherCourseScopeKey(remoteCourse.courseId),
-      );
-      if (syncState != null && syncState.contentHash != localHash) {
-        throw StateError(
-          'Teacher course sync conflict for "${remoteCourse.subject}". '
-          'Pull latest server course before uploading local changes.',
-        );
-      }
-      await _downloadAndImportTeacherCourse(
-        currentUser: currentUser,
-        remoteUserId: remoteUserId,
-        remoteCourseId: remoteCourse.courseId,
-        courseSubject: remoteCourse.subject,
-        bundleVersionId: latestBundleVersionId,
-        existingCourseVersionId: courseVersionId,
+          bundleVersionId: remoteBundle.bundleVersionId,
+          existingCourseVersionId: resolvedCourseVersionId,
+        ),
+        onHashesDiffer: (localCourse, localHash, installedVersion) async {
+          if (initializeOnly || installedVersion == null) {
+            return _downloadAndImportTeacherCourse(
+              currentUser: currentUser,
+              remoteUserId: remoteUserId,
+              remoteCourseId: remoteCourse.courseId,
+              courseSubject: remoteCourse.subject,
+              bundleVersionId: remoteBundle.bundleVersionId,
+              existingCourseVersionId: localCourse.id,
+            );
+          }
+          final syncState = await _secureStorage.readSyncItemState(
+            remoteUserId: remoteUserId,
+            domain: _syncDomainTeacherCourseUpload,
+            scopeKey: _teacherCourseScopeKey(remoteCourse.courseId),
+          );
+          if (syncState != null && syncState.contentHash != localHash) {
+            throw StateError(
+              'Teacher course sync conflict for "${remoteCourse.subject}". '
+              'Pull latest server course before uploading local changes.',
+            );
+          }
+          return _downloadAndImportTeacherCourse(
+            currentUser: currentUser,
+            remoteUserId: remoteUserId,
+            remoteCourseId: remoteCourse.courseId,
+            courseSubject: remoteCourse.subject,
+            bundleVersionId: remoteBundle.bundleVersionId,
+            existingCourseVersionId: localCourse.id,
+          );
+        },
       );
     }
+  }
+
+  Future<_ResolvedRemoteBundleInfo> _resolveRemoteBundleInfo({
+    required int remoteCourseId,
+    required String courseSubject,
+    required int latestBundleVersionId,
+    required String latestBundleHash,
+  }) async {
+    final normalizedHash = latestBundleHash.trim();
+    if (normalizedHash.isNotEmpty) {
+      return _ResolvedRemoteBundleInfo(
+        bundleVersionId: latestBundleVersionId,
+        hash: normalizedHash,
+      );
+    }
+    LatestCourseBundleInfo resolved;
+    try {
+      resolved = await _api.getLatestCourseBundleInfo(remoteCourseId);
+    } on MarketplaceApiException catch (error) {
+      if (error.statusCode == 404) {
+        return _ResolvedRemoteBundleInfo(
+          bundleVersionId: latestBundleVersionId,
+          hash: '',
+        );
+      }
+      rethrow;
+    }
+    final resolvedHash = resolved.hash.trim();
+    if (resolved.bundleVersionId <= 0 || resolvedHash.isEmpty) {
+      throw StateError(
+        'Remote bundle hash is missing for "$courseSubject".',
+      );
+    }
+    return _ResolvedRemoteBundleInfo(
+      bundleVersionId: resolved.bundleVersionId,
+      hash: resolvedHash,
+    );
+  }
+
+  Future<_ResolvedCourseSyncState> _resolveCourseSyncState({
+    required int remoteUserId,
+    required int remoteCourseId,
+  }) async {
+    final courseVersionId =
+        await _db.getCourseVersionIdForRemoteCourse(remoteCourseId);
+    final installedVersion =
+        await _secureStorage.readInstalledCourseBundleVersion(
+      remoteUserId: remoteUserId,
+      remoteCourseId: remoteCourseId,
+    );
+    final localCourse = courseVersionId == null
+        ? null
+        : await _db.getCourseVersionById(courseVersionId);
+    if (localCourse == null) {
+      return _ResolvedCourseSyncState(
+        courseVersionId: courseVersionId,
+        installedVersion: installedVersion,
+        localCourse: null,
+        canBuildLocalBundle: false,
+      );
+    }
+    if (_courseArtifactService == null) {
+      throw StateError(
+        'Course artifact service is required for course sync.',
+      );
+    }
+    var hasCachedArtifacts = await _hasCachedCourseArtifacts(localCourse.id);
+    if (!hasCachedArtifacts) {
+      final localSourcePath = (localCourse.sourcePath ?? '').trim();
+      if (localSourcePath.isNotEmpty &&
+          Directory(localSourcePath).existsSync()) {
+        await _ensureCourseArtifacts(localCourse);
+        hasCachedArtifacts = await _hasCachedCourseArtifacts(localCourse.id);
+      }
+    }
+    return _ResolvedCourseSyncState(
+      courseVersionId: courseVersionId,
+      installedVersion: installedVersion,
+      localCourse: localCourse,
+      canBuildLocalBundle: hasCachedArtifacts,
+    );
+  }
+
+  Future<CourseVersion> _syncRemoteCourseFromServer({
+    required int remoteUserId,
+    required int remoteCourseId,
+    required String courseSubject,
+    required int latestBundleVersionId,
+    required String latestBundleHash,
+    required Future<String?> Function(
+      CourseVersion localCourse,
+      int? installedVersion,
+    ) readLocalHash,
+    required Future<void> Function(
+      CourseVersion localCourse,
+      String localHash,
+    ) onHashesMatch,
+    required Future<CourseVersion> Function(int? existingCourseVersionId)
+        importRemoteCourse,
+    required Future<CourseVersion> Function(
+      CourseVersion localCourse,
+      String localHash,
+      int? installedVersion,
+    ) onHashesDiffer,
+  }) async {
+    final remoteHash = latestBundleHash.trim();
+    final localState = await _resolveCourseSyncState(
+      remoteUserId: remoteUserId,
+      remoteCourseId: remoteCourseId,
+    );
+    if (remoteHash.isEmpty) {
+      if (localState.localCourse != null &&
+          localState.installedVersion != null &&
+          latestBundleVersionId <= localState.installedVersion!) {
+        return localState.localCourse!;
+      }
+      return importRemoteCourse(localState.courseVersionId);
+    }
+    if (localState.localCourse == null || !localState.canBuildLocalBundle) {
+      return importRemoteCourse(localState.courseVersionId);
+    }
+    final localHash = (await readLocalHash(
+                localState.localCourse!, localState.installedVersion))
+            ?.trim() ??
+        '';
+    if (localHash.isEmpty) {
+      return importRemoteCourse(localState.courseVersionId);
+    }
+    if (localHash == remoteHash) {
+      await onHashesMatch(localState.localCourse!, localHash);
+      return localState.localCourse!;
+    }
+    return onHashesDiffer(
+      localState.localCourse!,
+      localHash,
+      localState.installedVersion,
+    );
+  }
+
+  Future<String?> _readStudentCourseSyncHash({
+    required int remoteUserId,
+    required int remoteCourseId,
+  }) async {
+    final syncState = await _secureStorage.readSyncItemState(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainStudentCourseBundles,
+      scopeKey: _teacherCourseScopeKey(remoteCourseId),
+    );
+    final normalized = syncState?.contentHash.trim() ?? '';
+    if (normalized.isEmpty) {
+      return null;
+    }
+    return normalized;
+  }
+
+  Future<void> _writeStudentCourseSyncState({
+    required int remoteUserId,
+    required int remoteCourseId,
+    required int bundleVersionId,
+    required String bundleHash,
+  }) async {
+    final now = DateTime.now().toUtc();
+    await _secureStorage.writeInstalledCourseBundleVersion(
+      remoteUserId: remoteUserId,
+      remoteCourseId: remoteCourseId,
+      versionId: bundleVersionId,
+    );
+    await _secureStorage.writeSyncItemState(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainStudentCourseBundles,
+      scopeKey: _teacherCourseScopeKey(remoteCourseId),
+      contentHash: bundleHash.trim(),
+      lastChangedAt: now,
+      lastSyncedAt: now,
+    );
   }
 
   Future<void> _initializeTeacherCourseSyncState({
@@ -740,7 +910,13 @@ class EnrollmentSyncService {
     final localCourses = await _db.getCourseVersionsForTeacher(currentUser.id);
     for (final course in localCourses) {
       final sourcePath = (course.sourcePath ?? '').trim();
-      if (sourcePath.isEmpty || !Directory(sourcePath).existsSync()) {
+      if (_courseArtifactService != null) {
+        await _ensureCourseArtifacts(course);
+      }
+      final hasArtifacts = _courseArtifactService != null &&
+          await _hasCachedCourseArtifacts(course.id);
+      if (!hasArtifacts &&
+          (sourcePath.isEmpty || !Directory(sourcePath).existsSync())) {
         continue;
       }
       final target = await _resolveTeacherUploadTarget(
@@ -887,6 +1063,23 @@ class EnrollmentSyncService {
     required CourseVersion course,
     required int remoteCourseId,
   }) async {
+    if (_courseArtifactService != null) {
+      await _ensureCourseArtifacts(course);
+      final promptMetadata = await _buildPromptBundleMetadata(
+        teacher: teacher,
+        course: course,
+        remoteCourseId: remoteCourseId,
+      );
+      final prepared = await _courseArtifactService.prepareUploadBundle(
+        courseVersionId: course.id,
+        promptMetadata: promptMetadata,
+        bundleLabel: course.subject,
+      );
+      return _PreparedTeacherCourseBundle(
+        bundleFile: prepared.bundleFile,
+        hash: prepared.hash,
+      );
+    }
     final sourcePath = (course.sourcePath ?? '').trim();
     if (sourcePath.isEmpty) {
       throw StateError('Course source path missing for "${course.subject}".');
@@ -913,6 +1106,18 @@ class EnrollmentSyncService {
     required CourseVersion course,
     required int remoteCourseId,
   }) async {
+    if (_courseArtifactService != null) {
+      await _ensureCourseArtifacts(course);
+      final promptMetadata = await _buildPromptBundleMetadata(
+        teacher: teacher,
+        course: course,
+        remoteCourseId: remoteCourseId,
+      );
+      return _courseArtifactService.computeUploadHash(
+        courseVersionId: course.id,
+        promptMetadata: promptMetadata,
+      );
+    }
     final preparedBundle = await _prepareTeacherCourseBundle(
       teacher: teacher,
       course: course,
@@ -927,7 +1132,7 @@ class EnrollmentSyncService {
     }
   }
 
-  Future<void> _downloadAndImportTeacherCourse({
+  Future<CourseVersion> _downloadAndImportTeacherCourse({
     required User currentUser,
     required int remoteUserId,
     required int remoteCourseId,
@@ -998,11 +1203,42 @@ class EnrollmentSyncService {
         lastChangedAt: now,
         lastSyncedAt: now,
       );
+      return result.course!;
     } finally {
       if (bundleFile != null && bundleFile.existsSync()) {
         await bundleFile.delete();
       }
     }
+  }
+
+  Future<bool> _hasCachedCourseArtifacts(int courseVersionId) async {
+    final manifest = await _courseArtifactService!.readCourseArtifacts(
+      courseVersionId,
+    );
+    if (manifest == null) {
+      return false;
+    }
+    return File(manifest.contentBundlePath).existsSync();
+  }
+
+  Future<void> _ensureCourseArtifacts(CourseVersion course) async {
+    if (_courseArtifactService == null) {
+      return;
+    }
+    if (await _hasCachedCourseArtifacts(course.id)) {
+      return;
+    }
+    final sourcePath = (course.sourcePath ?? '').trim();
+    if (sourcePath.isEmpty || !Directory(sourcePath).existsSync()) {
+      throw StateError(
+        'Cached course artifacts are missing for "${course.subject}", and '
+        'the source folder is unavailable.',
+      );
+    }
+    await _courseArtifactService.rebuildCourseArtifacts(
+      courseVersionId: course.id,
+      folderPath: sourcePath,
+    );
   }
 
   Future<Map<String, dynamic>> _buildPromptBundleMetadata({
@@ -1294,22 +1530,6 @@ class EnrollmentSyncService {
     return 'course:$remoteCourseId';
   }
 
-  Future<TeacherBundleVersionSummary?> _readLatestTeacherBundleVersion({
-    required int remoteCourseId,
-    required int bundleVersionId,
-  }) async {
-    final versions = await _api.listTeacherBundleVersions(remoteCourseId);
-    if (versions.isEmpty) {
-      return null;
-    }
-    for (final version in versions) {
-      if (version.bundleVersionId == bundleVersionId) {
-        return version;
-      }
-    }
-    return versions.first;
-  }
-
   Future<void> _writeSyncListEtag({
     required int remoteUserId,
     required String domain,
@@ -1490,6 +1710,54 @@ class EnrollmentSyncService {
     );
   }
 
+  Future<void> _claimTeacherCourseOwnership({
+    required User currentUser,
+    required int courseVersionId,
+    required List<CourseVersion> localCourses,
+    required Map<int, int?> localRemoteIdByCourseVersion,
+  }) async {
+    final existing = await _db.getCourseVersionById(courseVersionId);
+    if (existing == null) {
+      return;
+    }
+    if (existing.teacherId != currentUser.id) {
+      final existingTeacher = await _db.getUserById(existing.teacherId);
+      if (existingTeacher != null && existingTeacher.role == 'teacher') {
+        await _db.mergeUsers(
+          keepUserId: currentUser.id,
+          removeUserId: existingTeacher.id,
+        );
+      } else {
+        await _db.updateCourseVersionTeacherId(
+          id: courseVersionId,
+          teacherId: currentUser.id,
+        );
+      }
+    }
+    final refreshed = await _db.getCourseVersionById(courseVersionId);
+    if (refreshed == null) {
+      return;
+    }
+    final assignments = await _db.getAssignmentsForCourse(refreshed.id);
+    for (final assignment in assignments) {
+      await _db.updateStudentTeacherId(
+        studentId: assignment.studentId,
+        teacherId: currentUser.id,
+      );
+    }
+    final existingIndex = localCourses.indexWhere((course) {
+      return course.id == refreshed.id;
+    });
+    if (existingIndex >= 0) {
+      localCourses[existingIndex] = refreshed;
+    } else {
+      localCourses.add(refreshed);
+    }
+    localRemoteIdByCourseVersion[refreshed.id] = await _db.getRemoteCourseId(
+      refreshed.id,
+    );
+  }
+
   String _normalizeCourseName(String value) {
     return value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
   }
@@ -1512,4 +1780,28 @@ class _PreparedTeacherCourseBundle {
 
   final File bundleFile;
   final String hash;
+}
+
+class _ResolvedRemoteBundleInfo {
+  const _ResolvedRemoteBundleInfo({
+    required this.bundleVersionId,
+    required this.hash,
+  });
+
+  final int bundleVersionId;
+  final String hash;
+}
+
+class _ResolvedCourseSyncState {
+  const _ResolvedCourseSyncState({
+    required this.courseVersionId,
+    required this.installedVersion,
+    required this.localCourse,
+    required this.canBuildLocalBundle,
+  });
+
+  final int? courseVersionId;
+  final int? installedVersion;
+  final CourseVersion? localCourse;
+  final bool canBuildLocalBundle;
 }

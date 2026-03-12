@@ -455,14 +455,28 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         course: course,
         remoteCourseId: remoteCourseId,
       );
-
-      bundleFile = await bundleService.createBundleFromFolder(
-        sourcePath,
+      var cachedArtifacts =
+          await services.courseArtifactService.readCourseArtifacts(course.id);
+      if (cachedArtifacts == null) {
+        await services.courseArtifactService.rebuildCourseArtifacts(
+          courseVersionId: course.id,
+          folderPath: sourcePath,
+        );
+        cachedArtifacts =
+            await services.courseArtifactService.readCourseArtifacts(course.id);
+      }
+      if (cachedArtifacts == null) {
+        throw StateError(
+          'Cached course artifacts are missing for "${course.subject}".',
+        );
+      }
+      final prepared = await services.courseArtifactService.prepareUploadBundle(
+        courseVersionId: course.id,
         promptMetadata: promptMetadata,
+        bundleLabel: course.subject,
       );
-
-      final localSemanticHash =
-          await bundleService.computeBundleSemanticHash(bundleFile);
+      bundleFile = prepared.bundleFile;
+      final localSemanticHash = prepared.hash;
       final remoteVersions = await _marketplaceApi.listTeacherBundleVersions(
         remoteCourseId,
       );
