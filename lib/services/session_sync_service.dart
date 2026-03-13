@@ -823,6 +823,10 @@ class SessionSyncService {
     required User currentUser,
     required int remoteUserId,
   }) async {
+    final cacheService = _sessionUploadCacheService;
+    if (cacheService == null) {
+      throw StateError('Session upload cache service is not configured.');
+    }
     final sessions = await (_db.select(_db.chatSessions)
           ..where((tbl) =>
               tbl.syncUpdatedAt.isNotNull() &
@@ -841,16 +845,16 @@ class SessionSyncService {
       pendingSessionIds.add(session.id);
       final chapterKey = _extractSecondLevelChapter(session.kpKey);
       pendingChapterLocalKeys.add('${session.courseVersionId}:$chapterKey');
-      final existingChapter = await _sessionUploadCacheService!.readChapter(
+      final existingChapter = await cacheService.readChapter(
         courseVersionId: session.courseVersionId,
         chapterKey: chapterKey,
       );
       if (existingChapter != null) {
         continue;
       }
-      await _sessionUploadCacheService!.captureSession(session.id);
+      await cacheService.captureSession(session.id);
     }
-    final chapterSnapshots = await _sessionUploadCacheService!.listChapters();
+    final chapterSnapshots = await cacheService.listChapters();
     if (chapterSnapshots.isEmpty) {
       return;
     }
@@ -1042,6 +1046,10 @@ class SessionSyncService {
     required int remoteCourseId,
     required Set<int> pendingSessionIds,
   }) async {
+    final cacheService = _sessionUploadCacheService;
+    if (cacheService == null) {
+      throw StateError('Session upload cache service is not configured.');
+    }
     final preparedUploads = <_PreparedSessionUpload>[];
     final batchEntries = <SessionUploadEntry>[];
     var resolvedKeys = keysByCourse[remoteCourseId];
@@ -1070,7 +1078,7 @@ class SessionSyncService {
         );
         continue;
       }
-      var snapshot = await _sessionUploadCacheService!.readSession(
+      var snapshot = await cacheService.readSession(
         sessionId: member.sessionId,
         syncUpdatedAt: member.syncUpdatedAt,
       );
@@ -1079,8 +1087,8 @@ class SessionSyncService {
         if (existingSession == null) {
           continue;
         }
-        await _sessionUploadCacheService!.captureSession(member.sessionId);
-        snapshot = await _sessionUploadCacheService!.readSession(
+        await cacheService.captureSession(member.sessionId);
+        snapshot = await cacheService.readSession(
           sessionId: member.sessionId,
           syncUpdatedAt: member.syncUpdatedAt,
         );
