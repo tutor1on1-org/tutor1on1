@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:path/path.dart' as p;
 
 import '../security/hash_utils.dart';
 
@@ -20,6 +21,10 @@ class SyncItemState {
 
 class SecureStorageService {
   SecureStorageService() : _storage = const FlutterSecureStorage();
+
+  static const String windowsStorageCompanyName = 'com.example';
+  static const String windowsStableProductName = 'family_teacher';
+  static const String windowsAccidentalProductName = 'Tutor1on1';
 
   static const _apiKeyKey = 'openai_api_key';
   static const _apiKeyPrefix = 'openai_api_key:';
@@ -45,6 +50,9 @@ class SecureStorageService {
   static String get syncRunDeviceHash => _syncRunDeviceHash;
 
   Future<void> ensureReadableOrReset() async {
+    if (Platform.isWindows) {
+      await migrateWindowsRenamedProductStorage();
+    }
     try {
       await _storage.readAll();
       return;
@@ -66,6 +74,61 @@ class SecureStorageService {
         );
       }
     }
+  }
+
+  @visibleForTesting
+  static Future<void> migrateWindowsRenamedProductStorage({
+    Directory? roamingAppDataDir,
+  }) async {
+    final root = roamingAppDataDir ?? _defaultWindowsRoamingAppDataDir();
+    if (root == null) {
+      return;
+    }
+    final source = Directory(
+      p.join(
+        root.path,
+        windowsStorageCompanyName,
+        windowsAccidentalProductName,
+      ),
+    );
+    if (!await source.exists()) {
+      return;
+    }
+    final target = Directory(
+      p.join(
+        root.path,
+        windowsStorageCompanyName,
+        windowsStableProductName,
+      ),
+    );
+    await target.create(recursive: true);
+    await for (final entity in source.list(followLinks: false)) {
+      if (entity is! File || !entity.path.endsWith('.secure')) {
+        continue;
+      }
+      final sourceStat = await entity.stat();
+      final targetFile = File(p.join(target.path, p.basename(entity.path)));
+      if (!await targetFile.exists()) {
+        await entity.copy(targetFile.path);
+        await targetFile.setLastModified(sourceStat.modified);
+        continue;
+      }
+      final targetStat = await targetFile.stat();
+      if (!sourceStat.modified.isAfter(targetStat.modified)) {
+        continue;
+      }
+      await targetFile.delete();
+      await entity.copy(targetFile.path);
+      await targetFile.setLastModified(sourceStat.modified);
+    }
+  }
+
+  static Directory? _defaultWindowsRoamingAppDataDir() {
+    final path = Platform.environment['APPDATA'];
+    if (path == null || path.trim().isEmpty) {
+      return null;
+    }
+    return Directory(path);
   }
 
   Future<String?> readApiKey() => _storage.read(key: _apiKeyKey);
