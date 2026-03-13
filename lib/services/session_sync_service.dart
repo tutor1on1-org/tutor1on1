@@ -582,14 +582,18 @@ class SessionSyncService {
       await _api.uploadProgressChunkBatch(
         chunk.map((item) => item.upload).toList(growable: false),
       );
-      stats.addUploaded(
-        count: chunk.length,
-        bytes: chunk.fold<int>(
+    stats.addUploaded(
+      count: chunk.length,
+      bytes: chunk.fold<int>(
           0,
           (total, item) => total + _progressChunkUploadSize(item.upload),
-        ),
-      );
+      ),
+    );
       for (final prepared in chunk) {
+        await _mirrorProgressChunkUploadToDownloadState(
+          remoteUserId: remoteUserId,
+          entry: prepared.upload,
+        );
         for (final stateWrite in prepared.itemStateWrites) {
           await _secureStorage.writeSyncItemState(
             remoteUserId: remoteUserId,
@@ -789,6 +793,10 @@ class SessionSyncService {
         ),
       );
       for (final pending in chunk) {
+        await _mirrorProgressUploadToDownloadState(
+          remoteUserId: remoteUserId,
+          entry: pending.upload,
+        );
         final stateWrite = pending.stateWrite;
         await _secureStorage.writeSyncItemState(
           remoteUserId: remoteUserId,
@@ -1254,6 +1262,12 @@ class SessionSyncService {
         (total, entry) => total + _sessionUploadSize(entry),
       ),
     );
+    for (final entry in batchEntries) {
+      await _mirrorSessionUploadToDownloadState(
+        remoteUserId: remoteUserId,
+        entry: entry,
+      );
+    }
     for (final prepared in preparedUploads) {
       await _markSessionUploaded(
         sessionId: prepared.sessionId,
@@ -1405,6 +1419,12 @@ class SessionSyncService {
         (total, entry) => total + _sessionUploadSize(entry),
       ),
     );
+    for (final entry in batchEntries) {
+      await _mirrorSessionUploadToDownloadState(
+        remoteUserId: remoteUserId,
+        entry: entry,
+      );
+    }
     for (final prepared in preparedUploads) {
       await _markSessionUploaded(
         sessionId: prepared.sessionId,
@@ -2714,6 +2734,71 @@ class SessionSyncService {
         'envelope_hash': item.envelopeHash,
       }),
     ).length;
+  }
+
+  Future<void> _mirrorSessionUploadToDownloadState({
+    required int remoteUserId,
+    required SessionUploadEntry entry,
+  }) async {
+    final updatedAt =
+        DateTime.tryParse(entry.updatedAt)?.toUtc() ?? DateTime.now().toUtc();
+    await _secureStorage.writeSyncItemState(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainSessionDownload,
+      scopeKey: entry.sessionSyncId,
+      contentHash: _resolveSyncHash(
+        primaryHash: entry.envelopeHash,
+        fallbackValue: entry.envelope,
+      ),
+      lastChangedAt: updatedAt,
+      lastSyncedAt: updatedAt,
+    );
+  }
+
+  Future<void> _mirrorProgressUploadToDownloadState({
+    required int remoteUserId,
+    required ProgressUploadEntry entry,
+  }) async {
+    final updatedAt =
+        DateTime.tryParse(entry.updatedAt)?.toUtc() ?? DateTime.now().toUtc();
+    await _secureStorage.writeSyncItemState(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainProgressDownload,
+      scopeKey: _progressDownloadScopeKey(
+        studentRemoteId: remoteUserId,
+        courseId: entry.courseId,
+        kpKey: entry.kpKey,
+      ),
+      contentHash: _resolveSyncHash(
+        primaryHash: entry.envelopeHash,
+        fallbackValue: entry.envelope,
+      ),
+      lastChangedAt: updatedAt,
+      lastSyncedAt: updatedAt,
+    );
+  }
+
+  Future<void> _mirrorProgressChunkUploadToDownloadState({
+    required int remoteUserId,
+    required ProgressChunkUploadEntry entry,
+  }) async {
+    final updatedAt =
+        DateTime.tryParse(entry.updatedAt)?.toUtc() ?? DateTime.now().toUtc();
+    await _secureStorage.writeSyncItemState(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainProgressChunkDownload,
+      scopeKey: _progressChunkDownloadScopeKey(
+        studentRemoteId: remoteUserId,
+        courseId: entry.courseId,
+        chapterKey: entry.chapterKey,
+      ),
+      contentHash: _resolveSyncHash(
+        primaryHash: entry.envelopeHash,
+        fallbackValue: entry.envelope,
+      ),
+      lastChangedAt: updatedAt,
+      lastSyncedAt: updatedAt,
+    );
   }
 
   Future<void> _writeSyncListEtag({

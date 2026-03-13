@@ -2708,6 +2708,188 @@ void main() {
   );
 
   test(
+    'next timer sync does not fetch back the same session that was just uploaded',
+    () async {
+      final crypto = SessionCryptoService();
+      final secureStorage = _MemorySecureStorage(accessToken: 'token');
+
+      final teacherKeyPair = await crypto.generateKeyPair();
+      final teacherPublicKey = await crypto.extractPublicKey(teacherKeyPair);
+      final studentKeyPair = await crypto.generateKeyPair();
+      final studentPublicKey = await crypto.extractPublicKey(studentKeyPair);
+
+      const remoteStudentId = 3301;
+      await secureStorage.writeUserPrivateKey(
+        remoteStudentId,
+        await crypto.encodePrivateKey(studentKeyPair),
+      );
+      await secureStorage.writeUserPublicKey(
+        remoteStudentId,
+        crypto.encodePublicKey(studentPublicKey),
+      );
+
+      final teacherId = await db.createUser(
+        username: 'teacher_upload_echo',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 931,
+      );
+      final studentId = await db.createUser(
+        username: 'student_upload_echo',
+        pinHash: 'hash',
+        role: 'student',
+        remoteUserId: remoteStudentId,
+      );
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Biology',
+        granularity: 1,
+        textbookText: 'content',
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 291,
+      );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+      );
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+
+      final sessionUpdatedAt = DateTime.parse('2026-03-02T16:30:00Z');
+      final sessionId = await db.into(db.chatSessions).insert(
+            ChatSessionsCompanion.insert(
+              studentId: studentId,
+              courseVersionId: courseVersionId,
+              kpKey: '3.2.1',
+              title: const Value('Echo Session'),
+              status: const Value('active'),
+              startedAt: Value(sessionUpdatedAt),
+              syncId: const Value('session-echo'),
+              syncUpdatedAt: Value(sessionUpdatedAt),
+              syncUploadedAt:
+                  Value(sessionUpdatedAt.subtract(const Duration(hours: 2))),
+            ),
+          );
+      await db.into(db.chatMessages).insert(
+            ChatMessagesCompanion.insert(
+              sessionId: sessionId,
+              role: 'assistant',
+              content: 'echo payload',
+              createdAt: Value(sessionUpdatedAt),
+            ),
+          );
+
+      final initialRunAt = DateTime.now().toUtc();
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_session_download',
+        runAt: initialRunAt,
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_progress_download',
+        runAt: initialRunAt,
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_progress_upload',
+        runAt: initialRunAt,
+      );
+
+      final sessionItems = <SessionSyncItem>[];
+      var fetchCalls = 0;
+      final api = _TestSessionSyncApiService(
+        secureStorage: secureStorage,
+        sessionItems: sessionItems,
+        progressItems: const <ProgressSyncItem>[],
+        fetchDownloadPayloadHandler: (request) async {
+          fetchCalls++;
+          final requestedIds = request.sessionSyncIds.toSet();
+          return SyncDownloadFetchResult(
+            sessions: sessionItems
+                .where((item) => requestedIds.contains(item.sessionSyncId))
+                .toList(growable: false),
+            progressChunks: const <ProgressSyncChunkItem>[],
+            progressRows: const <ProgressSyncItem>[],
+          );
+        },
+        courseKeysByCourse: <int, CourseKeyBundle>{
+          291: CourseKeyBundle(
+            courseId: 291,
+            teacherUserId: 931,
+            teacherPublicKey: crypto.encodePublicKey(teacherPublicKey),
+            studentUserId: remoteStudentId,
+            studentPublicKey: crypto.encodePublicKey(studentPublicKey),
+          ),
+        },
+      );
+      final userKeyService = UserKeyService(
+        secureStorage: secureStorage,
+        api: api,
+        crypto: crypto,
+      );
+      final syncService = SessionSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        api: api,
+        userKeyService: userKeyService,
+        crypto: crypto,
+      );
+
+      final firstStats = await syncService.syncIfReady(currentUser: student!);
+      expect(firstStats.uploadedCount, equals(1));
+      expect(api.uploadedSessions, hasLength(1));
+
+      final uploaded = api.uploadedSessions.single;
+      sessionItems.add(
+        SessionSyncItem(
+          cursorId: 1,
+          sessionSyncId: uploaded['session_sync_id'] as String,
+          courseId: uploaded['course_id'] as int,
+          teacherUserId: 931,
+          studentUserId: remoteStudentId,
+          senderUserId: remoteStudentId,
+          chapterKey: uploaded['chapter_key'] as String,
+          updatedAt: uploaded['updated_at'] as String,
+          envelope: uploaded['envelope'] as String,
+          envelopeHash: uploaded['envelope_hash'] as String,
+        ),
+      );
+
+      final rerunAt =
+          DateTime.now().toUtc().subtract(const Duration(minutes: 5));
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_session_download',
+        runAt: rerunAt,
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_progress_download',
+        runAt: rerunAt,
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_progress_upload',
+        runAt: rerunAt,
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_session_upload',
+        runAt: rerunAt,
+      );
+
+      final secondStats = await syncService.syncIfReady(currentUser: student);
+      expect(secondStats.downloadedCount, equals(0));
+      expect(secondStats.downloadedBytes, equals(0));
+      expect(fetchCalls, equals(0));
+      expect(api.uploadedSessions, hasLength(1));
+    },
+  );
+
+  test(
     'force pull from server replaces local student data without uploads',
     () async {
       final crypto = SessionCryptoService();
