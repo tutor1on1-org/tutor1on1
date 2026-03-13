@@ -14,6 +14,9 @@ INPUTS
 - student_intent: {{student_intent}}
 - help_bias: {{help_bias}}
 - control_state_json: {{control_state_json}}
+- conversation_history: {{conversation_history}}
+- recent_dialogue: {{recent_dialogue}}
+- prev_json: {{prev_json}}
 - evidence_state_json: {{evidence_state_json}}
 - student_summary: {{student_summary}}
 - student_profile: {{student_profile}}
@@ -28,6 +31,10 @@ RULES
 - Keep the response concise and specific to this kp.
 - Focus on concept clarity, not grading.
 - If lesson_content is empty, rely on kp_title, kp_description, and student_input.
+- Use conversation_history as prior session context when this kp was already discussed.
+- If recent_dialogue or prev_json shows this kp was already explained, do not repeat the same explanation angle or same opening summary.
+- Repeated LEARN_INIT on the same kp should still use prior tutor output as context and add a meaningfully new explanation, example, analogy, contrast, or emphasis.
+- Prefer building on what the tutor already said over restating the same content with minor wording changes.
 - help_bias:
   - EASIER: more scaffolding, smaller steps, more direct hints.
   - HARDER: less scaffolding, more independent reasoning.

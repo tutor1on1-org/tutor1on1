@@ -154,7 +154,7 @@ class _FakePromptRepository extends PromptRepository {
       case 'summary':
         return 'Summary prompt {{conversation_history}} {{student_summary}}';
       default:
-        return 'Tutor prompt intent={{student_intent}} error_book={{error_book_summary}} input={{student_input}} history={{conversation_history}}';
+        return 'Tutor prompt intent={{student_intent}} error_book={{error_book_summary}} input={{student_input}} history={{conversation_history}} recent={{recent_dialogue}} prev={{prev_json}}';
     }
   }
 
@@ -623,6 +623,68 @@ void main() {
       expect(rendered, contains('intent=HELP_REQUEST'));
       expect(rendered, contains('sign_error'));
       expect(rendered, contains('ALGEBRA'));
+    },
+  );
+
+  test(
+    'repeated learn_init includes prior conversation and prior assistant payload',
+    () async {
+      final fixture = await _createTutorFixture(
+        db: db,
+        service: service,
+      );
+      await db.into(db.chatMessages).insert(
+            ChatMessagesCompanion.insert(
+              sessionId: fixture.sessionId,
+              role: 'user',
+              content: 'Teach me regression basics.',
+              action: const Value('learn'),
+            ),
+          );
+      await db.into(db.chatMessages).insert(
+            ChatMessagesCompanion.insert(
+              sessionId: fixture.sessionId,
+              role: 'assistant',
+              content: 'Regression predicts y from x.',
+              parsedJson: Value(
+                jsonEncode(<String, Object?>{
+                  'teacher_message': 'Regression predicts y from x.',
+                  'understanding': 'PARTIAL',
+                  'control': _learnUnfinishedControl(),
+                }),
+              ),
+              action: const Value('learn'),
+            ),
+          );
+      llmService.queueCall(
+        Future<LlmCallResult>.value(
+          _llmOk(
+            responseText: jsonEncode(<String, Object?>{
+              'teacher_message': 'Let us add a new angle.',
+              'understanding': 'PARTIAL',
+              'control': _learnUnfinishedControl(),
+            }),
+            callHash: 'repeat_learn_init',
+          ),
+        ),
+      );
+
+      final handle = await service.startTutorAction(
+        sessionId: fixture.sessionId,
+        mode: 'learn_init',
+        studentInput: '',
+        courseVersion: fixture.courseVersion,
+        node: fixture.node,
+      );
+      await handle.future;
+
+      final rendered = llmService.callInvocations.single.renderedPrompt;
+      expect(rendered, contains('Teach me regression basics.'));
+      expect(rendered, contains('Regression predicts y from x.'));
+      expect(
+        rendered,
+        contains('"teacher_message":"Regression predicts y from x."'),
+      );
     },
   );
 
