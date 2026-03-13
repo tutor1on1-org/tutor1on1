@@ -4,6 +4,7 @@ class LlmCallResult {
     required this.latencyMs,
     required this.fromReplay,
     this.responseJson,
+    this.reasoningText,
     this.parseValid,
     this.parseError,
     this.callHash,
@@ -15,11 +16,37 @@ class LlmCallResult {
   final int latencyMs;
   final bool fromReplay;
   final String? responseJson;
+  final String? reasoningText;
   final bool? parseValid;
   final String? parseError;
   final String? callHash;
   final String? model;
   final String? baseUrl;
+}
+
+class ReasoningEffort {
+  static const String none = 'none';
+  static const String low = 'low';
+  static const String medium = 'medium';
+  static const String high = 'high';
+
+  static const List<String> values = <String>[
+    none,
+    low,
+    medium,
+    high,
+  ];
+
+  static String normalize(String? value) {
+    final normalized = value?.trim().toLowerCase();
+    if (normalized == null || normalized.isEmpty) {
+      return medium;
+    }
+    if (values.contains(normalized)) {
+      return normalized;
+    }
+    return medium;
+  }
 }
 
 class LlmCallContext {

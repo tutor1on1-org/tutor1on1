@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
@@ -13,6 +14,7 @@ import 'package:family_teacher/services/secure_storage_service.dart';
 import 'package:family_teacher/services/session_crypto_service.dart';
 import 'package:family_teacher/services/session_sync_api_service.dart';
 import 'package:family_teacher/services/session_sync_service.dart';
+import 'package:family_teacher/services/session_upload_cache_service.dart';
 import 'package:family_teacher/services/sync_state_repository.dart';
 import 'package:family_teacher/services/user_key_service.dart';
 
@@ -2528,6 +2530,173 @@ void main() {
       expect(
         changedSession!.syncUploadedAt!.toUtc(),
         equals(changedSessionUpdatedAt.toUtc()),
+      );
+    },
+  );
+
+  test(
+    'chapter cache path uploads only changed sessions from changed chapters',
+    () async {
+      final crypto = SessionCryptoService();
+      final secureStorage = _MemorySecureStorage(accessToken: 'token');
+      final tempRoot =
+          await Directory.systemTemp.createTemp('session_sync_chapter_cache_');
+      addTearDown(() async {
+        if (await tempRoot.exists()) {
+          await tempRoot.delete(recursive: true);
+        }
+      });
+      final cacheService = SessionUploadCacheService(
+        db: db,
+        cacheRootProvider: () async => tempRoot,
+      );
+
+      final teacherId = await db.createUser(
+        username: 'teacher_chapter_cache',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 913,
+      );
+      final studentId = await db.createUser(
+        username: 'student_chapter_cache',
+        pinHash: 'hash',
+        role: 'student',
+        teacherId: teacherId,
+        remoteUserId: 3013,
+      );
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'MATH',
+        granularity: 2,
+        textbookText: 'contents',
+        sourcePath: r'C:\courses\chapter_cache',
+      );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 222,
+      );
+
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+      final remoteStudentId = student!.remoteUserId!;
+
+      final studentKeyPair = await crypto.generateKeyPair();
+      final studentPublicKey = await crypto.extractPublicKey(studentKeyPair);
+      await secureStorage.writeUserPrivateKey(
+        remoteStudentId,
+        await crypto.encodePrivateKey(studentKeyPair),
+      );
+      await secureStorage.writeUserPublicKey(
+        remoteStudentId,
+        crypto.encodePublicKey(studentPublicKey),
+      );
+      final teacherKeyPair = await crypto.generateKeyPair();
+      final teacherPublicKey = await crypto.extractPublicKey(teacherKeyPair);
+
+      final unchangedAt = DateTime.parse('2026-03-04T10:00:00Z');
+      final unchangedSessionId = await db.into(db.chatSessions).insert(
+            ChatSessionsCompanion.insert(
+              studentId: studentId,
+              courseVersionId: courseVersionId,
+              kpKey: '3.2.1.1',
+              title: const Value('Unchanged session'),
+              status: const Value('active'),
+              startedAt: Value(unchangedAt),
+              syncId: const Value('chapter-cache-unchanged'),
+              syncUpdatedAt: Value(unchangedAt),
+              syncUploadedAt: Value(unchangedAt),
+            ),
+          );
+      await db.into(db.chatMessages).insert(
+            ChatMessagesCompanion.insert(
+              sessionId: unchangedSessionId,
+              role: 'assistant',
+              content: 'unchanged payload',
+              createdAt: Value(unchangedAt),
+            ),
+          );
+      await cacheService.captureSession(unchangedSessionId);
+
+      final changedAt = DateTime.parse('2026-03-04T11:00:00Z');
+      final changedSessionId = await db.into(db.chatSessions).insert(
+            ChatSessionsCompanion.insert(
+              studentId: studentId,
+              courseVersionId: courseVersionId,
+              kpKey: '3.2.1.2',
+              title: const Value('Changed session'),
+              status: const Value('active'),
+              startedAt: Value(changedAt),
+              syncId: const Value('chapter-cache-changed'),
+              syncUpdatedAt: Value(changedAt),
+              syncUploadedAt:
+                  Value(changedAt.subtract(const Duration(minutes: 30))),
+            ),
+          );
+      await db.into(db.chatMessages).insert(
+            ChatMessagesCompanion.insert(
+              sessionId: changedSessionId,
+              role: 'assistant',
+              content: 'changed payload',
+              createdAt: Value(changedAt),
+            ),
+          );
+      await cacheService.captureSession(changedSessionId);
+
+      final nowUtc = DateTime.now().toUtc();
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_session_download',
+        runAt: nowUtc,
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_progress_download',
+        runAt: nowUtc,
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: remoteStudentId,
+        domain: 'session_sync_run_progress_upload',
+        runAt: nowUtc,
+      );
+
+      final api = _TestSessionSyncApiService(
+        secureStorage: secureStorage,
+        sessionItems: const <SessionSyncItem>[],
+        progressItems: const <ProgressSyncItem>[],
+        courseKeysByCourse: <int, CourseKeyBundle>{
+          222: CourseKeyBundle(
+            courseId: 222,
+            teacherUserId: 913,
+            teacherPublicKey: crypto.encodePublicKey(teacherPublicKey),
+            studentUserId: remoteStudentId,
+            studentPublicKey: crypto.encodePublicKey(studentPublicKey),
+          ),
+        },
+      );
+      final userKeyService = UserKeyService(
+        secureStorage: secureStorage,
+        api: api,
+        crypto: crypto,
+      );
+      final syncService = SessionSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        api: api,
+        userKeyService: userKeyService,
+        crypto: crypto,
+        sessionUploadCacheService: cacheService,
+      );
+
+      await syncService.syncIfReady(currentUser: student);
+
+      expect(api.uploadedSessions, hasLength(1));
+      expect(
+        api.uploadedSessions.single['session_sync_id'],
+        equals('chapter-cache-changed'),
       );
     },
   );

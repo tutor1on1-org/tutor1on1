@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -142,6 +143,82 @@ class SessionUploadCacheSnapshot {
   }
 }
 
+class SessionUploadChapterMember {
+  SessionUploadChapterMember({
+    required this.sessionId,
+    required this.syncId,
+    required this.syncUpdatedAt,
+    required this.payloadHash,
+  });
+
+  final int sessionId;
+  final String syncId;
+  final DateTime syncUpdatedAt;
+  final String payloadHash;
+
+  Map<String, dynamic> toJson() => {
+        'session_id': sessionId,
+        'sync_id': syncId,
+        'sync_updated_at': syncUpdatedAt.toUtc().toIso8601String(),
+        'payload_hash': payloadHash,
+      };
+
+  factory SessionUploadChapterMember.fromJson(Map<String, dynamic> json) {
+    return SessionUploadChapterMember(
+      sessionId: (json['session_id'] as num?)?.toInt() ?? 0,
+      syncId: (json['sync_id'] as String?) ?? '',
+      syncUpdatedAt:
+          DateTime.tryParse((json['sync_updated_at'] as String?) ?? '')
+                  ?.toUtc() ??
+              DateTime.now().toUtc(),
+      payloadHash: (json['payload_hash'] as String?) ?? '',
+    );
+  }
+}
+
+class SessionUploadChapterSnapshot {
+  SessionUploadChapterSnapshot({
+    required this.courseVersionId,
+    required this.chapterKey,
+    required this.updatedAt,
+    required this.contentHash,
+    required this.members,
+  });
+
+  final int courseVersionId;
+  final String chapterKey;
+  final DateTime updatedAt;
+  final String contentHash;
+  final List<SessionUploadChapterMember> members;
+
+  Map<String, dynamic> toJson() => {
+        'course_version_id': courseVersionId,
+        'chapter_key': chapterKey,
+        'updated_at': updatedAt.toUtc().toIso8601String(),
+        'content_hash': contentHash,
+        'members': members.map((member) => member.toJson()).toList(),
+      };
+
+  factory SessionUploadChapterSnapshot.fromJson(Map<String, dynamic> json) {
+    final rawMembers = json['members'];
+    final members = rawMembers is List
+        ? rawMembers
+            .whereType<Map<String, dynamic>>()
+            .map(SessionUploadChapterMember.fromJson)
+            .toList()
+        : <SessionUploadChapterMember>[];
+    return SessionUploadChapterSnapshot(
+      courseVersionId: (json['course_version_id'] as num?)?.toInt() ?? 0,
+      chapterKey: (json['chapter_key'] as String?) ?? '',
+      updatedAt:
+          DateTime.tryParse((json['updated_at'] as String?) ?? '')?.toUtc() ??
+              DateTime.now().toUtc(),
+      contentHash: (json['content_hash'] as String?) ?? '',
+      members: members,
+    );
+  }
+}
+
 class SessionUploadCacheService {
   SessionUploadCacheService({
     required AppDatabase db,
@@ -151,6 +228,7 @@ class SessionUploadCacheService {
 
   final AppDatabase _db;
   final Future<Directory> Function()? _cacheRootProvider;
+  static final RegExp _secondLevelChapterPattern = RegExp(r'^(\d+\.\d+)');
 
   Future<void> captureSession(int sessionId) async {
     if (sessionId <= 0) {
@@ -214,6 +292,7 @@ class SessionUploadCacheService {
       jsonEncode(snapshot.toJson()),
       encoding: utf8,
     );
+    await _upsertChapterSnapshot(snapshot);
   }
 
   Future<SessionUploadCacheSnapshot?> readSession({
@@ -238,13 +317,78 @@ class SessionUploadCacheService {
 
   Future<void> deleteSession(int sessionId) async {
     final file = await _resolveSessionFile(sessionId);
+    SessionUploadCacheSnapshot? existingSnapshot;
+    if (file.existsSync()) {
+      final decoded = jsonDecode(await file.readAsString(encoding: utf8));
+      if (decoded is! Map<String, dynamic>) {
+        throw StateError(
+          'Session upload cache is invalid for session $sessionId.',
+        );
+      }
+      existingSnapshot = SessionUploadCacheSnapshot.fromJson(decoded);
+    }
     if (file.existsSync()) {
       await file.delete();
     }
+    if (existingSnapshot != null) {
+      await _removeFromChapterSnapshot(existingSnapshot);
+    }
+  }
+
+  Future<SessionUploadChapterSnapshot?> readChapter({
+    required int courseVersionId,
+    required String chapterKey,
+  }) async {
+    final file = await _resolveChapterFile(courseVersionId, chapterKey);
+    if (!file.existsSync()) {
+      return null;
+    }
+    final decoded = jsonDecode(await file.readAsString(encoding: utf8));
+    if (decoded is! Map<String, dynamic>) {
+      throw StateError(
+        'Session upload chapter cache is invalid for courseVersionId='
+        '$courseVersionId chapterKey="$chapterKey".',
+      );
+    }
+    final snapshot = SessionUploadChapterSnapshot.fromJson(decoded);
+    return _normalizeChapterSnapshot(snapshot);
+  }
+
+  Future<List<SessionUploadChapterSnapshot>> listChapters() async {
+    final root = await _resolveChapterRoot();
+    if (!root.existsSync()) {
+      return const <SessionUploadChapterSnapshot>[];
+    }
+    final chapters = <SessionUploadChapterSnapshot>[];
+    await for (final entity in root.list(followLinks: false)) {
+      if (entity is! File || !entity.path.endsWith('.json')) {
+        continue;
+      }
+      final decoded = jsonDecode(await entity.readAsString(encoding: utf8));
+      if (decoded is! Map<String, dynamic>) {
+        throw StateError(
+          'Session upload chapter cache file is invalid: ${entity.path}',
+        );
+      }
+      final snapshot = SessionUploadChapterSnapshot.fromJson(decoded);
+      final normalized = await _normalizeChapterSnapshot(snapshot);
+      if (normalized != null) {
+        chapters.add(normalized);
+      }
+    }
+    chapters.sort((left, right) {
+      final courseCompare =
+          left.courseVersionId.compareTo(right.courseVersionId);
+      if (courseCompare != 0) {
+        return courseCompare;
+      }
+      return left.chapterKey.compareTo(right.chapterKey);
+    });
+    return chapters;
   }
 
   Future<File> _resolveSessionFile(int sessionId) async {
-    final root = await _resolveRoot();
+    final root = await _resolveSessionRoot();
     return File(p.join(root.path, 'session_$sessionId.json'));
   }
 
@@ -262,5 +406,222 @@ class SessionUploadCacheService {
       root.createSync(recursive: true);
     }
     return root;
+  }
+
+  Future<Directory> _resolveSessionRoot() async {
+    final root = await _resolveRoot();
+    final dir = Directory(p.join(root.path, 'sessions'));
+    if (!dir.existsSync()) {
+      dir.createSync(recursive: true);
+    }
+    return dir;
+  }
+
+  Future<Directory> _resolveChapterRoot() async {
+    final root = await _resolveRoot();
+    final dir = Directory(p.join(root.path, 'chapters'));
+    if (!dir.existsSync()) {
+      dir.createSync(recursive: true);
+    }
+    return dir;
+  }
+
+  Future<File> _resolveChapterFile(
+      int courseVersionId, String chapterKey) async {
+    final root = await _resolveChapterRoot();
+    final safeChapterKey = chapterKey.replaceAll('.', '_');
+    return File(
+      p.join(
+          root.path, 'course_${courseVersionId}__chapter_$safeChapterKey.json'),
+    );
+  }
+
+  Future<void> _upsertChapterSnapshot(
+      SessionUploadCacheSnapshot snapshot) async {
+    final chapterKey = _extractSecondLevelChapter(snapshot.kpKey);
+    final existing = await readChapter(
+      courseVersionId: snapshot.courseVersionId,
+      chapterKey: chapterKey,
+    );
+    final payloadHash = _hashSessionSnapshot(snapshot);
+    final members = <SessionUploadChapterMember>[
+      ...(existing?.members ?? const <SessionUploadChapterMember>[])
+          .where((member) => member.sessionId != snapshot.sessionId),
+      SessionUploadChapterMember(
+        sessionId: snapshot.sessionId,
+        syncId: snapshot.syncId,
+        syncUpdatedAt: snapshot.syncUpdatedAt,
+        payloadHash: payloadHash,
+      ),
+    ]..sort((left, right) => left.sessionId.compareTo(right.sessionId));
+    final chapterSnapshot = _buildChapterSnapshot(
+      courseVersionId: snapshot.courseVersionId,
+      chapterKey: chapterKey,
+      members: members,
+    );
+    final file =
+        await _resolveChapterFile(snapshot.courseVersionId, chapterKey);
+    await file.parent.create(recursive: true);
+    await file.writeAsString(
+      jsonEncode(chapterSnapshot.toJson()),
+      encoding: utf8,
+    );
+  }
+
+  Future<void> _removeFromChapterSnapshot(
+    SessionUploadCacheSnapshot snapshot,
+  ) async {
+    final chapterKey = _extractSecondLevelChapter(snapshot.kpKey);
+    final existing = await readChapter(
+      courseVersionId: snapshot.courseVersionId,
+      chapterKey: chapterKey,
+    );
+    if (existing == null) {
+      return;
+    }
+    final members = existing.members
+        .where((member) => member.sessionId != snapshot.sessionId)
+        .toList(growable: false);
+    final file =
+        await _resolveChapterFile(snapshot.courseVersionId, chapterKey);
+    if (members.isEmpty) {
+      if (file.existsSync()) {
+        await file.delete();
+      }
+      return;
+    }
+    final chapterSnapshot = _buildChapterSnapshot(
+      courseVersionId: snapshot.courseVersionId,
+      chapterKey: chapterKey,
+      members: members,
+    );
+    await file.writeAsString(
+      jsonEncode(chapterSnapshot.toJson()),
+      encoding: utf8,
+    );
+  }
+
+  Future<SessionUploadChapterSnapshot?> _normalizeChapterSnapshot(
+    SessionUploadChapterSnapshot snapshot,
+  ) async {
+    final sessionRoot = await _resolveSessionRoot();
+    final normalizedMembers = snapshot.members
+        .where(
+          (member) =>
+              member.sessionId > 0 &&
+              member.syncId.trim().isNotEmpty &&
+              File(
+                p.join(
+                  sessionRoot.path,
+                  'session_${member.sessionId}.json',
+                ),
+              ).existsSync(),
+        )
+        .toList(growable: false);
+    final file = await _resolveChapterFile(
+      snapshot.courseVersionId,
+      snapshot.chapterKey,
+    );
+    if (normalizedMembers.isEmpty) {
+      if (file.existsSync()) {
+        await file.delete();
+      }
+      return null;
+    }
+    final rebuilt = _buildChapterSnapshot(
+      courseVersionId: snapshot.courseVersionId,
+      chapterKey: snapshot.chapterKey,
+      members: normalizedMembers,
+    );
+    if (rebuilt.contentHash != snapshot.contentHash ||
+        rebuilt.updatedAt.toUtc() != snapshot.updatedAt.toUtc() ||
+        rebuilt.members.length != snapshot.members.length) {
+      await file.writeAsString(
+        jsonEncode(rebuilt.toJson()),
+        encoding: utf8,
+      );
+    }
+    return rebuilt;
+  }
+
+  SessionUploadChapterSnapshot _buildChapterSnapshot({
+    required int courseVersionId,
+    required String chapterKey,
+    required List<SessionUploadChapterMember> members,
+  }) {
+    final sortedMembers = members.toList(growable: false)
+      ..sort((left, right) => left.sessionId.compareTo(right.sessionId));
+    final updatedAt =
+        sortedMembers.map((member) => member.syncUpdatedAt).reduce(
+              (left, right) => left.isAfter(right) ? left : right,
+            );
+    final contentHash = _hashChapterMembers(sortedMembers);
+    return SessionUploadChapterSnapshot(
+      courseVersionId: courseVersionId,
+      chapterKey: chapterKey,
+      updatedAt: updatedAt,
+      contentHash: contentHash,
+      members: sortedMembers,
+    );
+  }
+
+  String _hashSessionSnapshot(SessionUploadCacheSnapshot snapshot) {
+    final canonical = jsonEncode(
+      <String, Object?>{
+        'sync_id': snapshot.syncId,
+        'sync_updated_at': snapshot.syncUpdatedAt.toUtc().toIso8601String(),
+        'course_version_id': snapshot.courseVersionId,
+        'course_subject': snapshot.courseSubject,
+        'kp_key': snapshot.kpKey,
+        'kp_title': snapshot.kpTitle,
+        'session_title': snapshot.sessionTitle,
+        'started_at': snapshot.startedAt.toUtc().toIso8601String(),
+        'ended_at': snapshot.endedAt?.toUtc().toIso8601String(),
+        'summary_text': snapshot.summaryText,
+        'control_state_json': snapshot.controlStateJson,
+        'control_state_updated_at':
+            snapshot.controlStateUpdatedAt?.toUtc().toIso8601String(),
+        'evidence_state_json': snapshot.evidenceStateJson,
+        'evidence_state_updated_at':
+            snapshot.evidenceStateUpdatedAt?.toUtc().toIso8601String(),
+        'messages': snapshot.messages
+            .map((message) => message.toJson())
+            .toList(growable: false),
+      },
+    );
+    return sha256.convert(utf8.encode(canonical)).toString();
+  }
+
+  String _hashChapterMembers(List<SessionUploadChapterMember> members) {
+    final fingerprints = members
+        .map(
+          (member) => [
+            member.syncId,
+            member.syncUpdatedAt.toUtc().toIso8601String(),
+            member.payloadHash,
+          ].join('|'),
+        )
+        .toList(growable: false)
+      ..sort();
+    return sha256.convert(utf8.encode(fingerprints.join('\n'))).toString();
+  }
+
+  String _extractSecondLevelChapter(String kpKey) {
+    final trimmed = kpKey.trim();
+    if (trimmed.isEmpty) {
+      return 'ungrouped';
+    }
+    final match = _secondLevelChapterPattern.firstMatch(trimmed);
+    if (match != null) {
+      final value = match.group(1);
+      if (value != null && value.isNotEmpty) {
+        return value;
+      }
+    }
+    final parts = trimmed.split('.');
+    if (parts.length >= 2) {
+      return '${parts[0].trim()}.${parts[1].trim()}';
+    }
+    return trimmed;
   }
 }

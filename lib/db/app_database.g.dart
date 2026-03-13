@@ -4849,6 +4849,14 @@ class $AppSettingsTable extends AppSettings
   late final GeneratedColumn<String> model = GeneratedColumn<String>(
       'model', aliasedName, false,
       type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _reasoningEffortMeta =
+      const VerificationMeta('reasoningEffort');
+  @override
+  late final GeneratedColumn<String> reasoningEffort = GeneratedColumn<String>(
+      'reasoning_effort', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: false,
+      defaultValue: const Constant('medium'));
   static const VerificationMeta _ttsModelMeta =
       const VerificationMeta('ttsModel');
   @override
@@ -4968,6 +4976,7 @@ class $AppSettingsTable extends AppSettings
         baseUrl,
         providerId,
         model,
+        reasoningEffort,
         ttsModel,
         sttModel,
         timeoutSeconds,
@@ -5015,6 +5024,12 @@ class $AppSettingsTable extends AppSettings
           _modelMeta, model.isAcceptableOrUnknown(data['model']!, _modelMeta));
     } else if (isInserting) {
       context.missing(_modelMeta);
+    }
+    if (data.containsKey('reasoning_effort')) {
+      context.handle(
+          _reasoningEffortMeta,
+          reasoningEffort.isAcceptableOrUnknown(
+              data['reasoning_effort']!, _reasoningEffortMeta));
     }
     if (data.containsKey('tts_model')) {
       context.handle(_ttsModelMeta,
@@ -5123,6 +5138,8 @@ class $AppSettingsTable extends AppSettings
           .read(DriftSqlType.string, data['${effectivePrefix}provider_id']),
       model: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}model'])!,
+      reasoningEffort: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}reasoning_effort'])!,
       ttsModel: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}tts_model']),
       sttModel: attachedDatabase.typeMapping
@@ -5169,6 +5186,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
   final String baseUrl;
   final String? providerId;
   final String model;
+  final String reasoningEffort;
   final String? ttsModel;
   final String? sttModel;
   final int timeoutSeconds;
@@ -5190,6 +5208,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       required this.baseUrl,
       this.providerId,
       required this.model,
+      required this.reasoningEffort,
       this.ttsModel,
       this.sttModel,
       required this.timeoutSeconds,
@@ -5215,6 +5234,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       map['provider_id'] = Variable<String>(providerId);
     }
     map['model'] = Variable<String>(model);
+    map['reasoning_effort'] = Variable<String>(reasoningEffort);
     if (!nullToAbsent || ttsModel != null) {
       map['tts_model'] = Variable<String>(ttsModel);
     }
@@ -5256,6 +5276,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
           ? const Value.absent()
           : Value(providerId),
       model: Value(model),
+      reasoningEffort: Value(reasoningEffort),
       ttsModel: ttsModel == null && nullToAbsent
           ? const Value.absent()
           : Value(ttsModel),
@@ -5296,6 +5317,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       baseUrl: serializer.fromJson<String>(json['baseUrl']),
       providerId: serializer.fromJson<String?>(json['providerId']),
       model: serializer.fromJson<String>(json['model']),
+      reasoningEffort: serializer.fromJson<String>(json['reasoningEffort']),
       ttsModel: serializer.fromJson<String?>(json['ttsModel']),
       sttModel: serializer.fromJson<String?>(json['sttModel']),
       timeoutSeconds: serializer.fromJson<int>(json['timeoutSeconds']),
@@ -5322,6 +5344,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       'baseUrl': serializer.toJson<String>(baseUrl),
       'providerId': serializer.toJson<String?>(providerId),
       'model': serializer.toJson<String>(model),
+      'reasoningEffort': serializer.toJson<String>(reasoningEffort),
       'ttsModel': serializer.toJson<String?>(ttsModel),
       'sttModel': serializer.toJson<String?>(sttModel),
       'timeoutSeconds': serializer.toJson<int>(timeoutSeconds),
@@ -5346,6 +5369,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
           String? baseUrl,
           Value<String?> providerId = const Value.absent(),
           String? model,
+          String? reasoningEffort,
           Value<String?> ttsModel = const Value.absent(),
           Value<String?> sttModel = const Value.absent(),
           int? timeoutSeconds,
@@ -5367,6 +5391,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
         baseUrl: baseUrl ?? this.baseUrl,
         providerId: providerId.present ? providerId.value : this.providerId,
         model: model ?? this.model,
+        reasoningEffort: reasoningEffort ?? this.reasoningEffort,
         ttsModel: ttsModel.present ? ttsModel.value : this.ttsModel,
         sttModel: sttModel.present ? sttModel.value : this.sttModel,
         timeoutSeconds: timeoutSeconds ?? this.timeoutSeconds,
@@ -5393,6 +5418,9 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
       providerId:
           data.providerId.present ? data.providerId.value : this.providerId,
       model: data.model.present ? data.model.value : this.model,
+      reasoningEffort: data.reasoningEffort.present
+          ? data.reasoningEffort.value
+          : this.reasoningEffort,
       ttsModel: data.ttsModel.present ? data.ttsModel.value : this.ttsModel,
       sttModel: data.sttModel.present ? data.sttModel.value : this.sttModel,
       timeoutSeconds: data.timeoutSeconds.present
@@ -5435,6 +5463,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
           ..write('baseUrl: $baseUrl, ')
           ..write('providerId: $providerId, ')
           ..write('model: $model, ')
+          ..write('reasoningEffort: $reasoningEffort, ')
           ..write('ttsModel: $ttsModel, ')
           ..write('sttModel: $sttModel, ')
           ..write('timeoutSeconds: $timeoutSeconds, ')
@@ -5456,27 +5485,29 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
   }
 
   @override
-  int get hashCode => Object.hash(
-      id,
-      baseUrl,
-      providerId,
-      model,
-      ttsModel,
-      sttModel,
-      timeoutSeconds,
-      maxTokens,
-      ttsInitialDelayMs,
-      ttsTextLeadMs,
-      ttsAudioPath,
-      sttAutoSend,
-      enterToSend,
-      studyModeEnabled,
-      logDirectory,
-      llmLogPath,
-      ttsLogPath,
-      llmMode,
-      locale,
-      updatedAt);
+  int get hashCode => Object.hashAll([
+        id,
+        baseUrl,
+        providerId,
+        model,
+        reasoningEffort,
+        ttsModel,
+        sttModel,
+        timeoutSeconds,
+        maxTokens,
+        ttsInitialDelayMs,
+        ttsTextLeadMs,
+        ttsAudioPath,
+        sttAutoSend,
+        enterToSend,
+        studyModeEnabled,
+        logDirectory,
+        llmLogPath,
+        ttsLogPath,
+        llmMode,
+        locale,
+        updatedAt
+      ]);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -5485,6 +5516,7 @@ class AppSetting extends DataClass implements Insertable<AppSetting> {
           other.baseUrl == this.baseUrl &&
           other.providerId == this.providerId &&
           other.model == this.model &&
+          other.reasoningEffort == this.reasoningEffort &&
           other.ttsModel == this.ttsModel &&
           other.sttModel == this.sttModel &&
           other.timeoutSeconds == this.timeoutSeconds &&
@@ -5508,6 +5540,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
   final Value<String> baseUrl;
   final Value<String?> providerId;
   final Value<String> model;
+  final Value<String> reasoningEffort;
   final Value<String?> ttsModel;
   final Value<String?> sttModel;
   final Value<int> timeoutSeconds;
@@ -5529,6 +5562,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     this.baseUrl = const Value.absent(),
     this.providerId = const Value.absent(),
     this.model = const Value.absent(),
+    this.reasoningEffort = const Value.absent(),
     this.ttsModel = const Value.absent(),
     this.sttModel = const Value.absent(),
     this.timeoutSeconds = const Value.absent(),
@@ -5551,6 +5585,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     required String baseUrl,
     this.providerId = const Value.absent(),
     required String model,
+    this.reasoningEffort = const Value.absent(),
     this.ttsModel = const Value.absent(),
     this.sttModel = const Value.absent(),
     required int timeoutSeconds,
@@ -5577,6 +5612,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     Expression<String>? baseUrl,
     Expression<String>? providerId,
     Expression<String>? model,
+    Expression<String>? reasoningEffort,
     Expression<String>? ttsModel,
     Expression<String>? sttModel,
     Expression<int>? timeoutSeconds,
@@ -5599,6 +5635,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
       if (baseUrl != null) 'base_url': baseUrl,
       if (providerId != null) 'provider_id': providerId,
       if (model != null) 'model': model,
+      if (reasoningEffort != null) 'reasoning_effort': reasoningEffort,
       if (ttsModel != null) 'tts_model': ttsModel,
       if (sttModel != null) 'stt_model': sttModel,
       if (timeoutSeconds != null) 'timeout_seconds': timeoutSeconds,
@@ -5623,6 +5660,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
       Value<String>? baseUrl,
       Value<String?>? providerId,
       Value<String>? model,
+      Value<String>? reasoningEffort,
       Value<String?>? ttsModel,
       Value<String?>? sttModel,
       Value<int>? timeoutSeconds,
@@ -5644,6 +5682,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
       baseUrl: baseUrl ?? this.baseUrl,
       providerId: providerId ?? this.providerId,
       model: model ?? this.model,
+      reasoningEffort: reasoningEffort ?? this.reasoningEffort,
       ttsModel: ttsModel ?? this.ttsModel,
       sttModel: sttModel ?? this.sttModel,
       timeoutSeconds: timeoutSeconds ?? this.timeoutSeconds,
@@ -5677,6 +5716,9 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
     }
     if (model.present) {
       map['model'] = Variable<String>(model.value);
+    }
+    if (reasoningEffort.present) {
+      map['reasoning_effort'] = Variable<String>(reasoningEffort.value);
     }
     if (ttsModel.present) {
       map['tts_model'] = Variable<String>(ttsModel.value);
@@ -5736,6 +5778,7 @@ class AppSettingsCompanion extends UpdateCompanion<AppSetting> {
           ..write('baseUrl: $baseUrl, ')
           ..write('providerId: $providerId, ')
           ..write('model: $model, ')
+          ..write('reasoningEffort: $reasoningEffort, ')
           ..write('ttsModel: $ttsModel, ')
           ..write('sttModel: $sttModel, ')
           ..write('timeoutSeconds: $timeoutSeconds, ')
@@ -5783,6 +5826,14 @@ class $ApiConfigsTable extends ApiConfigs
   late final GeneratedColumn<String> model = GeneratedColumn<String>(
       'model', aliasedName, false,
       type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _reasoningEffortMeta =
+      const VerificationMeta('reasoningEffort');
+  @override
+  late final GeneratedColumn<String> reasoningEffort = GeneratedColumn<String>(
+      'reasoning_effort', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: false,
+      defaultValue: const Constant('medium'));
   static const VerificationMeta _ttsModelMeta =
       const VerificationMeta('ttsModel');
   @override
@@ -5810,8 +5861,16 @@ class $ApiConfigsTable extends ApiConfigs
       requiredDuringInsert: false,
       defaultValue: currentDateAndTime);
   @override
-  List<GeneratedColumn> get $columns =>
-      [id, baseUrl, model, ttsModel, sttModel, apiKeyHash, createdAt];
+  List<GeneratedColumn> get $columns => [
+        id,
+        baseUrl,
+        model,
+        reasoningEffort,
+        ttsModel,
+        sttModel,
+        apiKeyHash,
+        createdAt
+      ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -5836,6 +5895,12 @@ class $ApiConfigsTable extends ApiConfigs
           _modelMeta, model.isAcceptableOrUnknown(data['model']!, _modelMeta));
     } else if (isInserting) {
       context.missing(_modelMeta);
+    }
+    if (data.containsKey('reasoning_effort')) {
+      context.handle(
+          _reasoningEffortMeta,
+          reasoningEffort.isAcceptableOrUnknown(
+              data['reasoning_effort']!, _reasoningEffortMeta));
     }
     if (data.containsKey('tts_model')) {
       context.handle(_ttsModelMeta,
@@ -5864,7 +5929,7 @@ class $ApiConfigsTable extends ApiConfigs
   Set<GeneratedColumn> get $primaryKey => {id};
   @override
   List<Set<GeneratedColumn>> get uniqueKeys => [
-        {baseUrl, model, ttsModel, sttModel, apiKeyHash},
+        {baseUrl, model, reasoningEffort, ttsModel, sttModel, apiKeyHash},
       ];
   @override
   ApiConfig map(Map<String, dynamic> data, {String? tablePrefix}) {
@@ -5876,6 +5941,8 @@ class $ApiConfigsTable extends ApiConfigs
           .read(DriftSqlType.string, data['${effectivePrefix}base_url'])!,
       model: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}model'])!,
+      reasoningEffort: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}reasoning_effort'])!,
       ttsModel: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}tts_model']),
       sttModel: attachedDatabase.typeMapping
@@ -5897,6 +5964,7 @@ class ApiConfig extends DataClass implements Insertable<ApiConfig> {
   final int id;
   final String baseUrl;
   final String model;
+  final String reasoningEffort;
   final String? ttsModel;
   final String? sttModel;
   final String apiKeyHash;
@@ -5905,6 +5973,7 @@ class ApiConfig extends DataClass implements Insertable<ApiConfig> {
       {required this.id,
       required this.baseUrl,
       required this.model,
+      required this.reasoningEffort,
       this.ttsModel,
       this.sttModel,
       required this.apiKeyHash,
@@ -5915,6 +5984,7 @@ class ApiConfig extends DataClass implements Insertable<ApiConfig> {
     map['id'] = Variable<int>(id);
     map['base_url'] = Variable<String>(baseUrl);
     map['model'] = Variable<String>(model);
+    map['reasoning_effort'] = Variable<String>(reasoningEffort);
     if (!nullToAbsent || ttsModel != null) {
       map['tts_model'] = Variable<String>(ttsModel);
     }
@@ -5931,6 +6001,7 @@ class ApiConfig extends DataClass implements Insertable<ApiConfig> {
       id: Value(id),
       baseUrl: Value(baseUrl),
       model: Value(model),
+      reasoningEffort: Value(reasoningEffort),
       ttsModel: ttsModel == null && nullToAbsent
           ? const Value.absent()
           : Value(ttsModel),
@@ -5949,6 +6020,7 @@ class ApiConfig extends DataClass implements Insertable<ApiConfig> {
       id: serializer.fromJson<int>(json['id']),
       baseUrl: serializer.fromJson<String>(json['baseUrl']),
       model: serializer.fromJson<String>(json['model']),
+      reasoningEffort: serializer.fromJson<String>(json['reasoningEffort']),
       ttsModel: serializer.fromJson<String?>(json['ttsModel']),
       sttModel: serializer.fromJson<String?>(json['sttModel']),
       apiKeyHash: serializer.fromJson<String>(json['apiKeyHash']),
@@ -5962,6 +6034,7 @@ class ApiConfig extends DataClass implements Insertable<ApiConfig> {
       'id': serializer.toJson<int>(id),
       'baseUrl': serializer.toJson<String>(baseUrl),
       'model': serializer.toJson<String>(model),
+      'reasoningEffort': serializer.toJson<String>(reasoningEffort),
       'ttsModel': serializer.toJson<String?>(ttsModel),
       'sttModel': serializer.toJson<String?>(sttModel),
       'apiKeyHash': serializer.toJson<String>(apiKeyHash),
@@ -5973,6 +6046,7 @@ class ApiConfig extends DataClass implements Insertable<ApiConfig> {
           {int? id,
           String? baseUrl,
           String? model,
+          String? reasoningEffort,
           Value<String?> ttsModel = const Value.absent(),
           Value<String?> sttModel = const Value.absent(),
           String? apiKeyHash,
@@ -5981,6 +6055,7 @@ class ApiConfig extends DataClass implements Insertable<ApiConfig> {
         id: id ?? this.id,
         baseUrl: baseUrl ?? this.baseUrl,
         model: model ?? this.model,
+        reasoningEffort: reasoningEffort ?? this.reasoningEffort,
         ttsModel: ttsModel.present ? ttsModel.value : this.ttsModel,
         sttModel: sttModel.present ? sttModel.value : this.sttModel,
         apiKeyHash: apiKeyHash ?? this.apiKeyHash,
@@ -5991,6 +6066,9 @@ class ApiConfig extends DataClass implements Insertable<ApiConfig> {
       id: data.id.present ? data.id.value : this.id,
       baseUrl: data.baseUrl.present ? data.baseUrl.value : this.baseUrl,
       model: data.model.present ? data.model.value : this.model,
+      reasoningEffort: data.reasoningEffort.present
+          ? data.reasoningEffort.value
+          : this.reasoningEffort,
       ttsModel: data.ttsModel.present ? data.ttsModel.value : this.ttsModel,
       sttModel: data.sttModel.present ? data.sttModel.value : this.sttModel,
       apiKeyHash:
@@ -6005,6 +6083,7 @@ class ApiConfig extends DataClass implements Insertable<ApiConfig> {
           ..write('id: $id, ')
           ..write('baseUrl: $baseUrl, ')
           ..write('model: $model, ')
+          ..write('reasoningEffort: $reasoningEffort, ')
           ..write('ttsModel: $ttsModel, ')
           ..write('sttModel: $sttModel, ')
           ..write('apiKeyHash: $apiKeyHash, ')
@@ -6014,8 +6093,8 @@ class ApiConfig extends DataClass implements Insertable<ApiConfig> {
   }
 
   @override
-  int get hashCode => Object.hash(
-      id, baseUrl, model, ttsModel, sttModel, apiKeyHash, createdAt);
+  int get hashCode => Object.hash(id, baseUrl, model, reasoningEffort, ttsModel,
+      sttModel, apiKeyHash, createdAt);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -6023,6 +6102,7 @@ class ApiConfig extends DataClass implements Insertable<ApiConfig> {
           other.id == this.id &&
           other.baseUrl == this.baseUrl &&
           other.model == this.model &&
+          other.reasoningEffort == this.reasoningEffort &&
           other.ttsModel == this.ttsModel &&
           other.sttModel == this.sttModel &&
           other.apiKeyHash == this.apiKeyHash &&
@@ -6033,6 +6113,7 @@ class ApiConfigsCompanion extends UpdateCompanion<ApiConfig> {
   final Value<int> id;
   final Value<String> baseUrl;
   final Value<String> model;
+  final Value<String> reasoningEffort;
   final Value<String?> ttsModel;
   final Value<String?> sttModel;
   final Value<String> apiKeyHash;
@@ -6041,6 +6122,7 @@ class ApiConfigsCompanion extends UpdateCompanion<ApiConfig> {
     this.id = const Value.absent(),
     this.baseUrl = const Value.absent(),
     this.model = const Value.absent(),
+    this.reasoningEffort = const Value.absent(),
     this.ttsModel = const Value.absent(),
     this.sttModel = const Value.absent(),
     this.apiKeyHash = const Value.absent(),
@@ -6050,6 +6132,7 @@ class ApiConfigsCompanion extends UpdateCompanion<ApiConfig> {
     this.id = const Value.absent(),
     required String baseUrl,
     required String model,
+    this.reasoningEffort = const Value.absent(),
     this.ttsModel = const Value.absent(),
     this.sttModel = const Value.absent(),
     required String apiKeyHash,
@@ -6061,6 +6144,7 @@ class ApiConfigsCompanion extends UpdateCompanion<ApiConfig> {
     Expression<int>? id,
     Expression<String>? baseUrl,
     Expression<String>? model,
+    Expression<String>? reasoningEffort,
     Expression<String>? ttsModel,
     Expression<String>? sttModel,
     Expression<String>? apiKeyHash,
@@ -6070,6 +6154,7 @@ class ApiConfigsCompanion extends UpdateCompanion<ApiConfig> {
       if (id != null) 'id': id,
       if (baseUrl != null) 'base_url': baseUrl,
       if (model != null) 'model': model,
+      if (reasoningEffort != null) 'reasoning_effort': reasoningEffort,
       if (ttsModel != null) 'tts_model': ttsModel,
       if (sttModel != null) 'stt_model': sttModel,
       if (apiKeyHash != null) 'api_key_hash': apiKeyHash,
@@ -6081,6 +6166,7 @@ class ApiConfigsCompanion extends UpdateCompanion<ApiConfig> {
       {Value<int>? id,
       Value<String>? baseUrl,
       Value<String>? model,
+      Value<String>? reasoningEffort,
       Value<String?>? ttsModel,
       Value<String?>? sttModel,
       Value<String>? apiKeyHash,
@@ -6089,6 +6175,7 @@ class ApiConfigsCompanion extends UpdateCompanion<ApiConfig> {
       id: id ?? this.id,
       baseUrl: baseUrl ?? this.baseUrl,
       model: model ?? this.model,
+      reasoningEffort: reasoningEffort ?? this.reasoningEffort,
       ttsModel: ttsModel ?? this.ttsModel,
       sttModel: sttModel ?? this.sttModel,
       apiKeyHash: apiKeyHash ?? this.apiKeyHash,
@@ -6107,6 +6194,9 @@ class ApiConfigsCompanion extends UpdateCompanion<ApiConfig> {
     }
     if (model.present) {
       map['model'] = Variable<String>(model.value);
+    }
+    if (reasoningEffort.present) {
+      map['reasoning_effort'] = Variable<String>(reasoningEffort.value);
     }
     if (ttsModel.present) {
       map['tts_model'] = Variable<String>(ttsModel.value);
@@ -6129,6 +6219,7 @@ class ApiConfigsCompanion extends UpdateCompanion<ApiConfig> {
           ..write('id: $id, ')
           ..write('baseUrl: $baseUrl, ')
           ..write('model: $model, ')
+          ..write('reasoningEffort: $reasoningEffort, ')
           ..write('ttsModel: $ttsModel, ')
           ..write('sttModel: $sttModel, ')
           ..write('apiKeyHash: $apiKeyHash, ')
@@ -10556,6 +10647,7 @@ typedef $$AppSettingsTableCreateCompanionBuilder = AppSettingsCompanion
   required String baseUrl,
   Value<String?> providerId,
   required String model,
+  Value<String> reasoningEffort,
   Value<String?> ttsModel,
   Value<String?> sttModel,
   required int timeoutSeconds,
@@ -10579,6 +10671,7 @@ typedef $$AppSettingsTableUpdateCompanionBuilder = AppSettingsCompanion
   Value<String> baseUrl,
   Value<String?> providerId,
   Value<String> model,
+  Value<String> reasoningEffort,
   Value<String?> ttsModel,
   Value<String?> sttModel,
   Value<int> timeoutSeconds,
@@ -10617,6 +10710,10 @@ class $$AppSettingsTableFilterComposer
 
   ColumnFilters<String> get model => $composableBuilder(
       column: $table.model, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get reasoningEffort => $composableBuilder(
+      column: $table.reasoningEffort,
+      builder: (column) => ColumnFilters(column));
 
   ColumnFilters<String> get ttsModel => $composableBuilder(
       column: $table.ttsModel, builder: (column) => ColumnFilters(column));
@@ -10690,6 +10787,10 @@ class $$AppSettingsTableOrderingComposer
 
   ColumnOrderings<String> get model => $composableBuilder(
       column: $table.model, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get reasoningEffort => $composableBuilder(
+      column: $table.reasoningEffort,
+      builder: (column) => ColumnOrderings(column));
 
   ColumnOrderings<String> get ttsModel => $composableBuilder(
       column: $table.ttsModel, builder: (column) => ColumnOrderings(column));
@@ -10767,6 +10868,9 @@ class $$AppSettingsTableAnnotationComposer
   GeneratedColumn<String> get model =>
       $composableBuilder(column: $table.model, builder: (column) => column);
 
+  GeneratedColumn<String> get reasoningEffort => $composableBuilder(
+      column: $table.reasoningEffort, builder: (column) => column);
+
   GeneratedColumn<String> get ttsModel =>
       $composableBuilder(column: $table.ttsModel, builder: (column) => column);
 
@@ -10843,6 +10947,7 @@ class $$AppSettingsTableTableManager extends RootTableManager<
             Value<String> baseUrl = const Value.absent(),
             Value<String?> providerId = const Value.absent(),
             Value<String> model = const Value.absent(),
+            Value<String> reasoningEffort = const Value.absent(),
             Value<String?> ttsModel = const Value.absent(),
             Value<String?> sttModel = const Value.absent(),
             Value<int> timeoutSeconds = const Value.absent(),
@@ -10865,6 +10970,7 @@ class $$AppSettingsTableTableManager extends RootTableManager<
             baseUrl: baseUrl,
             providerId: providerId,
             model: model,
+            reasoningEffort: reasoningEffort,
             ttsModel: ttsModel,
             sttModel: sttModel,
             timeoutSeconds: timeoutSeconds,
@@ -10887,6 +10993,7 @@ class $$AppSettingsTableTableManager extends RootTableManager<
             required String baseUrl,
             Value<String?> providerId = const Value.absent(),
             required String model,
+            Value<String> reasoningEffort = const Value.absent(),
             Value<String?> ttsModel = const Value.absent(),
             Value<String?> sttModel = const Value.absent(),
             required int timeoutSeconds,
@@ -10909,6 +11016,7 @@ class $$AppSettingsTableTableManager extends RootTableManager<
             baseUrl: baseUrl,
             providerId: providerId,
             model: model,
+            reasoningEffort: reasoningEffort,
             ttsModel: ttsModel,
             sttModel: sttModel,
             timeoutSeconds: timeoutSeconds,
@@ -10949,6 +11057,7 @@ typedef $$ApiConfigsTableCreateCompanionBuilder = ApiConfigsCompanion Function({
   Value<int> id,
   required String baseUrl,
   required String model,
+  Value<String> reasoningEffort,
   Value<String?> ttsModel,
   Value<String?> sttModel,
   required String apiKeyHash,
@@ -10958,6 +11067,7 @@ typedef $$ApiConfigsTableUpdateCompanionBuilder = ApiConfigsCompanion Function({
   Value<int> id,
   Value<String> baseUrl,
   Value<String> model,
+  Value<String> reasoningEffort,
   Value<String?> ttsModel,
   Value<String?> sttModel,
   Value<String> apiKeyHash,
@@ -10981,6 +11091,10 @@ class $$ApiConfigsTableFilterComposer
 
   ColumnFilters<String> get model => $composableBuilder(
       column: $table.model, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get reasoningEffort => $composableBuilder(
+      column: $table.reasoningEffort,
+      builder: (column) => ColumnFilters(column));
 
   ColumnFilters<String> get ttsModel => $composableBuilder(
       column: $table.ttsModel, builder: (column) => ColumnFilters(column));
@@ -11013,6 +11127,10 @@ class $$ApiConfigsTableOrderingComposer
   ColumnOrderings<String> get model => $composableBuilder(
       column: $table.model, builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<String> get reasoningEffort => $composableBuilder(
+      column: $table.reasoningEffort,
+      builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<String> get ttsModel => $composableBuilder(
       column: $table.ttsModel, builder: (column) => ColumnOrderings(column));
 
@@ -11043,6 +11161,9 @@ class $$ApiConfigsTableAnnotationComposer
 
   GeneratedColumn<String> get model =>
       $composableBuilder(column: $table.model, builder: (column) => column);
+
+  GeneratedColumn<String> get reasoningEffort => $composableBuilder(
+      column: $table.reasoningEffort, builder: (column) => column);
 
   GeneratedColumn<String> get ttsModel =>
       $composableBuilder(column: $table.ttsModel, builder: (column) => column);
@@ -11083,6 +11204,7 @@ class $$ApiConfigsTableTableManager extends RootTableManager<
             Value<int> id = const Value.absent(),
             Value<String> baseUrl = const Value.absent(),
             Value<String> model = const Value.absent(),
+            Value<String> reasoningEffort = const Value.absent(),
             Value<String?> ttsModel = const Value.absent(),
             Value<String?> sttModel = const Value.absent(),
             Value<String> apiKeyHash = const Value.absent(),
@@ -11092,6 +11214,7 @@ class $$ApiConfigsTableTableManager extends RootTableManager<
             id: id,
             baseUrl: baseUrl,
             model: model,
+            reasoningEffort: reasoningEffort,
             ttsModel: ttsModel,
             sttModel: sttModel,
             apiKeyHash: apiKeyHash,
@@ -11101,6 +11224,7 @@ class $$ApiConfigsTableTableManager extends RootTableManager<
             Value<int> id = const Value.absent(),
             required String baseUrl,
             required String model,
+            Value<String> reasoningEffort = const Value.absent(),
             Value<String?> ttsModel = const Value.absent(),
             Value<String?> sttModel = const Value.absent(),
             required String apiKeyHash,
@@ -11110,6 +11234,7 @@ class $$ApiConfigsTableTableManager extends RootTableManager<
             id: id,
             baseUrl: baseUrl,
             model: model,
+            reasoningEffort: reasoningEffort,
             ttsModel: ttsModel,
             sttModel: sttModel,
             apiKeyHash: apiKeyHash,

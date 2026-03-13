@@ -248,6 +248,7 @@ class _FakeLlmLogRepository implements llm_logs.LlmLogRepository {
     int? backoffMs,
     int? renderedChars,
     int? responseChars,
+    String? reasoningText,
     bool? dbWriteOk,
     bool? uiCommitOk,
   }) async {

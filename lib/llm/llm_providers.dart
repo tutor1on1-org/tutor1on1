@@ -4,6 +4,18 @@ enum MaxTokensParam {
   auto,
 }
 
+enum LlmApiFormat {
+  openAiChatCompletions,
+  anthropicMessages,
+}
+
+enum ReasoningControlStyle {
+  unsupported,
+  openAiEffort,
+  anthropicThinking,
+  deepSeekThinking,
+}
+
 class LlmProvider {
   const LlmProvider({
     required this.id,
@@ -15,6 +27,9 @@ class LlmProvider {
     this.authHeader = 'Authorization',
     this.authPrefix = 'Bearer ',
     this.chatPath = '/chat/completions',
+    this.apiFormat = LlmApiFormat.openAiChatCompletions,
+    this.reasoningControlStyle = ReasoningControlStyle.unsupported,
+    this.extraHeaders = const <String, String>{},
   });
 
   final String id;
@@ -26,6 +41,9 @@ class LlmProvider {
   final String authHeader;
   final String authPrefix;
   final String chatPath;
+  final LlmApiFormat apiFormat;
+  final ReasoningControlStyle reasoningControlStyle;
+  final Map<String, String> extraHeaders;
 
   String maxTokensField(String model) {
     switch (maxTokensParam) {
@@ -54,6 +72,9 @@ class LlmProvider {
     }
     return true;
   }
+
+  bool get supportsReasoning =>
+      reasoningControlStyle != ReasoningControlStyle.unsupported;
 }
 
 class LlmProviders {
@@ -73,6 +94,7 @@ class LlmProviders {
         ],
         maxTokensParam: MaxTokensParam.auto,
         noTemperatureModelPrefixes: ['gpt-'],
+        reasoningControlStyle: ReasoningControlStyle.openAiEffort,
       ),
       const LlmProvider(
         id: 'anthropic',
@@ -85,6 +107,12 @@ class LlmProviders {
         maxTokensParam: MaxTokensParam.maxTokens,
         authHeader: 'x-api-key',
         authPrefix: '',
+        chatPath: '/messages',
+        apiFormat: LlmApiFormat.anthropicMessages,
+        reasoningControlStyle: ReasoningControlStyle.anthropicThinking,
+        extraHeaders: <String, String>{
+          'anthropic-version': '2023-06-01',
+        },
       ),
       const LlmProvider(
         id: 'gemini',
@@ -97,6 +125,7 @@ class LlmProviders {
         maxTokensParam: MaxTokensParam.maxTokens,
         authHeader: 'Authorization',
         authPrefix: 'Bearer ',
+        reasoningControlStyle: ReasoningControlStyle.openAiEffort,
       ),
       const LlmProvider(
         id: 'grok',
@@ -116,6 +145,7 @@ class LlmProviders {
           'deepseek-ai/DeepSeek-V3.2',
         ],
         maxTokensParam: MaxTokensParam.maxTokens,
+        reasoningControlStyle: ReasoningControlStyle.deepSeekThinking,
       ),
       const LlmProvider(
         id: 'deepseek',
@@ -126,6 +156,7 @@ class LlmProviders {
           'deepseek-reasoner',
         ],
         maxTokensParam: MaxTokensParam.maxTokens,
+        reasoningControlStyle: ReasoningControlStyle.deepSeekThinking,
       ),
     ];
 

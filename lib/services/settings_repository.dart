@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../db/app_database.dart';
+import '../llm/llm_models.dart';
 import '../llm/llm_providers.dart';
 
 class SettingsRepository {
@@ -35,6 +36,14 @@ class SettingsRepository {
           );
           needsUpdate = true;
         }
+      }
+      final reasoningEffort =
+          ReasoningEffort.normalize(existing.reasoningEffort);
+      if (reasoningEffort != existing.reasoningEffort) {
+        companion = companion.copyWith(
+          reasoningEffort: Value(reasoningEffort),
+        );
+        needsUpdate = true;
       }
       if ((existing.ttsAudioPath ?? '').trim().isEmpty) {
         final defaultPath = await _defaultTtsAudioPath();
@@ -93,6 +102,7 @@ class SettingsRepository {
             baseUrl: _normalizeBaseUrl(baseUrl),
             providerId: Value(providerId),
             model: model,
+            reasoningEffort: const Value(ReasoningEffort.medium),
             timeoutSeconds: 60,
             maxTokens: 8000,
             ttsInitialDelayMs: const Value(60000),
@@ -115,6 +125,7 @@ class SettingsRepository {
     required String providerId,
     required String baseUrl,
     required String model,
+    required String reasoningEffort,
     required String ttsModel,
     required String sttModel,
     required int timeoutSeconds,
@@ -141,6 +152,7 @@ class SettingsRepository {
       baseUrl: Value(_normalizeBaseUrl(baseUrl)),
       providerId: Value(providerId),
       model: Value(model.trim()),
+      reasoningEffort: Value(ReasoningEffort.normalize(reasoningEffort)),
       ttsModel: Value(ttsModel.trim().isEmpty ? null : ttsModel.trim()),
       sttModel: Value(sttModel.trim().isEmpty ? null : sttModel.trim()),
       timeoutSeconds: Value(timeoutSeconds),

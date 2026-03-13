@@ -2178,9 +2178,11 @@ class SessionService {
     final activeModel = (modelOverride ?? '').trim().isNotEmpty
         ? modelOverride!.trim()
         : settings.model.trim();
+    final reasoningEffort = ReasoningEffort.normalize(settings.reasoningEffort);
     final callHash = LlmHash.compute(
       baseUrl: settings.baseUrl,
       model: activeModel,
+      reasoningEffort: reasoningEffort,
       promptName: promptName,
       renderedPrompt: renderedPrompt,
       conversationDigest: null,

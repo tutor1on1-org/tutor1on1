@@ -12,6 +12,7 @@ import '../services/settings_repository.dart';
 import 'llm_hash.dart';
 import 'llm_models.dart';
 import 'llm_providers.dart';
+import 'llm_reasoning_support.dart';
 import 'schema_validator.dart';
 
 class LlmService {
@@ -107,6 +108,9 @@ class LlmService {
     final modelToUse = (modelOverride ?? '').trim().isNotEmpty
         ? modelOverride!.trim()
         : settings.model;
+    final reasoningEffort = LlmReasoningSupport.normalizeEffort(
+      settings.reasoningEffort,
+    );
     final mode = LlmModeX.fromString(settings.llmMode);
     final providers = LlmProviders.defaultProviders(
       envBaseUrl: Platform.environment['OPENAI_BASE_URL'],
@@ -124,6 +128,7 @@ class LlmService {
     final callHash = LlmHash.compute(
       baseUrl: settings.baseUrl,
       model: modelToUse,
+      reasoningEffort: reasoningEffort,
       promptName: promptName,
       renderedPrompt: renderedPrompt,
       conversationDigest: conversationDigest,
@@ -161,6 +166,7 @@ class LlmService {
     final stopwatch = Stopwatch()..start();
     try {
       final responseText = await _postChatCompletion(
+        reasoningEffort: reasoningEffort,
         client: client,
         baseUrl: settings.baseUrl,
         provider: provider,
@@ -173,6 +179,7 @@ class LlmService {
       );
       stopwatch.stop();
 
+      final finalResponseText = responseText.responseText;
       String? responseJson;
       bool? parseValid;
       String? parseError;
@@ -180,7 +187,7 @@ class LlmService {
       if (schemaMap != null) {
         final validation = await _validator.validateJson(
           schemaMap: schemaMap,
-          responseText: responseText,
+          responseText: finalResponseText,
         );
         parseValid = validation.isValid;
         parseError = validation.error;
@@ -196,7 +203,7 @@ class LlmService {
           renderedPrompt: renderedPrompt,
           model: modelToUse,
           baseUrl: settings.baseUrl,
-          responseText: responseText,
+          responseText: finalResponseText,
           responseJson: responseJson,
           parseValid: parseValid,
           parseError: parseError,
@@ -221,6 +228,13 @@ class LlmService {
         latencyMs: stopwatch.elapsedMilliseconds,
         parseValid: parseValid,
         parseError: parseError,
+        reasoningText: LlmReasoningSupport.encodeReasoningLog(
+          provider: provider,
+          model: modelToUse,
+          reasoningEffort: reasoningEffort,
+          reasoningText: responseText.reasoningText,
+          reasoningTokens: responseText.reasoningTokens,
+        ),
         teacherId: context?.teacherId,
         studentId: context?.studentId,
         courseVersionId: context?.courseVersionId,
@@ -228,20 +242,27 @@ class LlmService {
         kpKey: context?.kpKey,
         action: context?.action,
         renderedChars: renderedPrompt.length,
-        responseChars: responseText.length,
+        responseChars: finalResponseText.length,
       );
 
       _logResponse(
         promptName: promptName,
-        responseText: responseText,
+        responseText: finalResponseText,
+        fromReplay: false,
+        callHash: callHash,
+      );
+      _logReasoning(
+        promptName: promptName,
+        reasoningText: responseText.reasoningText,
         fromReplay: false,
         callHash: callHash,
       );
       return LlmCallResult(
-        responseText: responseText,
+        responseText: finalResponseText,
         latencyMs: stopwatch.elapsedMilliseconds,
         fromReplay: false,
         responseJson: responseJson,
+        reasoningText: responseText.reasoningText,
         parseValid: parseValid,
         parseError: parseError,
         callHash: callHash,
@@ -259,6 +280,11 @@ class LlmService {
         callHash: callHash,
         latencyMs: stopwatch.elapsedMilliseconds,
         parseError: error.toString(),
+        reasoningText: LlmReasoningSupport.encodeReasoningLog(
+          provider: provider,
+          model: modelToUse,
+          reasoningEffort: reasoningEffort,
+        ),
         teacherId: context?.teacherId,
         studentId: context?.studentId,
         courseVersionId: context?.courseVersionId,
@@ -286,6 +312,9 @@ class LlmService {
     final modelToUse = (modelOverride ?? '').trim().isNotEmpty
         ? modelOverride!.trim()
         : settings.model;
+    final reasoningEffort = LlmReasoningSupport.normalizeEffort(
+      settings.reasoningEffort,
+    );
     final mode = LlmModeX.fromString(settings.llmMode);
     final providers = LlmProviders.defaultProviders(
       envBaseUrl: Platform.environment['OPENAI_BASE_URL'],
@@ -303,6 +332,7 @@ class LlmService {
     final callHash = LlmHash.compute(
       baseUrl: settings.baseUrl,
       model: modelToUse,
+      reasoningEffort: reasoningEffort,
       promptName: promptName,
       renderedPrompt: renderedPrompt,
       conversationDigest: conversationDigest,
@@ -343,6 +373,7 @@ class LlmService {
     final stopwatch = Stopwatch()..start();
     try {
       final responseText = await _postChatCompletionStream(
+        reasoningEffort: reasoningEffort,
         client: client,
         baseUrl: settings.baseUrl,
         provider: provider,
@@ -356,6 +387,7 @@ class LlmService {
       );
       stopwatch.stop();
 
+      final finalResponseText = responseText.responseText;
       String? responseJson;
       bool? parseValid;
       String? parseError;
@@ -363,7 +395,7 @@ class LlmService {
       if (schemaMap != null) {
         final validation = await _validator.validateJson(
           schemaMap: schemaMap,
-          responseText: responseText,
+          responseText: finalResponseText,
         );
         parseValid = validation.isValid;
         parseError = validation.error;
@@ -379,7 +411,7 @@ class LlmService {
           renderedPrompt: renderedPrompt,
           model: modelToUse,
           baseUrl: settings.baseUrl,
-          responseText: responseText,
+          responseText: finalResponseText,
           responseJson: responseJson,
           parseValid: parseValid,
           parseError: parseError,
@@ -404,6 +436,13 @@ class LlmService {
         latencyMs: stopwatch.elapsedMilliseconds,
         parseValid: parseValid,
         parseError: parseError,
+        reasoningText: LlmReasoningSupport.encodeReasoningLog(
+          provider: provider,
+          model: modelToUse,
+          reasoningEffort: reasoningEffort,
+          reasoningText: responseText.reasoningText,
+          reasoningTokens: responseText.reasoningTokens,
+        ),
         teacherId: context?.teacherId,
         studentId: context?.studentId,
         courseVersionId: context?.courseVersionId,
@@ -411,20 +450,27 @@ class LlmService {
         kpKey: context?.kpKey,
         action: context?.action,
         renderedChars: renderedPrompt.length,
-        responseChars: responseText.length,
+        responseChars: finalResponseText.length,
       );
 
       _logResponse(
         promptName: promptName,
-        responseText: responseText,
+        responseText: finalResponseText,
+        fromReplay: false,
+        callHash: callHash,
+      );
+      _logReasoning(
+        promptName: promptName,
+        reasoningText: responseText.reasoningText,
         fromReplay: false,
         callHash: callHash,
       );
       return LlmCallResult(
-        responseText: responseText,
+        responseText: finalResponseText,
         latencyMs: stopwatch.elapsedMilliseconds,
         fromReplay: false,
         responseJson: responseJson,
+        reasoningText: responseText.reasoningText,
         parseValid: parseValid,
         parseError: parseError,
         callHash: callHash,
@@ -442,6 +488,11 @@ class LlmService {
         callHash: callHash,
         latencyMs: stopwatch.elapsedMilliseconds,
         parseError: error.toString(),
+        reasoningText: LlmReasoningSupport.encodeReasoningLog(
+          provider: provider,
+          model: modelToUse,
+          reasoningEffort: reasoningEffort,
+        ),
         teacherId: context?.teacherId,
         studentId: context?.studentId,
         courseVersionId: context?.courseVersionId,
@@ -466,11 +517,28 @@ class LlmService {
     );
   }
 
-  Future<String> _postChatCompletion({
+  void _logReasoning({
+    required String promptName,
+    required String? reasoningText,
+    required bool fromReplay,
+    required String callHash,
+  }) {
+    final trimmed = reasoningText?.trim() ?? '';
+    if (trimmed.isEmpty) {
+      return;
+    }
+    final source = fromReplay ? 'REPLAY' : 'LIVE';
+    debugPrint(
+      '[LLM][$source][$promptName][$callHash] reasoning:\n$trimmed',
+    );
+  }
+
+  Future<LlmPreparedResponse> _postChatCompletion({
     required http.Client client,
     required String baseUrl,
     required LlmProvider provider,
     required String model,
+    required String reasoningEffort,
     required String apiKey,
     required String renderedPrompt,
     required int timeoutSeconds,
@@ -478,13 +546,14 @@ class LlmService {
     required bool Function() isCancelled,
   }) async {
     final url = Uri.parse('${_normalizeBaseUrl(baseUrl)}${provider.chatPath}');
-    final bodyMap = <String, dynamic>{
-      'model': model,
-      'messages': [
-        {'role': 'user', 'content': renderedPrompt},
-      ],
-    };
-    bodyMap[provider.maxTokensField(model)] = maxTokens;
+    final bodyMap = _buildRequestBody(
+      provider: provider,
+      model: model,
+      renderedPrompt: renderedPrompt,
+      maxTokens: maxTokens,
+      reasoningEffort: reasoningEffort,
+      stream: false,
+    );
     final body = jsonEncode(bodyMap);
 
     http.Response response;
@@ -492,10 +561,7 @@ class LlmService {
       () => client
           .post(
             url,
-            headers: {
-              'Content-Type': 'application/json',
-              provider.authHeader: '${provider.authPrefix}$apiKey',
-            },
+            headers: _buildHeaders(provider: provider, apiKey: apiKey),
             body: body,
           )
           .timeout(Duration(seconds: timeoutSeconds)),
@@ -517,18 +583,22 @@ class LlmService {
     if (payload is! Map<String, dynamic>) {
       throw StateError('LLM response is not a JSON object.');
     }
-    final content = _extractContentFromPayload(payload);
-    if (content == null || content.trim().isEmpty) {
+    final content = LlmReasoningSupport.extractResponse(
+      payload: payload,
+      provider: provider,
+    );
+    if (content.responseText.trim().isEmpty) {
       throw StateError('LLM response missing content.');
     }
     return content;
   }
 
-  Future<String> _postChatCompletionStream({
+  Future<LlmPreparedResponse> _postChatCompletionStream({
     required http.Client client,
     required String baseUrl,
     required LlmProvider provider,
     required String model,
+    required String reasoningEffort,
     required String apiKey,
     required String renderedPrompt,
     required int timeoutSeconds,
@@ -536,20 +606,32 @@ class LlmService {
     required bool Function() isCancelled,
     required void Function(String chunk) onChunk,
   }) async {
+    if (provider.apiFormat == LlmApiFormat.anthropicMessages) {
+      return _postAnthropicStream(
+        client: client,
+        baseUrl: baseUrl,
+        provider: provider,
+        model: model,
+        reasoningEffort: reasoningEffort,
+        apiKey: apiKey,
+        renderedPrompt: renderedPrompt,
+        timeoutSeconds: timeoutSeconds,
+        maxTokens: maxTokens,
+        isCancelled: isCancelled,
+        onChunk: onChunk,
+      );
+    }
     final url = Uri.parse('${_normalizeBaseUrl(baseUrl)}${provider.chatPath}');
-    final bodyMap = <String, dynamic>{
-      'model': model,
-      'stream': true,
-      'messages': [
-        {'role': 'user', 'content': renderedPrompt},
-      ],
-    };
-    bodyMap[provider.maxTokensField(model)] = maxTokens;
+    final bodyMap = _buildRequestBody(
+      provider: provider,
+      model: model,
+      renderedPrompt: renderedPrompt,
+      maxTokens: maxTokens,
+      reasoningEffort: reasoningEffort,
+      stream: true,
+    );
     final request = http.Request('POST', url);
-    request.headers.addAll({
-      'Content-Type': 'application/json',
-      provider.authHeader: '${provider.authPrefix}$apiKey',
-    });
+    request.headers.addAll(_buildHeaders(provider: provider, apiKey: apiKey));
     request.body = jsonEncode(bodyMap);
     final response =
         await client.send(request).timeout(Duration(seconds: timeoutSeconds));
@@ -563,7 +645,8 @@ class LlmService {
       throw HttpException('HTTP ${response.statusCode}: $body');
     }
 
-    final buffer = StringBuffer();
+    final responseBuffer = StringBuffer();
+    final reasoningBuffer = StringBuffer();
     var pending = '';
     final stream = response.stream.transform(utf8.decoder);
     await for (final chunk in stream) {
@@ -587,15 +670,24 @@ class LlmService {
         }
         final data = line.substring(5).trim();
         if (data == '[DONE]') {
-          return buffer.toString();
+          return LlmPreparedResponse(
+            responseText: responseBuffer.toString(),
+            reasoningText: reasoningBuffer.toString(),
+          );
         }
         try {
           final payload = jsonDecode(data);
           if (payload is Map<String, dynamic>) {
-            final content = _extractContentFromPayload(payload);
-            if (content != null && content.isNotEmpty) {
-              buffer.write(content);
-              onChunk(content);
+            final extracted = LlmReasoningSupport.extractResponse(
+              payload: payload,
+              provider: provider,
+            );
+            if (extracted.responseText.isNotEmpty) {
+              responseBuffer.write(extracted.responseText);
+              onChunk(extracted.responseText);
+            }
+            if ((extracted.reasoningText ?? '').isNotEmpty) {
+              reasoningBuffer.write(extracted.reasoningText);
             }
           }
         } catch (_) {
@@ -603,7 +695,10 @@ class LlmService {
         }
       }
     }
-    return buffer.toString();
+    return LlmPreparedResponse(
+      responseText: responseBuffer.toString(),
+      reasoningText: reasoningBuffer.toString(),
+    );
   }
 
   String _normalizeBaseUrl(String value) {
@@ -614,71 +709,157 @@ class LlmService {
     return trimmed;
   }
 
-  String? _extractContentFromPayload(Map<String, dynamic> payload) {
-    final choices = payload['choices'];
-    if (choices is List && choices.isNotEmpty) {
-      for (final choice in choices) {
-        final content = _extractContentFromChoice(choice);
-        if (content != null && content.trim().isNotEmpty) {
-          return content;
-        }
-      }
+  Map<String, dynamic> _buildRequestBody({
+    required LlmProvider provider,
+    required String model,
+    required String renderedPrompt,
+    required int maxTokens,
+    required String reasoningEffort,
+    required bool stream,
+  }) {
+    final bodyMap = <String, dynamic>{
+      'model': model,
+      'messages': [
+        {'role': 'user', 'content': renderedPrompt},
+      ],
+      if (stream) 'stream': true,
+    };
+    bodyMap[provider.maxTokensField(model)] = maxTokens;
+    if (provider.apiFormat == LlmApiFormat.anthropicMessages) {
+      bodyMap['messages'] = <Map<String, dynamic>>[
+        {
+          'role': 'user',
+          'content': renderedPrompt,
+        },
+      ];
     }
-    final outputText = payload['output_text'];
-    if (outputText is String && outputText.trim().isNotEmpty) {
-      return outputText;
-    }
-    return null;
+    LlmReasoningSupport.applyRequestFields(
+      bodyMap: bodyMap,
+      provider: provider,
+      model: model,
+      reasoningEffort: reasoningEffort,
+      maxTokens: maxTokens,
+    );
+    return bodyMap;
   }
 
-  String? _extractContentFromChoice(dynamic choice) {
-    if (choice is Map<String, dynamic>) {
-      final message = choice['message'] ?? choice['delta'] ?? choice;
-      if (message is Map<String, dynamic>) {
-        final content = message['content'];
-        final extracted = _extractContentValue(content);
-        if (extracted != null) {
-          return extracted;
-        }
-        final text = message['text'];
-        if (text is String) {
-          return text;
-        }
-      }
-      final text = choice['text'];
-      if (text is String) {
-        return text;
-      }
-    }
-    return null;
+  Map<String, String> _buildHeaders({
+    required LlmProvider provider,
+    required String apiKey,
+  }) {
+    return <String, String>{
+      'Content-Type': 'application/json',
+      provider.authHeader: '${provider.authPrefix}$apiKey',
+      ...provider.extraHeaders,
+    };
   }
 
-  String? _extractContentValue(dynamic content) {
-    if (content is String) {
-      return content;
+  Future<LlmPreparedResponse> _postAnthropicStream({
+    required http.Client client,
+    required String baseUrl,
+    required LlmProvider provider,
+    required String model,
+    required String reasoningEffort,
+    required String apiKey,
+    required String renderedPrompt,
+    required int timeoutSeconds,
+    required int maxTokens,
+    required bool Function() isCancelled,
+    required void Function(String chunk) onChunk,
+  }) async {
+    final url = Uri.parse('${_normalizeBaseUrl(baseUrl)}${provider.chatPath}');
+    final request = http.Request('POST', url);
+    request.headers.addAll(_buildHeaders(provider: provider, apiKey: apiKey));
+    request.body = jsonEncode(
+      _buildRequestBody(
+        provider: provider,
+        model: model,
+        renderedPrompt: renderedPrompt,
+        maxTokens: maxTokens,
+        reasoningEffort: reasoningEffort,
+        stream: true,
+      ),
+    );
+    final response =
+        await client.send(request).timeout(Duration(seconds: timeoutSeconds));
+
+    if (isCancelled()) {
+      throw StateError('Request cancelled.');
     }
-    if (content is List) {
-      final buffer = StringBuffer();
-      for (final part in content) {
-        final value = _extractContentValue(part);
-        if (value != null) {
-          buffer.write(value);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final body = await response.stream.bytesToString();
+      throw HttpException('HTTP ${response.statusCode}: $body');
+    }
+
+    final responseBuffer = StringBuffer();
+    final reasoningBuffer = StringBuffer();
+    String? eventType;
+    var pending = '';
+    final stream = response.stream.transform(utf8.decoder);
+    await for (final chunk in stream) {
+      if (isCancelled()) {
+        throw StateError('Request cancelled.');
+      }
+      pending += chunk;
+      while (true) {
+        final lineBreak = pending.indexOf('\n');
+        if (lineBreak == -1) {
+          break;
+        }
+        var line = pending.substring(0, lineBreak);
+        pending = pending.substring(lineBreak + 1);
+        line = line.trimRight();
+        if (line.isEmpty) {
+          eventType = null;
+          continue;
+        }
+        if (line.startsWith('event:')) {
+          eventType = line.substring(6).trim();
+          continue;
+        }
+        if (!line.startsWith('data:')) {
+          continue;
+        }
+        final data = line.substring(5).trim();
+        if (data == '[DONE]') {
+          return LlmPreparedResponse(
+            responseText: responseBuffer.toString(),
+            reasoningText: reasoningBuffer.toString(),
+          );
+        }
+        try {
+          final payload = jsonDecode(data);
+          if (payload is! Map<String, dynamic>) {
+            continue;
+          }
+          if (eventType == 'content_block_start' ||
+              eventType == 'content_block_delta') {
+            final extracted =
+                LlmReasoningSupport.extractAnthropicEvent(payload);
+            if (extracted.responseText.isNotEmpty) {
+              responseBuffer.write(extracted.responseText);
+              onChunk(extracted.responseText);
+            }
+            if ((extracted.reasoningText ?? '').isNotEmpty) {
+              reasoningBuffer.write(extracted.reasoningText);
+            }
+            continue;
+          }
+          if (eventType == 'message_stop') {
+            return LlmPreparedResponse(
+              responseText: responseBuffer.toString(),
+              reasoningText: reasoningBuffer.toString(),
+            );
+          }
+        } catch (_) {
+          continue;
         }
       }
-      final result = buffer.toString();
-      return result.isNotEmpty ? result : null;
     }
-    if (content is Map<String, dynamic>) {
-      final text = content['text'];
-      if (text is String) {
-        return text;
-      }
-      final inner = content['content'];
-      if (inner != null) {
-        return _extractContentValue(inner);
-      }
-    }
-    return null;
+    return LlmPreparedResponse(
+      responseText: responseBuffer.toString(),
+      reasoningText: reasoningBuffer.toString(),
+    );
   }
 
   Future<http.Response> _sendWithRetry(

@@ -8,7 +8,7 @@ import 'package:sqlite3/sqlite3.dart' as sqlite3;
 import 'package:family_teacher/db/app_database.dart';
 
 void main() {
-  test('migrates from v1 to v11', () async {
+  test('migrates from v1 to current schema', () async {
     final tempDir = await Directory.systemTemp.createTemp('family_teacher');
     final dbFile = File(p.join(tempDir.path, 'test.db'));
 
@@ -166,6 +166,13 @@ void main() {
     final settingsColumns = settingsInfo.map((row) => row.data['name']).toSet();
     expect(settingsColumns.contains('locale'), isTrue);
     expect(settingsColumns.contains('provider_id'), isTrue);
+    expect(settingsColumns.contains('reasoning_effort'), isTrue);
+
+    final apiConfigInfo =
+        await db.customSelect('PRAGMA table_info(api_configs)').get();
+    final apiConfigColumns =
+        apiConfigInfo.map((row) => row.data['name']).toSet();
+    expect(apiConfigColumns.contains('reasoning_effort'), isTrue);
 
     final apiConfigTable = await db
         .customSelect(

@@ -173,6 +173,8 @@ class AppSettings extends Table {
   TextColumn get baseUrl => text()();
   TextColumn get providerId => text().nullable()();
   TextColumn get model => text()();
+  TextColumn get reasoningEffort =>
+      text().withDefault(const Constant('medium'))();
   TextColumn get ttsModel => text().nullable()();
   TextColumn get sttModel => text().nullable()();
   IntColumn get timeoutSeconds => integer()();
@@ -197,6 +199,8 @@ class ApiConfigs extends Table {
   IntColumn get id => integer().autoIncrement()();
   TextColumn get baseUrl => text()();
   TextColumn get model => text()();
+  TextColumn get reasoningEffort =>
+      text().withDefault(const Constant('medium'))();
   TextColumn get ttsModel => text().nullable()();
   TextColumn get sttModel => text().nullable()();
   TextColumn get apiKeyHash => text()();
@@ -204,7 +208,7 @@ class ApiConfigs extends Table {
 
   @override
   List<Set<Column>> get uniqueKeys => [
-        {baseUrl, model, ttsModel, sttModel, apiKeyHash},
+        {baseUrl, model, reasoningEffort, ttsModel, sttModel, apiKeyHash},
       ];
 }
 
@@ -298,7 +302,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 26;
+  int get schemaVersion => 27;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -432,6 +436,12 @@ class AppDatabase extends _$AppDatabase {
               chatSessions,
               chatSessions.evidenceStateUpdatedAt,
             );
+          }
+          if (from < 27) {
+            await m.addColumn(appSettings, appSettings.reasoningEffort);
+            if (from >= 5) {
+              await m.addColumn(apiConfigs, apiConfigs.reasoningEffort);
+            }
           }
         },
       );
@@ -1328,6 +1338,7 @@ ORDER BY l.created_at DESC
   Future<int> insertApiConfig({
     required String baseUrl,
     required String model,
+    required String reasoningEffort,
     required String ttsModel,
     required String sttModel,
     required String apiKeyHash,
@@ -1336,6 +1347,11 @@ ORDER BY l.created_at DESC
       ApiConfigsCompanion.insert(
         baseUrl: baseUrl.trim(),
         model: model.trim(),
+        reasoningEffort: Value(
+          reasoningEffort.trim().isEmpty
+              ? 'medium'
+              : reasoningEffort.trim().toLowerCase(),
+        ),
         ttsModel: Value(ttsModel.trim().isEmpty ? null : ttsModel.trim()),
         sttModel: Value(sttModel.trim().isEmpty ? null : sttModel.trim()),
         apiKeyHash: apiKeyHash.trim(),

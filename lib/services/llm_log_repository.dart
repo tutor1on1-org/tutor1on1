@@ -124,6 +124,7 @@ class LlmLogRepository {
     int? backoffMs,
     int? renderedChars,
     int? responseChars,
+    String? reasoningText,
     bool? dbWriteOk,
     bool? uiCommitOk,
   }) async {
@@ -149,6 +150,9 @@ class LlmLogRepository {
         final encryptedRetryReason = retryReason == null
             ? null
             : await _logCrypto.encryptForCurrentUser(retryReason);
+        final encryptedReasoningText = reasoningText == null
+            ? null
+            : await _logCrypto.encryptForCurrentUser(reasoningText);
         final payload = <String, dynamic>{
           'log_version': 2,
           'created_at': DateTime.now().toIso8601String(),
@@ -172,6 +176,7 @@ class LlmLogRepository {
           'backoff_ms': backoffMs,
           'rendered_chars': renderedChars,
           'response_chars': responseChars,
+          'reasoning_text_enc': encryptedReasoningText,
           'db_write_ok': dbWriteOk,
           'ui_commit_ok': uiCommitOk,
           'owner_user_id': _logCrypto.activeUserId,

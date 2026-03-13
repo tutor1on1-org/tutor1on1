@@ -10,6 +10,7 @@ import 'package:family_teacher/l10n/app_localizations.dart';
 import '../db/app_database.dart';
 import '../llm/llm_models.dart';
 import '../llm/llm_providers.dart';
+import '../llm/llm_reasoning_support.dart';
 import '../security/hash_utils.dart';
 import '../security/pin_hasher.dart';
 import '../services/app_services.dart';
@@ -41,6 +42,7 @@ class _SettingsPageState extends State<SettingsPage> {
   String? _apiKeyLoadedForBaseUrl;
   String? _providerId;
   String? _textModelSelection;
+  String _reasoningEffortSelection = ReasoningEffort.medium;
   String? _ttsModelSelection;
   String? _sttModelSelection;
   bool _sttAutoSend = false;
@@ -98,6 +100,8 @@ class _SettingsPageState extends State<SettingsPage> {
       _textModelSelection = settings.model.trim().isNotEmpty
           ? settings.model.trim()
           : (provider.models.isNotEmpty ? provider.models.first : '');
+      _reasoningEffortSelection =
+          ReasoningEffort.normalize(settings.reasoningEffort);
       _ttsModelSelection = (settings.ttsModel ?? '').trim();
       _sttModelSelection = (settings.sttModel ?? '').trim();
       _timeoutController.text = settings.timeoutSeconds.toString();
@@ -332,6 +336,7 @@ class _SettingsPageState extends State<SettingsPage> {
               providerId: provider.id,
               baseUrl: provider.baseUrl,
               model: model,
+              reasoningEffort: _reasoningEffortSelection,
               ttsModel: _resolveTtsModel(settings),
               sttModel: _resolveSttModel(settings),
               timeoutSeconds:
@@ -481,6 +486,8 @@ class _SettingsPageState extends State<SettingsPage> {
           settings: settings,
           configs: configs,
         );
+        final reasoningOptions =
+            LlmReasoningSupport.effortOptionsForProvider(provider);
         final ttsOptions = _buildAudioModelOptions(
           configs: configs,
           baseUrl: provider.baseUrl,
@@ -622,6 +629,18 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             const SizedBox(height: 8),
             _buildModelPicker(
+              label: 'Thinking effort',
+              options: reasoningOptions,
+              value: _reasoningEffortSelection,
+              emptyMessage: 'Thinking is not supported by this provider.',
+              onChanged: (value) {
+                setState(() {
+                  _reasoningEffortSelection = ReasoningEffort.normalize(value);
+                });
+              },
+            ),
+            const SizedBox(height: 8),
+            _buildModelPicker(
               label: l10n.ttsModelSelectLabel,
               options: ttsOptions,
               value: ttsValue,
@@ -673,6 +692,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   providerId: provider.id,
                   baseUrl: provider.baseUrl,
                   model: model,
+                  reasoningEffort: _reasoningEffortSelection,
                   ttsModel: _resolveTtsModel(settings),
                   sttModel: _resolveSttModel(settings),
                   timeoutSeconds:
@@ -700,6 +720,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 await services.db.insertApiConfig(
                   baseUrl: provider.baseUrl,
                   model: model,
+                  reasoningEffort: _reasoningEffortSelection,
                   ttsModel: _resolveTtsModel(settings),
                   sttModel: _resolveSttModel(settings),
                   apiKeyHash: hash,
@@ -731,10 +752,13 @@ class _SettingsPageState extends State<SettingsPage> {
                   final providerLabel = provider?.label ?? config.baseUrl;
                   final ttsModel = (config.ttsModel ?? '').trim();
                   final sttModel = (config.sttModel ?? '').trim();
+                  final reasoningEffort =
+                      ReasoningEffort.normalize(config.reasoningEffort);
                   final subtitleLines = <String>[
                     '${l10n.baseUrlLabel}: ${config.baseUrl}',
                     '${l10n.keyHashLabel(shortHash)}',
                     '${l10n.textModelLabel}: ${config.model}',
+                    'Thinking effort: $reasoningEffort',
                   ];
                   if (ttsModel.isNotEmpty) {
                     subtitleLines.add('${l10n.ttsModelSelectLabel}: $ttsModel');
@@ -758,6 +782,7 @@ class _SettingsPageState extends State<SettingsPage> {
                             setState(() {
                               _providerId = provider.id;
                               _textModelSelection = config.model;
+                              _reasoningEffortSelection = reasoningEffort;
                               _ttsModelSelection = ttsModel;
                               _sttModelSelection = sttModel;
                               _ttsModelOverride = true;

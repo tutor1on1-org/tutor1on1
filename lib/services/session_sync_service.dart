@@ -806,6 +806,133 @@ class SessionSyncService {
     User currentUser,
     int remoteUserId,
   ) async {
+    if (_sessionUploadCacheService != null) {
+      await _uploadPendingSessionsFromChapterCache(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+      );
+      return;
+    }
+    await _uploadPendingSessionsLegacy(
+      currentUser: currentUser,
+      remoteUserId: remoteUserId,
+    );
+  }
+
+  Future<void> _uploadPendingSessionsFromChapterCache({
+    required User currentUser,
+    required int remoteUserId,
+  }) async {
+    final sessions = await (_db.select(_db.chatSessions)
+          ..where((tbl) =>
+              tbl.syncUpdatedAt.isNotNull() &
+              (tbl.syncUploadedAt.isNull() |
+                  tbl.syncUploadedAt.isSmallerThan(tbl.syncUpdatedAt))))
+        .get();
+    if (sessions.isEmpty) {
+      return;
+    }
+    final pendingChapterLocalKeys = <String>{};
+    final pendingSessionIds = <int>{};
+    for (final session in sessions) {
+      if (session.studentId != currentUser.id) {
+        continue;
+      }
+      pendingSessionIds.add(session.id);
+      final chapterKey = _extractSecondLevelChapter(session.kpKey);
+      pendingChapterLocalKeys.add('${session.courseVersionId}:$chapterKey');
+      final existingChapter = await _sessionUploadCacheService!.readChapter(
+        courseVersionId: session.courseVersionId,
+        chapterKey: chapterKey,
+      );
+      if (existingChapter != null) {
+        continue;
+      }
+      await _sessionUploadCacheService!.captureSession(session.id);
+    }
+    final chapterSnapshots = await _sessionUploadCacheService!.listChapters();
+    if (chapterSnapshots.isEmpty) {
+      return;
+    }
+    final keysByCourse = <int, CourseKeyBundle>{};
+    for (final chapterSnapshot in chapterSnapshots) {
+      if (!pendingChapterLocalKeys.contains(
+          '${chapterSnapshot.courseVersionId}:${chapterSnapshot.chapterKey}')) {
+        continue;
+      }
+      if (chapterSnapshot.members.isEmpty) {
+        continue;
+      }
+      final remoteCourseId =
+          await _db.getRemoteCourseId(chapterSnapshot.courseVersionId);
+      if (remoteCourseId == null || remoteCourseId <= 0) {
+        continue;
+      }
+      final groupScopeKey = '$remoteCourseId:${chapterSnapshot.chapterKey}';
+      final groupState = await _secureStorage.readSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainSessionGroupUpload,
+        scopeKey: groupScopeKey,
+      );
+      if (!_isTimestampNewer(
+        chapterSnapshot.updatedAt,
+        groupState?.lastSyncedAt,
+      )) {
+        for (final item in chapterSnapshot.members) {
+          if (!pendingSessionIds.contains(item.sessionId)) {
+            continue;
+          }
+          await _markSessionUploaded(
+            sessionId: item.sessionId,
+            uploadedAt: item.syncUpdatedAt,
+          );
+        }
+        continue;
+      }
+      if (groupState != null &&
+          groupState.contentHash == chapterSnapshot.contentHash) {
+        for (final item in chapterSnapshot.members) {
+          if (!pendingSessionIds.contains(item.sessionId)) {
+            continue;
+          }
+          await _markSessionUploaded(
+            sessionId: item.sessionId,
+            uploadedAt: item.syncUpdatedAt,
+          );
+        }
+        await _secureStorage.writeSyncItemState(
+          remoteUserId: remoteUserId,
+          domain: _syncDomainSessionGroupUpload,
+          scopeKey: groupScopeKey,
+          contentHash: chapterSnapshot.contentHash,
+          lastChangedAt: chapterSnapshot.updatedAt,
+          lastSyncedAt: chapterSnapshot.updatedAt,
+        );
+        continue;
+      }
+      await _uploadSessionChapterSnapshotGroup(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+        keysByCourse: keysByCourse,
+        chapterSnapshot: chapterSnapshot,
+        remoteCourseId: remoteCourseId,
+        pendingSessionIds: pendingSessionIds,
+      );
+      await _secureStorage.writeSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainSessionGroupUpload,
+        scopeKey: groupScopeKey,
+        contentHash: chapterSnapshot.contentHash,
+        lastChangedAt: chapterSnapshot.updatedAt,
+        lastSyncedAt: chapterSnapshot.updatedAt,
+      );
+    }
+  }
+
+  Future<void> _uploadPendingSessionsLegacy({
+    required User currentUser,
+    required int remoteUserId,
+  }) async {
     final sessions = await (_db.select(_db.chatSessions)
           ..where((tbl) =>
               tbl.syncUpdatedAt.isNotNull() &
@@ -890,7 +1017,7 @@ class SessionSyncService {
         );
         continue;
       }
-      await _uploadSessionGroup(
+      await _uploadSessionGroupLegacy(
         currentUser: currentUser,
         remoteUserId: remoteUserId,
         keysByCourse: keysByCourse,
@@ -907,7 +1034,171 @@ class SessionSyncService {
     }
   }
 
-  Future<void> _uploadSessionGroup({
+  Future<void> _uploadSessionChapterSnapshotGroup({
+    required User currentUser,
+    required int remoteUserId,
+    required Map<int, CourseKeyBundle> keysByCourse,
+    required SessionUploadChapterSnapshot chapterSnapshot,
+    required int remoteCourseId,
+    required Set<int> pendingSessionIds,
+  }) async {
+    final preparedUploads = <_PreparedSessionUpload>[];
+    final batchEntries = <SessionUploadEntry>[];
+    var resolvedKeys = keysByCourse[remoteCourseId];
+    for (final member in chapterSnapshot.members) {
+      if (!pendingSessionIds.contains(member.sessionId)) {
+        continue;
+      }
+      final syncState = await _secureStorage.readSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainSessionUpload,
+        scopeKey: member.syncId,
+      );
+      final downloadedState = await _secureStorage.readSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainSessionDownload,
+        scopeKey: member.syncId,
+      );
+      if (downloadedState != null &&
+          downloadedState.lastChangedAt.toUtc().isAfter(member.syncUpdatedAt)) {
+        continue;
+      }
+      if (!_isTimestampNewer(member.syncUpdatedAt, syncState?.lastSyncedAt)) {
+        await _markSessionUploaded(
+          sessionId: member.sessionId,
+          uploadedAt: member.syncUpdatedAt,
+        );
+        continue;
+      }
+      var snapshot = await _sessionUploadCacheService!.readSession(
+        sessionId: member.sessionId,
+        syncUpdatedAt: member.syncUpdatedAt,
+      );
+      if (snapshot == null) {
+        final existingSession = await _db.getSession(member.sessionId);
+        if (existingSession == null) {
+          continue;
+        }
+        await _sessionUploadCacheService!.captureSession(member.sessionId);
+        snapshot = await _sessionUploadCacheService!.readSession(
+          sessionId: member.sessionId,
+          syncUpdatedAt: member.syncUpdatedAt,
+        );
+      }
+      if (snapshot == null) {
+        throw StateError(
+          'Session upload cache is missing for session ${member.sessionId}.',
+        );
+      }
+      resolvedKeys ??= await _api.getCourseKeys(
+        courseId: remoteCourseId,
+        studentUserId: remoteUserId,
+      );
+      keysByCourse[remoteCourseId] = resolvedKeys;
+      final payload = _buildPayloadFromCache(
+        snapshot: snapshot,
+        remoteCourseId: remoteCourseId,
+        teacherUserId: resolvedKeys.teacherUserId,
+        studentUserId: resolvedKeys.studentUserId,
+        studentUsername: currentUser.username,
+      );
+      final payloadHash = _hashCanonicalJson(payload);
+      if (syncState != null && syncState.contentHash == payloadHash) {
+        await _markSessionUploaded(
+          sessionId: member.sessionId,
+          uploadedAt: member.syncUpdatedAt,
+        );
+        await _secureStorage.writeSyncItemState(
+          remoteUserId: remoteUserId,
+          domain: _syncDomainSessionUpload,
+          scopeKey: member.syncId,
+          contentHash: payloadHash,
+          lastChangedAt: member.syncUpdatedAt,
+          lastSyncedAt: member.syncUpdatedAt,
+        );
+        continue;
+      }
+      final envelope = await _crypto.encryptPayload(
+        payload: payload,
+        recipients: [
+          RecipientPublicKey(
+            userId: resolvedKeys.teacherUserId,
+            publicKey: _crypto.decodePublicKey(resolvedKeys.teacherPublicKey),
+          ),
+          RecipientPublicKey(
+            userId: resolvedKeys.studentUserId,
+            publicKey: _crypto.decodePublicKey(resolvedKeys.studentPublicKey),
+          ),
+        ],
+      );
+      final envelopeJson = jsonEncode(envelope.toJson());
+      final envelopeBase64 = base64Encode(utf8.encode(envelopeJson));
+      final envelopeHash = _hashEnvelope(envelopeJson);
+      batchEntries.add(
+        SessionUploadEntry(
+          sessionSyncId: payload['session_sync_id'] as String,
+          courseId: remoteCourseId,
+          studentUserId: resolvedKeys.studentUserId,
+          chapterKey: chapterSnapshot.chapterKey,
+          updatedAt: (payload['updated_at'] as String?) ??
+              DateTime.now().toUtc().toIso8601String(),
+          envelope: envelopeBase64,
+          envelopeHash: envelopeHash,
+        ),
+      );
+      preparedUploads.add(
+        _PreparedSessionUpload(
+          sessionId: member.sessionId,
+          syncUpdatedAt: member.syncUpdatedAt,
+          syncStateWrite: _SyncStateWrite(
+            domain: _syncDomainSessionUpload,
+            scopeKey: member.syncId,
+            contentHash: payloadHash,
+            lastChangedAt: member.syncUpdatedAt,
+            lastSyncedAt: member.syncUpdatedAt,
+          ),
+        ),
+      );
+    }
+    if (batchEntries.isEmpty) {
+      return;
+    }
+    try {
+      await _api.uploadSessionBatch(batchEntries);
+    } on SessionSyncApiException catch (error) {
+      if (error.statusCode != 404) {
+        rethrow;
+      }
+      for (final entry in batchEntries) {
+        await _api.uploadSession(
+          sessionSyncId: entry.sessionSyncId,
+          courseId: entry.courseId,
+          studentUserId: entry.studentUserId,
+          chapterKey: entry.chapterKey,
+          updatedAt: entry.updatedAt,
+          envelope: entry.envelope,
+          envelopeHash: entry.envelopeHash,
+        );
+      }
+    }
+    for (final prepared in preparedUploads) {
+      await _markSessionUploaded(
+        sessionId: prepared.sessionId,
+        uploadedAt: prepared.syncUpdatedAt,
+      );
+      final syncStateWrite = prepared.syncStateWrite;
+      await _secureStorage.writeSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: syncStateWrite.domain,
+        scopeKey: syncStateWrite.scopeKey,
+        contentHash: syncStateWrite.contentHash,
+        lastChangedAt: syncStateWrite.lastChangedAt,
+        lastSyncedAt: syncStateWrite.lastSyncedAt,
+      );
+    }
+  }
+
+  Future<void> _uploadSessionGroupLegacy({
     required User currentUser,
     required int remoteUserId,
     required Map<int, CourseKeyBundle> keysByCourse,
