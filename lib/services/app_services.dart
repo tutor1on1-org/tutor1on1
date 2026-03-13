@@ -109,7 +109,6 @@ class AppServices {
       marketplaceApi: marketplaceApi,
       promptRepository: promptRepository,
       courseArtifactService: courseArtifactService,
-      syncLogRepository: syncLogRepository,
     );
     final sessionUploadCacheService = SessionUploadCacheService(db: db);
     final sessionService = SessionService(

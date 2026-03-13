@@ -956,7 +956,7 @@ void main() {
         crypto: crypto,
       );
 
-      await syncService.syncIfReady(currentUser: student);
+      final stats = await syncService.syncIfReady(currentUser: student);
 
       expect((observedSessionSince ?? '').trim(), isEmpty);
       expect(observedSessionSinceId == null || observedSessionSinceId == 0,
@@ -978,6 +978,8 @@ void main() {
       expect(progressRows, hasLength(1));
       expect(progressRows.single.kpKey, equals('1.1'));
       expect(progressRows.single.litPercent, equals(70));
+      expect(stats.downloadedCount, equals(2));
+      expect(stats.downloadedBytes, greaterThan(0));
     },
   );
 
@@ -1444,7 +1446,7 @@ void main() {
         crypto: crypto,
       );
 
-      await syncService.syncIfReady(currentUser: student);
+      final stats = await syncService.syncIfReady(currentUser: student);
 
       final refreshedNewer = await db.getSession(localSessionNewerId);
       expect(refreshedNewer, isNotNull);
@@ -1467,6 +1469,8 @@ void main() {
       expect(byKey['1.2']!.litPercent, equals(75));
       expect(byKey['1.3']!.litPercent, equals(100));
       expect(byKey['1.3']!.questionLevel, equals('hard'));
+      expect(stats.downloadedCount, greaterThan(0));
+      expect(stats.downloadedBytes, greaterThan(0));
     },
   );
 
@@ -2514,7 +2518,7 @@ void main() {
       );
 
       final stopwatch = Stopwatch()..start();
-      await syncService.syncIfReady(currentUser: student);
+      final stats = await syncService.syncIfReady(currentUser: student);
       stopwatch.stop();
 
       print(
@@ -2531,6 +2535,8 @@ void main() {
         changedSession!.syncUploadedAt!.toUtc(),
         equals(changedSessionUpdatedAt.toUtc()),
       );
+      expect(stats.uploadedCount, equals(1));
+      expect(stats.uploadedBytes, greaterThan(0));
     },
   );
 

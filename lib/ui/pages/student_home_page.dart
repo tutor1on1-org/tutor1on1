@@ -8,6 +8,7 @@ import '../../db/app_database.dart';
 import '../../models/skill_tree.dart';
 import '../../services/app_services.dart';
 import '../../services/marketplace_api_service.dart';
+import '../../services/sync_log_repository.dart';
 import '../../state/auth_controller.dart';
 import '../app_settings_page.dart';
 import 'marketplace_page.dart';
@@ -139,15 +140,22 @@ class _StudentHomePageState extends State<StudentHomePage> {
       return;
     }
     final services = context.read<AppServices>();
+    final stats = SyncRunStats();
+    final trigger = showOverlay ? 'login' : 'timer';
+    Object? syncError;
     try {
-      await services.enrollmentSyncService.syncIfReady(currentUser: user);
+      stats.absorb(
+        await services.enrollmentSyncService.syncIfReady(currentUser: user),
+      );
       _setSyncState(
         syncing: showOverlay,
         message: showOverlay ? 'Syncing sessions/progress from server...' : '',
       );
-      await services.sessionSyncService.syncIfReady(currentUser: user);
+      stats.absorb(
+        await services.sessionSyncService.syncIfReady(currentUser: user),
+      );
     } catch (error) {
-      _setPersistentMessage(l10n.sessionSyncFailed('$error'));
+      syncError = error;
     } finally {
       _setSyncState(
         syncing: showOverlay,
@@ -156,6 +164,36 @@ class _StudentHomePageState extends State<StudentHomePage> {
       await _refreshRemoteEnrollmentState();
       _setSyncState(syncing: false, message: '');
       _syncInProgress = false;
+    }
+    if (syncError != null) {
+      var reportedError = '$syncError';
+      try {
+        await services.syncLogRepository.appendRunEvent(
+          trigger: trigger,
+          actorRole: user.role,
+          actorUserId: user.id,
+          stats: stats,
+          success: false,
+          error: reportedError,
+        );
+      } catch (logError) {
+        reportedError = '$reportedError; sync log write failed: $logError';
+      }
+      _setPersistentMessage(l10n.sessionSyncFailed(reportedError));
+      return;
+    }
+    try {
+      await services.syncLogRepository.appendRunEvent(
+        trigger: trigger,
+        actorRole: user.role,
+        actorUserId: user.id,
+        stats: stats,
+        success: true,
+      );
+    } catch (logError) {
+      _setPersistentMessage(
+        l10n.sessionSyncFailed('Sync log write failed: $logError'),
+      );
     }
   }
 

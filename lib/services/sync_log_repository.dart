@@ -43,6 +43,59 @@ class SyncTransferLogItem {
   }
 }
 
+class SyncRunStats {
+  SyncRunStats({
+    this.uploadedCount = 0,
+    this.downloadedCount = 0,
+    this.uploadedBytes = 0,
+    this.downloadedBytes = 0,
+  });
+
+  int uploadedCount;
+  int downloadedCount;
+  int uploadedBytes;
+  int downloadedBytes;
+
+  bool get hasTransfer =>
+      uploadedCount > 0 ||
+      downloadedCount > 0 ||
+      uploadedBytes > 0 ||
+      downloadedBytes > 0;
+
+  void addUploaded({
+    required int count,
+    required int bytes,
+  }) {
+    if (count < 0 || bytes < 0) {
+      throw ArgumentError('Sync run stats cannot be negative.');
+    }
+    uploadedCount += count;
+    uploadedBytes += bytes;
+  }
+
+  void addDownloaded({
+    required int count,
+    required int bytes,
+  }) {
+    if (count < 0 || bytes < 0) {
+      throw ArgumentError('Sync run stats cannot be negative.');
+    }
+    downloadedCount += count;
+    downloadedBytes += bytes;
+  }
+
+  void absorb(SyncRunStats other) {
+    addUploaded(
+      count: other.uploadedCount,
+      bytes: other.uploadedBytes,
+    );
+    addDownloaded(
+      count: other.downloadedCount,
+      bytes: other.downloadedBytes,
+    );
+  }
+}
+
 class SyncLogRepository {
   SyncLogRepository(this._settingsRepository);
 
@@ -89,6 +142,46 @@ class SyncLogRepository {
     return _writeQueue;
   }
 
+  Future<void> appendRunEvent({
+    required String trigger,
+    required String actorRole,
+    required int actorUserId,
+    required SyncRunStats stats,
+    required bool success,
+    String? error,
+  }) async {
+    if (success && !stats.hasTransfer) {
+      return;
+    }
+    final normalizedError = (error ?? '').trim();
+    _writeQueue = _writeQueue.then((_) async {
+      final file = await _resolveFile();
+      final payload = <String, dynamic>{
+        'created_at': DateTime.now().toIso8601String(),
+        'event': 'sync_run',
+        'status': success ? 'success' : 'failed',
+        'trigger': trigger.trim(),
+        'actor_role': actorRole,
+        'actor_user_id': actorUserId,
+        'uploaded_count': stats.uploadedCount,
+        'downloaded_count': stats.downloadedCount,
+        'uploaded_bytes': stats.uploadedBytes,
+        'downloaded_bytes': stats.downloadedBytes,
+        'uploaded_kb': _roundBytesToKb(stats.uploadedBytes),
+        'downloaded_kb': _roundBytesToKb(stats.downloadedBytes),
+      };
+      if (normalizedError.isNotEmpty) {
+        payload['error'] = normalizedError;
+      }
+      await file.writeAsString(
+        '${jsonEncode(payload)}\n',
+        mode: FileMode.append,
+        flush: true,
+      );
+    });
+    return _writeQueue;
+  }
+
   Future<File> _resolveFile() async {
     final settings = await _settingsRepository.load();
     final logDirectory = (settings.logDirectory ?? '').trim();
@@ -104,5 +197,12 @@ class SyncLogRepository {
       await file.create(recursive: true);
     }
     return file;
+  }
+
+  int _roundBytesToKb(int bytes) {
+    if (bytes <= 0) {
+      return 0;
+    }
+    return (bytes + 1023) ~/ 1024;
   }
 }

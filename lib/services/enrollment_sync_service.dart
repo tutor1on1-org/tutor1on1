@@ -22,14 +22,12 @@ class EnrollmentSyncService {
     required MarketplaceApiService marketplaceApi,
     required PromptRepository promptRepository,
     CourseArtifactService? courseArtifactService,
-    SyncLogRepository? syncLogRepository,
   })  : _db = db,
         _secureStorage = secureStorage,
         _courseService = courseService,
         _api = marketplaceApi,
         _promptRepository = promptRepository,
-        _courseArtifactService = courseArtifactService,
-        _syncLogRepository = syncLogRepository;
+        _courseArtifactService = courseArtifactService;
 
   final AppDatabase _db;
   final SecureStorageService _secureStorage;
@@ -37,7 +35,6 @@ class EnrollmentSyncService {
   final MarketplaceApiService _api;
   final PromptRepository _promptRepository;
   final CourseArtifactService? _courseArtifactService;
-  final SyncLogRepository? _syncLogRepository;
   final RemoteTeacherIdentityService _remoteTeacherIdentity =
       const RemoteTeacherIdentityService();
   final RemoteStudentIdentityService _remoteStudentIdentity =
@@ -55,20 +52,17 @@ class EnrollmentSyncService {
   static const String _syncScopeEnrollments = 'enrollments';
   static const String _syncScopeTeacherCourses = 'teacher_courses';
 
-  Future<void> forcePullFromServer({required User currentUser}) async {
+  Future<SyncRunStats> forcePullFromServer({required User currentUser}) async {
+    final stats = SyncRunStats();
     if (_syncing) {
-      return;
+      return stats;
     }
     final remoteUserId = currentUser.remoteUserId;
     if (remoteUserId == null || remoteUserId <= 0) {
-      return;
+      return stats;
     }
     final nowUtc = DateTime.now().toUtc();
-    final summary = _SyncTransferSummary(
-      domain: currentUser.role == 'teacher'
-          ? 'enrollment_sync_teacher'
-          : 'enrollment_sync_student',
-    );
+    final summary = _SyncTransferSummary();
     _syncing = true;
     try {
       await _resetForcePullState(
@@ -124,26 +118,23 @@ class EnrollmentSyncService {
           },
         );
       }
-      await _appendSyncSummary(currentUser: currentUser, summary: summary);
+      return summary.toStats();
     } finally {
       _syncing = false;
     }
   }
 
-  Future<void> syncIfReady({required User currentUser}) async {
+  Future<SyncRunStats> syncIfReady({required User currentUser}) async {
+    final stats = SyncRunStats();
     if (_syncing) {
-      return;
+      return stats;
     }
     final remoteUserId = currentUser.remoteUserId;
     if (remoteUserId == null || remoteUserId <= 0) {
-      return;
+      return stats;
     }
     final nowUtc = DateTime.now().toUtc();
-    final summary = _SyncTransferSummary(
-      domain: currentUser.role == 'teacher'
-          ? 'enrollment_sync_teacher'
-          : 'enrollment_sync_student',
-    );
+    final summary = _SyncTransferSummary();
     _syncing = true;
     try {
       if (currentUser.role == 'student') {
@@ -200,7 +191,7 @@ class EnrollmentSyncService {
           },
         );
       }
-      await _appendSyncSummary(currentUser: currentUser, summary: summary);
+      return summary.toStats();
     } finally {
       _syncing = false;
     }
@@ -1845,22 +1836,6 @@ class EnrollmentSyncService {
     final trimmed = value.trim();
     return trimmed.replaceFirst(_versionSuffixPattern, '');
   }
-
-  Future<void> _appendSyncSummary({
-    required User currentUser,
-    required _SyncTransferSummary summary,
-  }) async {
-    if (_syncLogRepository == null) {
-      return;
-    }
-    await _syncLogRepository.appendSummary(
-      domain: summary.domain,
-      actorRole: currentUser.role,
-      actorUserId: currentUser.id,
-      uploaded: summary.uploaded,
-      downloaded: summary.downloaded,
-    );
-  }
 }
 
 class _PreparedTeacherCourseBundle {
@@ -1898,9 +1873,20 @@ class _ResolvedCourseSyncState {
 }
 
 class _SyncTransferSummary {
-  _SyncTransferSummary({required this.domain});
-
-  final String domain;
+  _SyncTransferSummary();
   final List<SyncTransferLogItem> uploaded = <SyncTransferLogItem>[];
   final List<SyncTransferLogItem> downloaded = <SyncTransferLogItem>[];
+
+  SyncRunStats toStats() {
+    final stats = SyncRunStats();
+    stats.addUploaded(
+      count: uploaded.length,
+      bytes: uploaded.fold<int>(0, (total, item) => total + item.sizeBytes),
+    );
+    stats.addDownloaded(
+      count: downloaded.length,
+      bytes: downloaded.fold<int>(0, (total, item) => total + item.sizeBytes),
+    );
+    return stats;
+  }
 }
