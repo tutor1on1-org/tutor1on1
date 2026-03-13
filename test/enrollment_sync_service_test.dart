@@ -15,6 +15,8 @@ import 'package:family_teacher/services/course_service.dart';
 import 'package:family_teacher/services/enrollment_sync_service.dart';
 import 'package:family_teacher/services/marketplace_api_service.dart';
 import 'package:family_teacher/services/secure_storage_service.dart' as storage;
+import 'package:family_teacher/services/settings_repository.dart';
+import 'package:family_teacher/services/sync_log_repository.dart';
 
 class _TestSecureStorageService extends storage.SecureStorageService {
   _TestSecureStorageService({
@@ -123,6 +125,47 @@ class _TestSecureStorageService extends storage.SecureStorageService {
       contentHash: contentHash,
       lastChangedAt: lastChangedAt.toUtc(),
       lastSyncedAt: lastSyncedAt.toUtc(),
+    );
+  }
+}
+
+class _LoggedSyncSummary {
+  _LoggedSyncSummary({
+    required this.domain,
+    required this.actorRole,
+    required this.actorUserId,
+    required this.uploaded,
+    required this.downloaded,
+  });
+
+  final String domain;
+  final String actorRole;
+  final int actorUserId;
+  final List<SyncTransferLogItem> uploaded;
+  final List<SyncTransferLogItem> downloaded;
+}
+
+class _FakeSyncLogRepository extends SyncLogRepository {
+  _FakeSyncLogRepository(AppDatabase db) : super(SettingsRepository(db));
+
+  final List<_LoggedSyncSummary> summaries = <_LoggedSyncSummary>[];
+
+  @override
+  Future<void> appendSummary({
+    required String domain,
+    required String actorRole,
+    required int actorUserId,
+    required List<SyncTransferLogItem> uploaded,
+    required List<SyncTransferLogItem> downloaded,
+  }) async {
+    summaries.add(
+      _LoggedSyncSummary(
+        domain: domain,
+        actorRole: actorRole,
+        actorUserId: actorUserId,
+        uploaded: List<SyncTransferLogItem>.from(uploaded),
+        downloaded: List<SyncTransferLogItem>.from(downloaded),
+      ),
     );
   }
 }
@@ -656,6 +699,7 @@ void main() {
         ],
         bundleFilesByVersionId: <int, File>{301: remoteBundle},
       );
+      final syncLogRepository = _FakeSyncLogRepository(db);
       final service = EnrollmentSyncService(
         db: db,
         secureStorage: secureStorage,
@@ -663,6 +707,7 @@ void main() {
         marketplaceApi: api,
         promptRepository: PromptRepository(db: db),
         courseArtifactService: CourseArtifactService(),
+        syncLogRepository: syncLogRepository,
       );
 
       await service.syncIfReady(currentUser: teacher!);
@@ -712,6 +757,16 @@ void main() {
       expect(studentProfile, isNotNull);
       expect(studentProfile!.preferredTone, equals('calm'));
       expect(api.listTeacherBundleVersionsCalls, equals(0));
+      expect(syncLogRepository.summaries, hasLength(1));
+      expect(syncLogRepository.summaries.single.downloaded, hasLength(1));
+      expect(
+        syncLogRepository.summaries.single.downloaded.single.bundleVersionId,
+        equals(301),
+      );
+      expect(
+        syncLogRepository.summaries.single.downloaded.single.sizeBytes,
+        greaterThan(0),
+      );
     },
   );
 
@@ -822,6 +877,7 @@ void main() {
           ),
         ],
       );
+      final syncLogRepository = _FakeSyncLogRepository(db);
       final service = EnrollmentSyncService(
         db: db,
         secureStorage: secureStorage,
@@ -829,6 +885,7 @@ void main() {
         marketplaceApi: api,
         promptRepository: PromptRepository(db: db),
         courseArtifactService: CourseArtifactService(),
+        syncLogRepository: syncLogRepository,
       );
 
       await service.syncIfReady(currentUser: teacher!);
@@ -867,6 +924,13 @@ void main() {
       );
       expect(
         studentProfiles.any((item) => item['scope'] == 'student'),
+        isTrue,
+      );
+      expect(syncLogRepository.summaries, hasLength(1));
+      expect(syncLogRepository.summaries.single.uploaded, hasLength(2));
+      expect(
+        syncLogRepository.summaries.single.uploaded
+            .every((item) => item.sizeBytes > 0),
         isTrue,
       );
     },

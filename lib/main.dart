@@ -21,7 +21,7 @@ Future<void> main() async {
   if (Platform.isWindows) {
     await windowManager.ensureInitialized();
     const windowOptions = WindowOptions(
-      title: 'Family Teacher',
+      title: 'Tutor1on1',
     );
     await windowManager.waitUntilReadyToShow(windowOptions, () async {
       await windowManager.setFullScreen(true);

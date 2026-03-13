@@ -54,6 +54,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     _uploadService = TeacherMarketplaceUploadService(
       db: services.db,
       marketplaceApi: _marketplaceApi,
+      syncLogRepository: services.syncLogRepository,
     );
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _refreshMarketplaceState();
@@ -515,6 +516,8 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         target: target,
         courseSubject: course.subject,
         bundleFile: bundleFile,
+        actorUserId: teacher.id,
+        actorRole: teacher.role,
         visibility: 'public',
       );
       final uploadedStatus =
@@ -646,7 +649,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
           await _marketplaceApi.createTeacherCourse(
             subject: course.subject,
             grade: '',
-            description: 'Uploaded from Family Teacher app.',
+            description: 'Uploaded from Tutor1on1.',
             subjectLabelIds: selected.toList(growable: false),
           );
       await context.read<AppDatabase>().upsertCourseRemoteLink(

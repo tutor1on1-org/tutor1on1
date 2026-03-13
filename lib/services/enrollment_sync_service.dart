@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:drift/drift.dart';
+import 'package:path/path.dart' as p;
 
 import '../db/app_database.dart';
 import '../llm/prompt_repository.dart';
@@ -11,6 +12,7 @@ import 'marketplace_api_service.dart';
 import 'remote_student_identity_service.dart';
 import 'remote_teacher_identity_service.dart';
 import 'secure_storage_service.dart';
+import 'sync_log_repository.dart';
 
 class EnrollmentSyncService {
   EnrollmentSyncService({
@@ -20,12 +22,14 @@ class EnrollmentSyncService {
     required MarketplaceApiService marketplaceApi,
     required PromptRepository promptRepository,
     CourseArtifactService? courseArtifactService,
+    SyncLogRepository? syncLogRepository,
   })  : _db = db,
         _secureStorage = secureStorage,
         _courseService = courseService,
         _api = marketplaceApi,
         _promptRepository = promptRepository,
-        _courseArtifactService = courseArtifactService;
+        _courseArtifactService = courseArtifactService,
+        _syncLogRepository = syncLogRepository;
 
   final AppDatabase _db;
   final SecureStorageService _secureStorage;
@@ -33,6 +37,7 @@ class EnrollmentSyncService {
   final MarketplaceApiService _api;
   final PromptRepository _promptRepository;
   final CourseArtifactService? _courseArtifactService;
+  final SyncLogRepository? _syncLogRepository;
   final RemoteTeacherIdentityService _remoteTeacherIdentity =
       const RemoteTeacherIdentityService();
   final RemoteStudentIdentityService _remoteStudentIdentity =
@@ -59,6 +64,11 @@ class EnrollmentSyncService {
       return;
     }
     final nowUtc = DateTime.now().toUtc();
+    final summary = _SyncTransferSummary(
+      domain: currentUser.role == 'teacher'
+          ? 'enrollment_sync_teacher'
+          : 'enrollment_sync_student',
+    );
     _syncing = true;
     try {
       await _resetForcePullState(
@@ -84,6 +94,7 @@ class EnrollmentSyncService {
           action: () => _syncTeacherCourses(
             currentUser: currentUser,
             remoteUserId: remoteUserId,
+            summary: summary,
           ),
         );
       } else {
@@ -107,11 +118,13 @@ class EnrollmentSyncService {
                 currentUser: currentUser,
                 remoteUserId: remoteUserId,
                 enrollments: enrollmentsResult.items,
+                summary: summary,
               );
             }
           },
         );
       }
+      await _appendSyncSummary(currentUser: currentUser, summary: summary);
     } finally {
       _syncing = false;
     }
@@ -126,6 +139,11 @@ class EnrollmentSyncService {
       return;
     }
     final nowUtc = DateTime.now().toUtc();
+    final summary = _SyncTransferSummary(
+      domain: currentUser.role == 'teacher'
+          ? 'enrollment_sync_teacher'
+          : 'enrollment_sync_student',
+    );
     _syncing = true;
     try {
       if (currentUser.role == 'student') {
@@ -147,6 +165,7 @@ class EnrollmentSyncService {
           action: () => _syncTeacherCourses(
             currentUser: currentUser,
             remoteUserId: remoteUserId,
+            summary: summary,
           ),
         );
       } else {
@@ -175,11 +194,13 @@ class EnrollmentSyncService {
                 currentUser: currentUser,
                 remoteUserId: remoteUserId,
                 enrollments: enrollmentsResult.items,
+                summary: summary,
               );
             }
           },
         );
       }
+      await _appendSyncSummary(currentUser: currentUser, summary: summary);
     } finally {
       _syncing = false;
     }
@@ -304,6 +325,7 @@ class EnrollmentSyncService {
     required User currentUser,
     required int remoteUserId,
     required List<EnrollmentSummary> enrollments,
+    required _SyncTransferSummary summary,
   }) async {
     final activeRemoteCourseIds = <int>{};
     for (final enrollment in enrollments) {
@@ -360,12 +382,16 @@ class EnrollmentSyncService {
           bundleVersionId: remoteBundle.bundleVersionId,
           existingCourseVersionId: resolvedCourseVersionId,
           localTeacherId: localTeacherId,
+          bundleHash: remoteBundle.hash,
+          summary: summary,
         ),
         onHashesDiffer: (localCourse, __, ___) => _downloadAndImportCourse(
           enrollment: enrollment,
           bundleVersionId: remoteBundle.bundleVersionId,
           existingCourseVersionId: localCourse.id,
           localTeacherId: localTeacherId,
+          bundleHash: remoteBundle.hash,
+          summary: summary,
         ),
       );
       existingCourseVersionId = syncedCourse.id;
@@ -415,6 +441,8 @@ class EnrollmentSyncService {
     required int bundleVersionId,
     required int? existingCourseVersionId,
     required int localTeacherId,
+    required String bundleHash,
+    required _SyncTransferSummary summary,
   }) async {
     final bundleService = CourseBundleService();
     File? bundleFile;
@@ -425,6 +453,18 @@ class EnrollmentSyncService {
       bundleFile = await _api.downloadBundleToFile(
         bundleVersionId: bundleVersionId,
         targetPath: targetPath,
+      );
+      summary.downloaded.add(
+        SyncTransferLogItem(
+          direction: 'download',
+          fileName: p.basename(bundleFile.path),
+          sizeBytes: bundleFile.lengthSync(),
+          courseSubject: enrollment.courseSubject,
+          remoteCourseId: enrollment.courseId,
+          bundleVersionId: bundleVersionId,
+          hash: bundleHash,
+          source: 'student_enrollment_sync',
+        ),
       );
       await bundleService.validateBundleForImport(bundleFile);
       final folderPath = await bundleService.extractBundleFromFile(
@@ -486,6 +526,7 @@ class EnrollmentSyncService {
   Future<void> _syncTeacherCourses({
     required User currentUser,
     required int remoteUserId,
+    required _SyncTransferSummary summary,
   }) async {
     final firstSync = await _secureStorage.readSyncRunAt(
           remoteUserId: remoteUserId,
@@ -505,6 +546,7 @@ class EnrollmentSyncService {
       remoteUserId: remoteUserId,
       remoteCourses: remoteCourses,
       initializeOnly: firstSync,
+      summary: summary,
     );
     if (firstSync) {
       await _cleanupTeacherLocalDuplicates(currentUser.id);
@@ -514,6 +556,7 @@ class EnrollmentSyncService {
       currentUser: currentUser,
       remoteUserId: remoteUserId,
       remoteCourses: remoteCourses,
+      summary: summary,
     );
     remoteCourses = await _loadTeacherCourses(
       remoteUserId: remoteUserId,
@@ -528,6 +571,7 @@ class EnrollmentSyncService {
       remoteUserId: remoteUserId,
       remoteCourses: remoteCourses,
       initializeOnly: false,
+      summary: summary,
     );
     await _cleanupTeacherLocalDuplicates(currentUser.id);
   }
@@ -621,6 +665,7 @@ class EnrollmentSyncService {
     required int remoteUserId,
     required List<TeacherCourseSummary> remoteCourses,
     required bool initializeOnly,
+    required _SyncTransferSummary summary,
   }) async {
     for (final remoteCourse in remoteCourses) {
       final latestBundleVersionId = remoteCourse.latestBundleVersionId ?? 0;
@@ -659,6 +704,7 @@ class EnrollmentSyncService {
           courseSubject: remoteCourse.subject,
           bundleVersionId: remoteBundle.bundleVersionId,
           existingCourseVersionId: resolvedCourseVersionId,
+          summary: summary,
         ),
         onHashesDiffer: (localCourse, localHash, installedVersion) async {
           if (initializeOnly || installedVersion == null) {
@@ -669,6 +715,7 @@ class EnrollmentSyncService {
               courseSubject: remoteCourse.subject,
               bundleVersionId: remoteBundle.bundleVersionId,
               existingCourseVersionId: localCourse.id,
+              summary: summary,
             );
           }
           final syncState = await _secureStorage.readSyncItemState(
@@ -689,6 +736,7 @@ class EnrollmentSyncService {
             courseSubject: remoteCourse.subject,
             bundleVersionId: remoteBundle.bundleVersionId,
             existingCourseVersionId: localCourse.id,
+            summary: summary,
           );
         },
       );
@@ -902,6 +950,7 @@ class EnrollmentSyncService {
     required User currentUser,
     required int remoteUserId,
     required List<TeacherCourseSummary> remoteCourses,
+    required _SyncTransferSummary summary,
   }) async {
     final remoteCoursesById = <int, TeacherCourseSummary>{
       for (final remoteCourse in remoteCourses)
@@ -967,6 +1016,19 @@ class EnrollmentSyncService {
         final uploadedVersionId =
             (uploadResponse['bundle_version_id'] as num?)?.toInt() ??
                 remoteLatestVersion;
+        summary.uploaded.add(
+          SyncTransferLogItem(
+            direction: 'upload',
+            fileName: p.basename(preparedBundle.bundleFile.path),
+            sizeBytes: preparedBundle.bundleFile.lengthSync(),
+            courseSubject: course.subject,
+            remoteCourseId: remoteCourseId,
+            bundleId: target.bundleId,
+            bundleVersionId: uploadedVersionId,
+            hash: preparedBundle.hash,
+            source: 'teacher_course_sync',
+          ),
+        );
         final now = DateTime.now().toUtc();
         await _secureStorage.writeInstalledCourseBundleVersion(
           remoteUserId: remoteUserId,
@@ -1011,7 +1073,7 @@ class EnrollmentSyncService {
       final created = await _api.createTeacherCourse(
         subject: courseSubject,
         grade: '',
-        description: 'Uploaded from Family Teacher app.',
+        description: 'Uploaded from Tutor1on1.',
       );
       remoteCourseId = created.courseId;
       remoteCoursesById[remoteCourseId] = created;
@@ -1038,7 +1100,7 @@ class EnrollmentSyncService {
       final created = await _api.createTeacherCourse(
         subject: courseSubject,
         grade: '',
-        description: 'Uploaded from Family Teacher app.',
+        description: 'Uploaded from Tutor1on1.',
       );
       remoteCourseId = created.courseId;
       remoteCoursesById[remoteCourseId] = created;
@@ -1139,6 +1201,7 @@ class EnrollmentSyncService {
     required String courseSubject,
     required int bundleVersionId,
     required int? existingCourseVersionId,
+    required _SyncTransferSummary summary,
   }) async {
     final bundleService = CourseBundleService();
     File? bundleFile;
@@ -1189,6 +1252,18 @@ class EnrollmentSyncService {
       }
       final remoteHash =
           await bundleService.computeBundleSemanticHash(bundleFile);
+      summary.downloaded.add(
+        SyncTransferLogItem(
+          direction: 'download',
+          fileName: p.basename(bundleFile.path),
+          sizeBytes: bundleFile.lengthSync(),
+          courseSubject: courseSubject,
+          remoteCourseId: remoteCourseId,
+          bundleVersionId: bundleVersionId,
+          hash: remoteHash,
+          source: 'teacher_course_sync',
+        ),
+      );
       final now = DateTime.now().toUtc();
       await _secureStorage.writeInstalledCourseBundleVersion(
         remoteUserId: remoteUserId,
@@ -1770,6 +1845,22 @@ class EnrollmentSyncService {
     final trimmed = value.trim();
     return trimmed.replaceFirst(_versionSuffixPattern, '');
   }
+
+  Future<void> _appendSyncSummary({
+    required User currentUser,
+    required _SyncTransferSummary summary,
+  }) async {
+    if (_syncLogRepository == null) {
+      return;
+    }
+    await _syncLogRepository.appendSummary(
+      domain: summary.domain,
+      actorRole: currentUser.role,
+      actorUserId: currentUser.id,
+      uploaded: summary.uploaded,
+      downloaded: summary.downloaded,
+    );
+  }
 }
 
 class _PreparedTeacherCourseBundle {
@@ -1804,4 +1895,12 @@ class _ResolvedCourseSyncState {
   final int? installedVersion;
   final CourseVersion? localCourse;
   final bool canBuildLocalBundle;
+}
+
+class _SyncTransferSummary {
+  _SyncTransferSummary({required this.domain});
+
+  final String domain;
+  final List<SyncTransferLogItem> uploaded = <SyncTransferLogItem>[];
+  final List<SyncTransferLogItem> downloaded = <SyncTransferLogItem>[];
 }

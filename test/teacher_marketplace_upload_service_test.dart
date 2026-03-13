@@ -6,6 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:family_teacher/db/app_database.dart';
 import 'package:family_teacher/services/marketplace_api_service.dart';
 import 'package:family_teacher/services/secure_storage_service.dart';
+import 'package:family_teacher/services/settings_repository.dart';
+import 'package:family_teacher/services/sync_log_repository.dart';
 import 'package:family_teacher/services/teacher_marketplace_upload_service.dart';
 
 class _TestSecureStorageService extends SecureStorageService {
@@ -99,6 +101,47 @@ class _FakeMarketplaceApiService extends MarketplaceApiService {
   }
 }
 
+class _LoggedSummary {
+  _LoggedSummary({
+    required this.domain,
+    required this.actorRole,
+    required this.actorUserId,
+    required this.uploaded,
+    required this.downloaded,
+  });
+
+  final String domain;
+  final String actorRole;
+  final int actorUserId;
+  final List<SyncTransferLogItem> uploaded;
+  final List<SyncTransferLogItem> downloaded;
+}
+
+class _FakeSyncLogRepository extends SyncLogRepository {
+  _FakeSyncLogRepository(AppDatabase db) : super(SettingsRepository(db));
+
+  final List<_LoggedSummary> summaries = <_LoggedSummary>[];
+
+  @override
+  Future<void> appendSummary({
+    required String domain,
+    required String actorRole,
+    required int actorUserId,
+    required List<SyncTransferLogItem> uploaded,
+    required List<SyncTransferLogItem> downloaded,
+  }) async {
+    summaries.add(
+      _LoggedSummary(
+        domain: domain,
+        actorRole: actorRole,
+        actorUserId: actorUserId,
+        uploaded: List<SyncTransferLogItem>.from(uploaded),
+        downloaded: List<SyncTransferLogItem>.from(downloaded),
+      ),
+    );
+  }
+}
+
 TeacherCourseSummary _teacherCourse(int courseId, String subject) {
   return TeacherCourseSummary(
     courseId: courseId,
@@ -183,9 +226,11 @@ void main() {
       final api = _FakeMarketplaceApiService(
         secureStorage: _TestSecureStorageService(),
       );
+      final syncLogRepository = _FakeSyncLogRepository(db);
       final service = TeacherMarketplaceUploadService(
         db: db,
         marketplaceApi: api,
+        syncLogRepository: syncLogRepository,
       );
 
       final tempDir = await Directory.systemTemp.createTemp(
@@ -202,6 +247,8 @@ void main() {
           ),
           courseSubject: 'Algebra',
           bundleFile: bundleFile,
+          actorUserId: 111,
+          actorRole: 'teacher',
           visibility: 'public',
         );
 
@@ -210,6 +257,16 @@ void main() {
         expect(api.uploadCourseNames, equals(<String>['Algebra']));
         expect(api.publishCourseIds, equals(<int>[444]));
         expect(api.publishVisibilities, equals(<String>['public']));
+        expect(syncLogRepository.summaries, hasLength(1));
+        expect(
+          syncLogRepository.summaries.single.domain,
+          equals('teacher_marketplace_upload'),
+        );
+        expect(syncLogRepository.summaries.single.uploaded, hasLength(1));
+        expect(
+          syncLogRepository.summaries.single.uploaded.single.sizeBytes,
+          equals(3),
+        );
       } finally {
         if (bundleFile.existsSync()) {
           await bundleFile.delete();

@@ -410,7 +410,7 @@ class _SettingsPageState extends State<SettingsPage> {
           onPressed: () async {
             final path = await FilePicker.platform.saveFile(
               dialogTitle: l10n.exportDbDialogTitle,
-              fileName: 'family_teacher_backup.db',
+              fileName: 'tutor1on1_backup.db',
             );
             if (path == null) {
               return;

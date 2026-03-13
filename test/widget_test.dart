@@ -6,11 +6,11 @@ void main() {
     await tester.pumpWidget(
       const MaterialApp(
         home: Scaffold(
-          body: Text('Family Teacher'),
+          body: Text('Tutor1on1'),
         ),
       ),
     );
 
-    expect(find.text('Family Teacher'), findsOneWidget);
+    expect(find.text('Tutor1on1'), findsOneWidget);
   });
 }

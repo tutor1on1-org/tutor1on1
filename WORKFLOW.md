@@ -11,9 +11,11 @@ Last updated: 2026-03-08
 7. Update memory docs intentionally; the memory hook auto-consolidates only memory markdown files whose line-count delta is `>10` from `scripts/memory_line_snapshot.json`.
 8. Update docs (`BUGS.md`, `LOGBOOK.md`, `TODOS.md`, `DONEs.md`) as applicable.
 9. Run `powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1 -NoPostHook`.
-10. Commit and push in the same turn after validation unless the user explicitly says not to push.
-11. For app changes, publish/upload the remote Windows release in the same turn unless the user explicitly says to skip it.
-12. If backend under `remote/` changed, rebuild/deploy/restart per the remote ops workflow before reporting done.
+10. Stage changes with `git add -A` before commit unless a file is clearly temporary/log-only and should stay untracked; in that case add/update `.gitignore` instead of relying on selective staging.
+11. Commit and push in the same turn after validation unless the user explicitly says not to do one of them.
+12. For app changes, publish/upload the remote Windows release in the same turn unless the user explicitly says to skip it.
+13. Do not hand off app changes as "done" before commit + push + publish complete; if one step is blocked, report the blocker explicitly instead of silently stopping early.
+14. If backend under `remote/` changed, rebuild/deploy/restart per the remote ops workflow before reporting done.
 
 ## Bug-fix discipline
 1. Reproduce with evidence (logs, script, or minimal failing test).

@@ -17,6 +17,7 @@ import 'secure_storage_service.dart';
 import 'settings_repository.dart';
 import 'session_service.dart';
 import 'stt_service.dart';
+import 'sync_log_repository.dart';
 import 'sync_state_repository.dart';
 import 'tts_service.dart';
 import 'tts_log_repository.dart';
@@ -39,6 +40,7 @@ class AppServices {
     required this.sessionSyncService,
     required this.sessionUploadCacheService,
     required this.sttService,
+    required this.syncLogRepository,
     required this.ttsService,
     required this.ttsLogRepository,
     required this.llmLogRepository,
@@ -58,6 +60,7 @@ class AppServices {
   final SessionSyncService sessionSyncService;
   final SessionUploadCacheService sessionUploadCacheService;
   final SttService sttService;
+  final SyncLogRepository syncLogRepository;
   final TtsService ttsService;
   final TtsLogRepository ttsLogRepository;
   final LlmLogRepository llmLogRepository;
@@ -83,6 +86,7 @@ class AppServices {
     final promptRepository = PromptRepository(db: db);
     final schemaValidator = SchemaValidator();
     final callRepository = LlmCallRepository(db);
+    final syncLogRepository = SyncLogRepository(settingsRepository);
     final llmLogRepository = LlmLogRepository(settingsRepository);
     final llmService = LlmService(
       settingsRepository,
@@ -105,6 +109,7 @@ class AppServices {
       marketplaceApi: marketplaceApi,
       promptRepository: promptRepository,
       courseArtifactService: courseArtifactService,
+      syncLogRepository: syncLogRepository,
     );
     final sessionUploadCacheService = SessionUploadCacheService(db: db);
     final sessionService = SessionService(
@@ -152,6 +157,7 @@ class AppServices {
       sessionSyncService: sessionSyncService,
       sessionUploadCacheService: sessionUploadCacheService,
       sttService: sttService,
+      syncLogRepository: syncLogRepository,
       ttsService: ttsService,
       ttsLogRepository: ttsLogRepository,
       llmLogRepository: llmLogRepository,
