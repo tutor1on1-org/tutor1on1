@@ -647,6 +647,7 @@ class LlmService {
 
     final responseBuffer = StringBuffer();
     final reasoningBuffer = StringBuffer();
+    int? reasoningTokens;
     var pending = '';
     final stream = response.stream.transform(utf8.decoder);
     await for (final chunk in stream) {
@@ -673,6 +674,7 @@ class LlmService {
           return LlmPreparedResponse(
             responseText: responseBuffer.toString(),
             reasoningText: reasoningBuffer.toString(),
+            reasoningTokens: reasoningTokens,
           );
         }
         try {
@@ -683,11 +685,17 @@ class LlmService {
               provider: provider,
             );
             if (extracted.responseText.isNotEmpty) {
-              responseBuffer.write(extracted.responseText);
+              LlmReasoningSupport.appendJsonAwareFragment(
+                responseBuffer,
+                extracted.responseText,
+              );
               onChunk(extracted.responseText);
             }
             if ((extracted.reasoningText ?? '').isNotEmpty) {
               reasoningBuffer.write(extracted.reasoningText);
+            }
+            if (extracted.reasoningTokens != null) {
+              reasoningTokens = extracted.reasoningTokens;
             }
           }
         } catch (_) {
@@ -698,6 +706,7 @@ class LlmService {
     return LlmPreparedResponse(
       responseText: responseBuffer.toString(),
       reasoningText: reasoningBuffer.toString(),
+      reasoningTokens: reasoningTokens,
     );
   }
 
@@ -732,6 +741,10 @@ class LlmService {
           'content': renderedPrompt,
         },
       ];
+    } else if (stream && provider.id == 'openai') {
+      bodyMap['stream_options'] = <String, dynamic>{
+        'include_usage': true,
+      };
     }
     LlmReasoningSupport.applyRequestFields(
       bodyMap: bodyMap,
@@ -793,6 +806,7 @@ class LlmService {
 
     final responseBuffer = StringBuffer();
     final reasoningBuffer = StringBuffer();
+    int? reasoningTokens;
     String? eventType;
     var pending = '';
     final stream = response.stream.transform(utf8.decoder);
@@ -825,6 +839,7 @@ class LlmService {
           return LlmPreparedResponse(
             responseText: responseBuffer.toString(),
             reasoningText: reasoningBuffer.toString(),
+            reasoningTokens: reasoningTokens,
           );
         }
         try {
@@ -837,11 +852,17 @@ class LlmService {
             final extracted =
                 LlmReasoningSupport.extractAnthropicEvent(payload);
             if (extracted.responseText.isNotEmpty) {
-              responseBuffer.write(extracted.responseText);
+              LlmReasoningSupport.appendJsonAwareFragment(
+                responseBuffer,
+                extracted.responseText,
+              );
               onChunk(extracted.responseText);
             }
             if ((extracted.reasoningText ?? '').isNotEmpty) {
               reasoningBuffer.write(extracted.reasoningText);
+            }
+            if (extracted.reasoningTokens != null) {
+              reasoningTokens = extracted.reasoningTokens;
             }
             continue;
           }
@@ -849,6 +870,7 @@ class LlmService {
             return LlmPreparedResponse(
               responseText: responseBuffer.toString(),
               reasoningText: reasoningBuffer.toString(),
+              reasoningTokens: reasoningTokens,
             );
           }
         } catch (_) {
@@ -859,6 +881,7 @@ class LlmService {
     return LlmPreparedResponse(
       responseText: responseBuffer.toString(),
       reasoningText: reasoningBuffer.toString(),
+      reasoningTokens: reasoningTokens,
     );
   }
 

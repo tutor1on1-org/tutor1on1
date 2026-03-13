@@ -134,5 +134,83 @@ void main() {
         equals(<String, dynamic>{'type': 'disabled'}),
       );
     });
+
+    test('rejoins split JSON string fragments with spaces inside values', () {
+      const provider = LlmProvider(
+        id: 'openai',
+        label: 'OpenAI',
+        baseUrl: 'https://api.openai.com/v1',
+        models: <String>['gpt-5.4'],
+        maxTokensParam: MaxTokensParam.auto,
+        reasoningControlStyle: ReasoningControlStyle.openAiEffort,
+      );
+      final payload = <String, dynamic>{
+        'choices': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'message': <String, dynamic>{
+              'content': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'type': 'text',
+                  'text': '{"teacher_message":"You',
+                },
+                <String, dynamic>{
+                  'type': 'text',
+                  'text': 'already',
+                },
+                <String, dynamic>{
+                  'type': 'text',
+                  'text': 'did',
+                },
+                <String, dynamic>{
+                  'type': 'text',
+                  'text': 'the',
+                },
+                <String, dynamic>{
+                  'type': 'text',
+                  'text': 'hard',
+                },
+                <String, dynamic>{
+                  'type': 'text',
+                  'text': 'part."}',
+                },
+              ],
+            },
+          },
+        ],
+      };
+
+      final extracted = LlmReasoningSupport.extractResponse(
+        payload: payload,
+        provider: provider,
+      );
+
+      expect(
+        extracted.responseText,
+        equals('{"teacher_message":"You already did the hard part."}'),
+      );
+    });
+
+    test('reasoning log keeps requested effort even without returned text', () {
+      const provider = LlmProvider(
+        id: 'openai',
+        label: 'OpenAI',
+        baseUrl: 'https://api.openai.com/v1',
+        models: <String>['gpt-5.4'],
+        maxTokensParam: MaxTokensParam.auto,
+        reasoningControlStyle: ReasoningControlStyle.openAiEffort,
+      );
+
+      final encoded = LlmReasoningSupport.encodeReasoningLog(
+        provider: provider,
+        model: 'gpt-5.4',
+        reasoningEffort: ReasoningEffort.medium,
+      );
+
+      expect(encoded, isNotNull);
+      final decoded = jsonDecode(encoded!) as Map<String, dynamic>;
+      expect(decoded['reasoning_effort'], equals(ReasoningEffort.medium));
+      expect(decoded['reasoning_text'], isNull);
+      expect(decoded['reasoning_tokens'], isNull);
+    });
   });
 }

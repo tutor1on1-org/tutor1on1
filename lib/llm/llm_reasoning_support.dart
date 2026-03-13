@@ -127,14 +127,13 @@ class LlmReasoningSupport {
     String? reasoningText,
     int? reasoningTokens,
   }) {
-    if ((reasoningText ?? '').trim().isEmpty && reasoningTokens == null) {
-      return null;
-    }
     return jsonEncode(<String, dynamic>{
       'provider_id': provider.id,
       'model': model,
       'reasoning_effort': normalizeEffort(reasoningEffort),
-      'reasoning_text': (reasoningText ?? '').trim(),
+      'reasoning_text': (reasoningText ?? '').trim().isEmpty
+          ? null
+          : (reasoningText ?? '').trim(),
       'reasoning_tokens': reasoningTokens,
     });
   }
@@ -293,11 +292,14 @@ class LlmReasoningSupport {
       return value;
     }
     if (value is List) {
-      final buffer = StringBuffer();
+      final fragments = <String>[];
       for (final item in value) {
-        buffer.write(_extractFinalTextValue(item));
+        final fragment = _extractFinalTextValue(item);
+        if (fragment.isNotEmpty) {
+          fragments.add(fragment);
+        }
       }
-      return buffer.toString();
+      return _joinJsonAwareFragments(fragments);
     }
     if (value is Map<String, dynamic>) {
       final type = (value['type'] as String?)?.trim().toLowerCase();
@@ -375,4 +377,81 @@ class LlmReasoningSupport {
     }
     return trimmed;
   }
+
+  static void appendJsonAwareFragment(
+    StringBuffer buffer,
+    String fragment,
+  ) {
+    if (fragment.isEmpty) {
+      return;
+    }
+    final current = buffer.toString();
+    if (_shouldInsertJsonStringSpace(current, fragment)) {
+      buffer.write(' ');
+    }
+    buffer.write(fragment);
+  }
+
+  static String _joinJsonAwareFragments(List<String> fragments) {
+    final cleaned = fragments.where((fragment) => fragment.isNotEmpty).toList();
+    if (cleaned.isEmpty) {
+      return '';
+    }
+    if (cleaned.length == 1) {
+      return cleaned.first;
+    }
+    final buffer = StringBuffer(cleaned.first);
+    for (final fragment in cleaned.skip(1)) {
+      appendJsonAwareFragment(buffer, fragment);
+    }
+    return buffer.toString();
+  }
+
+  static bool _shouldInsertJsonStringSpace(String current, String next) {
+    if (current.isEmpty || next.isEmpty) {
+      return false;
+    }
+    if (!_looksLikeJsonPayload(current)) {
+      return false;
+    }
+    final previousChar = current[current.length - 1];
+    final nextChar = next[0];
+    if (_isWhitespace(previousChar) || _isWhitespace(nextChar)) {
+      return false;
+    }
+    if (!_isWordLike(previousChar) || !_isWordLike(nextChar)) {
+      return false;
+    }
+    return _isInsideJsonString(current);
+  }
+
+  static bool _looksLikeJsonPayload(String value) {
+    final trimmed = value.trimLeft();
+    return trimmed.startsWith('{') || trimmed.startsWith('[');
+  }
+
+  static bool _isInsideJsonString(String value) {
+    var inString = false;
+    var escaping = false;
+    for (final codeUnit in value.codeUnits) {
+      final character = String.fromCharCode(codeUnit);
+      if (escaping) {
+        escaping = false;
+        continue;
+      }
+      if (character == r'\') {
+        escaping = true;
+        continue;
+      }
+      if (character == '"') {
+        inString = !inString;
+      }
+    }
+    return inString;
+  }
+
+  static bool _isWhitespace(String value) => value.trim().isEmpty;
+
+  static bool _isWordLike(String value) =>
+      RegExp(r'[A-Za-z0-9]').hasMatch(value);
 }
