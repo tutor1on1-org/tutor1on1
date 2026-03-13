@@ -78,11 +78,7 @@ class _NodeDetailPageState extends State<NodeDetailPage> {
               ),
               builder: (context, snapshot) {
                 final entry = snapshot.data;
-                final percent = entry == null
-                    ? 0
-                    : (entry.litPercent == 0 && entry.lit
-                        ? 100
-                        : entry.litPercent);
+                final percent = entry == null ? 0 : entry.litPercent;
                 return Text(l10n.courseProgressStatus(percent, 100));
               },
             ),

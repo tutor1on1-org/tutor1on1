@@ -82,6 +82,10 @@ class ProgressEntries extends Table {
   BoolColumn get lit => boolean().withDefault(const Constant(false))();
   IntColumn get litPercent => integer().withDefault(const Constant(0))();
   TextColumn get questionLevel => text().nullable()();
+  IntColumn get easyPassedCount => integer().withDefault(const Constant(0))();
+  IntColumn get mediumPassedCount =>
+      integer().withDefault(const Constant(0))();
+  IntColumn get hardPassedCount => integer().withDefault(const Constant(0))();
   TextColumn get summaryText => text().nullable()();
   TextColumn get summaryRawResponse => text().nullable()();
   BoolColumn get summaryValid => boolean().nullable()();
@@ -302,7 +306,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 27;
+  int get schemaVersion => 28;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -442,6 +446,20 @@ class AppDatabase extends _$AppDatabase {
             if (from >= 5) {
               await m.addColumn(apiConfigs, apiConfigs.reasoningEffort);
             }
+          }
+          if (from < 28) {
+            await customStatement(
+              'ALTER TABLE progress_entries '
+              'ADD COLUMN easy_passed_count INTEGER NOT NULL DEFAULT 0',
+            );
+            await customStatement(
+              'ALTER TABLE progress_entries '
+              'ADD COLUMN medium_passed_count INTEGER NOT NULL DEFAULT 0',
+            );
+            await customStatement(
+              'ALTER TABLE progress_entries '
+              'ADD COLUMN hard_passed_count INTEGER NOT NULL DEFAULT 0',
+            );
           }
         },
       );
@@ -1124,6 +1142,59 @@ WHERE p.student_id = ? AND p.kp_key <> ?
     );
   }
 
+  Future<void> incrementProgressPassedCount({
+    required int studentId,
+    required int courseVersionId,
+    required String kpKey,
+    required String passedLevel,
+  }) async {
+    final normalized = _normalizeLevel(passedLevel);
+    if (normalized == null) {
+      throw StateError('Unsupported passed level: $passedLevel');
+    }
+    final existing = await getProgress(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+      kpKey: kpKey,
+    );
+    final easyCount = (existing?.easyPassedCount ?? 0) +
+        (normalized == 'easy' ? 1 : 0);
+    final mediumCount = (existing?.mediumPassedCount ?? 0) +
+        (normalized == 'medium' ? 1 : 0);
+    final hardCount = (existing?.hardPassedCount ?? 0) +
+        (normalized == 'hard' ? 1 : 0);
+    final derivedLitPercent = _deriveLitPercentFromPassedCounts(
+      easyPassedCount: easyCount,
+      mediumPassedCount: mediumCount,
+      hardPassedCount: hardCount,
+    );
+    if (existing == null) {
+      await into(progressEntries).insert(
+        ProgressEntriesCompanion.insert(
+          studentId: studentId,
+          courseVersionId: courseVersionId,
+          kpKey: kpKey,
+          litPercent: Value(derivedLitPercent),
+          easyPassedCount: Value(easyCount),
+          mediumPassedCount: Value(mediumCount),
+          hardPassedCount: Value(hardCount),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+      return;
+    }
+    await (update(progressEntries)..where((tbl) => tbl.id.equals(existing.id)))
+        .write(
+      ProgressEntriesCompanion(
+        litPercent: Value(derivedLitPercent),
+        easyPassedCount: Value(easyCount),
+        mediumPassedCount: Value(mediumCount),
+        hardPassedCount: Value(hardCount),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
   Future<void> upsertProgressSummary({
     required int studentId,
     required int courseVersionId,
@@ -1141,7 +1212,12 @@ WHERE p.student_id = ? AND p.kp_key <> ?
       kpKey: kpKey,
     );
     final shouldLit = summaryLit == true;
-    final resolvedPercent = litPercent ?? (shouldLit ? 100 : 0);
+    final resolvedPercent = litPercent ??
+        _deriveLitPercentFromPassedCounts(
+          easyPassedCount: existing?.easyPassedCount ?? 0,
+          mediumPassedCount: existing?.mediumPassedCount ?? 0,
+          hardPassedCount: existing?.hardPassedCount ?? 0,
+        );
     if (existing == null) {
       await into(progressEntries).insert(
         ProgressEntriesCompanion.insert(
@@ -1151,6 +1227,9 @@ WHERE p.student_id = ? AND p.kp_key <> ?
           lit: Value(shouldLit),
           litPercent: Value(resolvedPercent),
           questionLevel: Value(questionLevel),
+          easyPassedCount: const Value(0),
+          mediumPassedCount: const Value(0),
+          hardPassedCount: const Value(0),
           summaryText: Value(summaryText),
           summaryRawResponse: Value(summaryRawResponse),
           summaryValid: Value(summaryValid),
@@ -1159,15 +1238,11 @@ WHERE p.student_id = ? AND p.kp_key <> ?
       );
       return;
     }
-    final newLit = existing.lit || shouldLit;
-    final nextPercent = resolvedPercent < existing.litPercent
-        ? existing.litPercent
-        : resolvedPercent;
     await (update(progressEntries)..where((tbl) => tbl.id.equals(existing.id)))
         .write(
       ProgressEntriesCompanion(
-        lit: Value(newLit),
-        litPercent: Value(nextPercent),
+        lit: Value(shouldLit),
+        litPercent: Value(resolvedPercent),
         questionLevel: Value(questionLevel ?? existing.questionLevel),
         summaryText: Value(summaryText),
         summaryRawResponse: Value(summaryRawResponse),
@@ -1183,6 +1258,9 @@ WHERE p.student_id = ? AND p.kp_key <> ?
     required String kpKey,
     required bool lit,
     required int litPercent,
+    int easyPassedCount = 0,
+    int mediumPassedCount = 0,
+    int hardPassedCount = 0,
     String? questionLevel,
     String? summaryText,
     String? summaryRawResponse,
@@ -1204,6 +1282,9 @@ WHERE p.student_id = ? AND p.kp_key <> ?
           lit: Value(lit),
           litPercent: Value(clampedPercent),
           questionLevel: Value(questionLevel),
+          easyPassedCount: Value(easyPassedCount),
+          mediumPassedCount: Value(mediumPassedCount),
+          hardPassedCount: Value(hardPassedCount),
           summaryText: Value(summaryText),
           summaryRawResponse: Value(summaryRawResponse),
           summaryValid: Value(summaryValid),
@@ -1212,12 +1293,26 @@ WHERE p.student_id = ? AND p.kp_key <> ?
       );
       return;
     }
-    final mergedLitPercent = existing.litPercent >= clampedPercent
-        ? existing.litPercent
-        : clampedPercent;
+    final mergedEasyPassedCount = existing.easyPassedCount >= easyPassedCount
+        ? existing.easyPassedCount
+        : easyPassedCount;
+    final mergedMediumPassedCount =
+        existing.mediumPassedCount >= mediumPassedCount
+            ? existing.mediumPassedCount
+            : mediumPassedCount;
+    final mergedHardPassedCount = existing.hardPassedCount >= hardPassedCount
+        ? existing.hardPassedCount
+        : hardPassedCount;
+    final mergedLitPercent = _deriveLitPercentFromPassedCounts(
+      easyPassedCount: mergedEasyPassedCount,
+      mediumPassedCount: mergedMediumPassedCount,
+      hardPassedCount: mergedHardPassedCount,
+      fallbackPercent: existing.litPercent >= clampedPercent
+          ? existing.litPercent
+          : clampedPercent,
+    );
     final mergedQuestionLevel =
         _mergeQuestionLevel(existing.questionLevel, questionLevel);
-    final mergedLit = existing.lit || lit || mergedLitPercent >= 100;
     final shouldTakeIncomingDetails = _shouldTakeIncomingProgressDetails(
       existing: existing,
       incomingLitPercent: clampedPercent,
@@ -1227,9 +1322,12 @@ WHERE p.student_id = ? AND p.kp_key <> ?
     await (update(progressEntries)..where((tbl) => tbl.id.equals(existing.id)))
         .write(
       ProgressEntriesCompanion(
-        lit: Value(mergedLit),
+        lit: Value(shouldTakeIncomingDetails ? lit : existing.lit),
         litPercent: Value(mergedLitPercent),
         questionLevel: Value(mergedQuestionLevel),
+        easyPassedCount: Value(mergedEasyPassedCount),
+        mediumPassedCount: Value(mergedMediumPassedCount),
+        hardPassedCount: Value(mergedHardPassedCount),
         summaryText: Value(
           shouldTakeIncomingDetails ? summaryText : existing.summaryText,
         ),
@@ -1645,20 +1743,42 @@ HAVING COUNT(*) > 1
         continue;
       }
       final sourceIsNewer = progress.updatedAt.isAfter(existing.updatedAt);
+      final mergedEasyPassedCount =
+          existing.easyPassedCount >= progress.easyPassedCount
+              ? existing.easyPassedCount
+              : progress.easyPassedCount;
+      final mergedMediumPassedCount =
+          existing.mediumPassedCount >= progress.mediumPassedCount
+              ? existing.mediumPassedCount
+              : progress.mediumPassedCount;
+      final mergedHardPassedCount =
+          existing.hardPassedCount >= progress.hardPassedCount
+              ? existing.hardPassedCount
+              : progress.hardPassedCount;
       await (update(progressEntries)
             ..where((tbl) => tbl.id.equals(existing.id)))
           .write(
         ProgressEntriesCompanion(
           lit: Value(existing.lit || progress.lit),
-          litPercent: Value(existing.litPercent >= progress.litPercent
-              ? existing.litPercent
-              : progress.litPercent),
+          litPercent: Value(
+            _deriveLitPercentFromPassedCounts(
+              easyPassedCount: mergedEasyPassedCount,
+              mediumPassedCount: mergedMediumPassedCount,
+              hardPassedCount: mergedHardPassedCount,
+              fallbackPercent: existing.litPercent >= progress.litPercent
+                  ? existing.litPercent
+                  : progress.litPercent,
+            ),
+          ),
           questionLevel: Value(
             _mergeQuestionLevel(
               existing.questionLevel,
               progress.questionLevel,
             ),
           ),
+          easyPassedCount: Value(mergedEasyPassedCount),
+          mediumPassedCount: Value(mergedMediumPassedCount),
+          hardPassedCount: Value(mergedHardPassedCount),
           summaryText: Value(
             sourceIsNewer ? progress.summaryText : existing.summaryText,
           ),
@@ -1896,13 +2016,16 @@ HAVING COUNT(*) > 1
             ProgressEntriesCompanion.insert(
               studentId: progress.studentId,
               courseVersionId: toCourseVersionId,
-              kpKey: progress.kpKey,
-              lit: Value(progress.lit),
-              litPercent: Value(progress.litPercent),
-              questionLevel: Value(progress.questionLevel),
-              summaryText: Value(progress.summaryText),
-              summaryRawResponse: Value(progress.summaryRawResponse),
-              summaryValid: Value(progress.summaryValid),
+            kpKey: progress.kpKey,
+            lit: Value(progress.lit),
+            litPercent: Value(progress.litPercent),
+            questionLevel: Value(progress.questionLevel),
+            easyPassedCount: Value(progress.easyPassedCount),
+            mediumPassedCount: Value(progress.mediumPassedCount),
+            hardPassedCount: Value(progress.hardPassedCount),
+            summaryText: Value(progress.summaryText),
+            summaryRawResponse: Value(progress.summaryRawResponse),
+            summaryValid: Value(progress.summaryValid),
               updatedAt: Value(progress.updatedAt),
             ),
             mode: InsertMode.insertOrReplace,
@@ -1910,9 +2033,26 @@ HAVING COUNT(*) > 1
           continue;
         }
         final mergedLit = existing.lit || progress.lit;
-        final mergedLitPercent = existing.litPercent >= progress.litPercent
-            ? existing.litPercent
-            : progress.litPercent;
+        final mergedEasyPassedCount =
+            existing.easyPassedCount >= progress.easyPassedCount
+                ? existing.easyPassedCount
+                : progress.easyPassedCount;
+        final mergedMediumPassedCount =
+            existing.mediumPassedCount >= progress.mediumPassedCount
+                ? existing.mediumPassedCount
+                : progress.mediumPassedCount;
+        final mergedHardPassedCount =
+            existing.hardPassedCount >= progress.hardPassedCount
+                ? existing.hardPassedCount
+                : progress.hardPassedCount;
+        final mergedLitPercent = _deriveLitPercentFromPassedCounts(
+          easyPassedCount: mergedEasyPassedCount,
+          mediumPassedCount: mergedMediumPassedCount,
+          hardPassedCount: mergedHardPassedCount,
+          fallbackPercent: existing.litPercent >= progress.litPercent
+              ? existing.litPercent
+              : progress.litPercent,
+        );
         final mergedQuestionLevel = _mergeQuestionLevel(
           existing.questionLevel,
           progress.questionLevel,
@@ -1925,6 +2065,9 @@ HAVING COUNT(*) > 1
             lit: Value(mergedLit),
             litPercent: Value(mergedLitPercent),
             questionLevel: Value(mergedQuestionLevel),
+            easyPassedCount: Value(mergedEasyPassedCount),
+            mediumPassedCount: Value(mergedMediumPassedCount),
+            hardPassedCount: Value(mergedHardPassedCount),
             summaryText: Value(
               sourceIsNewer ? progress.summaryText : existing.summaryText,
             ),
@@ -2522,6 +2665,34 @@ HAVING COUNT(*) > 1
       default:
         return 0;
     }
+  }
+
+  String? _normalizeLevel(String? value) {
+    final normalized = value?.trim().toLowerCase();
+    if (normalized == 'easy' ||
+        normalized == 'medium' ||
+        normalized == 'hard') {
+      return normalized;
+    }
+    return null;
+  }
+
+  int _deriveLitPercentFromPassedCounts({
+    required int easyPassedCount,
+    required int mediumPassedCount,
+    required int hardPassedCount,
+    int fallbackPercent = 0,
+  }) {
+    if (hardPassedCount > 0) {
+      return 100;
+    }
+    if (mediumPassedCount > 0) {
+      return 66;
+    }
+    if (easyPassedCount > 0) {
+      return 33;
+    }
+    return fallbackPercent.clamp(0, 100);
   }
 
   bool _shouldTakeIncomingProgressDetails({

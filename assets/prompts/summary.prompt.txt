@@ -9,32 +9,37 @@ INPUTS
 - practice_history_summary: {{practice_history_summary}}
 - error_book_summary: {{error_book_summary}}
 - last_evidence: {{last_evidence}}
-- current_mastery_level: {{current_mastery_level}}
 - control_state_json: {{control_state_json}}
 - evidence_state_json: {{evidence_state_json}}
 - evidence_policy: {{evidence_policy}}
 - new_graded_review_evidence_available: {{new_graded_review_evidence_available}}
+- passed_counts_json: {{passed_counts_json}}
+- best_passed_level: {{best_passed_level}}
+- total_passed_count: {{total_passed_count}}
+- current_lit: {{current_lit}}
 - student_summary: {{student_summary}}
 - student_profile: {{student_profile}}
 - student_preferences: {{student_preferences}}
 
 EVIDENCE SEMANTICS
-- evidence_policy tells you what evidence may change mastery.
-- If evidence_policy = REVIEW_ONLY, only graded review evidence may change mastery.
+- evidence_policy tells you what evidence may change lit.
+- If evidence_policy = REVIEW_ONLY, only graded review results may change lit.
+- Use passed_counts_json, best_passed_level, and total_passed_count as the primary evidence summary.
 - If new_graded_review_evidence_available = false, do not say vague things like "no new evidence" without context.
-- Instead, be explicit: there is no new graded review evidence yet, so mastery stays stable for now.
-- Learn-mode explanation alone does not upgrade mastery when evidence_policy = REVIEW_ONLY.
+- Instead, be explicit: there is no new graded review evidence yet, so the lit decision stays stable for now.
+- Learn-mode explanation alone does not upgrade lit when evidence_policy = REVIEW_ONLY.
 
 DECISION RULES
 - Be conservative.
-- Use current_mastery_level as the baseline prior.
-- Use last_evidence and practice_history_summary as primary evidence.
-- If there is no eligible new graded review evidence, keep mastery_level = current_mastery_level.
+- Decide only whether the kp is lit now.
+- Use passed_counts_json, best_passed_level, total_passed_count, and practice_history_summary as primary evidence.
+- Current pass rule for this product: if the student has answered any 2 graded review questions correctly in total for this kp, set lit = true. Otherwise set lit = false.
+- Be explicit in teacher_message about what was achieved so far.
 
 next_step
-- NOT_PASS -> RELEARN
-- PASS_EASY or PASS_MEDIUM -> CONTINUE_REVIEW
-- PASS_HARD -> MOVE_ON
+- lit = false -> CONTINUE_REVIEW
+- lit = true and best_passed_level != "hard" -> CONTINUE_REVIEW
+- lit = true and best_passed_level = "hard" -> MOVE_ON
 
 CONTROL CONTRACT
 Return one control object and nothing else controls app state.
@@ -50,11 +55,6 @@ control = {
 }
 
 CONTROL RULES AFTER SUMMARY
-- next_step = RELEARN
-  - mode = "LEARN"
-  - step = "NEW"
-  - allowed_actions = ["CONTINUE_LEARNING", "TRY_QUESTION", "PAUSE"]
-  - recommended_action = "CONTINUE_LEARNING"
 - next_step = CONTINUE_REVIEW
   - mode = "REVIEW"
   - step = "NEW"
@@ -70,7 +70,7 @@ OUTPUT
 Return exactly one JSON object with only:
 - teacher_message: string
 - control: object following the contract above
-- mastery_level: "NOT_PASS" | "PASS_EASY" | "PASS_MEDIUM" | "PASS_HARD"
-- next_step: "RELEARN" | "CONTINUE_REVIEW" | "MOVE_ON"
+- lit: boolean
+- next_step: "CONTINUE_REVIEW" | "MOVE_ON"
 
 No extra keys. JSON only. Keep teacher_message concise and honest.

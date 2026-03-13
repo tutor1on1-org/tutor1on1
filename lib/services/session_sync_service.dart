@@ -1896,6 +1896,9 @@ class SessionSyncService {
       kpKey: resolved.kpKey,
       lit: resolved.lit,
       litPercent: resolved.litPercent,
+      easyPassedCount: resolved.easyPassedCount,
+      mediumPassedCount: resolved.mediumPassedCount,
+      hardPassedCount: resolved.hardPassedCount,
       questionLevel:
           resolved.questionLevel.isEmpty ? null : resolved.questionLevel,
       summaryText: resolved.summaryText.isEmpty ? null : resolved.summaryText,
@@ -1990,6 +1993,18 @@ class SessionSyncService {
         rawItem['lit_percent'],
         field: 'lit_percent',
       );
+      final easyPassedCount = _parsePayloadOptionalInt(
+        rawItem['easy_passed_count'],
+        field: 'easy_passed_count',
+      );
+      final mediumPassedCount = _parsePayloadOptionalInt(
+        rawItem['medium_passed_count'],
+        field: 'medium_passed_count',
+      );
+      final hardPassedCount = _parsePayloadOptionalInt(
+        rawItem['hard_passed_count'],
+        field: 'hard_passed_count',
+      );
       results.add(
         ProgressSyncItem(
           cursorId: 0,
@@ -2007,6 +2022,9 @@ class SessionSyncService {
             field: 'question_level',
             isRequired: false,
           ),
+          easyPassedCount: easyPassedCount < 0 ? 0 : easyPassedCount,
+          mediumPassedCount: mediumPassedCount < 0 ? 0 : mediumPassedCount,
+          hardPassedCount: hardPassedCount < 0 ? 0 : hardPassedCount,
           summaryText: _parsePayloadString(
             rawItem['summary_text'],
             field: 'summary_text',
@@ -2564,6 +2582,9 @@ class SessionSyncService {
       'lit': entry.lit,
       'lit_percent': entry.litPercent,
       'question_level': entry.questionLevel ?? '',
+      'easy_passed_count': entry.easyPassedCount,
+      'medium_passed_count': entry.mediumPassedCount,
+      'hard_passed_count': entry.hardPassedCount,
       'summary_text': entry.summaryText ?? '',
       'summary_raw_response': entry.summaryRawResponse ?? '',
       'summary_valid': entry.summaryValid,
@@ -2586,6 +2607,9 @@ class SessionSyncService {
         'lit': entry.lit,
         'lit_percent': entry.litPercent,
         'question_level': entry.questionLevel ?? '',
+        'easy_passed_count': entry.easyPassedCount,
+        'medium_passed_count': entry.mediumPassedCount,
+        'hard_passed_count': entry.hardPassedCount,
         'summary_text': entry.summaryText ?? '',
         'summary_raw_response': entry.summaryRawResponse ?? '',
         'summary_valid': entry.summaryValid,
@@ -2605,6 +2629,9 @@ class SessionSyncService {
         'lit': item.lit,
         'lit_percent': item.litPercent,
         'question_level': item.questionLevel,
+        'easy_passed_count': item.easyPassedCount,
+        'medium_passed_count': item.mediumPassedCount,
+        'hard_passed_count': item.hardPassedCount,
         'summary_text': item.summaryText,
         'summary_raw_response': item.summaryRawResponse,
         'summary_valid': item.summaryValid,
@@ -2622,6 +2649,9 @@ class SessionSyncService {
         'lit': payload.lit,
         'lit_percent': payload.litPercent,
         'question_level': payload.questionLevel,
+        'easy_passed_count': payload.easyPassedCount,
+        'medium_passed_count': payload.mediumPassedCount,
+        'hard_passed_count': payload.hardPassedCount,
         'summary_text': payload.summaryText,
         'summary_raw_response': payload.summaryRawResponse,
         'summary_valid': payload.summaryValid,
@@ -2726,6 +2756,9 @@ class SessionSyncService {
         'lit': item.lit,
         'lit_percent': item.litPercent,
         'question_level': item.questionLevel,
+        'easy_passed_count': item.easyPassedCount,
+        'medium_passed_count': item.mediumPassedCount,
+        'hard_passed_count': item.hardPassedCount,
         'summary_text': item.summaryText,
         'summary_raw_response': item.summaryRawResponse,
         'summary_valid': item.summaryValid,
@@ -2868,6 +2901,9 @@ class SessionSyncService {
         lit: item.lit,
         litPercent: item.litPercent.clamp(0, 100).toInt(),
         questionLevel: item.questionLevel,
+        easyPassedCount: item.easyPassedCount,
+        mediumPassedCount: item.mediumPassedCount,
+        hardPassedCount: item.hardPassedCount,
         summaryText: item.summaryText,
         summaryRawResponse: item.summaryRawResponse,
         summaryValid: item.summaryValid,
@@ -2904,6 +2940,18 @@ class SessionSyncService {
       payload['lit_percent'],
       field: 'lit_percent',
     );
+    final easyPassedCount = _parsePayloadOptionalInt(
+      payload['easy_passed_count'],
+      field: 'easy_passed_count',
+    );
+    final mediumPassedCount = _parsePayloadOptionalInt(
+      payload['medium_passed_count'],
+      field: 'medium_passed_count',
+    );
+    final hardPassedCount = _parsePayloadOptionalInt(
+      payload['hard_passed_count'],
+      field: 'hard_passed_count',
+    );
     final payloadCourseSubject = _parsePayloadString(
       payload['course_subject'],
       field: 'course_subject',
@@ -2919,6 +2967,9 @@ class SessionSyncService {
       litPercent: litPercentRaw.clamp(0, 100).toInt(),
       questionLevel: _parsePayloadString(payload['question_level'],
           field: 'question_level'),
+      easyPassedCount: easyPassedCount < 0 ? 0 : easyPassedCount,
+      mediumPassedCount: mediumPassedCount < 0 ? 0 : mediumPassedCount,
+      hardPassedCount: hardPassedCount < 0 ? 0 : hardPassedCount,
       summaryText:
           _parsePayloadString(payload['summary_text'], field: 'summary_text'),
       summaryRawResponse: _parsePayloadString(
@@ -3004,6 +3055,16 @@ class SessionSyncService {
       }
     }
     throw StateError('Progress payload field "$field" invalid.');
+  }
+
+  int _parsePayloadOptionalInt(
+    Object? value, {
+    required String field,
+  }) {
+    if (value == null) {
+      return 0;
+    }
+    return _parsePayloadInt(value, field: field);
   }
 
   bool _parsePayloadBool(
@@ -3190,6 +3251,9 @@ class _ResolvedProgressPayload {
     required this.lit,
     required this.litPercent,
     required this.questionLevel,
+    required this.easyPassedCount,
+    required this.mediumPassedCount,
+    required this.hardPassedCount,
     required this.summaryText,
     required this.summaryRawResponse,
     required this.summaryValid,
@@ -3202,6 +3266,9 @@ class _ResolvedProgressPayload {
   final bool lit;
   final int litPercent;
   final String questionLevel;
+  final int easyPassedCount;
+  final int mediumPassedCount;
+  final int hardPassedCount;
   final String summaryText;
   final String summaryRawResponse;
   final bool? summaryValid;

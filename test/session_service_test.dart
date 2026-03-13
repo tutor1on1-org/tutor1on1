@@ -941,7 +941,7 @@ void main() {
                 ],
                 recommendedAction: 'NEXT_QUESTION',
               ),
-              'mastery_level': 'PASS_EASY',
+              'lit': false,
               'next_step': 'CONTINUE_REVIEW',
             }),
             callHash: 'summarize_after_review_finish',
@@ -1154,18 +1154,18 @@ void main() {
               'teacher_message':
                   'Keep relearning this skill before more review.',
               'control': _control(
-                mode: 'LEARN',
+                mode: 'REVIEW',
                 step: 'NEW',
                 turnFinished: true,
                 allowedActions: const <String>[
-                  'CONTINUE_LEARNING',
-                  'TRY_QUESTION',
+                  'NEXT_QUESTION',
+                  'LEARN',
                   'PAUSE',
                 ],
-                recommendedAction: 'CONTINUE_LEARNING',
+                recommendedAction: 'NEXT_QUESTION',
               ),
-              'mastery_level': 'NOT_PASS',
-              'next_step': 'RELEARN',
+              'lit': false,
+              'next_step': 'CONTINUE_REVIEW',
             }),
             callHash: 'summary_retry_good',
           ),
@@ -1293,7 +1293,7 @@ void main() {
                 ],
                 recommendedAction: 'NEXT_QUESTION',
               ),
-              'mastery_level': 'NOT_PASS',
+              'lit': false,
               'next_step': 'CONTINUE_REVIEW',
             }),
             callHash: 'summary_cache_fallback',
@@ -1449,6 +1449,12 @@ void main() {
         kpKey: fixture.node.kpKey,
         questionLevel: 'hard',
       );
+      await db.incrementProgressPassedCount(
+        studentId: session.studentId,
+        courseVersionId: fixture.courseVersion.id,
+        kpKey: fixture.node.kpKey,
+        passedLevel: 'hard',
+      );
       await db.into(db.chatMessages).insert(
             ChatMessagesCompanion.insert(
               sessionId: fixture.sessionId,
@@ -1496,7 +1502,7 @@ void main() {
                 ],
                 recommendedAction: 'NEXT_QUESTION',
               ),
-              'mastery_level': 'PASS_EASY',
+              'lit': false,
               'next_step': 'CONTINUE_REVIEW',
             }),
             callHash: 'summary_stabilize_1',
@@ -1523,10 +1529,20 @@ void main() {
     },
   );
 
-  test('startSummarize stores parsed summary and mastery fields', () async {
+  test('startSummarize stores parsed summary and lit fields', () async {
     final fixture = await _createTutorFixture(
       db: db,
       service: service,
+    );
+    final sessionBeforeSummary = await db.getSession(fixture.sessionId);
+    if (sessionBeforeSummary == null) {
+      throw StateError('Session not found for summary store test.');
+    }
+    await db.incrementProgressPassedCount(
+      studentId: sessionBeforeSummary.studentId,
+      courseVersionId: fixture.courseVersion.id,
+      kpKey: fixture.node.kpKey,
+      passedLevel: 'hard',
     );
     final summaryPayload = jsonEncode(<String, Object?>{
       'teacher_message': 'Student can move to next topic.',
@@ -1537,7 +1553,7 @@ void main() {
         allowedActions: const <String>['PAUSE'],
         recommendedAction: 'PAUSE',
       ),
-      'mastery_level': 'PASS_HARD',
+      'lit': true,
       'next_step': 'MOVE_ON',
     });
     llmService.queueCall(

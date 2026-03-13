@@ -642,8 +642,7 @@ class _CourseProgressTileState extends State<_CourseProgressTile> {
       if (!leafIds.contains(entry.kpKey)) {
         continue;
       }
-      final percent =
-          entry.litPercent == 0 && entry.lit ? 100 : entry.litPercent;
+      final percent = entry.litPercent;
       final clamped = percent.clamp(0, 100);
       sum += clamped;
     }

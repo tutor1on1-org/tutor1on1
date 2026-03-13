@@ -286,6 +286,9 @@ class TutorEvidenceState {
     required this.policy,
     required this.gradedReviewCount,
     required this.summaryConsumedReviewCount,
+    required this.easyPassedCount,
+    required this.mediumPassedCount,
+    required this.hardPassedCount,
     required this.lastAssessedAction,
     required this.lastMasteryLevel,
     required this.lastEvidence,
@@ -298,6 +301,9 @@ class TutorEvidenceState {
   final String policy;
   final int gradedReviewCount;
   final int summaryConsumedReviewCount;
+  final int easyPassedCount;
+  final int mediumPassedCount;
+  final int hardPassedCount;
   final String? lastAssessedAction;
   final String? lastMasteryLevel;
   final Map<String, dynamic>? lastEvidence;
@@ -309,6 +315,9 @@ class TutorEvidenceState {
     String? policy,
     int? gradedReviewCount,
     int? summaryConsumedReviewCount,
+    int? easyPassedCount,
+    int? mediumPassedCount,
+    int? hardPassedCount,
     String? lastAssessedAction,
     String? lastMasteryLevel,
     Map<String, dynamic>? lastEvidence,
@@ -319,6 +328,9 @@ class TutorEvidenceState {
       gradedReviewCount: gradedReviewCount ?? this.gradedReviewCount,
       summaryConsumedReviewCount:
           summaryConsumedReviewCount ?? this.summaryConsumedReviewCount,
+      easyPassedCount: easyPassedCount ?? this.easyPassedCount,
+      mediumPassedCount: mediumPassedCount ?? this.mediumPassedCount,
+      hardPassedCount: hardPassedCount ?? this.hardPassedCount,
       lastAssessedAction: lastAssessedAction ?? this.lastAssessedAction,
       lastMasteryLevel: lastMasteryLevel ?? this.lastMasteryLevel,
       lastEvidence: lastEvidence ?? this.lastEvidence,
@@ -331,6 +343,9 @@ class TutorEvidenceState {
       'policy': policy,
       'graded_review_count': gradedReviewCount,
       'summary_consumed_review_count': summaryConsumedReviewCount,
+      'easy_passed_count': easyPassedCount,
+      'medium_passed_count': mediumPassedCount,
+      'hard_passed_count': hardPassedCount,
       'last_assessed_action': lastAssessedAction,
       'last_mastery_level': lastMasteryLevel,
       'last_evidence': lastEvidence,
@@ -345,6 +360,9 @@ class TutorEvidenceState {
       policy: reviewOnlyPolicy,
       gradedReviewCount: 0,
       summaryConsumedReviewCount: 0,
+      easyPassedCount: 0,
+      mediumPassedCount: 0,
+      hardPassedCount: 0,
       lastAssessedAction: null,
       lastMasteryLevel: null,
       lastEvidence: null,
@@ -376,6 +394,9 @@ class TutorEvidenceState {
       gradedReviewCount: (json['graded_review_count'] as num?)?.toInt() ?? 0,
       summaryConsumedReviewCount:
           (json['summary_consumed_review_count'] as num?)?.toInt() ?? 0,
+      easyPassedCount: (json['easy_passed_count'] as num?)?.toInt() ?? 0,
+      mediumPassedCount: (json['medium_passed_count'] as num?)?.toInt() ?? 0,
+      hardPassedCount: (json['hard_passed_count'] as num?)?.toInt() ?? 0,
       lastAssessedAction: (json['last_assessed_action'] as String?)?.trim(),
       lastMasteryLevel: (json['last_mastery_level'] as String?)?.trim(),
       lastEvidence: json['last_evidence'] is Map<String, dynamic>
@@ -388,6 +409,7 @@ class TutorEvidenceState {
     required TutorEvidenceState current,
     required String actionMode,
     required Map<String, dynamic>? parsed,
+    String? passedLevel,
   }) {
     final normalizedAction = actionMode.trim().toUpperCase();
     if (normalizedAction == 'REVIEW' && parsed != null) {
@@ -395,15 +417,27 @@ class TutorEvidenceState {
       final turnState = (parsed['turn_state'] as String?)?.trim().toUpperCase();
       final grading = parsed['grading'];
       final evidence = parsed['evidence'];
-      final masteryLevel = (parsed['mastery_level'] as String?)?.trim();
       final turnFinished = control?.turnFinished ?? (turnState == 'FINISHED');
+      final isCorrect = grading is Map<String, dynamic> &&
+          grading['is_correct'] is bool &&
+          grading['is_correct'] == true;
       final isGradedFinal = turnFinished && grading is Map<String, dynamic>;
+      final normalizedPassedLevel = passedLevel?.trim().toLowerCase();
       return current.copyWith(
         gradedReviewCount: current.gradedReviewCount + (isGradedFinal ? 1 : 0),
+        easyPassedCount: current.easyPassedCount +
+            (isGradedFinal && isCorrect && normalizedPassedLevel == 'easy'
+                ? 1
+                : 0),
+        mediumPassedCount: current.mediumPassedCount +
+            (isGradedFinal && isCorrect && normalizedPassedLevel == 'medium'
+                ? 1
+                : 0),
+        hardPassedCount: current.hardPassedCount +
+            (isGradedFinal && isCorrect && normalizedPassedLevel == 'hard'
+                ? 1
+                : 0),
         lastAssessedAction: 'REVIEW',
-        lastMasteryLevel: masteryLevel != null && masteryLevel.isNotEmpty
-            ? masteryLevel
-            : current.lastMasteryLevel,
         lastEvidence: evidence is Map<String, dynamic>
             ? Map<String, dynamic>.from(evidence)
             : current.lastEvidence,

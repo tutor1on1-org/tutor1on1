@@ -1952,6 +1952,30 @@ class $ProgressEntriesTable extends ProgressEntries
   late final GeneratedColumn<String> questionLevel = GeneratedColumn<String>(
       'question_level', aliasedName, true,
       type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _easyPassedCountMeta =
+      const VerificationMeta('easyPassedCount');
+  @override
+  late final GeneratedColumn<int> easyPassedCount = GeneratedColumn<int>(
+      'easy_passed_count', aliasedName, false,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(0));
+  static const VerificationMeta _mediumPassedCountMeta =
+      const VerificationMeta('mediumPassedCount');
+  @override
+  late final GeneratedColumn<int> mediumPassedCount = GeneratedColumn<int>(
+      'medium_passed_count', aliasedName, false,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(0));
+  static const VerificationMeta _hardPassedCountMeta =
+      const VerificationMeta('hardPassedCount');
+  @override
+  late final GeneratedColumn<int> hardPassedCount = GeneratedColumn<int>(
+      'hard_passed_count', aliasedName, false,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(0));
   static const VerificationMeta _summaryTextMeta =
       const VerificationMeta('summaryText');
   @override
@@ -1990,6 +2014,9 @@ class $ProgressEntriesTable extends ProgressEntries
         lit,
         litPercent,
         questionLevel,
+        easyPassedCount,
+        mediumPassedCount,
+        hardPassedCount,
         summaryText,
         summaryRawResponse,
         summaryValid,
@@ -2044,6 +2071,24 @@ class $ProgressEntriesTable extends ProgressEntries
           questionLevel.isAcceptableOrUnknown(
               data['question_level']!, _questionLevelMeta));
     }
+    if (data.containsKey('easy_passed_count')) {
+      context.handle(
+          _easyPassedCountMeta,
+          easyPassedCount.isAcceptableOrUnknown(
+              data['easy_passed_count']!, _easyPassedCountMeta));
+    }
+    if (data.containsKey('medium_passed_count')) {
+      context.handle(
+          _mediumPassedCountMeta,
+          mediumPassedCount.isAcceptableOrUnknown(
+              data['medium_passed_count']!, _mediumPassedCountMeta));
+    }
+    if (data.containsKey('hard_passed_count')) {
+      context.handle(
+          _hardPassedCountMeta,
+          hardPassedCount.isAcceptableOrUnknown(
+              data['hard_passed_count']!, _hardPassedCountMeta));
+    }
     if (data.containsKey('summary_text')) {
       context.handle(
           _summaryTextMeta,
@@ -2093,6 +2138,12 @@ class $ProgressEntriesTable extends ProgressEntries
           .read(DriftSqlType.int, data['${effectivePrefix}lit_percent'])!,
       questionLevel: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}question_level']),
+      easyPassedCount: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}easy_passed_count'])!,
+      mediumPassedCount: attachedDatabase.typeMapping.read(
+          DriftSqlType.int, data['${effectivePrefix}medium_passed_count'])!,
+      hardPassedCount: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}hard_passed_count'])!,
       summaryText: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}summary_text']),
       summaryRawResponse: attachedDatabase.typeMapping.read(
@@ -2118,6 +2169,9 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
   final bool lit;
   final int litPercent;
   final String? questionLevel;
+  final int easyPassedCount;
+  final int mediumPassedCount;
+  final int hardPassedCount;
   final String? summaryText;
   final String? summaryRawResponse;
   final bool? summaryValid;
@@ -2130,6 +2184,9 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
       required this.lit,
       required this.litPercent,
       this.questionLevel,
+      required this.easyPassedCount,
+      required this.mediumPassedCount,
+      required this.hardPassedCount,
       this.summaryText,
       this.summaryRawResponse,
       this.summaryValid,
@@ -2146,6 +2203,9 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
     if (!nullToAbsent || questionLevel != null) {
       map['question_level'] = Variable<String>(questionLevel);
     }
+    map['easy_passed_count'] = Variable<int>(easyPassedCount);
+    map['medium_passed_count'] = Variable<int>(mediumPassedCount);
+    map['hard_passed_count'] = Variable<int>(hardPassedCount);
     if (!nullToAbsent || summaryText != null) {
       map['summary_text'] = Variable<String>(summaryText);
     }
@@ -2170,6 +2230,9 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
       questionLevel: questionLevel == null && nullToAbsent
           ? const Value.absent()
           : Value(questionLevel),
+      easyPassedCount: Value(easyPassedCount),
+      mediumPassedCount: Value(mediumPassedCount),
+      hardPassedCount: Value(hardPassedCount),
       summaryText: summaryText == null && nullToAbsent
           ? const Value.absent()
           : Value(summaryText),
@@ -2194,6 +2257,9 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
       lit: serializer.fromJson<bool>(json['lit']),
       litPercent: serializer.fromJson<int>(json['litPercent']),
       questionLevel: serializer.fromJson<String?>(json['questionLevel']),
+      easyPassedCount: serializer.fromJson<int>(json['easyPassedCount']),
+      mediumPassedCount: serializer.fromJson<int>(json['mediumPassedCount']),
+      hardPassedCount: serializer.fromJson<int>(json['hardPassedCount']),
       summaryText: serializer.fromJson<String?>(json['summaryText']),
       summaryRawResponse:
           serializer.fromJson<String?>(json['summaryRawResponse']),
@@ -2212,6 +2278,9 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
       'lit': serializer.toJson<bool>(lit),
       'litPercent': serializer.toJson<int>(litPercent),
       'questionLevel': serializer.toJson<String?>(questionLevel),
+      'easyPassedCount': serializer.toJson<int>(easyPassedCount),
+      'mediumPassedCount': serializer.toJson<int>(mediumPassedCount),
+      'hardPassedCount': serializer.toJson<int>(hardPassedCount),
       'summaryText': serializer.toJson<String?>(summaryText),
       'summaryRawResponse': serializer.toJson<String?>(summaryRawResponse),
       'summaryValid': serializer.toJson<bool?>(summaryValid),
@@ -2227,6 +2296,9 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
           bool? lit,
           int? litPercent,
           Value<String?> questionLevel = const Value.absent(),
+          int? easyPassedCount,
+          int? mediumPassedCount,
+          int? hardPassedCount,
           Value<String?> summaryText = const Value.absent(),
           Value<String?> summaryRawResponse = const Value.absent(),
           Value<bool?> summaryValid = const Value.absent(),
@@ -2240,6 +2312,9 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
         litPercent: litPercent ?? this.litPercent,
         questionLevel:
             questionLevel.present ? questionLevel.value : this.questionLevel,
+        easyPassedCount: easyPassedCount ?? this.easyPassedCount,
+        mediumPassedCount: mediumPassedCount ?? this.mediumPassedCount,
+        hardPassedCount: hardPassedCount ?? this.hardPassedCount,
         summaryText: summaryText.present ? summaryText.value : this.summaryText,
         summaryRawResponse: summaryRawResponse.present
             ? summaryRawResponse.value
@@ -2262,6 +2337,15 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
       questionLevel: data.questionLevel.present
           ? data.questionLevel.value
           : this.questionLevel,
+      easyPassedCount: data.easyPassedCount.present
+          ? data.easyPassedCount.value
+          : this.easyPassedCount,
+      mediumPassedCount: data.mediumPassedCount.present
+          ? data.mediumPassedCount.value
+          : this.mediumPassedCount,
+      hardPassedCount: data.hardPassedCount.present
+          ? data.hardPassedCount.value
+          : this.hardPassedCount,
       summaryText:
           data.summaryText.present ? data.summaryText.value : this.summaryText,
       summaryRawResponse: data.summaryRawResponse.present
@@ -2284,6 +2368,9 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
           ..write('lit: $lit, ')
           ..write('litPercent: $litPercent, ')
           ..write('questionLevel: $questionLevel, ')
+          ..write('easyPassedCount: $easyPassedCount, ')
+          ..write('mediumPassedCount: $mediumPassedCount, ')
+          ..write('hardPassedCount: $hardPassedCount, ')
           ..write('summaryText: $summaryText, ')
           ..write('summaryRawResponse: $summaryRawResponse, ')
           ..write('summaryValid: $summaryValid, ')
@@ -2301,6 +2388,9 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
       lit,
       litPercent,
       questionLevel,
+      easyPassedCount,
+      mediumPassedCount,
+      hardPassedCount,
       summaryText,
       summaryRawResponse,
       summaryValid,
@@ -2316,6 +2406,9 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
           other.lit == this.lit &&
           other.litPercent == this.litPercent &&
           other.questionLevel == this.questionLevel &&
+          other.easyPassedCount == this.easyPassedCount &&
+          other.mediumPassedCount == this.mediumPassedCount &&
+          other.hardPassedCount == this.hardPassedCount &&
           other.summaryText == this.summaryText &&
           other.summaryRawResponse == this.summaryRawResponse &&
           other.summaryValid == this.summaryValid &&
@@ -2330,6 +2423,9 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
   final Value<bool> lit;
   final Value<int> litPercent;
   final Value<String?> questionLevel;
+  final Value<int> easyPassedCount;
+  final Value<int> mediumPassedCount;
+  final Value<int> hardPassedCount;
   final Value<String?> summaryText;
   final Value<String?> summaryRawResponse;
   final Value<bool?> summaryValid;
@@ -2342,6 +2438,9 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
     this.lit = const Value.absent(),
     this.litPercent = const Value.absent(),
     this.questionLevel = const Value.absent(),
+    this.easyPassedCount = const Value.absent(),
+    this.mediumPassedCount = const Value.absent(),
+    this.hardPassedCount = const Value.absent(),
     this.summaryText = const Value.absent(),
     this.summaryRawResponse = const Value.absent(),
     this.summaryValid = const Value.absent(),
@@ -2355,6 +2454,9 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
     this.lit = const Value.absent(),
     this.litPercent = const Value.absent(),
     this.questionLevel = const Value.absent(),
+    this.easyPassedCount = const Value.absent(),
+    this.mediumPassedCount = const Value.absent(),
+    this.hardPassedCount = const Value.absent(),
     this.summaryText = const Value.absent(),
     this.summaryRawResponse = const Value.absent(),
     this.summaryValid = const Value.absent(),
@@ -2370,6 +2472,9 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
     Expression<bool>? lit,
     Expression<int>? litPercent,
     Expression<String>? questionLevel,
+    Expression<int>? easyPassedCount,
+    Expression<int>? mediumPassedCount,
+    Expression<int>? hardPassedCount,
     Expression<String>? summaryText,
     Expression<String>? summaryRawResponse,
     Expression<bool>? summaryValid,
@@ -2383,6 +2488,9 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
       if (lit != null) 'lit': lit,
       if (litPercent != null) 'lit_percent': litPercent,
       if (questionLevel != null) 'question_level': questionLevel,
+      if (easyPassedCount != null) 'easy_passed_count': easyPassedCount,
+      if (mediumPassedCount != null) 'medium_passed_count': mediumPassedCount,
+      if (hardPassedCount != null) 'hard_passed_count': hardPassedCount,
       if (summaryText != null) 'summary_text': summaryText,
       if (summaryRawResponse != null)
         'summary_raw_response': summaryRawResponse,
@@ -2399,6 +2507,9 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
       Value<bool>? lit,
       Value<int>? litPercent,
       Value<String?>? questionLevel,
+      Value<int>? easyPassedCount,
+      Value<int>? mediumPassedCount,
+      Value<int>? hardPassedCount,
       Value<String?>? summaryText,
       Value<String?>? summaryRawResponse,
       Value<bool?>? summaryValid,
@@ -2411,6 +2522,9 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
       lit: lit ?? this.lit,
       litPercent: litPercent ?? this.litPercent,
       questionLevel: questionLevel ?? this.questionLevel,
+      easyPassedCount: easyPassedCount ?? this.easyPassedCount,
+      mediumPassedCount: mediumPassedCount ?? this.mediumPassedCount,
+      hardPassedCount: hardPassedCount ?? this.hardPassedCount,
       summaryText: summaryText ?? this.summaryText,
       summaryRawResponse: summaryRawResponse ?? this.summaryRawResponse,
       summaryValid: summaryValid ?? this.summaryValid,
@@ -2442,6 +2556,15 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
     if (questionLevel.present) {
       map['question_level'] = Variable<String>(questionLevel.value);
     }
+    if (easyPassedCount.present) {
+      map['easy_passed_count'] = Variable<int>(easyPassedCount.value);
+    }
+    if (mediumPassedCount.present) {
+      map['medium_passed_count'] = Variable<int>(mediumPassedCount.value);
+    }
+    if (hardPassedCount.present) {
+      map['hard_passed_count'] = Variable<int>(hardPassedCount.value);
+    }
     if (summaryText.present) {
       map['summary_text'] = Variable<String>(summaryText.value);
     }
@@ -2467,6 +2590,9 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
           ..write('lit: $lit, ')
           ..write('litPercent: $litPercent, ')
           ..write('questionLevel: $questionLevel, ')
+          ..write('easyPassedCount: $easyPassedCount, ')
+          ..write('mediumPassedCount: $mediumPassedCount, ')
+          ..write('hardPassedCount: $hardPassedCount, ')
           ..write('summaryText: $summaryText, ')
           ..write('summaryRawResponse: $summaryRawResponse, ')
           ..write('summaryValid: $summaryValid, ')
@@ -9372,6 +9498,9 @@ typedef $$ProgressEntriesTableCreateCompanionBuilder = ProgressEntriesCompanion
   Value<bool> lit,
   Value<int> litPercent,
   Value<String?> questionLevel,
+  Value<int> easyPassedCount,
+  Value<int> mediumPassedCount,
+  Value<int> hardPassedCount,
   Value<String?> summaryText,
   Value<String?> summaryRawResponse,
   Value<bool?> summaryValid,
@@ -9386,6 +9515,9 @@ typedef $$ProgressEntriesTableUpdateCompanionBuilder = ProgressEntriesCompanion
   Value<bool> lit,
   Value<int> litPercent,
   Value<String?> questionLevel,
+  Value<int> easyPassedCount,
+  Value<int> mediumPassedCount,
+  Value<int> hardPassedCount,
   Value<String?> summaryText,
   Value<String?> summaryRawResponse,
   Value<bool?> summaryValid,
@@ -9422,6 +9554,18 @@ class $$ProgressEntriesTableFilterComposer
 
   ColumnFilters<String> get questionLevel => $composableBuilder(
       column: $table.questionLevel, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get easyPassedCount => $composableBuilder(
+      column: $table.easyPassedCount,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get mediumPassedCount => $composableBuilder(
+      column: $table.mediumPassedCount,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get hardPassedCount => $composableBuilder(
+      column: $table.hardPassedCount,
+      builder: (column) => ColumnFilters(column));
 
   ColumnFilters<String> get summaryText => $composableBuilder(
       column: $table.summaryText, builder: (column) => ColumnFilters(column));
@@ -9469,6 +9613,18 @@ class $$ProgressEntriesTableOrderingComposer
       column: $table.questionLevel,
       builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<int> get easyPassedCount => $composableBuilder(
+      column: $table.easyPassedCount,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get mediumPassedCount => $composableBuilder(
+      column: $table.mediumPassedCount,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get hardPassedCount => $composableBuilder(
+      column: $table.hardPassedCount,
+      builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<String> get summaryText => $composableBuilder(
       column: $table.summaryText, builder: (column) => ColumnOrderings(column));
 
@@ -9513,6 +9669,15 @@ class $$ProgressEntriesTableAnnotationComposer
 
   GeneratedColumn<String> get questionLevel => $composableBuilder(
       column: $table.questionLevel, builder: (column) => column);
+
+  GeneratedColumn<int> get easyPassedCount => $composableBuilder(
+      column: $table.easyPassedCount, builder: (column) => column);
+
+  GeneratedColumn<int> get mediumPassedCount => $composableBuilder(
+      column: $table.mediumPassedCount, builder: (column) => column);
+
+  GeneratedColumn<int> get hardPassedCount => $composableBuilder(
+      column: $table.hardPassedCount, builder: (column) => column);
 
   GeneratedColumn<String> get summaryText => $composableBuilder(
       column: $table.summaryText, builder: (column) => column);
@@ -9561,6 +9726,9 @@ class $$ProgressEntriesTableTableManager extends RootTableManager<
             Value<bool> lit = const Value.absent(),
             Value<int> litPercent = const Value.absent(),
             Value<String?> questionLevel = const Value.absent(),
+            Value<int> easyPassedCount = const Value.absent(),
+            Value<int> mediumPassedCount = const Value.absent(),
+            Value<int> hardPassedCount = const Value.absent(),
             Value<String?> summaryText = const Value.absent(),
             Value<String?> summaryRawResponse = const Value.absent(),
             Value<bool?> summaryValid = const Value.absent(),
@@ -9574,6 +9742,9 @@ class $$ProgressEntriesTableTableManager extends RootTableManager<
             lit: lit,
             litPercent: litPercent,
             questionLevel: questionLevel,
+            easyPassedCount: easyPassedCount,
+            mediumPassedCount: mediumPassedCount,
+            hardPassedCount: hardPassedCount,
             summaryText: summaryText,
             summaryRawResponse: summaryRawResponse,
             summaryValid: summaryValid,
@@ -9587,6 +9758,9 @@ class $$ProgressEntriesTableTableManager extends RootTableManager<
             Value<bool> lit = const Value.absent(),
             Value<int> litPercent = const Value.absent(),
             Value<String?> questionLevel = const Value.absent(),
+            Value<int> easyPassedCount = const Value.absent(),
+            Value<int> mediumPassedCount = const Value.absent(),
+            Value<int> hardPassedCount = const Value.absent(),
             Value<String?> summaryText = const Value.absent(),
             Value<String?> summaryRawResponse = const Value.absent(),
             Value<bool?> summaryValid = const Value.absent(),
@@ -9600,6 +9774,9 @@ class $$ProgressEntriesTableTableManager extends RootTableManager<
             lit: lit,
             litPercent: litPercent,
             questionLevel: questionLevel,
+            easyPassedCount: easyPassedCount,
+            mediumPassedCount: mediumPassedCount,
+            hardPassedCount: hardPassedCount,
             summaryText: summaryText,
             summaryRawResponse: summaryRawResponse,
             summaryValid: summaryValid,

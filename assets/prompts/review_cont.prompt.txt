@@ -14,8 +14,10 @@ INPUTS
 - evidence_state_json: {{evidence_state_json}}
 - error_book_summary: {{error_book_summary}}
 - practice_history_summary: {{practice_history_summary}}
-- current_mastery_level: {{current_mastery_level}}
 - current_difficulty_level: {{current_difficulty_level}}
+- passed_counts_json: {{passed_counts_json}}
+- best_passed_level: {{best_passed_level}}
+- total_passed_count: {{total_passed_count}}
 - student_profile: {{student_profile}}
 - student_preferences: {{student_preferences}}
 
@@ -44,7 +46,9 @@ NORMAL REVIEW RULES
 - error_book_update:
   - use null when there is no new mistake record
   - otherwise use exactly {"type_id": string, "delta_wrong": integer >= 1, "mistake_tag": string, "mistake_note": string}
-- Keep evidence and mastery_level consistent with the grading result.
+- Keep evidence consistent with the grading result.
+- Do not decide lit here.
+- Do not return kp pass/fail here.
 - Do not return any extra keys.
 
 CONTROL CONTRACT
@@ -93,6 +97,5 @@ Return exactly one JSON object with only:
 - grading: object or null
 - error_book_update: object or null
 - evidence: {"a": int, "c": int, "h": int, "t": string, "mt": [string]}
-- mastery_level: "NOT_PASS" | "PASS_EASY" | "PASS_MEDIUM" | "PASS_HARD"
 
 No extra keys. JSON only.

@@ -100,6 +100,7 @@ class _TutorRequestContext {
     required this.llmContext,
     required this.dedupeKey,
     required this.isStructuredPrompt,
+    this.reviewPassedLevel,
   });
 
   final int sessionId;
@@ -113,6 +114,7 @@ class _TutorRequestContext {
   final LlmCallContext llmContext;
   final String dedupeKey;
   final bool isStructuredPrompt;
+  final String? reviewPassedLevel;
 }
 
 class SessionService {
@@ -374,6 +376,12 @@ class SessionService {
         'easy';
     final currentMasteryLevel =
         masteryFromProgress ?? masteryFromPrev ?? 'NOT_PASS';
+    final passedCounts = _resolvePassedCounts(
+      progress: progress,
+      evidenceState: evidenceState,
+    );
+    final bestPassedLevel = _bestPassedLevelFromCounts(passedCounts) ?? 'none';
+    final totalPassedCount = _totalPassedCount(passedCounts);
     final practiceHistorySummary = _buildPracticeHistorySummary(
       messages,
       evidenceState: evidenceState,
@@ -424,6 +432,10 @@ class SessionService {
       'student_summary': progress?.summaryText ?? session?.summaryText ?? '',
       'student_profile': studentPromptContext.profileText,
       'student_preferences': studentPromptContext.preferencesText,
+      'passed_counts_json': jsonEncode(passedCounts),
+      'best_passed_level': bestPassedLevel,
+      'total_passed_count': totalPassedCount.toString(),
+      'current_lit': progress?.lit == true ? 'true' : 'false',
       'lesson_content': '',
       'types': '[{"type_id":"OTHER","name":"General"}]',
       'error_book_summary': errorBookSummary,
@@ -484,6 +496,11 @@ class SessionService {
       llmContext: llmContext,
       dedupeKey: dedupeKey,
       isStructuredPrompt: _isStructuredPrompt(promptName),
+      reviewPassedLevel: _reviewPassedLevelForPrompt(
+        promptName: promptName,
+        currentDifficultyLevel: currentDifficultyLevel,
+        previousAssistantJson: promptResolution.prevJson,
+      ),
     );
   }
 
@@ -680,6 +697,7 @@ class SessionService {
       current: currentEvidence,
       actionMode: request.actionMode,
       parsed: parsed,
+      passedLevel: request.reviewPassedLevel,
     );
     await _db.updateSessionContracts(
       sessionId: request.sessionId,
@@ -695,6 +713,7 @@ class SessionService {
       kpKey: request.kpKey,
       studentIntent: request.resolvedStudentIntent,
       parsedJsonText: resolution.payload.parsedJson,
+      passedLevel: request.reviewPassedLevel,
     );
     await _appendTutorPersistLog(
       request: request,
@@ -796,6 +815,12 @@ class SessionService {
     );
     final schema = await _promptRepository.loadSchema('summarize');
     final settings = await _settingsRepository.load();
+    final passedCounts = _resolvePassedCounts(
+      progress: progress,
+      evidenceState: evidenceState,
+    );
+    final bestPassedLevel = _bestPassedLevelFromCounts(passedCounts);
+    final totalPassedCount = _totalPassedCount(passedCounts);
     final values = {
       'subject': courseVersion.subject,
       'course_version_id': courseVersion.id,
@@ -808,6 +833,10 @@ class SessionService {
       'student_summary': progress?.summaryText ?? session?.summaryText ?? '',
       'student_profile': studentPromptContext.profileText,
       'student_preferences': studentPromptContext.preferencesText,
+      'passed_counts_json': jsonEncode(passedCounts),
+      'best_passed_level': bestPassedLevel ?? 'none',
+      'total_passed_count': totalPassedCount.toString(),
+      'current_lit': progress?.lit == true ? 'true' : 'false',
       'control_state_json': currentControl.toJsonText(),
       'evidence_state_json': evidenceState.toJsonText(),
       'evidence_policy': evidenceState.policy,
@@ -883,32 +912,19 @@ class SessionService {
       if (parsed == null) {
         throw StateError('Structured summary payload is missing parsed JSON.');
       }
-      final masteryLevel = _normalizeMasteryLevel(parsed['mastery_level']);
+      final litValue = parsed['lit'];
+      if (litValue is! bool) {
+        throw StateError(
+          'Structured summary payload is missing a valid lit boolean.',
+        );
+      }
       final nextStep = _normalizeNextStep(parsed['next_step']);
-      final currentMasteryLevel =
-          _questionLevelToMasteryLevel(progress?.questionLevel);
-      final stabilizedMasteryLevel = _stabilizeSummaryMastery(
-        parsedMasteryLevel: masteryLevel,
-        currentMasteryLevel: currentMasteryLevel,
-        lastEvidence: lastEvidence,
-      );
-      if (stabilizedMasteryLevel == null) {
-        throw StateError(
-          'Structured summary payload is missing a valid mastery level.',
-        );
-      }
-      final litPercent = _masteryLevelToPercent(stabilizedMasteryLevel);
-      if (litPercent == null) {
-        throw StateError(
-          'Structured summary payload could not be converted to lit percent.',
-        );
-      }
-      final resolvedLit = litPercent >= 100;
+      final litPercent = _litPercentFromBestPassedLevel(bestPassedLevel);
+      final resolvedLit = litValue;
       final summary = resolution.payload.displayText;
       final summaryValid = true;
       final rawResponse = null;
-      final questionLevel =
-          _masteryLevelToQuestionLevel(stabilizedMasteryLevel);
+      final questionLevel = bestPassedLevel;
       final nextControl =
           TutorControlState.fromAssistantPayload(parsed) ?? currentControl;
       final nextEvidence = TutorEvidenceState.updateFromAssistantPayload(
@@ -970,7 +986,6 @@ class SessionService {
         litPercent: litPercent,
         summaryText: summary,
         masterLevel: questionLevel,
-        masteryLevel: stabilizedMasteryLevel,
         nextStep: nextStep,
       );
     });
@@ -1250,7 +1265,6 @@ class SessionService {
           'grading',
           'error_book_update',
           'evidence',
-          'mastery_level',
         };
       case 'review_cont':
         return {
@@ -1262,14 +1276,13 @@ class SessionService {
           'grading',
           'error_book_update',
           'evidence',
-          'mastery_level',
         };
       case 'summary':
       case 'summarize':
         return {
           'teacher_message',
           'control',
-          'mastery_level',
+          'lit',
           'next_step',
         };
       default:
@@ -1332,93 +1345,76 @@ class SessionService {
     }
   }
 
-  String? _stabilizeSummaryMastery({
-    required String? parsedMasteryLevel,
-    required String? currentMasteryLevel,
-    required Map<String, dynamic>? lastEvidence,
+  Map<String, int> _resolvePassedCounts({
+    required ProgressEntry? progress,
+    required TutorEvidenceState evidenceState,
   }) {
-    if (currentMasteryLevel == null) {
-      return parsedMasteryLevel;
-    }
-    if (parsedMasteryLevel == null) {
-      return currentMasteryLevel;
-    }
-    final attempts = _nonNegativeInt(lastEvidence?['a']);
-    if (attempts <= 0) {
-      return currentMasteryLevel;
-    }
-    final currentRank = _masteryRank(currentMasteryLevel);
-    final parsedRank = _masteryRank(parsedMasteryLevel);
-    if (currentRank == null || parsedRank == null) {
-      return parsedMasteryLevel;
-    }
-    if (attempts <= 1) {
-      return currentMasteryLevel;
-    }
-    if (attempts <= 3 && parsedRank < currentRank - 1) {
-      return _masteryFromRank(currentRank - 1) ?? parsedMasteryLevel;
-    }
-    return parsedMasteryLevel;
+    final easy = progress?.easyPassedCount ?? 0;
+    final medium = progress?.mediumPassedCount ?? 0;
+    final hard = progress?.hardPassedCount ?? 0;
+    return <String, int>{
+      'easy': easy >= evidenceState.easyPassedCount
+          ? easy
+          : evidenceState.easyPassedCount,
+      'medium': medium >= evidenceState.mediumPassedCount
+          ? medium
+          : evidenceState.mediumPassedCount,
+      'hard': hard >= evidenceState.hardPassedCount
+          ? hard
+          : evidenceState.hardPassedCount,
+    };
   }
 
-  int _nonNegativeInt(Object? value) {
-    if (value is int) {
-      return value < 0 ? 0 : value;
+  String? _bestPassedLevelFromCounts(Map<String, int> counts) {
+    if ((counts['hard'] ?? 0) > 0) {
+      return 'hard';
     }
-    if (value is num) {
-      final asInt = value.toInt();
-      return asInt < 0 ? 0 : asInt;
+    if ((counts['medium'] ?? 0) > 0) {
+      return 'medium';
     }
-    if (value is String) {
-      final parsed = int.tryParse(value.trim()) ?? 0;
-      return parsed < 0 ? 0 : parsed;
+    if ((counts['easy'] ?? 0) > 0) {
+      return 'easy';
     }
-    return 0;
+    return null;
   }
 
-  int? _masteryRank(String masteryLevel) {
-    switch (masteryLevel) {
-      case 'NOT_PASS':
-        return 0;
-      case 'PASS_EASY':
-        return 1;
-      case 'PASS_MEDIUM':
-        return 2;
-      case 'PASS_HARD':
-        return 3;
-      default:
-        return null;
-    }
-  }
-
-  String? _masteryFromRank(int rank) {
-    switch (rank) {
-      case 0:
-        return 'NOT_PASS';
-      case 1:
-        return 'PASS_EASY';
-      case 2:
-        return 'PASS_MEDIUM';
-      case 3:
-        return 'PASS_HARD';
-      default:
-        return null;
-    }
-  }
-
-  int? _masteryLevelToPercent(String? masteryLevel) {
-    switch (masteryLevel) {
-      case 'NOT_PASS':
-        return 0;
-      case 'PASS_EASY':
+  int _litPercentFromBestPassedLevel(String? level) {
+    switch (level) {
+      case 'easy':
         return 33;
-      case 'PASS_MEDIUM':
+      case 'medium':
         return 66;
-      case 'PASS_HARD':
+      case 'hard':
         return 100;
       default:
-        return null;
+        return 0;
     }
+  }
+
+  int _totalPassedCount(Map<String, int> counts) {
+    return (counts['easy'] ?? 0) +
+        (counts['medium'] ?? 0) +
+        (counts['hard'] ?? 0);
+  }
+
+  String? _reviewPassedLevelForPrompt({
+    required String promptName,
+    required String currentDifficultyLevel,
+    required Map<String, dynamic>? previousAssistantJson,
+  }) {
+    if (promptName == 'review_init') {
+      final level =
+          _normalizeLevel(previousAssistantJson?['difficulty_level']) ??
+              _normalizeLevel(currentDifficultyLevel);
+      return level;
+    }
+    if (promptName == 'review_cont') {
+      final level =
+          _normalizeLevel(previousAssistantJson?['difficulty_level']) ??
+              _normalizeLevel(currentDifficultyLevel);
+      return level;
+    }
+    return null;
   }
 
   String? _masteryLevelToQuestionLevel(String? masteryLevel) {
@@ -1784,6 +1780,7 @@ class SessionService {
     required String kpKey,
     required String studentIntent,
     required String? parsedJsonText,
+    required String? passedLevel,
   }) async {
     if (actionMode != 'review' || studentId == null || studentId <= 0) {
       return;
@@ -1812,6 +1809,14 @@ class SessionService {
     var nextLevel = currentLevel;
     final studentWantsHarder =
         studentIntent == 'TOO_EASY' || studentIntent == 'BORED';
+    if (turnFinished && isCorrect && passedLevel != null) {
+      await _db.incrementProgressPassedCount(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+        kpKey: kpKey,
+        passedLevel: passedLevel,
+      );
+    }
     if (studentWantsHarder) {
       nextLevel = _nextDifficultyLevel(currentLevel);
     } else if (turnFinished && isCorrect) {
@@ -1867,21 +1872,6 @@ class SessionService {
         return 'PASS_MEDIUM';
       case 'hard':
         return 'PASS_HARD';
-      default:
-        return null;
-    }
-  }
-
-  String? _percentToMasteryLevel(int? litPercent) {
-    switch (litPercent) {
-      case 100:
-        return 'PASS_HARD';
-      case 66:
-        return 'PASS_MEDIUM';
-      case 33:
-        return 'PASS_EASY';
-      case 0:
-        return 'NOT_PASS';
       default:
         return null;
     }
@@ -2075,24 +2065,27 @@ class SessionService {
     if (summaryText.isEmpty) {
       return null;
     }
-    final cachedLitPercent = progress?.litPercent ?? session.summaryLitPercent;
-    final masteryLevel =
-        _questionLevelToMasteryLevel(progress?.questionLevel) ??
-            _percentToMasteryLevel(cachedLitPercent);
-    final litPercent = _masteryLevelToPercent(masteryLevel);
-    if (litPercent == null) {
+    if (progress == null && session.summaryLitPercent == null) {
       return null;
     }
-    final lit = litPercent >= 100;
+    final litPercent =
+        (progress?.litPercent ?? session.summaryLitPercent ?? 0).clamp(0, 100);
+    final lit = progress?.lit ?? session.summaryLit ?? false;
+    final bestPassedLevel = _bestPassedLevelFromCounts(
+          _resolvePassedCounts(
+            progress: progress,
+            evidenceState: evidenceState,
+          ),
+        ) ??
+        _normalizeLevel(progress?.questionLevel);
     return SummarizeResult(
       success: true,
       message: 'Summary unchanged. Reused cached result.',
       lit: lit,
       litPercent: litPercent,
       summaryText: summaryText,
-      masteryLevel: masteryLevel,
-      masterLevel: _normalizeLevel(progress?.questionLevel),
-      nextStep: lit == true ? 'MOVE_ON' : 'CONTINUE_REVIEW',
+      masterLevel: bestPassedLevel,
+      nextStep: lit ? 'MOVE_ON' : 'CONTINUE_REVIEW',
     );
   }
 

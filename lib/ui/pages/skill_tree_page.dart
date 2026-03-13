@@ -316,6 +316,10 @@ class _SkillTreePageState extends State<SkillTreePage> {
             for (final entry in progress)
               entry.kpKey: _resolveLitPercent(entry),
           };
+          final litMap = {
+            for (final entry in progress)
+              entry.kpKey: entry.lit,
+          };
           _nodeProgress
             ..clear()
             ..addAll(_calculateNodeProgress(_parseResult!.root, litPercentMap));
@@ -385,7 +389,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
                         final showTeacherControls = widget.isTeacherView &&
                             isActive &&
                             studentId != null;
-                        final isLit = _isNodeFullyLit(node, litPercentMap);
+                        final isLit = _isNodeFullyLit(node, litMap);
                         final background = _nodeColor(node.id, isLit: isLit);
                         final idLabel =
                             node.id == _parseResult!.root.id ? '' : node.id;
@@ -448,7 +452,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
                                           ),
                                           onPressed: () => _toggleNodeLit(
                                             node: node,
-                                            litPercentMap: litPercentMap,
+                                            litMap: litMap,
                                             db: db,
                                             studentId: studentId,
                                             includeAll: !_isLeafNode(node),
@@ -466,7 +470,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
                                           ),
                                           onPressed: () => _toggleNodeLit(
                                             node: node,
-                                            litPercentMap: litPercentMap,
+                                            litMap: litMap,
                                             db: db,
                                             studentId: studentId,
                                             includeAll: true,
@@ -619,7 +623,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
                           if (data == null) {
                             return const SizedBox.shrink();
                           }
-                          return _buildNodeWidget(data, litPercentMap);
+                          return _buildNodeWidget(data, litPercentMap, litMap);
                         },
                       ),
                     ),
@@ -693,10 +697,11 @@ class _SkillTreePageState extends State<SkillTreePage> {
   Widget _buildNodeWidget(
     SkillNode node,
     Map<String, int> litPercentMap,
+    Map<String, bool> litMap,
   ) {
     final isSelected = _selectedId == node.id;
     final size = _nodeSizeFor(node);
-    final isLit = _isNodeFullyLit(node, litPercentMap);
+    final isLit = _isNodeFullyLit(node, litMap);
     final baseColor = _nodeColor(node.id, isLit: isLit);
     final content = Container(
       width: size,
@@ -1102,15 +1107,15 @@ class _SkillTreePageState extends State<SkillTreePage> {
     return node.children.isEmpty;
   }
 
-  bool _isNodeFullyLit(SkillNode node, Map<String, int> litPercentMap) {
+  bool _isNodeFullyLit(SkillNode node, Map<String, bool> litMap) {
     if (_isLeafNode(node)) {
-      return (litPercentMap[node.id] ?? 0) >= 100;
+      return litMap[node.id] ?? false;
     }
     final leaves = _collectLeafNodes(node);
     if (leaves.isEmpty) {
       return false;
     }
-    return leaves.every((leaf) => (litPercentMap[leaf.id] ?? 0) >= 100);
+    return leaves.every((leaf) => litMap[leaf.id] ?? false);
   }
 
   List<SkillNode> _collectLeafNodes(SkillNode node) {
@@ -1131,7 +1136,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
 
   Future<void> _toggleNodeLit({
     required SkillNode node,
-    required Map<String, int> litPercentMap,
+    required Map<String, bool> litMap,
     required AppDatabase db,
     required int studentId,
     required bool includeAll,
@@ -1142,7 +1147,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
     if (leaves.isEmpty) {
       return;
     }
-    final allLit = leaves.every((leaf) => (litPercentMap[leaf.id] ?? 0) >= 100);
+    final allLit = leaves.every((leaf) => litMap[leaf.id] ?? false);
     final nextLit = !allLit;
     await db.transaction(() async {
       for (final leaf in leaves) {

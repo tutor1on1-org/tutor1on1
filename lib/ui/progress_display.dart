@@ -5,8 +5,9 @@ int resolveProgressDisplayPercent({
   required bool lit,
   required String? questionLevel,
 }) {
-  if (lit) {
-    return 100;
+  final clampedPercent = litPercent.clamp(0, 100);
+  if (clampedPercent > 0) {
+    return clampedPercent;
   }
   final normalizedLevel = questionLevel?.trim().toLowerCase();
   switch (normalizedLevel) {
@@ -17,7 +18,7 @@ int resolveProgressDisplayPercent({
     case 'easy':
       return 33;
     default:
-      return litPercent.clamp(0, 100);
+      return clampedPercent;
   }
 }
 

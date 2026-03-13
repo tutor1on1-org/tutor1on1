@@ -187,6 +187,9 @@ class ProgressSyncItem {
     required this.lit,
     required this.litPercent,
     required this.questionLevel,
+    this.easyPassedCount = 0,
+    this.mediumPassedCount = 0,
+    this.hardPassedCount = 0,
     required this.summaryText,
     required this.summaryRawResponse,
     required this.summaryValid,
@@ -204,6 +207,9 @@ class ProgressSyncItem {
   final bool lit;
   final int litPercent;
   final String questionLevel;
+  final int easyPassedCount;
+  final int mediumPassedCount;
+  final int hardPassedCount;
   final String summaryText;
   final String summaryRawResponse;
   final bool? summaryValid;
@@ -222,6 +228,9 @@ class ProgressSyncItem {
       lit: (json['lit'] as bool?) ?? false,
       litPercent: (json['lit_percent'] as num?)?.toInt() ?? 0,
       questionLevel: (json['question_level'] as String?) ?? '',
+      easyPassedCount: (json['easy_passed_count'] as num?)?.toInt() ?? 0,
+      mediumPassedCount: (json['medium_passed_count'] as num?)?.toInt() ?? 0,
+      hardPassedCount: (json['hard_passed_count'] as num?)?.toInt() ?? 0,
       summaryText: (json['summary_text'] as String?) ?? '',
       summaryRawResponse: (json['summary_raw_response'] as String?) ?? '',
       summaryValid: json['summary_valid'] as bool?,

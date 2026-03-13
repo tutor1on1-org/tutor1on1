@@ -80,9 +80,7 @@ class ProgressPage extends StatelessWidget {
       if (!nodeIds.contains(entry.kpKey)) {
         continue;
       }
-      final percent = entry.litPercent == 0 && entry.lit
-          ? 100
-          : entry.litPercent;
+      final percent = entry.litPercent;
       final clamped = percent.clamp(0, 100);
       sum += clamped;
     }
