@@ -381,12 +381,12 @@ class _SkillTreePageState extends State<SkillTreePage> {
                           _detailNodesForSelection(selectedNode).map((node) {
                         final text = _nodeDisplayText(node);
                         final isActive = node.id == _selectedId;
-                        final background = _nodeColor(node.id);
                         final studentId = targetStudentId;
                         final showTeacherControls = widget.isTeacherView &&
                             isActive &&
                             studentId != null;
                         final isLit = _isNodeFullyLit(node, litPercentMap);
+                        final background = _nodeColor(node.id, isLit: isLit);
                         final idLabel =
                             node.id == _parseResult!.root.id ? '' : node.id;
                         return InkWell(
@@ -619,7 +619,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
                           if (data == null) {
                             return const SizedBox.shrink();
                           }
-                          return _buildNodeWidget(data);
+                          return _buildNodeWidget(data, litPercentMap);
                         },
                       ),
                     ),
@@ -690,10 +690,14 @@ class _SkillTreePageState extends State<SkillTreePage> {
     return _parseResult?.nodes[id];
   }
 
-  Widget _buildNodeWidget(SkillNode node) {
+  Widget _buildNodeWidget(
+    SkillNode node,
+    Map<String, int> litPercentMap,
+  ) {
     final isSelected = _selectedId == node.id;
     final size = _nodeSizeFor(node);
-    final baseColor = _nodeColor(node.id);
+    final isLit = _isNodeFullyLit(node, litPercentMap);
+    final baseColor = _nodeColor(node.id, isLit: isLit);
     final content = Container(
       width: size,
       height: size,
@@ -1207,9 +1211,9 @@ class _SkillTreePageState extends State<SkillTreePage> {
     );
   }
 
-  Color _nodeColor(String nodeId) {
+  Color _nodeColor(String nodeId, {required bool isLit}) {
     final ratio = _nodeProgress[nodeId] ?? 0.0;
-    return resolveProgressDisplayColor(ratio);
+    return resolveProgressDisplayColor(ratio: ratio, isLit: isLit);
   }
 
   List<SkillNode> _pathToNode(SkillNode node) {

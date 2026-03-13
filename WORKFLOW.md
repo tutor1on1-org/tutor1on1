@@ -2,6 +2,8 @@
 Last updated: 2026-03-08
 
 ## Standard workflow
+For app changes, the default same-turn handoff is: validate, build, git, and publish unless the user explicitly skips a step.
+
 1. Understand scope and locate the true failing/target layer.
 2. For bugs, reproduce with evidence first (logs, repro script, or minimal failing test).
 3. Implement the minimal correct root-cause change.

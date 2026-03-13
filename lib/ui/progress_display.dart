@@ -21,11 +21,17 @@ int resolveProgressDisplayPercent({
   }
 }
 
-Color resolveProgressDisplayColor(double ratio) {
+Color resolveProgressDisplayColor({
+  required double ratio,
+  required bool isLit,
+}) {
   final clamped = ratio.clamp(0.0, 1.0);
+  if (isLit) {
+    return Colors.green.shade300;
+  }
   return Color.lerp(
         Colors.grey.shade300,
-        Colors.green.shade300,
+        Colors.orange.shade300,
         clamped,
       ) ??
       Colors.grey.shade300;
