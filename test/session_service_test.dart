@@ -543,6 +543,58 @@ void main() {
     expect(persistLogs.single.callHash, equals('call_learn_1'));
   });
 
+  test('startTutorAction streams structured teacher message before completion',
+      () async {
+    final fixture = await _createTutorFixture(
+      db: db,
+      service: service,
+    );
+    final response = jsonEncode(<String, Object?>{
+      'teacher_message': 'Hello world',
+      'understanding': 'PARTIAL',
+      'control': _learnUnfinishedControl(),
+    });
+    final pending = Completer<LlmCallResult>();
+    llmService.queueStreamingCall(
+      pending.future,
+      streamChunks: <String>[
+        '{"teacher_message":"Hello',
+        ' world","understanding":"PARTIAL","control":{"version":1,"mode":"LEARN","step":"CONTINUE","turn_finished":false,"help_bias":"UNCHANGED","allowed_actions":[],"recommended_action":null}}',
+      ],
+    );
+    final streamedChunks = <String>[];
+
+    final handle = await service.startTutorAction(
+      sessionId: fixture.sessionId,
+      mode: 'learn_init',
+      studentInput: '',
+      courseVersion: fixture.courseVersion,
+      node: fixture.node,
+      stream: true,
+      onChunk: streamedChunks.add,
+    );
+
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    final streamedMessages = await db.getMessagesForSession(fixture.sessionId);
+    expect(streamedMessages.length, equals(1));
+    expect(streamedMessages.single.role, equals('assistant'));
+    expect(streamedMessages.single.content, equals('Hello world'));
+
+    pending.complete(
+      _llmOk(
+        responseText: response,
+        callHash: 'streamed_learn_1',
+      ),
+    );
+    await handle.future;
+
+    final messages = await db.getMessagesForSession(fixture.sessionId);
+    expect(messages.single.content, equals('Hello world'));
+    expect(messages.single.rawContent, equals(response));
+    expect(messages.single.parsedJson, isNotNull);
+    expect(streamedChunks, equals(<String>['Hello', ' world']));
+  });
+
   test(
     'startTutorAction injects student_intent and aggregated error book summary',
     () async {

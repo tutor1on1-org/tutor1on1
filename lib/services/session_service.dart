@@ -87,6 +87,14 @@ class _StructuredPayloadResolution {
   final bool didRetry;
 }
 
+class _JsonStringPrefixResult {
+  _JsonStringPrefixResult({
+    required this.value,
+  });
+
+  final String value;
+}
+
 class _TutorRequestContext {
   _TutorRequestContext({
     required this.sessionId,
@@ -564,6 +572,7 @@ class SessionService {
       onAssistantMessageCreated(assistantId);
     }
     final buffer = StringBuffer();
+    var streamedDisplayText = '';
     Timer? flushTimer;
 
     Future<void> flush() async {
@@ -572,7 +581,9 @@ class SessionService {
       }
       await _db.updateChatMessageContent(
         messageId: assistantId,
-        content: buffer.toString(),
+        content: request.isStructuredPrompt
+            ? streamedDisplayText
+            : buffer.toString(),
       );
     }
 
@@ -588,6 +599,20 @@ class SessionService {
     void handleChunk(String chunk) {
       buffer.write(chunk);
       if (request.isStructuredPrompt) {
+        final nextDisplayText = _extractStreamingDisplayText(
+          promptName: request.promptName,
+          responseText: buffer.toString(),
+        );
+        if (nextDisplayText == null ||
+            nextDisplayText.length <= streamedDisplayText.length) {
+          return;
+        }
+        final delta = nextDisplayText.substring(streamedDisplayText.length);
+        streamedDisplayText = nextDisplayText;
+        scheduleFlush();
+        if (onChunk != null && delta.isNotEmpty) {
+          onChunk(delta);
+        }
         return;
       }
       scheduleFlush();
@@ -615,7 +640,13 @@ class SessionService {
         responseText: finalText,
       );
       if (request.isStructuredPrompt && onChunk != null) {
-        onChunk(resolution.payload.displayText);
+        final displayText = resolution.payload.displayText;
+        final delta = displayText.startsWith(streamedDisplayText)
+            ? displayText.substring(streamedDisplayText.length)
+            : displayText;
+        if (delta.isNotEmpty) {
+          onChunk(delta);
+        }
       }
       final writeDirectly = streamToDatabase ||
           onAssistantMessageCreated == null ||
@@ -1954,6 +1985,141 @@ class SessionService {
       }
     }
     return fallback;
+  }
+
+  String? _extractStreamingDisplayText({
+    required String promptName,
+    required String responseText,
+  }) {
+    final fieldNames = promptName == 'summary' || promptName == 'summarize'
+        ? const <String>['teacher_message', 'summary_text']
+        : const <String>['teacher_message'];
+    for (final fieldName in fieldNames) {
+      final extracted = _extractJsonStringFieldPrefix(
+        responseText: responseText,
+        fieldName: fieldName,
+      );
+      if (extracted != null) {
+        return extracted;
+      }
+    }
+    return null;
+  }
+
+  String? _extractJsonStringFieldPrefix({
+    required String responseText,
+    required String fieldName,
+  }) {
+    final keyToken = '"$fieldName"';
+    final keyIndex = responseText.indexOf(keyToken);
+    if (keyIndex < 0) {
+      return null;
+    }
+    var index = keyIndex + keyToken.length;
+    while (index < responseText.length &&
+        _isJsonWhitespace(responseText.codeUnitAt(index))) {
+      index += 1;
+    }
+    if (index >= responseText.length || responseText[index] != ':') {
+      return null;
+    }
+    index += 1;
+    while (index < responseText.length &&
+        _isJsonWhitespace(responseText.codeUnitAt(index))) {
+      index += 1;
+    }
+    if (index >= responseText.length || responseText[index] != '"') {
+      return null;
+    }
+    return _readJsonStringPrefix(
+      responseText: responseText,
+      startIndex: index + 1,
+    ).value;
+  }
+
+  bool _isJsonWhitespace(int codeUnit) {
+    return codeUnit == 0x20 ||
+        codeUnit == 0x09 ||
+        codeUnit == 0x0A ||
+        codeUnit == 0x0D;
+  }
+
+  _JsonStringPrefixResult _readJsonStringPrefix({
+    required String responseText,
+    required int startIndex,
+  }) {
+    final buffer = StringBuffer();
+    var index = startIndex;
+    while (index < responseText.length) {
+      final char = responseText[index];
+      if (char == '"') {
+        return _JsonStringPrefixResult(
+          value: buffer.toString(),
+        );
+      }
+      if (char != r'\') {
+        buffer.write(char);
+        index += 1;
+        continue;
+      }
+      if (index + 1 >= responseText.length) {
+        return _JsonStringPrefixResult(
+          value: buffer.toString(),
+        );
+      }
+      final escaped = responseText[index + 1];
+      switch (escaped) {
+        case '"':
+        case r'\':
+        case '/':
+          buffer.write(escaped);
+          index += 2;
+          break;
+        case 'b':
+          buffer.write('\b');
+          index += 2;
+          break;
+        case 'f':
+          buffer.write('\f');
+          index += 2;
+          break;
+        case 'n':
+          buffer.write('\n');
+          index += 2;
+          break;
+        case 'r':
+          buffer.write('\r');
+          index += 2;
+          break;
+        case 't':
+          buffer.write('\t');
+          index += 2;
+          break;
+        case 'u':
+          if (index + 5 >= responseText.length) {
+            return _JsonStringPrefixResult(
+              value: buffer.toString(),
+            );
+          }
+          final hexDigits = responseText.substring(index + 2, index + 6);
+          final codePoint = int.tryParse(hexDigits, radix: 16);
+          if (codePoint == null) {
+            return _JsonStringPrefixResult(
+              value: buffer.toString(),
+            );
+          }
+          buffer.write(String.fromCharCode(codePoint));
+          index += 6;
+          break;
+        default:
+          return _JsonStringPrefixResult(
+            value: buffer.toString(),
+          );
+      }
+    }
+    return _JsonStringPrefixResult(
+      value: buffer.toString(),
+    );
   }
 
   bool _isStructuredPrompt(String promptName) {
