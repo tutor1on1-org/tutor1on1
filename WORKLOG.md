@@ -15,6 +15,11 @@ Last updated: 2026-03-12
 - Logs: `/var/log/family_teacher_remote/app.log`
 - Storage root: `/var/lib/family_teacher_remote/storage`
 
+## Local data paths (this machine)
+- `getApplicationDocumentsDirectory()` resolves to `C:\Mac\Home\Documents`
+- Live local app DB: `C:\Mac\Home\Documents\family_teacher.db`
+- Live local session sync cache: `C:\Mac\Home\Documents\sync_artifacts\sessions\`
+
 ## Operational requirements
 - `STORAGE_ROOT` must be writable by `ftapp` (API user).
 - Nginx worker (`nginx`) must be able to read/traverse storage paths (current fix: `nginx` in `ftapp` group).

@@ -130,6 +130,16 @@ Defaults:
 - `KeyPath`: `C:\Users\kl\.ssh\id_rsa`
 - SSH options: key-only auth with `IdentitiesOnly=yes`
 
+### Legacy summary migration
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/migrate_legacy_summary_results.ps1 -DryRun
+powershell -ExecutionPolicy Bypass -File scripts/migrate_legacy_summary_results.ps1
+```
+What it does:
+- migrates legacy local SQLite summary rows that still encode `PASS_EASY|PASS_MEDIUM|PASS_HARD`
+- updates local `chat_sessions` / `progress_entries` into `lit=true` plus passed-counts
+- updates server `progress_sync` mirror rows for the same legacy summary text pattern
+
 ### Skill tree parser check
 ```powershell
 dart run tool/parse_check.dart
