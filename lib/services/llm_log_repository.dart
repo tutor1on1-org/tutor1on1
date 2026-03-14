@@ -9,6 +9,7 @@ import 'settings_repository.dart';
 class LlmLogEntry {
   LlmLogEntry({
     required this.createdAt,
+    required this.logVersion,
     required this.promptName,
     required this.model,
     required this.baseUrl,
@@ -29,11 +30,15 @@ class LlmLogEntry {
     this.backoffMs,
     this.renderedChars,
     this.responseChars,
+    this.reasoningText,
     this.dbWriteOk,
     this.uiCommitOk,
+    this.ownerUserId,
+    this.ownerRole,
   });
 
   final DateTime createdAt;
+  final int logVersion;
   final String promptName;
   final String model;
   final String baseUrl;
@@ -54,8 +59,11 @@ class LlmLogEntry {
   final int? backoffMs;
   final int? renderedChars;
   final int? responseChars;
+  final String? reasoningText;
   final bool? dbWriteOk;
   final bool? uiCommitOk;
+  final int? ownerUserId;
+  final String? ownerRole;
 
   factory LlmLogEntry.fromJson(Map<String, dynamic> json) {
     final createdRaw = json['created_at'];
@@ -67,6 +75,7 @@ class LlmLogEntry {
     }
     return LlmLogEntry(
       createdAt: createdAt,
+      logVersion: (json['log_version'] as num?)?.toInt() ?? 1,
       promptName: json['prompt_name'] as String? ?? '',
       model: json['model'] as String? ?? '',
       baseUrl: json['base_url'] as String? ?? '',
@@ -87,8 +96,11 @@ class LlmLogEntry {
       backoffMs: json['backoff_ms'] as int?,
       renderedChars: json['rendered_chars'] as int?,
       responseChars: json['response_chars'] as int?,
+      reasoningText: json['reasoning_text'] as String?,
       dbWriteOk: json['db_write_ok'] as bool?,
       uiCommitOk: json['ui_commit_ok'] as bool?,
+      ownerUserId: json['owner_user_id'] as int?,
+      ownerRole: json['owner_role'] as String?,
     );
   }
 }
@@ -273,9 +285,16 @@ class LlmLogRepository {
         if (decoded['retry_reason_enc'] != null && retryReason == null) {
           continue;
         }
+        final reasoningText = await _logCrypto.decryptForCurrentUser(
+          decoded['reasoning_text_enc'] as String?,
+        );
+        if (decoded['reasoning_text_enc'] != null && reasoningText == null) {
+          continue;
+        }
         entries.add(
           LlmLogEntry.fromJson(
             <String, dynamic>{
+              'log_version': decoded['log_version'],
               'created_at': decoded['created_at'],
               'prompt_name': promptName,
               'model': model,
@@ -297,8 +316,11 @@ class LlmLogRepository {
               'backoff_ms': decoded['backoff_ms'],
               'rendered_chars': decoded['rendered_chars'],
               'response_chars': decoded['response_chars'],
+              'reasoning_text': reasoningText,
               'db_write_ok': decoded['db_write_ok'],
               'ui_commit_ok': decoded['ui_commit_ok'],
+              'owner_user_id': decoded['owner_user_id'],
+              'owner_role': decoded['owner_role'],
             },
           ),
         );
