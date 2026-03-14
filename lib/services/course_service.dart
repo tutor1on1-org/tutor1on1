@@ -439,8 +439,18 @@ GROUP BY kp_key
                   courseVersionId: courseId,
                   kpKey: entry.kpKey,
                   lit: Value(entry.lit),
-                  litPercent: Value(entry.litPercent),
-                  questionLevel: Value(entry.questionLevel),
+                  litPercent: Value(
+                    _deriveProgressPercent(
+                      easyPassedCount: entry.easyPassedCount,
+                      mediumPassedCount: entry.mediumPassedCount,
+                      hardPassedCount: entry.hardPassedCount,
+                      fallbackPercent: entry.litPercent,
+                    ),
+                  ),
+                  questionLevel: const Value(null),
+                  easyPassedCount: Value(entry.easyPassedCount),
+                  mediumPassedCount: Value(entry.mediumPassedCount),
+                  hardPassedCount: Value(entry.hardPassedCount),
                   summaryText: Value(entry.summaryText),
                   summaryRawResponse: Value(entry.summaryRawResponse),
                   summaryValid: Value(entry.summaryValid),
@@ -650,7 +660,9 @@ class _ProgressMergeState {
         kpKey = newKpKey,
         lit = entry.lit,
         litPercent = entry.litPercent,
-        questionLevel = entry.questionLevel,
+        easyPassedCount = entry.easyPassedCount,
+        mediumPassedCount = entry.mediumPassedCount,
+        hardPassedCount = entry.hardPassedCount,
         summaryText = entry.summaryText,
         summaryRawResponse = entry.summaryRawResponse,
         summaryValid = entry.summaryValid,
@@ -661,7 +673,9 @@ class _ProgressMergeState {
   final String kpKey;
   bool lit;
   int litPercent;
-  String? questionLevel;
+  int easyPassedCount;
+  int mediumPassedCount;
+  int hardPassedCount;
   String? summaryText;
   String? summaryRawResponse;
   bool? summaryValid;
@@ -669,10 +683,21 @@ class _ProgressMergeState {
 
   void merge(ProgressEntry entry) {
     lit = lit || entry.lit;
-    if (entry.litPercent > litPercent) {
-      litPercent = entry.litPercent;
+    if (entry.easyPassedCount > easyPassedCount) {
+      easyPassedCount = entry.easyPassedCount;
     }
-    questionLevel = _mergeQuestionLevel(questionLevel, entry.questionLevel);
+    if (entry.mediumPassedCount > mediumPassedCount) {
+      mediumPassedCount = entry.mediumPassedCount;
+    }
+    if (entry.hardPassedCount > hardPassedCount) {
+      hardPassedCount = entry.hardPassedCount;
+    }
+    litPercent = _deriveProgressPercent(
+      easyPassedCount: easyPassedCount,
+      mediumPassedCount: mediumPassedCount,
+      hardPassedCount: hardPassedCount,
+      fallbackPercent: entry.litPercent > litPercent ? entry.litPercent : litPercent,
+    );
     if (entry.updatedAt.isAfter(updatedAt)) {
       summaryText = entry.summaryText;
       summaryRawResponse = entry.summaryRawResponse;
@@ -682,27 +707,20 @@ class _ProgressMergeState {
   }
 }
 
-int _questionLevelRank(String? level) {
-  switch (level?.toLowerCase()) {
-    case 'hard':
-      return 3;
-    case 'medium':
-      return 2;
-    case 'easy':
-      return 1;
-    default:
-      return 0;
+int _deriveProgressPercent({
+  required int easyPassedCount,
+  required int mediumPassedCount,
+  required int hardPassedCount,
+  int fallbackPercent = 0,
+}) {
+  if (hardPassedCount > 0) {
+    return 100;
   }
-}
-
-String? _mergeQuestionLevel(String? left, String? right) {
-  final leftRank = _questionLevelRank(left);
-  final rightRank = _questionLevelRank(right);
-  if (leftRank == 0) {
-    return right;
+  if (mediumPassedCount > 0) {
+    return 66;
   }
-  if (rightRank == 0) {
-    return left;
+  if (easyPassedCount > 0) {
+    return 33;
   }
-  return leftRank >= rightRank ? left : right;
+  return fallbackPercent.clamp(0, 100);
 }

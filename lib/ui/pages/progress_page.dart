@@ -3,6 +3,7 @@ import 'package:family_teacher/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
 import '../../db/app_database.dart';
+import '../progress_display.dart';
 
 class ProgressPage extends StatelessWidget {
   const ProgressPage({super.key, required this.courseVersion});
@@ -80,9 +81,12 @@ class ProgressPage extends StatelessWidget {
       if (!nodeIds.contains(entry.kpKey)) {
         continue;
       }
-      final percent = entry.litPercent;
-      final clamped = percent.clamp(0, 100);
-      sum += clamped;
+      sum += resolveProgressDisplayPercent(
+        lit: entry.lit,
+        easyPassedCount: entry.easyPassedCount,
+        mediumPassedCount: entry.mediumPassedCount,
+        hardPassedCount: entry.hardPassedCount,
+      );
     }
     final ratio = sum / (nodeIds.length * 100);
     return (ratio * 100).round();

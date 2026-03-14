@@ -1222,8 +1222,12 @@ void main() {
       summaryRawResponse: null,
       summaryValid: true,
       summaryLit: false,
-      questionLevel: 'medium',
-      litPercent: 66,
+    );
+    await db.incrementProgressPassedCount(
+      studentId: session.studentId,
+      courseVersionId: fixture.courseVersion.id,
+      kpKey: fixture.node.kpKey,
+      passedLevel: 'medium',
     );
     await (db.update(db.chatSessions)
           ..where((tbl) => tbl.id.equals(fixture.sessionId)))
@@ -1366,8 +1370,12 @@ void main() {
         summaryRawResponse: null,
         summaryValid: true,
         summaryLit: true,
-        questionLevel: 'hard',
-        litPercent: 100,
+      );
+      await db.incrementProgressPassedCount(
+        studentId: session.studentId,
+        courseVersionId: fixture.courseVersion.id,
+        kpKey: fixture.node.kpKey,
+        passedLevel: 'hard',
       );
       await (db.update(db.chatSessions)
             ..where((tbl) => tbl.id.equals(fixture.sessionId)))
@@ -1443,12 +1451,6 @@ void main() {
       if (session == null) {
         throw StateError('Session not found for summary stabilization test.');
       }
-      await db.upsertProgressDifficulty(
-        studentId: session.studentId,
-        courseVersionId: fixture.courseVersion.id,
-        kpKey: fixture.node.kpKey,
-        questionLevel: 'hard',
-      );
       await db.incrementProgressPassedCount(
         studentId: session.studentId,
         courseVersionId: fixture.courseVersion.id,
@@ -1525,7 +1527,7 @@ void main() {
         kpKey: fixture.node.kpKey,
       );
       expect(refreshed, isNotNull);
-      expect(refreshed!.questionLevel, equals('hard'));
+      expect(refreshed!.hardPassedCount, equals(1));
     },
   );
 
@@ -1580,7 +1582,6 @@ void main() {
     final session = await db.getSession(fixture.sessionId);
     expect(session, isNotNull);
     expect(session!.summaryText, equals('Student can move to next topic.'));
-    expect(session.summaryLitPercent, equals(100));
     expect(session.summaryLit, isTrue);
 
     final progress = await db.getProgress(
@@ -1590,6 +1591,6 @@ void main() {
     );
     expect(progress, isNotNull);
     expect(progress!.summaryText, equals('Student can move to next topic.'));
-    expect(progress.questionLevel, equals('hard'));
+    expect(progress.hardPassedCount, equals(1));
   });
 }

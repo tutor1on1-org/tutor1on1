@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../db/app_database.dart';
 import '../../services/app_services.dart';
 import '../../state/auth_controller.dart';
+import '../progress_display.dart';
 import '../tutor_session_page.dart';
 
 class NodeDetailPage extends StatefulWidget {
@@ -78,7 +79,14 @@ class _NodeDetailPageState extends State<NodeDetailPage> {
               ),
               builder: (context, snapshot) {
                 final entry = snapshot.data;
-                final percent = entry == null ? 0 : entry.litPercent;
+                final percent = entry == null
+                    ? 0
+                    : resolveProgressDisplayPercent(
+                        lit: entry.lit,
+                        easyPassedCount: entry.easyPassedCount,
+                        mediumPassedCount: entry.mediumPassedCount,
+                        hardPassedCount: entry.hardPassedCount,
+                      );
                 return Text(l10n.courseProgressStatus(percent, 100));
               },
             ),

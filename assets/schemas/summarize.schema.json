@@ -5,7 +5,7 @@
   "required": [
     "teacher_message",
     "control",
-    "mastery_level",
+    "lit",
     "next_step"
   ],
   "properties": {
@@ -74,13 +74,12 @@
       },
       "additionalProperties": false
     },
-    "mastery_level": {
-      "type": "string",
-      "enum": ["NOT_PASS", "PASS_EASY", "PASS_MEDIUM", "PASS_HARD"]
+    "lit": {
+      "type": "boolean"
     },
     "next_step": {
       "type": "string",
-      "enum": ["RELEARN", "CONTINUE_REVIEW", "MOVE_ON"]
+      "enum": ["CONTINUE_REVIEW", "MOVE_ON"]
     }
   },
   "additionalProperties": false

@@ -59,7 +59,6 @@ Return JSON with:
 - grading
 - error_book_update
 - evidence
-- mastery_level
 
 control must be REVIEW/CONTINUE/turn_finished=false with empty allowed_actions.
 grading must be null. error_book_update must be null. Do not return extra keys.
@@ -74,12 +73,9 @@ Return JSON with:
 - teacher_message
 - control
 - answer_state
-- difficulty_action
-- recommended_level
 - grading
 - error_book_update
 - evidence
-- mastery_level
 
 Finished review turns must stay in REVIEW/NEW. Do not route review directly back into learn.
 If grading is not null, it must be exactly {"is_correct": boolean, "mistake_summary": string, "hint_level": 0..3}. Do not use keys like "correct", "score", or "feedback".
@@ -94,7 +90,7 @@ If evidence_policy is REVIEW_ONLY and new_graded_review_evidence_available is fa
 Return JSON with:
 - teacher_message
 - control
-- mastery_level
+- lit
 - next_step
 
 control must be a finished canonical control object.

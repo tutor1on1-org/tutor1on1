@@ -11,6 +11,7 @@ import '../../services/marketplace_api_service.dart';
 import '../../services/sync_log_repository.dart';
 import '../../state/auth_controller.dart';
 import '../app_settings_page.dart';
+import '../progress_display.dart';
 import 'marketplace_page.dart';
 import 'skill_tree_page.dart';
 import '../widgets/server_sync_overlay.dart';
@@ -642,9 +643,12 @@ class _CourseProgressTileState extends State<_CourseProgressTile> {
       if (!leafIds.contains(entry.kpKey)) {
         continue;
       }
-      final percent = entry.litPercent;
-      final clamped = percent.clamp(0, 100);
-      sum += clamped;
+      sum += resolveProgressDisplayPercent(
+        lit: entry.lit,
+        easyPassedCount: entry.easyPassedCount,
+        mediumPassedCount: entry.mediumPassedCount,
+        hardPassedCount: entry.hardPassedCount,
+      );
     }
     final ratio = sum / (leafIds.length * 100);
     return (ratio * 100).round();

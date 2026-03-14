@@ -92,8 +92,6 @@ Return exactly one JSON object with only:
 - teacher_message: string
 - control: object following the contract above
 - answer_state: "HELP_REQUEST" | "PARTIAL_ATTEMPT" | "FINAL_ANSWER"
-- difficulty_action: "DOWN" | "HOLD" | "UP"
-- recommended_level: "easy" | "medium" | "hard"
 - grading: object or null
 - error_book_update: object or null
 - evidence: {"a": int, "c": int, "h": int, "t": string, "mt": [string]}

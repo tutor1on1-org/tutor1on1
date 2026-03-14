@@ -290,7 +290,6 @@ class TutorEvidenceState {
     required this.mediumPassedCount,
     required this.hardPassedCount,
     required this.lastAssessedAction,
-    required this.lastMasteryLevel,
     required this.lastEvidence,
   });
 
@@ -305,7 +304,6 @@ class TutorEvidenceState {
   final int mediumPassedCount;
   final int hardPassedCount;
   final String? lastAssessedAction;
-  final String? lastMasteryLevel;
   final Map<String, dynamic>? lastEvidence;
 
   bool get hasNewGradedReviewEvidence =>
@@ -319,7 +317,6 @@ class TutorEvidenceState {
     int? mediumPassedCount,
     int? hardPassedCount,
     String? lastAssessedAction,
-    String? lastMasteryLevel,
     Map<String, dynamic>? lastEvidence,
   }) {
     return TutorEvidenceState(
@@ -332,7 +329,6 @@ class TutorEvidenceState {
       mediumPassedCount: mediumPassedCount ?? this.mediumPassedCount,
       hardPassedCount: hardPassedCount ?? this.hardPassedCount,
       lastAssessedAction: lastAssessedAction ?? this.lastAssessedAction,
-      lastMasteryLevel: lastMasteryLevel ?? this.lastMasteryLevel,
       lastEvidence: lastEvidence ?? this.lastEvidence,
     );
   }
@@ -347,7 +343,6 @@ class TutorEvidenceState {
       'medium_passed_count': mediumPassedCount,
       'hard_passed_count': hardPassedCount,
       'last_assessed_action': lastAssessedAction,
-      'last_mastery_level': lastMasteryLevel,
       'last_evidence': lastEvidence,
     };
   }
@@ -364,7 +359,6 @@ class TutorEvidenceState {
       mediumPassedCount: 0,
       hardPassedCount: 0,
       lastAssessedAction: null,
-      lastMasteryLevel: null,
       lastEvidence: null,
     );
   }
@@ -398,7 +392,6 @@ class TutorEvidenceState {
       mediumPassedCount: (json['medium_passed_count'] as num?)?.toInt() ?? 0,
       hardPassedCount: (json['hard_passed_count'] as num?)?.toInt() ?? 0,
       lastAssessedAction: (json['last_assessed_action'] as String?)?.trim(),
-      lastMasteryLevel: (json['last_mastery_level'] as String?)?.trim(),
       lastEvidence: json['last_evidence'] is Map<String, dynamic>
           ? Map<String, dynamic>.from(json['last_evidence'] as Map)
           : null,

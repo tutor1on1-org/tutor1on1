@@ -6,12 +6,9 @@
     "teacher_message",
     "control",
     "answer_state",
-    "difficulty_action",
-    "recommended_level",
     "grading",
     "error_book_update",
-    "evidence",
-    "mastery_level"
+    "evidence"
   ],
   "properties": {
     "teacher_message": {
@@ -82,14 +79,6 @@
     "answer_state": {
       "type": "string",
       "enum": ["HELP_REQUEST", "PARTIAL_ATTEMPT", "FINAL_ANSWER"]
-    },
-    "difficulty_action": {
-      "type": "string",
-      "enum": ["DOWN", "HOLD", "UP"]
-    },
-    "recommended_level": {
-      "type": "string",
-      "enum": ["easy", "medium", "hard"]
     },
     "grading": {
       "anyOf": [
@@ -174,10 +163,6 @@
         }
       },
       "additionalProperties": true
-    },
-    "mastery_level": {
-      "type": "string",
-      "enum": ["NOT_PASS", "PASS_EASY", "PASS_MEDIUM", "PASS_HARD"]
     }
   },
   "additionalProperties": false

@@ -367,19 +367,17 @@ class SessionService {
             'mt': <String>[],
           },
     );
-    final masteryFromProgress =
-        _questionLevelToMasteryLevel(progress?.questionLevel);
-    final masteryFromPrev = evidenceState.lastMasteryLevel ??
-        _normalizeMasteryLevel(promptResolution.prevJson?['mastery_level']);
-    final currentDifficultyLevel = _normalizeLevel(progress?.questionLevel) ??
-        _masteryLevelToQuestionLevel(masteryFromPrev) ??
-        'easy';
-    final currentMasteryLevel =
-        masteryFromProgress ?? masteryFromPrev ?? 'NOT_PASS';
     final passedCounts = _resolvePassedCounts(
       progress: progress,
       evidenceState: evidenceState,
     );
+    final masteryFromCounts = _masteryLevelFromPassedCounts(passedCounts);
+    final masteryFromPrev =
+        _normalizeMasteryLevel(promptResolution.prevJson?['mastery_level']);
+    final currentDifficultyLevel =
+        _reviewDifficultyLevelFromPassedCounts(passedCounts);
+    final currentMasteryLevel =
+        masteryFromCounts ?? masteryFromPrev ?? 'NOT_PASS';
     final bestPassedLevel = _bestPassedLevelFromCounts(passedCounts) ?? 'none';
     final totalPassedCount = _totalPassedCount(passedCounts);
     final practiceHistorySummary = _buildPracticeHistorySummary(
@@ -454,11 +452,10 @@ class SessionService {
       );
     }
     if (actionMode == 'review') {
-      final questionLevel = _normalizeLevel(progress?.questionLevel) ?? 'easy';
       values['presented_questions'] = await _loadQuestionsText(
         courseVersion: courseVersion,
         kpKey: node.kpKey,
-        level: questionLevel,
+        level: currentDifficultyLevel,
       );
     }
     final renderResult = _renderWithHistoryLimit(
@@ -706,7 +703,7 @@ class SessionService {
       evidenceStateJson: nextEvidence.toJsonText(),
       evidenceStateUpdatedAt: DateTime.now(),
     );
-    await _updateReviewDifficultyIfNeeded(
+    await _updateReviewProgressIfNeeded(
       actionMode: request.actionMode,
       studentId: request.llmContext.studentId,
       courseVersionId: request.courseVersionId,
@@ -864,9 +861,7 @@ class SessionService {
             },
       ),
       'current_mastery_level':
-          _questionLevelToMasteryLevel(progress?.questionLevel) ??
-              evidenceState.lastMasteryLevel ??
-              'NOT_PASS',
+          _masteryLevelFromPassedCounts(passedCounts) ?? 'NOT_PASS',
     };
     final renderResult = _renderWithHistoryLimit(
       template: template,
@@ -924,7 +919,6 @@ class SessionService {
       final summary = resolution.payload.displayText;
       final summaryValid = true;
       final rawResponse = null;
-      final questionLevel = bestPassedLevel;
       final nextControl =
           TutorControlState.fromAssistantPayload(parsed) ?? currentControl;
       final nextEvidence = TutorEvidenceState.updateFromAssistantPayload(
@@ -944,8 +938,6 @@ class SessionService {
             summaryRawResponse: rawResponse,
             summaryValid: summaryValid,
             summaryLit: resolvedLit,
-            litPercent: litPercent,
-            questionLevel: questionLevel,
           );
         }
 
@@ -955,7 +947,6 @@ class SessionService {
           ChatSessionsCompanion(
             summaryText: Value(summary),
             summaryLit: Value(resolvedLit),
-            summaryLitPercent: Value(litPercent),
             summaryRawResponse: Value(rawResponse),
             summaryValid: Value(summaryValid),
             status: const Value('active'),
@@ -985,7 +976,7 @@ class SessionService {
         lit: resolvedLit,
         litPercent: litPercent,
         summaryText: summary,
-        masterLevel: questionLevel,
+        masterLevel: bestPassedLevel,
         nextStep: nextStep,
       );
     });
@@ -1197,22 +1188,6 @@ class SessionService {
           'Response preview: ${_summarizeResponseForError(responseText)}',
         );
       }
-      final difficultyAction =
-          (parsed['difficulty_action'] as String?)?.trim().toUpperCase() ?? '';
-      const validActions = {'DOWN', 'HOLD', 'UP'};
-      if (!validActions.contains(difficultyAction)) {
-        throw StateError(
-          'LLM response for "$promptName" has invalid "difficulty_action". '
-          'Response preview: ${_summarizeResponseForError(responseText)}',
-        );
-      }
-      final recommendedLevel = _normalizeLevel(parsed['recommended_level']);
-      if (recommendedLevel == null) {
-        throw StateError(
-          'LLM response for "$promptName" has invalid "recommended_level". '
-          'Response preview: ${_summarizeResponseForError(responseText)}',
-        );
-      }
       if (answerState == 'FINAL_ANSWER' && !controlState.turnFinished) {
         throw StateError(
           'LLM response for "$promptName" requires turn_state=FINISHED when answer_state=FINAL_ANSWER. '
@@ -1271,8 +1246,6 @@ class SessionService {
           'teacher_message',
           'control',
           'answer_state',
-          'difficulty_action',
-          'recommended_level',
           'grading',
           'error_book_update',
           'evidence',
@@ -1417,17 +1390,31 @@ class SessionService {
     return null;
   }
 
-  String? _masteryLevelToQuestionLevel(String? masteryLevel) {
-    switch (masteryLevel) {
-      case 'PASS_EASY':
-        return 'easy';
-      case 'PASS_MEDIUM':
-        return 'medium';
-      case 'PASS_HARD':
-        return 'hard';
+  String? _masteryLevelFromPassedCounts(Map<String, int> counts) {
+    final bestPassedLevel = _bestPassedLevelFromCounts(counts);
+    if (bestPassedLevel == null) {
+      return null;
+    }
+    switch (bestPassedLevel) {
+      case 'easy':
+        return 'PASS_EASY';
+      case 'medium':
+        return 'PASS_MEDIUM';
+      case 'hard':
+        return 'PASS_HARD';
       default:
         return null;
     }
+  }
+
+  String _reviewDifficultyLevelFromPassedCounts(Map<String, int> counts) {
+    if ((counts['medium'] ?? 0) > 0 || (counts['hard'] ?? 0) > 0) {
+      return 'hard';
+    }
+    if ((counts['easy'] ?? 0) > 0) {
+      return 'medium';
+    }
+    return 'easy';
   }
 
   Future<String> _loadLectureText({
@@ -1773,7 +1760,7 @@ class SessionService {
     return 'UNCHANGED';
   }
 
-  Future<void> _updateReviewDifficultyIfNeeded({
+  Future<void> _updateReviewProgressIfNeeded({
     required String actionMode,
     required int? studentId,
     required int courseVersionId,
@@ -1790,25 +1777,12 @@ class SessionService {
     if (parsed == null) {
       return;
     }
-    final progress = await _db.getProgress(
-      studentId: studentId,
-      courseVersionId: courseVersionId,
-      kpKey: kpKey,
-    );
-    final currentLevel = _normalizeLevel(progress?.questionLevel) ?? 'easy';
     final controlState = TutorControlState.fromAssistantPayload(parsed);
     final turnFinished = controlState?.turnFinished ?? false;
     final grading = parsed['grading'];
     final isCorrect = grading is Map<String, dynamic> &&
         grading['is_correct'] is bool &&
         grading['is_correct'] == true;
-    final recommendedLevel = _normalizeLevel(parsed['recommended_level']);
-    final difficultyAction =
-        (parsed['difficulty_action'] as String?)?.trim().toUpperCase() ?? '';
-
-    var nextLevel = currentLevel;
-    final studentWantsHarder =
-        studentIntent == 'TOO_EASY' || studentIntent == 'BORED';
     if (turnFinished && isCorrect && passedLevel != null) {
       await _db.incrementProgressPassedCount(
         studentId: studentId,
@@ -1816,64 +1790,6 @@ class SessionService {
         kpKey: kpKey,
         passedLevel: passedLevel,
       );
-    }
-    if (studentWantsHarder) {
-      nextLevel = _nextDifficultyLevel(currentLevel);
-    } else if (turnFinished && isCorrect) {
-      nextLevel = _nextDifficultyLevel(currentLevel);
-    } else if (difficultyAction == 'DOWN') {
-      nextLevel = _previousDifficultyLevel(currentLevel);
-    } else if (recommendedLevel != null) {
-      nextLevel = recommendedLevel;
-    }
-    if (nextLevel == currentLevel) {
-      return;
-    }
-    await _db.upsertProgressDifficulty(
-      studentId: studentId,
-      courseVersionId: courseVersionId,
-      kpKey: kpKey,
-      questionLevel: nextLevel,
-    );
-  }
-
-  String _nextDifficultyLevel(String currentLevel) {
-    switch (_normalizeLevel(currentLevel) ?? 'easy') {
-      case 'easy':
-        return 'medium';
-      case 'medium':
-        return 'hard';
-      case 'hard':
-        return 'hard';
-      default:
-        return 'medium';
-    }
-  }
-
-  String _previousDifficultyLevel(String currentLevel) {
-    switch (_normalizeLevel(currentLevel) ?? 'easy') {
-      case 'hard':
-        return 'medium';
-      case 'medium':
-        return 'easy';
-      case 'easy':
-        return 'easy';
-      default:
-        return 'easy';
-    }
-  }
-
-  String? _questionLevelToMasteryLevel(String? questionLevel) {
-    final normalized = _normalizeLevel(questionLevel);
-    switch (normalized) {
-      case 'easy':
-        return 'PASS_EASY';
-      case 'medium':
-        return 'PASS_MEDIUM';
-      case 'hard':
-        return 'PASS_HARD';
-      default:
-        return null;
     }
   }
 
@@ -2065,24 +1981,23 @@ class SessionService {
     if (summaryText.isEmpty) {
       return null;
     }
-    if (progress == null && session.summaryLitPercent == null) {
+    if (progress == null && session.summaryLit == null) {
       return null;
     }
-    final litPercent =
-        (progress?.litPercent ?? session.summaryLitPercent ?? 0).clamp(0, 100);
+    final passedCounts = _resolvePassedCounts(
+      progress: progress,
+      evidenceState: evidenceState,
+    );
     final lit = progress?.lit ?? session.summaryLit ?? false;
-    final bestPassedLevel = _bestPassedLevelFromCounts(
-          _resolvePassedCounts(
-            progress: progress,
-            evidenceState: evidenceState,
-          ),
-        ) ??
-        _normalizeLevel(progress?.questionLevel);
+    final litPercent = _litPercentFromBestPassedLevel(
+      _bestPassedLevelFromCounts(passedCounts),
+    );
+    final bestPassedLevel = _bestPassedLevelFromCounts(passedCounts);
     return SummarizeResult(
       success: true,
       message: 'Summary unchanged. Reused cached result.',
       lit: lit,
-      litPercent: litPercent,
+      litPercent: litPercent > 0 ? litPercent : (lit ? 100 : 0),
       summaryText: summaryText,
       masterLevel: bestPassedLevel,
       nextStep: lit ? 'MOVE_ON' : 'CONTINUE_REVIEW',

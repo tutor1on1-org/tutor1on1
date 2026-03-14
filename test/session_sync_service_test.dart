@@ -685,7 +685,7 @@ void main() {
       );
       expect(progressRows, hasLength(1));
       expect(progressRows.single.kpKey, equals('1.1'));
-      expect(progressRows.single.litPercent, equals(80));
+      expect(progressRows.single.litPercent, equals(66));
 
       final remoteId = await db.getRemoteCourseId(localCourseVersionId);
       expect(remoteId, equals(200));
@@ -977,7 +977,7 @@ void main() {
       );
       expect(progressRows, hasLength(1));
       expect(progressRows.single.kpKey, equals('1.1'));
-      expect(progressRows.single.litPercent, equals(70));
+      expect(progressRows.single.litPercent, equals(66));
       expect(stats.downloadedCount, equals(2));
       expect(stats.downloadedBytes, greaterThan(0));
     },
@@ -1151,7 +1151,7 @@ void main() {
       );
       expect(progressRows, hasLength(1));
       expect(progressRows.single.kpKey, equals('2.1'));
-      expect(progressRows.single.litPercent, equals(91));
+      expect(progressRows.single.litPercent, equals(66));
     },
   );
 
@@ -1465,10 +1465,10 @@ void main() {
       final byKey = <String, ProgressEntry>{
         for (final row in progressRows) row.kpKey: row,
       };
-      expect(byKey['1.1']!.litPercent, equals(95));
-      expect(byKey['1.2']!.litPercent, equals(75));
+      expect(byKey['1.1']!.litPercent, equals(100));
+      expect(byKey['1.2']!.litPercent, equals(66));
       expect(byKey['1.3']!.litPercent, equals(100));
-      expect(byKey['1.3']!.questionLevel, equals('hard'));
+      expect(byKey['1.3']!.questionLevel, isNull);
       expect(stats.downloadedCount, greaterThan(0));
       expect(stats.downloadedBytes, greaterThan(0));
     },

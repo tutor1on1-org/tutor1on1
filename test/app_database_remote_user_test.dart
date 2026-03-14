@@ -75,7 +75,7 @@ void main() {
       kpKey: '1.1',
     );
     expect(progress, isNotNull);
-    expect(progress!.litPercent, equals(85));
+    expect(progress!.litPercent, equals(66));
 
     final sessions = await db.getSessionsForStudent(canonicalId);
     expect(sessions, hasLength(1));

@@ -3,55 +3,51 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:family_teacher/ui/progress_display.dart';
 
 void main() {
-  test('stored lit percent drives display even when lit is true', () {
+  test('easy passed count renders one-third progress', () {
     expect(
       resolveProgressDisplayPercent(
-        litPercent: 33,
-        lit: true,
-        questionLevel: null,
+        lit: false,
+        easyPassedCount: 1,
+        mediumPassedCount: 0,
+        hardPassedCount: 0,
       ),
       equals(33),
     );
   });
 
-  test('hard question level renders as passed', () {
+  test('hard passed count renders full progress', () {
     expect(
       resolveProgressDisplayPercent(
-        litPercent: 0,
         lit: false,
-        questionLevel: 'hard',
+        easyPassedCount: 0,
+        mediumPassedCount: 0,
+        hardPassedCount: 1,
       ),
       equals(100),
     );
   });
 
-  test('question level raises weak stored percent for display', () {
+  test('medium passed count renders two-thirds progress', () {
     expect(
       resolveProgressDisplayPercent(
-        litPercent: 0,
         lit: false,
-        questionLevel: 'medium',
+        easyPassedCount: 0,
+        mediumPassedCount: 1,
+        hardPassedCount: 0,
       ),
       equals(66),
-    );
-    expect(
-      resolveProgressDisplayPercent(
-        litPercent: 0,
-        lit: false,
-        questionLevel: 'easy',
-      ),
-      equals(33),
     );
   });
 
-  test('stored percent takes precedence once review counts have set it', () {
+  test('lit without passed counts still renders full progress', () {
     expect(
       resolveProgressDisplayPercent(
-        litPercent: 66,
-        lit: false,
-        questionLevel: 'easy',
+        lit: true,
+        easyPassedCount: 0,
+        mediumPassedCount: 0,
+        hardPassedCount: 0,
       ),
-      equals(66),
+      equals(100),
     );
   });
 }

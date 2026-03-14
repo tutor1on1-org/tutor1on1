@@ -1,25 +1,21 @@
 import 'package:flutter/material.dart';
 
 int resolveProgressDisplayPercent({
-  required int litPercent,
   required bool lit,
-  required String? questionLevel,
+  required int easyPassedCount,
+  required int mediumPassedCount,
+  required int hardPassedCount,
 }) {
-  final clampedPercent = litPercent.clamp(0, 100);
-  if (clampedPercent > 0) {
-    return clampedPercent;
+  if (hardPassedCount > 0) {
+    return 100;
   }
-  final normalizedLevel = questionLevel?.trim().toLowerCase();
-  switch (normalizedLevel) {
-    case 'hard':
-      return 100;
-    case 'medium':
-      return 66;
-    case 'easy':
-      return 33;
-    default:
-      return clampedPercent;
+  if (mediumPassedCount > 0) {
+    return 66;
   }
+  if (easyPassedCount > 0) {
+    return 33;
+  }
+  return lit ? 100 : 0;
 }
 
 Color resolveProgressDisplayColor({

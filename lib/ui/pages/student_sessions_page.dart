@@ -89,8 +89,7 @@ class _StudentSessionsPageState extends State<StudentSessionsPage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(subtitleParts.join(' | ')),
-                          if (session.summaryLitPercent != null)
-                            Text('Summary LIT: ${session.summaryLitPercent}%'),
+                          Text('Summary LIT: ${session.summaryLit ? 'Yes' : 'No'}'),
                           if (summaryPreview.isNotEmpty)
                             Text(
                               'Summary: $summaryPreview',

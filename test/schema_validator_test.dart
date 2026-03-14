@@ -39,7 +39,7 @@ void main() {
         allowedActions: const ['PAUSE'],
         recommendedAction: 'PAUSE',
       ),
-      'mastery_level': 'PASS_HARD',
+      'lit': true,
       'next_step': 'MOVE_ON',
     };
     final result = await validator.validateJson(
@@ -58,7 +58,7 @@ void main() {
       final wrapped = '''
 Model output:
 ```json
-{"teacher_message":"Nice work.","control":{"version":1,"mode":"REVIEW","step":"NEW","turn_finished":true,"help_bias":"UNCHANGED","allowed_actions":["NEXT_QUESTION","LEARN","PAUSE"],"recommended_action":"NEXT_QUESTION"},"mastery_level":"PASS_MEDIUM","next_step":"MOVE_ON"}
+{"teacher_message":"Nice work.","control":{"version":1,"mode":"REVIEW","step":"NEW","turn_finished":true,"help_bias":"UNCHANGED","allowed_actions":["NEXT_QUESTION","LEARN","PAUSE"],"recommended_action":"NEXT_QUESTION"},"lit":true,"next_step":"MOVE_ON"}
 ```
 ''';
       final result = await validator.validateJson(
@@ -75,7 +75,7 @@ Model output:
     final validator = SchemaValidator();
     final invalid = {
       'teacher_message': 'Reviewed the node.',
-      'mastery_level': 'PASS_EASY',
+      'lit': true,
     };
     final result = await validator.validateJson(
       schemaMap: schema,
@@ -130,7 +130,6 @@ Model output:
         't': 'OTHER',
         'mt': <String>[],
       },
-      'mastery_level': 'NOT_PASS',
     };
     final result = await validator.validateJson(
       schemaMap: schema,
@@ -150,8 +149,6 @@ Model output:
         step: 'CONTINUE',
         turnFinished: false,
       ),
-      'difficulty_action': 'HOLD',
-      'recommended_level': 'easy',
       'grading': null,
       'error_book_update': null,
       'evidence': {
@@ -161,7 +158,6 @@ Model output:
         't': 'OTHER',
         'mt': <String>[],
       },
-      'mastery_level': 'NOT_PASS',
     };
     final result = await validator.validateJson(
       schemaMap: schema,
@@ -183,8 +179,6 @@ Model output:
         turnFinished: false,
       ),
       'answer_state': 'PARTIAL_ATTEMPT',
-      'difficulty_action': 'HOLD',
-      'recommended_level': 'easy',
       'grading': null,
       'error_book_update': null,
       'evidence': {
@@ -194,7 +188,6 @@ Model output:
         't': 'OTHER',
         'mt': <String>[],
       },
-      'mastery_level': 'NOT_PASS',
     };
     final result = await validator.validateJson(
       schemaMap: schema,

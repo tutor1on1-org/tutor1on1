@@ -8,8 +8,7 @@
     "difficulty_level",
     "grading",
     "error_book_update",
-    "evidence",
-    "mastery_level"
+    "evidence"
   ],
   "properties": {
     "teacher_message": {
@@ -116,10 +115,6 @@
         }
       },
       "additionalProperties": true
-    },
-    "mastery_level": {
-      "type": "string",
-      "enum": ["NOT_PASS", "PASS_EASY", "PASS_MEDIUM", "PASS_HARD"]
     }
   },
   "additionalProperties": false

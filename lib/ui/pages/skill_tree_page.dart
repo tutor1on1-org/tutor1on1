@@ -1210,9 +1210,10 @@ class _SkillTreePageState extends State<SkillTreePage> {
 
   int _resolveLitPercent(ProgressEntry entry) {
     return resolveProgressDisplayPercent(
-      litPercent: entry.litPercent,
       lit: entry.lit,
-      questionLevel: entry.questionLevel,
+      easyPassedCount: entry.easyPassedCount,
+      mediumPassedCount: entry.mediumPassedCount,
+      hardPassedCount: entry.hardPassedCount,
     );
   }
 
