@@ -1,5 +1,5 @@
 # SCRIPTS
-Last updated: 2026-02-27
+Last updated: 2026-03-15
 
 All commands are expected from repository root (`C:\family_teacher\app`) unless stated otherwise.
 
@@ -81,6 +81,7 @@ Optional flags:
 Default safeguards:
 - Prompt asset test gate runs before build.
 - ZIP validator checks required runtime files and prompt asset UTF-8 readability.
+- ZIP packaging uses `System.IO.Compression` for Windows Explorer compatibility.
 - Remote publish uses candidate-first promotion before replacing canonical `family_teacher.zip`.
 
 ### Auth API smoke test
@@ -105,6 +106,21 @@ What it validates:
 - local ZIP import-readiness checks (`contents/context` + lecture files)
 Optional flags:
 - `-KeepArtifacts` (preserve temp bundle/download folder for debugging)
+
+### Decrypt LLM JSONL metadata for a known user
+```powershell
+$env:LOG_USER_ID='6'
+$env:LOG_ROLE='student'
+$env:LOG_PASSWORD='1234'
+$env:LOG_SESSION_ID='71'
+$env:LOG_KP_KEY='4.1.2.2'
+dart run tool/decrypt_llm_logs.dart
+```
+Notes:
+- Raw JSONL is at `C:\family_teacher\logs\llm_logs.jsonl`.
+- Determine `LOG_USER_ID` and `LOG_ROLE` from raw JSONL `owner_user_id` / `owner_role` before decrypting.
+- `tool/decrypt_llm_logs.dart` decrypts JSONL metadata fields such as prompt name, status, retry reason, and parse error for one `(session_id, kp_key)` pair.
+- JSONL does not contain rendered prompt / full response bodies; inspect the local `llm_calls` DB table when available for those.
 
 ### Remote upload/storage preflight
 ```powershell
