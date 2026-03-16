@@ -820,6 +820,15 @@
   "yearFilterLabel": "Year",
   "yearFilterAll": "All years",
   "zoomInLabel": "Zoom in",
-  "zoomOutLabel": "Zoom out"
+  "zoomOutLabel": "Zoom out",
+  "kpPassedDialogTitle": "Knowledge point passed",
+  "kpPassedDialogMessage": "Congratulations. You passed this knowledge point.\n\nEasy correct: {easy}\nMedium correct: {medium}\nHard correct: {hard}",
+  "@kpPassedDialogMessage": {
+    "placeholders": {
+      "easy": {},
+      "medium": {},
+      "hard": {}
+    }
+  }
 }
 

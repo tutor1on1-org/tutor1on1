@@ -820,5 +820,14 @@
   "yearFilterLabel": "年份",
   "yearFilterAll": "全部年份",
   "zoomInLabel": "放大",
-  "zoomOutLabel": "缩小"
+  "zoomOutLabel": "缩小",
+  "kpPassedDialogTitle": "知识点已通过",
+  "kpPassedDialogMessage": "恭喜，你已通过这个知识点。\n\n简单题答对：{easy}\n中等题答对：{medium}\n困难题答对：{hard}",
+  "@kpPassedDialogMessage": {
+    "placeholders": {
+      "easy": {},
+      "medium": {},
+      "hard": {}
+    }
+  }
 }

@@ -49,6 +49,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   bool _closed = false;
   bool _loadingSession = true;
   bool _autoStartAttempted = false;
+  bool _lastKnownSummaryLit = false;
   TutorMode _mode = TutorMode.learn;
   TutorTurnStep _step = TutorTurnStep.newTurn;
   TutorHelpBias _helpBias = TutorHelpBias.unchanged;
@@ -173,9 +174,11 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     if (session == null) {
       _closed = true;
       _sessionTitle = null;
+      _lastKnownSummaryLit = false;
     } else {
       _closed = false;
       _sessionTitle = session.title;
+      _lastKnownSummaryLit = session.summaryLit == true;
     }
     setState(() => _loadingSession = false);
     await _applyPersistedSessionControl(db);
@@ -1752,6 +1755,9 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     if (!mounted) {
       return;
     }
+    final summaryLit = session?.summaryLit == true;
+    final evidence = TutorEvidenceState.fromJsonText(session?.evidenceStateJson) ??
+        TutorEvidenceState.initial();
     final control = _loadControlStateFromSession(session);
     if (control.mode != _mode ||
         control.step != _step ||
@@ -1764,6 +1770,46 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         _recommendedAction = control.recommendedAction;
       });
     }
+    final shouldShowPassedDialog = !_lastKnownSummaryLit && summaryLit;
+    _lastKnownSummaryLit = summaryLit;
+    if (shouldShowPassedDialog) {
+      await _showPassedDialog(
+        easyCount: evidence.easyPassedCount,
+        mediumCount: evidence.mediumPassedCount,
+        hardCount: evidence.hardPassedCount,
+      );
+    }
+  }
+
+  Future<void> _showPassedDialog({
+    required int easyCount,
+    required int mediumCount,
+    required int hardCount,
+  }) async {
+    if (!mounted) {
+      return;
+    }
+    final l10n = AppLocalizations.of(context)!;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Text(l10n.kpPassedDialogTitle),
+        content: SelectableText(
+          l10n.kpPassedDialogMessage(
+            '$easyCount',
+            '$mediumCount',
+            '$hardCount',
+          ),
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(l10n.closeButton),
+          ),
+        ],
+      ),
+    );
   }
 
   Map<String, dynamic>? _extractMessageJson(ChatMessage message) {

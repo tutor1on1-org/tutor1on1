@@ -307,3 +307,44 @@ flutter build windows
 - After the prompt rewrite, the 10-call live Albert quality flow completed without the malformed-key retry pattern seen in the earlier `mist akes` failure.
 - The new prompt bodies are much shorter and now include exact JSON examples for the model to copy literally.
 - `llm_calls` is now append-only across retries, and replay lookup reads the latest row for a given `call_hash`.
+
+## 2026-03-16 Post-stream busy diagnosis and KP-passed dialog
+
+- Branch: `simple`
+- User report:
+  - visible tutor text had already finished streaming
+  - GUI still showed busy/waiting for about 10 seconds
+  - app should show a non-fading congratulations message when the KP is passed
+
+### Root-cause evidence
+
+- For the latest affected live call on student session `83` / KP `2.3.5.1`, the logs show:
+  - `23:35:12.694` first `review` LLM attempt finished
+  - that first attempt failed structured validation because the model emitted `mist akes` instead of `mistakes`
+  - `23:35:12.702` app logged `APP retry`
+  - `23:35:30.569` second `review` LLM attempt finished successfully
+  - `23:35:30.720` app persisted the accepted result
+- This means the visible stream from the first attempt ended, but `_sending` stayed true while the app waited for the retry attempt to finish. The delay was retry time, not a stuck spinner after successful completion.
+
+### Commands
+
+```powershell
+flutter test test\session_service_test.dart test\llm_call_repository_test.dart
+flutter gen-l10n
+flutter analyze
+flutter build windows
+```
+
+### Result
+
+- Passed.
+- `flutter test`: passed.
+- `flutter analyze`: passed.
+- Windows release build: passed.
+
+### UI change
+
+- When the session flips to passed, the tutor page now shows a non-auto-fading dialog with the current session's:
+  - easy correct count
+  - medium correct count
+  - hard correct count
