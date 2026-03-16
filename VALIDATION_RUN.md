@@ -271,3 +271,39 @@ flutter test integration_test\live_albert_simple_flow_test.dart -d windows --pla
 - All 5 live prompt-iteration reruns passed.
 - Final transcript quality improved on the exact visible failure modes found during the loop.
 - Validation used only a temp copy of the live DB; real usage data was not modified.
+
+## 2026-03-16 Retry-log retention and prompt hardening
+
+- Branch: `simple`
+- Goal:
+  - keep all LLM retry attempts visible in `llm_calls`
+  - reduce malformed structured-output retries by shortening `learn` / `review` prompts and adding exact JSON examples
+
+### Root-cause evidence
+
+- A real student run at `2026-03-16 23:12:05` retried because the model emitted `mist akes` instead of `mistakes`.
+- The JSONL metadata log showed both attempts, but the LLM logs page only showed the final accepted one because `llm_calls.call_hash` was unique and inserts used replace semantics.
+
+### Commands
+
+```powershell
+dart run build_runner build --delete-conflicting-outputs
+flutter test test\llm_call_repository_test.dart test\session_service_test.dart test\migration_test.dart
+flutter analyze
+flutter test integration_test\live_albert_simple_flow_test.dart -d windows --plain-name "Albert prompt quality review flow prints 10 learn/review tutor calls"
+flutter build windows
+```
+
+### Result
+
+- Passed.
+- Migration/repository tests passed.
+- `flutter analyze`: passed.
+- Live Albert quality flow: passed.
+- Windows release build: passed.
+
+### Observed behavior
+
+- After the prompt rewrite, the 10-call live Albert quality flow completed without the malformed-key retry pattern seen in the earlier `mist akes` failure.
+- The new prompt bodies are much shorter and now include exact JSON examples for the model to copy literally.
+- `llm_calls` is now append-only across retries, and replay lookup reads the latest row for a given `call_hash`.

@@ -164,11 +164,6 @@ class LlmCalls extends Table {
   TextColumn get action => text().nullable()();
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
   TextColumn get mode => text()();
-
-  @override
-  List<Set<Column>> get uniqueKeys => [
-        {callHash},
-      ];
 }
 
 class AppSettings extends Table {
@@ -323,7 +318,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 29;
+  int get schemaVersion => 30;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -480,6 +475,80 @@ class AppDatabase extends _$AppDatabase {
           }
           if (from < 29) {
             await m.createTable(studentPassConfigs);
+          }
+          if (from < 30) {
+            await customStatement('''
+CREATE TABLE llm_calls_new (
+  id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+  call_hash TEXT NOT NULL,
+  prompt_name TEXT NOT NULL,
+  rendered_prompt TEXT NOT NULL,
+  model TEXT NOT NULL,
+  base_url TEXT NOT NULL,
+  response_text TEXT NULL,
+  response_json TEXT NULL,
+  parse_valid INTEGER NULL CHECK (parse_valid IN (0, 1)),
+  parse_error TEXT NULL,
+  latency_ms INTEGER NULL,
+  teacher_id INTEGER NULL,
+  student_id INTEGER NULL,
+  course_version_id INTEGER NULL,
+  session_id INTEGER NULL,
+  kp_key TEXT NULL,
+  action TEXT NULL,
+  created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s', CURRENT_TIMESTAMP) AS INTEGER)),
+  mode TEXT NOT NULL
+)
+''');
+            await customStatement('''
+INSERT INTO llm_calls_new (
+  id,
+  call_hash,
+  prompt_name,
+  rendered_prompt,
+  model,
+  base_url,
+  response_text,
+  response_json,
+  parse_valid,
+  parse_error,
+  latency_ms,
+  teacher_id,
+  student_id,
+  course_version_id,
+  session_id,
+  kp_key,
+  action,
+  created_at,
+  mode
+)
+SELECT
+  id,
+  call_hash,
+  prompt_name,
+  rendered_prompt,
+  model,
+  base_url,
+  response_text,
+  response_json,
+  parse_valid,
+  parse_error,
+  latency_ms,
+  teacher_id,
+  student_id,
+  course_version_id,
+  session_id,
+  kp_key,
+  action,
+  created_at,
+  mode
+FROM llm_calls
+ORDER BY id
+''');
+            await customStatement('DROP TABLE llm_calls');
+            await customStatement(
+              'ALTER TABLE llm_calls_new RENAME TO llm_calls',
+            );
           }
         },
       );

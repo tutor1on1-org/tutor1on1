@@ -14,7 +14,18 @@ class LlmCallRepository {
 
   Future<LlmCall?> findByHash(String callHash) async {
     final record = await (_db.select(_db.llmCalls)
-          ..where((tbl) => tbl.callHash.equals(callHash)))
+          ..where((tbl) => tbl.callHash.equals(callHash))
+          ..orderBy([
+            (tbl) => OrderingTerm(
+                  expression: tbl.createdAt,
+                  mode: OrderingMode.desc,
+                ),
+            (tbl) => OrderingTerm(
+                  expression: tbl.id,
+                  mode: OrderingMode.desc,
+                ),
+          ])
+          ..limit(1))
         .getSingleOrNull();
     if (record == null) {
       return null;
@@ -96,7 +107,6 @@ class LlmCallRepository {
             kpKey: Value(kpKey),
             action: Value(action),
           ),
-          mode: InsertMode.insertOrReplace,
         );
   }
 }

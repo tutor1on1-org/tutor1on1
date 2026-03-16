@@ -4311,10 +4311,6 @@ class $LlmCallsTable extends LlmCalls with TableInfo<$LlmCallsTable, LlmCall> {
   @override
   Set<GeneratedColumn> get $primaryKey => {id};
   @override
-  List<Set<GeneratedColumn>> get uniqueKeys => [
-        {callHash},
-      ];
-  @override
   LlmCall map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return LlmCall(
