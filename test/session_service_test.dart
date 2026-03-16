@@ -423,6 +423,37 @@ void main() {
     expect(evidence.lastAssessedAction, equals('LEARN'));
   });
 
+  test('visible tutor text strips think blocks but raw payload keeps them',
+      () async {
+    final fixture = await _createTutorFixture(db: db, service: service);
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': '<think>hidden chain of thought</think>Visible answer.',
+            'difficulty': 'easy',
+            'mistakes': <String>[],
+            'next_action': 'review',
+          }),
+        ),
+      ),
+    );
+
+    final handle = await service.startTutorAction(
+      sessionId: fixture.sessionId,
+      mode: 'learn',
+      studentInput: 'Teach me simply.',
+      courseVersion: fixture.courseVersion,
+      node: fixture.node,
+    );
+    await handle.future;
+
+    final message = await _latestAssistantMessage(db, fixture.sessionId);
+
+    expect(message.content, equals('Visible answer.'));
+    expect(message.rawContent, contains('<think>hidden chain of thought</think>'));
+  });
+
   test(
       'unfinished review keeps one active question and does not count progress',
       () async {

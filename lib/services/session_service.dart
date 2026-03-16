@@ -1626,13 +1626,13 @@ class SessionService {
     required String fallback,
   }) {
     if (parsed == null) {
-      return fallback;
+      return _sanitizeVisibleTutorText(fallback).trim();
     }
     final teacherMessage = parsed['text'] ?? parsed['teacher_message'];
     if (teacherMessage is String && teacherMessage.trim().isNotEmpty) {
-      return teacherMessage.trim();
+      return _sanitizeVisibleTutorText(teacherMessage).trim();
     }
-    return fallback;
+    return _sanitizeVisibleTutorText(fallback).trim();
   }
 
   String? _extractStreamingDisplayText({
@@ -1646,10 +1646,38 @@ class SessionService {
         fieldName: fieldName,
       );
       if (extracted != null) {
-        return extracted;
+        return _sanitizeVisibleTutorText(extracted);
       }
     }
     return null;
+  }
+
+  String _sanitizeVisibleTutorText(String value) {
+    if (value.isEmpty) {
+      return value;
+    }
+    final lower = value.toLowerCase();
+    const openTag = '<think>';
+    const closeTag = '</think>';
+    final buffer = StringBuffer();
+    var index = 0;
+    while (index < value.length) {
+      final openIndex = lower.indexOf(openTag, index);
+      if (openIndex < 0) {
+        buffer.write(value.substring(index));
+        break;
+      }
+      if (openIndex > index) {
+        buffer.write(value.substring(index, openIndex));
+      }
+      final contentStart = openIndex + openTag.length;
+      final closeIndex = lower.indexOf(closeTag, contentStart);
+      if (closeIndex < 0) {
+        break;
+      }
+      index = closeIndex + closeTag.length;
+    }
+    return buffer.toString();
   }
 
   String? _extractJsonStringFieldPrefix({
