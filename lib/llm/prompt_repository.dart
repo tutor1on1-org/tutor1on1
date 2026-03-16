@@ -17,84 +17,35 @@ class PromptRepository {
   final Map<String, String> _systemPromptCache = {};
   final Map<String, Map<String, dynamic>> _schemaCache = {};
   final Map<String, String> _textbookCache = {};
+  static const Set<String> _bundledOnlyPromptNames = <String>{
+    'learn',
+    'review',
+  };
   static const Map<String, String> _emergencyPromptFallbacks = <String, String>{
-    'learn_init': '''
-You are a one-on-one teacher. Task: LEARN_INIT.
+    'learn': '''
+You are a one-on-one teacher. Task: LEARN.
 
 Teach the knowledge point through explanation only. No formal practice question.
 Return JSON with:
-- teacher_message
-- understanding
-- control
+- text
+- difficulty
+- mistakes
+- next_action
 
-control must be the canonical contract:
-{"version":1,"mode":"LEARN|REVIEW","step":"NEW|CONTINUE","turn_finished":bool,"help_bias":"EASIER|UNCHANGED|HARDER","allowed_actions":[...],"recommended_action":string|null}
-
-If teaching continues, control must be LEARN/CONTINUE/turn_finished=false with empty allowed_actions.
-If learning is finished, control must be REVIEW/NEW/turn_finished=true with allowed_actions ["NEXT_QUESTION"] and recommended_action "NEXT_QUESTION".
-Return a valid response following the LEARN_INIT output schema.
+Return a valid response following the LEARN output schema.
 ''',
-    'learn_cont': '''
-You are a one-on-one teacher. Task: LEARN_CONT.
+    'review': '''
+You are a one-on-one teacher. Task: REVIEW.
 
-Continue teaching the same knowledge point. prev_json may be missing or stale; continue safely from available dialogue.
-No formal practice question.
+Keep one active review question at a time.
 Return JSON with:
-- teacher_message
-- understanding
-- control
+- text
+- difficulty
+- mistakes
+- next_action
+- finished
 
-Use the same canonical control contract as LEARN_INIT.
-If learning is finished, control must be REVIEW/NEW/turn_finished=true with allowed_actions ["NEXT_QUESTION"] and recommended_action "NEXT_QUESTION".
-Return a valid response following the LEARN_CONT output schema.
-''',
-    'review_init': '''
-You are a one-on-one teacher. Task: REVIEW_INIT.
-
-Ask exactly one new practice question for the same knowledge point.
-Return JSON with:
-- teacher_message
-- control
-- difficulty_level
-- grading
-- error_book_update
-- evidence
-
-control must be REVIEW/CONTINUE/turn_finished=false with empty allowed_actions.
-grading must be null. error_book_update must be null. Do not return extra keys.
-Return a valid response following the REVIEW_INIT output schema.
-''',
-    'review_cont': '''
-You are a one-on-one teacher. Task: REVIEW_CONT.
-
-Continue the same active review question.
-If prev_json is missing, stale, finished, or wrong-mode, do not invent a continuation and do not start a new question. Return a finished control state whose allowed_actions are ["NEXT_QUESTION","SUMMARIZE","PAUSE"].
-Return JSON with:
-- teacher_message
-- control
-- answer_state
-- grading
-- error_book_update
-- evidence
-
-Finished review turns must stay in REVIEW/NEW. Do not route review directly back into learn.
-If grading is not null, it must be exactly {"is_correct": boolean, "mistake_summary": string, "hint_level": 0..3}. Do not use keys like "correct", "score", or "feedback".
-If error_book_update is not null, it must be exactly {"type_id": string, "delta_wrong": integer >= 1, "mistake_tag": string, "mistake_note": string}.
-Return a valid response following the REVIEW_CONT output schema.
-''',
-    'summary': '''
-You are a one-on-one teacher. Task: SUMMARY.
-
-Summarize current mastery for one knowledge point.
-If evidence_policy is REVIEW_ONLY and new_graded_review_evidence_available is false, keep mastery stable and explicitly say there is no new graded review evidence yet.
-Return JSON with:
-- teacher_message
-- control
-- lit
-- next_step
-
-control must be a finished canonical control object.
-Return a valid response following the SUMMARY output schema.
+Return a valid response following the REVIEW output schema.
 ''',
   };
 
@@ -104,6 +55,9 @@ Return a valid response following the SUMMARY output schema.
     String? courseKey,
     int? studentId,
   }) async {
+    if (_usesBundledOnlyPrompt(name)) {
+      return _loadBundledSystemPrompt(name);
+    }
     final normalizedCourseKey = _normalizeCourseKey(courseKey);
     final cacheKey = [
       teacherId?.toString() ?? 'default',
@@ -147,6 +101,9 @@ Return a valid response following the SUMMARY output schema.
     String? courseKey,
     int? studentId,
   }) async {
+    if (_usesBundledOnlyPrompt(name)) {
+      return '';
+    }
     final normalizedCourseKey = _normalizeCourseKey(courseKey);
     return _loadAppendPrompt(
       name,
@@ -165,6 +122,9 @@ Return a valid response following the SUMMARY output schema.
     String? studentAppendOverride,
     bool includeSystem = true,
   }) async {
+    if (_usesBundledOnlyPrompt(name)) {
+      return includeSystem ? _loadBundledSystemPrompt(name) : '';
+    }
     final normalizedCourseKey = _normalizeCourseKey(courseKey);
     final systemPrompt = includeSystem
         ? await loadResolvedSystemPrompt(name, teacherId: teacherId)
@@ -210,6 +170,9 @@ Return a valid response following the SUMMARY output schema.
     String name, {
     required int? teacherId,
   }) async {
+    if (_usesBundledOnlyPrompt(name)) {
+      return _loadBundledSystemPrompt(name);
+    }
     final override = await _loadSystemPromptOverride(
       name,
       teacherId: teacherId,
@@ -291,6 +254,9 @@ Return a valid response following the SUMMARY output schema.
     required String? courseKey,
     int? studentId,
   }) async {
+    if (_usesBundledOnlyPrompt(name)) {
+      return '';
+    }
     final db = _db;
     if (db == null || teacherId == null || courseKey == null) {
       return '';
@@ -334,5 +300,9 @@ Return a valid response following the SUMMARY output schema.
     final content = await _assetBundle.loadString('assets/textbooks/$filename');
     _textbookCache[filename] = content;
     return content;
+  }
+
+  bool _usesBundledOnlyPrompt(String name) {
+    return _bundledOnlyPromptNames.contains(name.trim());
   }
 }

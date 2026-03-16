@@ -24,11 +24,8 @@ class _MarketplacePageState extends State<MarketplacePage> {
   static const _promptConflictPolicy =
       _PromptConflictPolicy.preserveLocalOnRedownload;
   static const List<String> _promptNames = [
-    'learn_init',
-    'learn_cont',
-    'review_init',
-    'review_cont',
-    'summary',
+    'learn',
+    'review',
   ];
 
   late final MarketplaceApiService _api;
@@ -954,6 +951,7 @@ class _MarketplacePageState extends State<MarketplacePage> {
       final hasLocalEdits = await _hasManagedPromptLocalEditsSinceLastApply(
         db: db,
         teacherId: teacherId,
+        courseVersionId: course.id,
         courseKey: courseKey,
         studentId: user.id,
         appliedAt: appliedAt,
@@ -1002,6 +1000,10 @@ class _MarketplacePageState extends State<MarketplacePage> {
     await db.deleteStudentPromptProfile(
       teacherId: teacherId,
       courseKey: courseKey,
+      studentId: user.id,
+    );
+    await db.deleteStudentPassConfig(
+      courseVersionId: course.id,
       studentId: user.id,
     );
 
@@ -1111,6 +1113,40 @@ class _MarketplacePageState extends State<MarketplacePage> {
       }
     }
 
+    final passConfigs = metadata['student_pass_configs'];
+    if (passConfigs is List) {
+      for (final item in passConfigs) {
+        if (item is! Map<String, dynamic>) {
+          continue;
+        }
+        final targetRemoteUserId =
+            (item['student_remote_user_id'] as num?)?.toInt();
+        final targetUsername =
+            (item['student_username'] as String?)?.trim() ?? '';
+        final remoteMatched = remoteUserId != null &&
+            targetRemoteUserId != null &&
+            targetRemoteUserId > 0 &&
+            remoteUserId == targetRemoteUserId;
+        final usernameMatched = targetUsername.isNotEmpty &&
+            targetUsername.toLowerCase() == user.username.toLowerCase();
+        if (!remoteMatched && !usernameMatched) {
+          continue;
+        }
+        await db.upsertStudentPassConfig(
+          courseVersionId: course.id,
+          studentId: user.id,
+          easyWeight: ((item['easy_weight'] as num?)?.toDouble()) ??
+              ResolvedStudentPassRule.defaultEasyWeight,
+          mediumWeight: ((item['medium_weight'] as num?)?.toDouble()) ??
+              ResolvedStudentPassRule.defaultMediumWeight,
+          hardWeight: ((item['hard_weight'] as num?)?.toDouble()) ??
+              ResolvedStudentPassRule.defaultHardWeight,
+          passThreshold: ((item['pass_threshold'] as num?)?.toDouble()) ??
+              ResolvedStudentPassRule.defaultPassThreshold,
+        );
+      }
+    }
+
     if (remoteUserId != null &&
         remoteUserId > 0 &&
         remoteCourseId > 0 &&
@@ -1134,6 +1170,7 @@ class _MarketplacePageState extends State<MarketplacePage> {
   Future<bool> _hasManagedPromptLocalEditsSinceLastApply({
     required AppDatabase db,
     required int teacherId,
+    required int courseVersionId,
     required String courseKey,
     required int studentId,
     required DateTime? appliedAt,
@@ -1168,6 +1205,16 @@ class _MarketplacePageState extends State<MarketplacePage> {
         continue;
       }
       final changedAt = profile.updatedAt ?? profile.createdAt;
+      if (changedAt.isAfter(appliedAt)) {
+        return true;
+      }
+    }
+    final passConfig = await db.getStudentPassConfig(
+      courseVersionId: courseVersionId,
+      studentId: studentId,
+    );
+    if (passConfig != null) {
+      final changedAt = passConfig.updatedAt ?? passConfig.createdAt;
       if (changedAt.isAfter(appliedAt)) {
         return true;
       }

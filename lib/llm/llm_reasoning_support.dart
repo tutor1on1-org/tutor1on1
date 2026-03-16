@@ -382,14 +382,25 @@ class LlmReasoningSupport {
     StringBuffer buffer,
     String fragment,
   ) {
+    appendJsonAwareFragmentAndReturnDelta(buffer, fragment);
+  }
+
+  static String appendJsonAwareFragmentAndReturnDelta(
+    StringBuffer buffer,
+    String fragment,
+  ) {
     if (fragment.isEmpty) {
-      return;
+      return '';
     }
     final current = buffer.toString();
+    final delta = StringBuffer();
     if (_shouldInsertJsonStringSpace(current, fragment)) {
       buffer.write(' ');
+      delta.write(' ');
     }
     buffer.write(fragment);
+    delta.write(fragment);
+    return delta.toString();
   }
 
   static String _joinJsonAwareFragments(List<String> fragments) {

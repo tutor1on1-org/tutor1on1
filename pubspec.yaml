@@ -52,15 +52,9 @@ flutter:
   uses-material-design: true
   generate: true
   assets:
-    - assets/prompts/learn_init.prompt.txt
-    - assets/prompts/learn_cont.prompt.txt
-    - assets/prompts/review_init.prompt.txt
-    - assets/prompts/review_cont.prompt.txt
-    - assets/prompts/summary.prompt.txt
-    - assets/schemas/learn_init.schema.json
-    - assets/schemas/learn_cont.schema.json
-    - assets/schemas/review_init.schema.json
-    - assets/schemas/review_cont.schema.json
-    - assets/schemas/summarize.schema.json
+    - assets/prompts/learn.prompt.txt
+    - assets/prompts/review.prompt.txt
+    - assets/schemas/learn.schema.json
+    - assets/schemas/review.schema.json
     - assets/textbooks/math_outline_y5_y12.txt
     - assets/teachers/

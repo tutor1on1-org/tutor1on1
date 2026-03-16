@@ -73,7 +73,7 @@ void main() {
 
   test('loadEntries decrypts reasoning text and owner metadata', () async {
     await repository.appendEntry(
-      promptName: 'review_cont',
+      promptName: 'review',
       model: 'gpt-5.4',
       baseUrl: 'https://api.openai.com/v1',
       mode: 'LIVE_RECORD',
@@ -99,7 +99,7 @@ void main() {
     expect(entries, hasLength(1));
     final entry = entries.single;
     expect(entry.logVersion, equals(2));
-    expect(entry.promptName, equals('review_cont'));
+    expect(entry.promptName, equals('review'));
     expect(entry.model, equals('gpt-5.4'));
     expect(entry.status, equals('ok'));
     expect(entry.reasoningText,

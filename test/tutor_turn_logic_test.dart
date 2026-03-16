@@ -1,62 +1,31 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:family_teacher/models/tutor_contract.dart';
 import 'package:family_teacher/ui/tutor_turn_logic.dart';
 
 void main() {
-  test('review turn stays active while control says unfinished', () {
+  test('review turn stays active while finished is false', () {
     expect(
       hasActiveTutorTurn(
         action: 'review',
-        parsed: <String, dynamic>{
-          'control': {
-            'version': 1,
-            'mode': 'REVIEW',
-            'step': 'CONTINUE',
-            'turn_finished': false,
-            'help_bias': 'UNCHANGED',
-            'allowed_actions': const <String>[],
-            'recommended_action': null,
-          },
-        },
+        parsed: <String, dynamic>{'finished': false},
       ),
       isTrue,
     );
   });
 
-  test('finished review turn is not active anymore', () {
+  test('closed review turn is finished', () {
     expect(
       hasActiveTutorTurn(
         action: 'review',
-        parsed: <String, dynamic>{
-          'control': {
-            'version': 1,
-            'mode': 'REVIEW',
-            'step': 'NEW',
-            'turn_finished': true,
-            'help_bias': 'UNCHANGED',
-            'allowed_actions': const <String>['NEXT_QUESTION'],
-            'recommended_action': 'NEXT_QUESTION',
-          },
-        },
+        parsed: <String, dynamic>{'finished': true},
       ),
       isFalse,
     );
     expect(
       isFinishedTutorTurn(
         action: 'review',
-        parsed: <String, dynamic>{
-          'control': {
-            'version': 1,
-            'mode': 'REVIEW',
-            'step': 'NEW',
-            'turn_finished': true,
-            'help_bias': 'UNCHANGED',
-            'allowed_actions': const <String>['NEXT_QUESTION'],
-            'recommended_action': 'NEXT_QUESTION',
-          },
-        },
+        parsed: <String, dynamic>{'finished': true},
       ),
       isTrue,
     );
@@ -72,52 +41,18 @@ void main() {
     );
 
     expect(normalized.text, equals('draft answer'));
-    expect(
-      normalized.selection,
-      const TextSelection.collapsed(offset: 12),
-    );
+    expect(normalized.selection, const TextSelection.collapsed(offset: 12));
     expect(normalized.composing, TextRange.empty);
   });
 
-  test('prompt resolution stays on the message action branch', () {
+  test('prompt resolution uses simple learn/review names', () {
     expect(
-      resolveTutorPromptName(
-        action: 'review',
-        wantsContinue: true,
-      ),
-      equals('review_cont'),
+      resolveTutorPromptName(action: 'review', wantsContinue: true),
+      equals('review'),
     );
     expect(
-      resolveTutorPromptName(
-        action: 'learn',
-        wantsContinue: true,
-      ),
-      equals('learn_cont'),
-    );
-  });
-
-  test('non tutor actions pass through prompt resolution unchanged', () {
-    expect(
-      resolveTutorPromptName(
-        action: 'summary',
-        wantsContinue: true,
-      ),
-      equals('summary'),
-    );
-  });
-
-  test('invalid control contract is rejected by parser', () {
-    expect(
-      TutorControlState.fromJson(<String, dynamic>{
-        'version': 1,
-        'mode': 'REVIEW',
-        'step': 'NEW',
-        'turn_finished': true,
-        'help_bias': 'UNCHANGED',
-        'allowed_actions': const <String>['INVALID'],
-        'recommended_action': null,
-      }),
-      isNull,
+      resolveTutorPromptName(action: 'learn', wantsContinue: true),
+      equals('learn'),
     );
   });
 }

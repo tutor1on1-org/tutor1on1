@@ -19,28 +19,6 @@ import 'llm_log_repository.dart';
 import 'session_upload_cache_service.dart';
 import 'settings_repository.dart';
 
-class SummarizeResult {
-  SummarizeResult({
-    required this.success,
-    required this.message,
-    this.lit,
-    this.litPercent,
-    this.summaryText,
-    this.masterLevel,
-    this.masteryLevel,
-    this.nextStep,
-  });
-
-  final bool success;
-  final String message;
-  final bool? lit;
-  final int? litPercent;
-  final String? summaryText;
-  final String? masterLevel;
-  final String? masteryLevel;
-  final String? nextStep;
-}
-
 class _RenderResult {
   _RenderResult({
     required this.rendered,
@@ -357,41 +335,13 @@ class SessionService {
     );
     final promptName = promptResolution.promptName;
     final history = _buildHistory(messages);
-    final recentDialogue = _buildRecentDialogue(
-      messages,
-      lastAssistantIndex: promptResolution.lastAssistantIndex,
-    );
-    final prevJsonText = promptResolution.prevJson == null
-        ? '{}'
-        : jsonEncode(promptResolution.prevJson);
-    final lastEvidence = evidenceState.lastEvidence;
-    final lastEvidenceText = jsonEncode(
-      lastEvidence ??
-          {
-            'a': 0,
-            'c': 0,
-            'h': 0,
-            't': '',
-            'mt': <String>[],
-          },
-    );
+    final recentChat = _buildRecentChat(messages);
     final passedCounts = _resolvePassedCounts(
       progress: progress,
       evidenceState: evidenceState,
     );
-    final masteryFromCounts = _masteryLevelFromPassedCounts(passedCounts);
-    final masteryFromPrev =
-        _normalizeMasteryLevel(promptResolution.prevJson?['mastery_level']);
     final currentDifficultyLevel =
         _reviewDifficultyLevelFromPassedCounts(passedCounts);
-    final currentMasteryLevel =
-        masteryFromCounts ?? masteryFromPrev ?? 'NOT_PASS';
-    final bestPassedLevel = _bestPassedLevelFromCounts(passedCounts) ?? 'none';
-    final totalPassedCount = _totalPassedCount(passedCounts);
-    final practiceHistorySummary = _buildPracticeHistorySummary(
-      messages,
-      evidenceState: evidenceState,
-    );
     final errorBookSummary = _buildErrorBookSummary(
       messages: messages,
       progress: progress,
@@ -419,40 +369,30 @@ class SessionService {
     );
     final settings = await _settingsRepository.load();
     final values = {
-      'subject': courseVersion.subject,
-      'course_version_id': courseVersion.id,
-      'kp_key': node.kpKey,
       'kp_title': node.title,
       'kp_description': node.description,
-      'conversation_history': history,
-      'session_history': history,
-      'control_state_json': controlState.toJsonText(),
-      'evidence_state_json': evidenceState.toJsonText(),
-      'evidence_policy': evidenceState.policy,
-      'new_graded_review_evidence_available':
-          evidenceState.hasNewGradedReviewEvidence ? 'true' : 'false',
       'student_input': studentInput.trim(),
-      'student_intent': resolvedStudentIntent,
+      'recent_chat': recentChat,
       'help_bias': resolvedHelpBias,
-      'current_difficulty_level': currentDifficultyLevel,
       'student_summary': progress?.summaryText ?? session?.summaryText ?? '',
       'student_profile': studentPromptContext.profileText,
       'student_preferences': studentPromptContext.preferencesText,
-      'passed_counts_json': jsonEncode(passedCounts),
-      'best_passed_level': bestPassedLevel,
-      'total_passed_count': totalPassedCount.toString(),
-      'current_lit': progress?.lit == true ? 'true' : 'false',
       'lesson_content': '',
-      'types': '[{"type_id":"OTHER","name":"General"}]',
       'error_book_summary': errorBookSummary,
-      'practice_history_summary': practiceHistorySummary,
       'presented_questions': '',
-      'recent_dialogue': recentDialogue,
-      'prev_json': prevJsonText,
-      'last_evidence': lastEvidenceText,
-      'current_mastery_level': currentMasteryLevel,
+      'active_review_question_json': controlState.activeReviewQuestion == null
+          ? 'null'
+          : jsonEncode(controlState.activeReviewQuestion),
+      'target_difficulty': _resolveTargetDifficulty(
+        controlState: controlState,
+        fallbackDifficulty: currentDifficultyLevel,
+      ),
+      'review_correct_total': evidenceState.reviewCorrectTotal.toString(),
+      'review_attempt_total': evidenceState.reviewAttemptTotal.toString(),
+      'conversation_history': history,
+      'session_history': history,
     };
-    final needsLessonContent = promptName == 'learn_init';
+    final needsLessonContent = promptName == 'learn';
     if (needsLessonContent) {
       values['lesson_content'] = await _loadLectureTextIfPresent(
         courseVersion: courseVersion,
@@ -463,7 +403,10 @@ class SessionService {
       values['presented_questions'] = await _loadQuestionsText(
         courseVersion: courseVersion,
         kpKey: node.kpKey,
-        level: currentDifficultyLevel,
+        level: _resolveTargetDifficulty(
+          controlState: controlState,
+          fallbackDifficulty: currentDifficultyLevel,
+        ),
       );
     }
     final renderResult = _renderWithHistoryLimit(
@@ -718,8 +661,12 @@ class SessionService {
       fallbackMode:
           request.actionMode == 'review' ? TutorMode.review : TutorMode.learn,
     );
-    final nextControl =
-        TutorControlState.fromAssistantPayload(parsed) ?? currentControl;
+    final nextControl = _deriveNextControlState(
+      current: currentControl,
+      actionMode: request.actionMode,
+      parsed: parsed,
+      helpBias: _normalizeHelpBias(parsed?['next_help_bias'] as String?),
+    );
     final currentEvidence = _loadSessionEvidenceState(session);
     final nextEvidence = TutorEvidenceState.updateFromAssistantPayload(
       current: currentEvidence,
@@ -743,6 +690,43 @@ class SessionService {
       parsedJsonText: resolution.payload.parsedJson,
       passedLevel: request.reviewPassedLevel,
     );
+    final studentId = request.llmContext.studentId;
+    if (request.actionMode == 'review' && studentId != null && studentId > 0) {
+      final progress = await _db.getProgress(
+        studentId: studentId,
+        courseVersionId: request.courseVersionId,
+        kpKey: request.kpKey,
+      );
+      final passRule = await _db.resolveStudentPassRule(
+        courseVersionId: request.courseVersionId,
+        studentId: studentId,
+      );
+      final resolvedLit = passRule.litForCounts(
+        easyCount: progress?.easyPassedCount ?? 0,
+        mediumCount: progress?.mediumPassedCount ?? 0,
+        hardCount: progress?.hardPassedCount ?? 0,
+      );
+      final resolvedLitPercent = passRule.litPercentForCounts(
+        easyCount: progress?.easyPassedCount ?? 0,
+        mediumCount: progress?.mediumPassedCount ?? 0,
+        hardCount: progress?.hardPassedCount ?? 0,
+      );
+      await (_db.update(_db.chatSessions)
+            ..where((tbl) => tbl.id.equals(request.sessionId)))
+          .write(
+        ChatSessionsCompanion(
+          summaryLit: Value(resolvedLit),
+          summaryLitPercent: Value(resolvedLitPercent),
+        ),
+      );
+      await _db.setProgressLit(
+        studentId: studentId,
+        courseVersionId: request.courseVersionId,
+        kpKey: request.kpKey,
+        lit: resolvedLit,
+        litPercent: resolvedLitPercent,
+      );
+    }
     await _appendTutorPersistLog(
       request: request,
       resolution: resolution,
@@ -770,251 +754,6 @@ class SessionService {
       sessionId: context.sessionId,
       kpKey: context.kpKey,
       action: context.action,
-    );
-  }
-
-  Future<RequestHandle<SummarizeResult>> startSummarize({
-    required int sessionId,
-    required CourseVersion courseVersion,
-    required CourseNode node,
-    String? modelOverride,
-    void Function()? onPromptWarning,
-  }) async {
-    const llmPromptName = 'summarize';
-    final session = await _db.getSession(sessionId);
-    final currentControl = _loadSessionControlState(
-      session,
-      fallbackMode: TutorMode.learn,
-    );
-    final evidenceState = _loadSessionEvidenceState(session);
-    final progress = session == null
-        ? null
-        : await _db.getProgress(
-            studentId: session.studentId,
-            courseVersionId: courseVersion.id,
-            kpKey: node.kpKey,
-          );
-    final messages = await _db.getMessagesForSession(sessionId);
-    final cachedSummary = _buildCachedSummaryResult(
-      session: session,
-      progress: progress,
-      evidenceState: evidenceState,
-    );
-    if (cachedSummary != null) {
-      await _llmLogRepository.appendEntry(
-        promptName: llmPromptName,
-        model: '',
-        baseUrl: await _resolveCurrentBaseUrl(),
-        mode: 'APP',
-        status: 'cache_hit',
-        responseChars: (cachedSummary.summaryText ?? '').length,
-        teacherId: courseVersion.teacherId,
-        studentId: session?.studentId,
-        courseVersionId: courseVersion.id,
-        sessionId: sessionId,
-        kpKey: node.kpKey,
-        action: 'summary',
-      );
-      return RequestHandle<SummarizeResult>(
-        future: Future<SummarizeResult>.value(cachedSummary),
-        cancel: () {},
-      );
-    }
-    final history = _buildHistory(messages);
-    final lastEvidence = evidenceState.lastEvidence;
-    final courseKey = _normalizeCourseKey(courseVersion.sourcePath);
-    final studentPromptContext = await _db.resolveStudentPromptContext(
-      teacherId: courseVersion.teacherId,
-      courseKey: courseKey,
-      studentId: session?.studentId,
-    );
-    if (session != null) {
-      await _promptRepository.ensureAssignmentPrompts(
-        teacherId: courseVersion.teacherId,
-        studentId: session.studentId,
-        courseVersionId: courseVersion.id,
-      );
-    }
-    final template = await _promptRepository.loadPrompt(
-      'summary',
-      teacherId: courseVersion.teacherId,
-      courseKey: courseKey,
-      studentId: session?.studentId,
-    );
-    final schema = await _promptRepository.loadSchema('summarize');
-    final settings = await _settingsRepository.load();
-    final passedCounts = _resolvePassedCounts(
-      progress: progress,
-      evidenceState: evidenceState,
-    );
-    final bestPassedLevel = _bestPassedLevelFromCounts(passedCounts);
-    final totalPassedCount = _totalPassedCount(passedCounts);
-    final values = {
-      'subject': courseVersion.subject,
-      'course_version_id': courseVersion.id,
-      'kp_key': node.kpKey,
-      'kp_title': node.title,
-      'kp_description': node.description,
-      'conversation_history': history,
-      'session_history': history,
-      'student_intent': 'AUTO',
-      'student_summary': progress?.summaryText ?? session?.summaryText ?? '',
-      'student_profile': studentPromptContext.profileText,
-      'student_preferences': studentPromptContext.preferencesText,
-      'passed_counts_json': jsonEncode(passedCounts),
-      'best_passed_level': bestPassedLevel ?? 'none',
-      'total_passed_count': totalPassedCount.toString(),
-      'current_lit': progress?.lit == true ? 'true' : 'false',
-      'control_state_json': currentControl.toJsonText(),
-      'evidence_state_json': evidenceState.toJsonText(),
-      'evidence_policy': evidenceState.policy,
-      'new_graded_review_evidence_available':
-          evidenceState.hasNewGradedReviewEvidence ? 'true' : 'false',
-      'practice_history_summary': _buildPracticeHistorySummary(
-        messages,
-        evidenceState: evidenceState,
-        reviewOnly: true,
-        maxMessages: 20,
-      ),
-      'error_book_summary': _buildErrorBookSummary(
-        messages: messages,
-        progress: progress,
-        evidenceState: evidenceState,
-      ),
-      'last_evidence': jsonEncode(
-        lastEvidence ??
-            {
-              'a': 0,
-              'c': 0,
-              'h': 0,
-              't': '',
-              'mt': <String>[],
-            },
-      ),
-      'current_mastery_level':
-          _masteryLevelFromPassedCounts(passedCounts) ?? 'NOT_PASS',
-    };
-    final renderResult = _renderWithHistoryLimit(
-      template: template,
-      values: values,
-      maxTokens: settings.maxTokens,
-    );
-    if (renderResult.maxTokensTooSmall && onPromptWarning != null) {
-      onPromptWarning();
-    }
-    final rendered = renderResult.rendered;
-
-    final context = LlmCallContext(
-      teacherId: courseVersion.teacherId,
-      studentId: session?.studentId,
-      courseVersionId: courseVersion.id,
-      sessionId: sessionId,
-      kpKey: node.kpKey,
-      action: 'summary',
-    );
-    final handle = _llmService.startCall(
-      promptName: llmPromptName,
-      renderedPrompt: rendered,
-      schemaMap: schema,
-      modelOverride: modelOverride,
-      context: context,
-    );
-    final future = handle.future.then((result) async {
-      if (result.responseText.trim().isEmpty) {
-        throw StateError('LLM returned an empty response.');
-      }
-      final resolution = await _resolveStructuredPayload(
-        promptName: llmPromptName,
-        renderedPrompt: rendered,
-        modelOverride: modelOverride,
-        context: context,
-        schemaMap: schema,
-        responseText: result.responseText,
-        result: result,
-      );
-      final parsedJsonText = resolution.payload.parsedJson;
-      final parsed =
-          parsedJsonText == null ? null : _tryDecodeJsonObject(parsedJsonText);
-      if (parsed == null) {
-        throw StateError('Structured summary payload is missing parsed JSON.');
-      }
-      final litValue = parsed['lit'];
-      if (litValue is! bool) {
-        throw StateError(
-          'Structured summary payload is missing a valid lit boolean.',
-        );
-      }
-      final nextStep = _normalizeNextStep(parsed['next_step']);
-      final litPercent = _litPercentFromBestPassedLevel(bestPassedLevel);
-      final resolvedLit = litValue;
-      final summary = resolution.payload.displayText;
-      final summaryValid = true;
-      final rawResponse = null;
-      final nextControl =
-          TutorControlState.fromAssistantPayload(parsed) ?? currentControl;
-      final nextEvidence = TutorEvidenceState.updateFromAssistantPayload(
-        current: evidenceState,
-        actionMode: 'summary',
-        parsed: parsed,
-      );
-
-      await _db.transaction(() async {
-        final studentId = session?.studentId;
-        if (studentId != null) {
-          await _db.upsertProgressSummary(
-            studentId: studentId,
-            courseVersionId: courseVersion.id,
-            kpKey: node.kpKey,
-            summaryText: summary,
-            summaryRawResponse: rawResponse,
-            summaryValid: summaryValid,
-            summaryLit: resolvedLit,
-          );
-        }
-
-        await (_db.update(_db.chatSessions)
-              ..where((tbl) => tbl.id.equals(sessionId)))
-            .write(
-          ChatSessionsCompanion(
-            summaryText: Value(summary),
-            summaryLit: Value(resolvedLit),
-            summaryRawResponse: Value(rawResponse),
-            summaryValid: Value(summaryValid),
-            status: const Value('active'),
-            controlStateJson: Value(nextControl.toJsonText()),
-            controlStateUpdatedAt: Value(DateTime.now()),
-            evidenceStateJson: Value(nextEvidence.toJsonText()),
-            evidenceStateUpdatedAt: Value(DateTime.now()),
-          ),
-        );
-
-        await _db.into(_db.chatMessages).insert(
-              ChatMessagesCompanion.insert(
-                sessionId: sessionId,
-                role: 'assistant',
-                content: summary,
-                rawContent: Value(resolution.payload.rawText),
-                parsedJson: Value(resolution.payload.parsedJson),
-                action: const Value('summary'),
-              ),
-            );
-      });
-      await _touchSessionSync(sessionId);
-
-      return SummarizeResult(
-        success: true,
-        message: 'Summary stored.',
-        lit: resolvedLit,
-        litPercent: litPercent,
-        summaryText: summary,
-        masterLevel: bestPassedLevel,
-        nextStep: nextStep,
-      );
-    });
-
-    return RequestHandle<SummarizeResult>(
-      future: future,
-      cancel: handle.cancel,
     );
   }
 
@@ -1134,163 +873,93 @@ class SessionService {
         'Response preview: ${_summarizeResponseForError(responseText)}',
       );
     }
-    final teacherMessage = parsed['teacher_message'];
+    final teacherMessage = parsed['text'];
     if (teacherMessage is! String || teacherMessage.trim().isEmpty) {
       throw StateError(
-        'LLM response for "$promptName" is missing "teacher_message". '
+        'LLM response for "$promptName" is missing visible text. '
         'Response preview: ${_summarizeResponseForError(responseText)}',
       );
     }
-    final control = parsed['control'];
-    if (control is! Map<String, dynamic>) {
-      throw StateError(
-        'LLM response for "$promptName" is missing "control". '
-        'Response preview: ${_summarizeResponseForError(responseText)}',
-      );
-    }
-    final controlState = TutorControlState.fromJson(control);
-    if (controlState == null) {
-      throw StateError(
-        'LLM response for "$promptName" has invalid "control". '
-        'Response preview: ${_summarizeResponseForError(responseText)}',
-      );
-    }
-    if (!controlState.turnFinished &&
-        (controlState.allowedActions.isNotEmpty ||
-            controlState.recommendedAction != null)) {
-      throw StateError(
-        'LLM response for "$promptName" cannot expose finished actions while turn_finished=false. '
-        'Response preview: ${_summarizeResponseForError(responseText)}',
-      );
-    }
-    if (controlState.recommendedAction != null &&
-        !controlState.allowedActions.contains(controlState.recommendedAction)) {
-      throw StateError(
-        'LLM response for "$promptName" has recommended_action outside allowed_actions. '
-        'Response preview: ${_summarizeResponseForError(responseText)}',
-      );
-    }
-    if (promptName == 'review_init') {
-      if (controlState.mode != TutorMode.review ||
-          controlState.step != TutorTurnStep.continueTurn ||
-          controlState.turnFinished) {
+    if (promptName == 'learn') {
+      final difficulty = _normalizeLevel(parsed['difficulty']);
+      if (difficulty == null) {
         throw StateError(
-          'LLM response for "$promptName" has invalid review-init control state. '
+          'LLM response for "$promptName" has invalid "difficulty". '
           'Response preview: ${_summarizeResponseForError(responseText)}',
         );
       }
-      final difficultyLevel = _normalizeLevel(parsed['difficulty_level']);
-      if (difficultyLevel == null) {
+      final mistakes = parsed['mistakes'];
+      if (mistakes is! List ||
+          mistakes.any(
+            (item) => item is! String || item.trim().isEmpty,
+          )) {
         throw StateError(
-          'LLM response for "$promptName" has invalid "difficulty_level". '
+          'LLM response for "$promptName" has invalid "mistakes". '
           'Response preview: ${_summarizeResponseForError(responseText)}',
         );
       }
-    }
-    if (promptName == 'learn_init' || promptName == 'learn_cont') {
-      if (!controlState.turnFinished) {
-        if (controlState.mode != TutorMode.learn ||
-            controlState.step != TutorTurnStep.continueTurn) {
-          throw StateError(
-            'LLM response for "$promptName" has invalid active learn control state. '
-            'Response preview: ${_summarizeResponseForError(responseText)}',
-          );
-        }
-      } else {
-        if (controlState.mode != TutorMode.review ||
-            controlState.step != TutorTurnStep.newTurn) {
-          throw StateError(
-            'LLM response for "$promptName" must finish into REVIEW/NEW. '
-            'Response preview: ${_summarizeResponseForError(responseText)}',
-          );
-        }
-      }
-    }
-    if (promptName == 'review_cont') {
-      final answerState = (parsed['answer_state'] as String?)?.trim() ?? '';
-      const validAnswerStates = {
-        'HELP_REQUEST',
-        'PARTIAL_ATTEMPT',
-        'FINAL_ANSWER',
-      };
-      if (!validAnswerStates.contains(answerState)) {
-        throw StateError(
-          'LLM response for "$promptName" has invalid "answer_state". '
-          'Response preview: ${_summarizeResponseForError(responseText)}',
-        );
-      }
-      if (answerState == 'FINAL_ANSWER' && !controlState.turnFinished) {
-        throw StateError(
-          'LLM response for "$promptName" requires turn_state=FINISHED when answer_state=FINAL_ANSWER. '
-          'Response preview: ${_summarizeResponseForError(responseText)}',
-        );
-      }
-      if (controlState.turnFinished &&
-          (controlState.mode != TutorMode.review ||
-              controlState.step != TutorTurnStep.newTurn)) {
-        throw StateError(
-          'LLM response for "$promptName" must finish into REVIEW/NEW. '
-          'Response preview: ${_summarizeResponseForError(responseText)}',
-        );
-      }
-      final nextAction =
-          (parsed['next_action'] as String?)?.trim().toUpperCase();
-      if (nextAction != null &&
-          nextAction.isNotEmpty &&
-          nextAction != 'NONE' &&
-          nextAction != 'SUMMARY') {
+      final nextAction = _normalizeNextAction(parsed['next_action']);
+      if (nextAction == null) {
         throw StateError(
           'LLM response for "$promptName" has invalid "next_action". '
           'Response preview: ${_summarizeResponseForError(responseText)}',
         );
       }
     }
-    if ((promptName == 'summary' || promptName == 'summarize') &&
-        !controlState.turnFinished) {
-      throw StateError(
-        'LLM response for "$promptName" must be a finished control state. '
-        'Response preview: ${_summarizeResponseForError(responseText)}',
-      );
+    if (promptName == 'review') {
+      final finished = parsed['finished'];
+      if (finished is! bool) {
+        throw StateError(
+          'LLM response for "$promptName" is missing boolean "finished". '
+          'Response preview: ${_summarizeResponseForError(responseText)}',
+        );
+      }
+      final difficultyLevel = _normalizeLevel(parsed['difficulty']);
+      if (difficultyLevel == null) {
+        throw StateError(
+          'LLM response for "$promptName" has invalid "difficulty". '
+          'Response preview: ${_summarizeResponseForError(responseText)}',
+        );
+      }
+      final mistakeTags = parsed['mistakes'];
+      if (mistakeTags is! List ||
+          mistakeTags.any(
+            (item) => item is! String || item.trim().isEmpty,
+          )) {
+        throw StateError(
+          'LLM response for "$promptName" has invalid "mistakes". '
+          'Response preview: ${_summarizeResponseForError(responseText)}',
+        );
+      }
+      final nextAction = _normalizeNextAction(parsed['next_action']);
+      if (nextAction == null) {
+        throw StateError(
+          'LLM response for "$promptName" has invalid "next_action". '
+          'Response preview: ${_summarizeResponseForError(responseText)}',
+        );
+      }
     }
   }
 
   Set<String> _requiredStructuredKeys(String promptName) {
     switch (promptName) {
-      case 'learn_init':
-      case 'learn_cont':
+      case 'learn':
         return {
-          'teacher_message',
-          'understanding',
-          'control',
+          'text',
+          'difficulty',
+          'mistakes',
+          'next_action',
         };
-      case 'review_init':
+      case 'review':
         return {
-          'teacher_message',
-          'control',
-          'difficulty_level',
-          'grading',
-          'error_book_update',
-          'evidence',
-        };
-      case 'review_cont':
-        return {
-          'teacher_message',
-          'control',
-          'answer_state',
-          'grading',
-          'error_book_update',
-          'evidence',
-        };
-      case 'summary':
-      case 'summarize':
-        return {
-          'teacher_message',
-          'control',
-          'lit',
-          'next_step',
+          'text',
+          'difficulty',
+          'mistakes',
+          'next_action',
+          'finished',
         };
       default:
-        return {'teacher_message'};
+        return {'text'};
     }
   }
 
@@ -1318,35 +987,15 @@ class SessionService {
     return null;
   }
 
-  String? _normalizeMasteryLevel(Object? value) {
+  String? _normalizeNextAction(Object? value) {
     if (value is! String) {
       return null;
     }
-    final normalized = value.trim().toUpperCase().replaceAll('-', '_');
-    switch (normalized) {
-      case 'NOT_PASS':
-      case 'PASS_EASY':
-      case 'PASS_MEDIUM':
-      case 'PASS_HARD':
-        return normalized;
-      default:
-        return null;
+    final normalized = value.trim().toLowerCase();
+    if (normalized == 'learn' || normalized == 'review') {
+      return normalized;
     }
-  }
-
-  String? _normalizeNextStep(Object? value) {
-    if (value is! String) {
-      return null;
-    }
-    final normalized = value.trim().toUpperCase().replaceAll('-', '_');
-    switch (normalized) {
-      case 'RELEARN':
-      case 'CONTINUE_REVIEW':
-      case 'MOVE_ON':
-        return normalized;
-      default:
-        return null;
-    }
+    return null;
   }
 
   Map<String, int> _resolvePassedCounts({
@@ -1369,73 +1018,17 @@ class SessionService {
     };
   }
 
-  String? _bestPassedLevelFromCounts(Map<String, int> counts) {
-    if ((counts['hard'] ?? 0) > 0) {
-      return 'hard';
-    }
-    if ((counts['medium'] ?? 0) > 0) {
-      return 'medium';
-    }
-    if ((counts['easy'] ?? 0) > 0) {
-      return 'easy';
-    }
-    return null;
-  }
-
-  int _litPercentFromBestPassedLevel(String? level) {
-    switch (level) {
-      case 'easy':
-        return 33;
-      case 'medium':
-        return 66;
-      case 'hard':
-        return 100;
-      default:
-        return 0;
-    }
-  }
-
-  int _totalPassedCount(Map<String, int> counts) {
-    return (counts['easy'] ?? 0) +
-        (counts['medium'] ?? 0) +
-        (counts['hard'] ?? 0);
-  }
-
   String? _reviewPassedLevelForPrompt({
     required String promptName,
     required String currentDifficultyLevel,
     required Map<String, dynamic>? previousAssistantJson,
   }) {
-    if (promptName == 'review_init') {
-      final level =
-          _normalizeLevel(previousAssistantJson?['difficulty_level']) ??
-              _normalizeLevel(currentDifficultyLevel);
-      return level;
-    }
-    if (promptName == 'review_cont') {
-      final level =
-          _normalizeLevel(previousAssistantJson?['difficulty_level']) ??
-              _normalizeLevel(currentDifficultyLevel);
+    if (promptName == 'review') {
+      final level = _normalizeLevel(previousAssistantJson?['difficulty']) ??
+          _normalizeLevel(currentDifficultyLevel);
       return level;
     }
     return null;
-  }
-
-  String? _masteryLevelFromPassedCounts(Map<String, int> counts) {
-    final bestPassedLevel = _bestPassedLevelFromCounts(counts);
-    if (bestPassedLevel == null) {
-      return null;
-    }
-    switch (bestPassedLevel) {
-      case 'easy':
-        return 'PASS_EASY';
-      case 'medium':
-        return 'PASS_MEDIUM';
-      case 'hard':
-        return 'PASS_HARD';
-      default:
-        return null;
-    }
   }
 
   String _reviewDifficultyLevelFromPassedCounts(Map<String, int> counts) {
@@ -1497,9 +1090,6 @@ class SessionService {
         normalized == 'review_cont') {
       return 'review';
     }
-    if (normalized == 'summary' || normalized == 'summarize') {
-      return 'summary';
-    }
     return normalized;
   }
 
@@ -1511,38 +1101,14 @@ class SessionService {
     required TutorControlState sessionControl,
   }) {
     final normalized = mode.trim().toLowerCase();
-    if (normalized == 'learn_init' ||
-        normalized == 'learn_cont' ||
-        normalized == 'review_init' ||
-        normalized == 'review_cont') {
-      final actionMode = _resolveActionMode(normalized);
-      final previous = _findLastAssistantForActionMode(
-        messages: messages,
-        actionMode: actionMode,
-      );
-      return _TutorPromptResolution(
-        promptName: normalized,
-        lastAssistantIndex: previous?.index,
-        prevJson: previous?.json,
-      );
-    }
-
     final actionMode = _resolveActionMode(normalized);
     if (actionMode == 'learn' || actionMode == 'review') {
       final previous = _findLastAssistantForActionMode(
         messages: messages,
         actionMode: actionMode,
       );
-      String promptName;
-      final continueRequested =
-          sessionControl.step == TutorTurnStep.continueTurn;
-      if (actionMode == 'learn') {
-        promptName = continueRequested ? 'learn_cont' : 'learn_init';
-      } else {
-        promptName = continueRequested ? 'review_cont' : 'review_init';
-      }
       return _TutorPromptResolution(
-        promptName: promptName,
+        promptName: actionMode,
         lastAssistantIndex: previous?.index,
         prevJson: previous?.json,
       );
@@ -1576,18 +1142,108 @@ class SessionService {
     return null;
   }
 
-  String _buildRecentDialogue(
+  String _buildRecentChat(
     List<ChatMessage> messages, {
-    required int? lastAssistantIndex,
+    int maxMessages = 8,
   }) {
-    if (lastAssistantIndex == null) {
+    if (messages.isEmpty) {
       return '';
     }
-    final from = lastAssistantIndex + 1;
-    if (from >= messages.length) {
-      return '';
+    final start =
+        messages.length > maxMessages ? messages.length - maxMessages : 0;
+    return _buildHistory(messages.sublist(start));
+  }
+
+  String _resolveTargetDifficulty({
+    required TutorControlState controlState,
+    required String fallbackDifficulty,
+  }) {
+    final activeDifficulty = _normalizeLevel(
+      controlState.activeReviewQuestion?['difficulty'],
+    );
+    return activeDifficulty ?? fallbackDifficulty;
+  }
+
+  TutorControlState _deriveNextControlState({
+    required TutorControlState current,
+    required String actionMode,
+    required Map<String, dynamic>? parsed,
+    required String helpBias,
+  }) {
+    final resolvedHelpBias =
+        TutorHelpBias.fromWire(helpBias) ?? current.helpBias;
+    if (parsed == null) {
+      return current.copyWith(helpBias: resolvedHelpBias);
     }
-    return _buildHistory(messages.sublist(from));
+    if (actionMode == 'review') {
+      final finished = parsed['finished'];
+      if (finished is bool) {
+        final nextQuestion = finished
+            ? null
+            : _buildActiveReviewQuestion(
+                currentQuestion: current.activeReviewQuestion,
+                parsed: parsed,
+              );
+        final nextAction = TutorFinishedAction.fromWire(
+          _normalizeNextAction(parsed['next_action'])?.toUpperCase(),
+        );
+        return current.copyWith(
+          mode: TutorMode.review,
+          step: finished ? TutorTurnStep.newTurn : TutorTurnStep.continueTurn,
+          turnFinished: finished,
+          helpBias: resolvedHelpBias,
+          allowedActions: const <TutorFinishedAction>[],
+          recommendedAction: nextAction,
+          activeReviewQuestion: nextQuestion,
+        );
+      }
+    }
+    if (actionMode == 'learn') {
+      final nextAction = TutorFinishedAction.fromWire(
+        _normalizeNextAction(parsed['next_action'])?.toUpperCase(),
+      );
+      return current.copyWith(
+        mode: TutorMode.learn,
+        step: TutorTurnStep.newTurn,
+        turnFinished: true,
+        helpBias: resolvedHelpBias,
+        allowedActions: const <TutorFinishedAction>[],
+        recommendedAction: nextAction,
+        activeReviewQuestion: null,
+      );
+    }
+    final fallback = TutorControlState.fromAssistantPayload(parsed);
+    if (fallback != null) {
+      return fallback.copyWith(helpBias: resolvedHelpBias);
+    }
+    return current.copyWith(helpBias: resolvedHelpBias);
+  }
+
+  Map<String, dynamic>? _buildActiveReviewQuestion({
+    required Map<String, dynamic>? currentQuestion,
+    required Map<String, dynamic> parsed,
+  }) {
+    final next = <String, dynamic>{};
+    if (currentQuestion != null) {
+      next.addAll(currentQuestion);
+    }
+    final text = (parsed['text'] as String?)?.trim();
+    if (text != null && text.isNotEmpty) {
+      next['text'] = text;
+    }
+    final difficultyLevel = _normalizeLevel(parsed['difficulty']);
+    if (difficultyLevel != null) {
+      next['difficulty'] = difficultyLevel;
+    }
+    final mistakeTags = parsed['mistakes'];
+    if (mistakeTags is List) {
+      next['mistakes'] = mistakeTags
+          .whereType<String>()
+          .map((item) => item.trim())
+          .where((item) => item.isNotEmpty)
+          .toList(growable: false);
+    }
+    return next.isEmpty ? null : next;
   }
 
   TutorControlState _loadSessionControlState(
@@ -1604,30 +1260,6 @@ class SessionService {
   TutorEvidenceState _loadSessionEvidenceState(ChatSession? session) {
     return TutorEvidenceState.fromJsonText(session?.evidenceStateJson) ??
         TutorEvidenceState.initial();
-  }
-
-  String _buildPracticeHistorySummary(
-    List<ChatMessage> messages, {
-    TutorEvidenceState? evidenceState,
-    bool reviewOnly = false,
-    int maxMessages = 6,
-  }) {
-    final source = reviewOnly
-        ? messages
-            .where((message) =>
-                _resolveActionMode(message.action ?? '') == 'review')
-            .toList(growable: false)
-        : messages;
-    final tail = source.length > maxMessages
-        ? source.sublist(source.length - maxMessages)
-        : source;
-    if (tail.isEmpty) {
-      if (reviewOnly && evidenceState?.hasNewGradedReviewEvidence == true) {
-        return 'A graded review happened recently, but the raw review history is unavailable on this device.';
-      }
-      return 'No practice history yet.';
-    }
-    return _buildHistory(tail);
   }
 
   String _buildErrorBookSummary({
@@ -1671,34 +1303,59 @@ class SessionService {
       }
       final parsed = _extractMessageJson(message);
       final update = parsed?['error_book_update'];
-      if (update is! Map<String, dynamic>) {
-        continue;
-      }
-      final mistakeTag = (update['mistake_tag'] as String?)?.trim() ?? '';
-      if (mistakeTag.isEmpty) {
-        continue;
-      }
-      final typeId = _resolveErrorBookTypeId(
-        parsed: parsed,
-        update: update,
-      );
-      final key = '$typeId::$mistakeTag';
-      final note = (update['mistake_note'] as String?)?.trim() ?? '';
-      final existing = counts[key];
-      if (existing == null) {
-        counts[key] = _ErrorBookAggregate(
-          typeId: typeId,
-          mistakeTag: mistakeTag,
-          count: 1,
-          lastNote: note,
-        );
-      } else {
-        existing.count += 1;
-        if (note.isNotEmpty) {
-          existing.lastNote = note;
+      if (update is Map<String, dynamic>) {
+        final mistakeTag = (update['mistake_tag'] as String?)?.trim() ?? '';
+        if (mistakeTag.isEmpty) {
+          continue;
         }
+        final typeId = _resolveErrorBookTypeId(
+          parsed: parsed,
+          update: update,
+        );
+        final key = '$typeId::$mistakeTag';
+        final note = (update['mistake_note'] as String?)?.trim() ?? '';
+        final existing = counts[key];
+        if (existing == null) {
+          counts[key] = _ErrorBookAggregate(
+            typeId: typeId,
+            mistakeTag: mistakeTag,
+            count: 1,
+            lastNote: note,
+          );
+        } else {
+          existing.count += 1;
+          if (note.isNotEmpty) {
+            existing.lastNote = note;
+          }
+        }
+        totalUpdates += 1;
+        continue;
       }
-      totalUpdates += 1;
+      final mistakeTags = parsed?['mistake_tags'];
+      final modernMistakes = parsed?['mistakes'];
+      final source = modernMistakes ?? mistakeTags;
+      if (source is! List) {
+        continue;
+      }
+      for (final entry in source) {
+        if (entry is! String || entry.trim().isEmpty) {
+          continue;
+        }
+        final mistakeTag = entry.trim();
+        final key = 'OTHER::$mistakeTag';
+        final existing = counts[key];
+        if (existing == null) {
+          counts[key] = _ErrorBookAggregate(
+            typeId: 'OTHER',
+            mistakeTag: mistakeTag,
+            count: 1,
+            lastNote: '',
+          );
+        } else {
+          existing.count += 1;
+        }
+        totalUpdates += 1;
+      }
     }
     if (counts.isEmpty) {
       return null;
@@ -1808,18 +1465,15 @@ class SessionService {
     if (parsed == null) {
       return;
     }
-    final controlState = TutorControlState.fromAssistantPayload(parsed);
-    final turnFinished = controlState?.turnFinished ?? false;
-    final grading = parsed['grading'];
-    final isCorrect = grading is Map<String, dynamic> &&
-        grading['is_correct'] is bool &&
-        grading['is_correct'] == true;
-    if (turnFinished && isCorrect && passedLevel != null) {
+    final finished = parsed['finished'] == true;
+    final resolvedPassedLevel =
+        _normalizeLevel(parsed['difficulty']) ?? passedLevel;
+    if (finished && resolvedPassedLevel != null) {
       await _db.incrementProgressPassedCount(
         studentId: studentId,
         courseVersionId: courseVersionId,
         kpKey: kpKey,
-        passedLevel: passedLevel,
+        passedLevel: resolvedPassedLevel,
       );
     }
   }
@@ -1974,15 +1628,9 @@ class SessionService {
     if (parsed == null) {
       return fallback;
     }
-    final teacherMessage = parsed['teacher_message'];
+    final teacherMessage = parsed['text'] ?? parsed['teacher_message'];
     if (teacherMessage is String && teacherMessage.trim().isNotEmpty) {
       return teacherMessage.trim();
-    }
-    if (promptName == 'summary' || promptName == 'summarize') {
-      final summaryText = parsed['summary_text'];
-      if (summaryText is String && summaryText.trim().isNotEmpty) {
-        return summaryText.trim();
-      }
     }
     return fallback;
   }
@@ -1991,9 +1639,7 @@ class SessionService {
     required String promptName,
     required String responseText,
   }) {
-    final fieldNames = promptName == 'summary' || promptName == 'summarize'
-        ? const <String>['teacher_message', 'summary_text']
-        : const <String>['teacher_message'];
+    final fieldNames = const <String>['text', 'teacher_message'];
     for (final fieldName in fieldNames) {
       final extracted = _extractJsonStringFieldPrefix(
         responseText: responseText,
@@ -2123,66 +1769,15 @@ class SessionService {
   }
 
   bool _isStructuredPrompt(String promptName) {
-    return promptName == 'learn_init' ||
-        promptName == 'learn_cont' ||
-        promptName == 'review_init' ||
-        promptName == 'review_cont' ||
-        promptName == 'summary' ||
-        promptName == 'summarize';
-  }
-
-  SummarizeResult? _buildCachedSummaryResult({
-    required ChatSession? session,
-    required ProgressEntry? progress,
-    required TutorEvidenceState evidenceState,
-  }) {
-    if (session == null) {
-      return null;
-    }
-    if (evidenceState.hasNewGradedReviewEvidence) {
-      return null;
-    }
-    final summaryText =
-        (progress?.summaryText ?? session.summaryText ?? '').trim();
-    if (summaryText.isEmpty) {
-      return null;
-    }
-    if (progress == null && session.summaryLit == null) {
-      return null;
-    }
-    final passedCounts = _resolvePassedCounts(
-      progress: progress,
-      evidenceState: evidenceState,
-    );
-    final lit = progress?.lit ?? session.summaryLit ?? false;
-    final litPercent = _litPercentFromBestPassedLevel(
-      _bestPassedLevelFromCounts(passedCounts),
-    );
-    final bestPassedLevel = _bestPassedLevelFromCounts(passedCounts);
-    return SummarizeResult(
-      success: true,
-      message: 'Summary unchanged. Reused cached result.',
-      lit: lit,
-      litPercent: litPercent > 0 ? litPercent : (lit ? 100 : 0),
-      summaryText: summaryText,
-      masterLevel: bestPassedLevel,
-      nextStep: lit ? 'MOVE_ON' : 'CONTINUE_REVIEW',
-    );
+    return promptName == 'learn' || promptName == 'review';
   }
 
   Future<Map<String, dynamic>?> _loadStructuredSchema(String promptName) async {
     switch (promptName) {
-      case 'learn_init':
-        return _promptRepository.loadSchema('learn_init');
-      case 'learn_cont':
-        return _promptRepository.loadSchema('learn_cont');
-      case 'review_init':
-        return _promptRepository.loadSchema('review_init');
-      case 'review_cont':
-        return _promptRepository.loadSchema('review_cont');
-      case 'summary':
-      case 'summarize':
-        return _promptRepository.loadSchema('summarize');
+      case 'learn':
+        return _promptRepository.loadSchema('learn');
+      case 'review':
+        return _promptRepository.loadSchema('review');
       default:
         return null;
     }

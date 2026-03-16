@@ -1320,6 +1320,7 @@ class EnrollmentSyncService {
         'teacher_username': teacher.username,
         'prompt_templates': const <Map<String, dynamic>>[],
         'student_prompt_profiles': const <Map<String, dynamic>>[],
+        'student_pass_configs': const <Map<String, dynamic>>[],
       };
     }
 
@@ -1433,12 +1434,45 @@ class EnrollmentSyncService {
       );
     }
 
+    final passConfigsPayload = <Map<String, dynamic>>[];
+    final passConfigRows = await (_db.select(_db.studentPassConfigs)
+          ..where(
+            (tbl) => tbl.courseVersionId.equals(course.id),
+          )
+          ..orderBy([
+            (tbl) => OrderingTerm(
+                  expression: tbl.updatedAt,
+                  mode: OrderingMode.desc,
+                ),
+            (tbl) => OrderingTerm(
+                  expression: tbl.createdAt,
+                  mode: OrderingMode.desc,
+                ),
+          ]))
+        .get();
+    for (final config in passConfigRows) {
+      var student = studentCache[config.studentId];
+      student ??= await _db.getUserById(config.studentId);
+      studentCache[config.studentId] = student;
+      passConfigsPayload.add({
+        'student_remote_user_id': student?.remoteUserId,
+        'student_username': student?.username,
+        'easy_weight': config.easyWeight,
+        'medium_weight': config.mediumWeight,
+        'hard_weight': config.hardWeight,
+        'pass_threshold': config.passThreshold,
+        'updated_at':
+            (config.updatedAt ?? config.createdAt).toUtc().toIso8601String(),
+      });
+    }
+
     return {
       'schema': 'family_teacher_prompt_bundle_v1',
       'remote_course_id': remoteCourseId,
       'teacher_username': teacher.username,
       'prompt_templates': promptTemplatesPayload,
       'student_prompt_profiles': profilesPayload,
+      'student_pass_configs': passConfigsPayload,
     };
   }
 
@@ -1490,6 +1524,7 @@ class EnrollmentSyncService {
                 tbl.teacherId.equals(currentUser.id) &
                 tbl.courseKey.equals(courseKey)))
           .go();
+      await _db.deleteStudentPassConfigsForCourse(course.id);
     });
 
     final promptTemplates = metadata['prompt_templates'];
@@ -1585,6 +1620,41 @@ class EnrollmentSyncService {
           preferredPace: item['preferred_pace'] as String?,
           preferredFormat: item['preferred_format'] as String?,
           supportNotes: item['support_notes'] as String?,
+        );
+      }
+    }
+
+    final passConfigs = metadata['student_pass_configs'];
+    if (passConfigs is List) {
+      for (final item in passConfigs) {
+        if (item is! Map<String, dynamic>) {
+          continue;
+        }
+        final targetRemoteUserId =
+            (item['student_remote_user_id'] as num?)?.toInt() ?? 0;
+        if (targetRemoteUserId <= 0) {
+          continue;
+        }
+        final targetUsername =
+            (item['student_username'] as String?)?.trim() ?? '';
+        final targetStudentId =
+            await _remoteStudentIdentity.resolveOrCreateLocalStudentId(
+          db: _db,
+          remoteStudentId: targetRemoteUserId,
+          usernameHint: targetUsername,
+          teacherId: currentUser.id,
+        );
+        await _db.upsertStudentPassConfig(
+          courseVersionId: course.id,
+          studentId: targetStudentId,
+          easyWeight: ((item['easy_weight'] as num?)?.toDouble()) ??
+              ResolvedStudentPassRule.defaultEasyWeight,
+          mediumWeight: ((item['medium_weight'] as num?)?.toDouble()) ??
+              ResolvedStudentPassRule.defaultMediumWeight,
+          hardWeight: ((item['hard_weight'] as num?)?.toDouble()) ??
+              ResolvedStudentPassRule.defaultHardWeight,
+          passThreshold: ((item['pass_threshold'] as num?)?.toDouble()) ??
+              ResolvedStudentPassRule.defaultPassThreshold,
         );
       }
     }

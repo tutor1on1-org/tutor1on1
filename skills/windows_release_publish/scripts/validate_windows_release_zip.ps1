@@ -13,19 +13,13 @@ if (-not (Test-Path -LiteralPath $ZipPath)) {
 $requiredEntries = @(
   'family_teacher.exe',
   'data/flutter_assets/AssetManifest.bin',
-  'data/flutter_assets/assets/prompts/learn_init.prompt.txt',
-  'data/flutter_assets/assets/prompts/learn_cont.prompt.txt',
-  'data/flutter_assets/assets/prompts/review_init.prompt.txt',
-  'data/flutter_assets/assets/prompts/review_cont.prompt.txt',
-  'data/flutter_assets/assets/prompts/summary.prompt.txt'
+  'data/flutter_assets/assets/prompts/learn.prompt.txt',
+  'data/flutter_assets/assets/prompts/review.prompt.txt'
 )
 
 $promptEntries = @(
-  'data/flutter_assets/assets/prompts/learn_init.prompt.txt',
-  'data/flutter_assets/assets/prompts/learn_cont.prompt.txt',
-  'data/flutter_assets/assets/prompts/review_init.prompt.txt',
-  'data/flutter_assets/assets/prompts/review_cont.prompt.txt',
-  'data/flutter_assets/assets/prompts/summary.prompt.txt'
+  'data/flutter_assets/assets/prompts/learn.prompt.txt',
+  'data/flutter_assets/assets/prompts/review.prompt.txt'
 )
 
 function Normalize-EntryPath {

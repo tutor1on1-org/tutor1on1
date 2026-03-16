@@ -5,6 +5,7 @@ import 'package:family_teacher/db/app_database.dart';
 import 'package:family_teacher/llm/prompt_repository.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   late AppDatabase db;
 
   setUp(() {
@@ -16,7 +17,7 @@ void main() {
   });
 
   test(
-    'loadPrompt combines system, course, and student scopes in precedence order',
+    'loadPrompt ignores prompt template scopes for bundled tutor prompts',
     () async {
       final teacherId = await db.createUser(
         username: 'teacher_prompt_scope',
@@ -31,51 +32,49 @@ void main() {
       );
       await db.insertPromptTemplate(
         teacherId: teacherId,
-        promptName: 'learn_init',
+        promptName: 'learn',
         content: 'SYSTEM override',
       );
       await db.insertPromptTemplate(
         teacherId: teacherId,
-        promptName: 'learn_init',
+        promptName: 'learn',
         courseKey: 'course_math',
         content: 'COURSE append',
       );
       await db.insertPromptTemplate(
         teacherId: teacherId,
-        promptName: 'learn_init',
+        promptName: 'learn',
         courseKey: 'course_math',
         studentId: studentId,
         content: 'STUDENT append',
       );
 
       final repo = PromptRepository(db: db);
+      final bundled = await repo.loadBundledSystemPrompt('learn');
       final combined = await repo.loadPrompt(
-        'learn_init',
+        'learn',
         teacherId: teacherId,
         courseKey: 'course_math',
         studentId: studentId,
       );
-      expect(
-        combined,
-        equals('SYSTEM override\n\nCOURSE append\n\nSTUDENT append'),
-      );
+      expect(combined, equals(bundled));
 
       final noStudent = await repo.loadPrompt(
-        'learn_init',
+        'learn',
         teacherId: teacherId,
         courseKey: 'course_math',
       );
-      expect(noStudent, equals('SYSTEM override\n\nCOURSE append'));
+      expect(noStudent, equals(bundled));
 
       final systemOnly = await repo.loadPrompt(
-        'learn_init',
+        'learn',
         teacherId: teacherId,
       );
-      expect(systemOnly, equals('SYSTEM override'));
+      expect(systemOnly, equals(bundled));
     },
   );
 
-  test('loadPrompt normalizes scoped course keys before lookup', () async {
+  test('loadAppendPrompt returns empty for bundled tutor prompts', () async {
     final teacherId = await db.createUser(
       username: 'teacher_prompt_normalize',
       pinHash: 'hash',
@@ -83,22 +82,22 @@ void main() {
     );
     await db.insertPromptTemplate(
       teacherId: teacherId,
-      promptName: 'learn_cont',
+      promptName: 'learn',
       content: 'SYSTEM override',
     );
     await db.insertPromptTemplate(
       teacherId: teacherId,
-      promptName: 'learn_cont',
+      promptName: 'learn',
       courseKey: '  course_math  ',
       content: 'COURSE append',
     );
 
     final repo = PromptRepository(db: db);
-    final combined = await repo.loadPrompt(
-      'learn_cont',
+    final combined = await repo.loadAppendPrompt(
+      'learn',
       teacherId: teacherId,
       courseKey: 'course_math',
     );
-    expect(combined, equals('SYSTEM override\n\nCOURSE append'));
+    expect(combined, isEmpty);
   });
 }

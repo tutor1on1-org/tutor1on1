@@ -7488,6 +7488,482 @@ class StudentPromptProfilesCompanion
   }
 }
 
+class $StudentPassConfigsTable extends StudentPassConfigs
+    with TableInfo<$StudentPassConfigsTable, StudentPassConfig> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $StudentPassConfigsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+      'id', aliasedName, false,
+      hasAutoIncrement: true,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('PRIMARY KEY AUTOINCREMENT'));
+  static const VerificationMeta _courseVersionIdMeta =
+      const VerificationMeta('courseVersionId');
+  @override
+  late final GeneratedColumn<int> courseVersionId = GeneratedColumn<int>(
+      'course_version_id', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _studentIdMeta =
+      const VerificationMeta('studentId');
+  @override
+  late final GeneratedColumn<int> studentId = GeneratedColumn<int>(
+      'student_id', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _easyWeightMeta =
+      const VerificationMeta('easyWeight');
+  @override
+  late final GeneratedColumn<double> easyWeight = GeneratedColumn<double>(
+      'easy_weight', aliasedName, false,
+      type: DriftSqlType.double,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(0.25));
+  static const VerificationMeta _mediumWeightMeta =
+      const VerificationMeta('mediumWeight');
+  @override
+  late final GeneratedColumn<double> mediumWeight = GeneratedColumn<double>(
+      'medium_weight', aliasedName, false,
+      type: DriftSqlType.double,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(0.5));
+  static const VerificationMeta _hardWeightMeta =
+      const VerificationMeta('hardWeight');
+  @override
+  late final GeneratedColumn<double> hardWeight = GeneratedColumn<double>(
+      'hard_weight', aliasedName, false,
+      type: DriftSqlType.double,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(1.0));
+  static const VerificationMeta _passThresholdMeta =
+      const VerificationMeta('passThreshold');
+  @override
+  late final GeneratedColumn<double> passThreshold = GeneratedColumn<double>(
+      'pass_threshold', aliasedName, false,
+      type: DriftSqlType.double,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(1.0));
+  static const VerificationMeta _createdAtMeta =
+      const VerificationMeta('createdAt');
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+      'created_at', aliasedName, false,
+      type: DriftSqlType.dateTime,
+      requiredDuringInsert: false,
+      defaultValue: currentDateAndTime);
+  static const VerificationMeta _updatedAtMeta =
+      const VerificationMeta('updatedAt');
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+      'updated_at', aliasedName, true,
+      type: DriftSqlType.dateTime, requiredDuringInsert: false);
+  @override
+  List<GeneratedColumn> get $columns => [
+        id,
+        courseVersionId,
+        studentId,
+        easyWeight,
+        mediumWeight,
+        hardWeight,
+        passThreshold,
+        createdAt,
+        updatedAt
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'student_pass_configs';
+  @override
+  VerificationContext validateIntegrity(Insertable<StudentPassConfig> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('course_version_id')) {
+      context.handle(
+          _courseVersionIdMeta,
+          courseVersionId.isAcceptableOrUnknown(
+              data['course_version_id']!, _courseVersionIdMeta));
+    } else if (isInserting) {
+      context.missing(_courseVersionIdMeta);
+    }
+    if (data.containsKey('student_id')) {
+      context.handle(_studentIdMeta,
+          studentId.isAcceptableOrUnknown(data['student_id']!, _studentIdMeta));
+    } else if (isInserting) {
+      context.missing(_studentIdMeta);
+    }
+    if (data.containsKey('easy_weight')) {
+      context.handle(
+          _easyWeightMeta,
+          easyWeight.isAcceptableOrUnknown(
+              data['easy_weight']!, _easyWeightMeta));
+    }
+    if (data.containsKey('medium_weight')) {
+      context.handle(
+          _mediumWeightMeta,
+          mediumWeight.isAcceptableOrUnknown(
+              data['medium_weight']!, _mediumWeightMeta));
+    }
+    if (data.containsKey('hard_weight')) {
+      context.handle(
+          _hardWeightMeta,
+          hardWeight.isAcceptableOrUnknown(
+              data['hard_weight']!, _hardWeightMeta));
+    }
+    if (data.containsKey('pass_threshold')) {
+      context.handle(
+          _passThresholdMeta,
+          passThreshold.isAcceptableOrUnknown(
+              data['pass_threshold']!, _passThresholdMeta));
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(_createdAtMeta,
+          createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(_updatedAtMeta,
+          updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+        {courseVersionId, studentId},
+      ];
+  @override
+  StudentPassConfig map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return StudentPassConfig(
+      id: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}id'])!,
+      courseVersionId: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}course_version_id'])!,
+      studentId: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}student_id'])!,
+      easyWeight: attachedDatabase.typeMapping
+          .read(DriftSqlType.double, data['${effectivePrefix}easy_weight'])!,
+      mediumWeight: attachedDatabase.typeMapping
+          .read(DriftSqlType.double, data['${effectivePrefix}medium_weight'])!,
+      hardWeight: attachedDatabase.typeMapping
+          .read(DriftSqlType.double, data['${effectivePrefix}hard_weight'])!,
+      passThreshold: attachedDatabase.typeMapping
+          .read(DriftSqlType.double, data['${effectivePrefix}pass_threshold'])!,
+      createdAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}created_at'])!,
+      updatedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}updated_at']),
+    );
+  }
+
+  @override
+  $StudentPassConfigsTable createAlias(String alias) {
+    return $StudentPassConfigsTable(attachedDatabase, alias);
+  }
+}
+
+class StudentPassConfig extends DataClass
+    implements Insertable<StudentPassConfig> {
+  final int id;
+  final int courseVersionId;
+  final int studentId;
+  final double easyWeight;
+  final double mediumWeight;
+  final double hardWeight;
+  final double passThreshold;
+  final DateTime createdAt;
+  final DateTime? updatedAt;
+  const StudentPassConfig(
+      {required this.id,
+      required this.courseVersionId,
+      required this.studentId,
+      required this.easyWeight,
+      required this.mediumWeight,
+      required this.hardWeight,
+      required this.passThreshold,
+      required this.createdAt,
+      this.updatedAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['course_version_id'] = Variable<int>(courseVersionId);
+    map['student_id'] = Variable<int>(studentId);
+    map['easy_weight'] = Variable<double>(easyWeight);
+    map['medium_weight'] = Variable<double>(mediumWeight);
+    map['hard_weight'] = Variable<double>(hardWeight);
+    map['pass_threshold'] = Variable<double>(passThreshold);
+    map['created_at'] = Variable<DateTime>(createdAt);
+    if (!nullToAbsent || updatedAt != null) {
+      map['updated_at'] = Variable<DateTime>(updatedAt);
+    }
+    return map;
+  }
+
+  StudentPassConfigsCompanion toCompanion(bool nullToAbsent) {
+    return StudentPassConfigsCompanion(
+      id: Value(id),
+      courseVersionId: Value(courseVersionId),
+      studentId: Value(studentId),
+      easyWeight: Value(easyWeight),
+      mediumWeight: Value(mediumWeight),
+      hardWeight: Value(hardWeight),
+      passThreshold: Value(passThreshold),
+      createdAt: Value(createdAt),
+      updatedAt: updatedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(updatedAt),
+    );
+  }
+
+  factory StudentPassConfig.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return StudentPassConfig(
+      id: serializer.fromJson<int>(json['id']),
+      courseVersionId: serializer.fromJson<int>(json['courseVersionId']),
+      studentId: serializer.fromJson<int>(json['studentId']),
+      easyWeight: serializer.fromJson<double>(json['easyWeight']),
+      mediumWeight: serializer.fromJson<double>(json['mediumWeight']),
+      hardWeight: serializer.fromJson<double>(json['hardWeight']),
+      passThreshold: serializer.fromJson<double>(json['passThreshold']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      updatedAt: serializer.fromJson<DateTime?>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'courseVersionId': serializer.toJson<int>(courseVersionId),
+      'studentId': serializer.toJson<int>(studentId),
+      'easyWeight': serializer.toJson<double>(easyWeight),
+      'mediumWeight': serializer.toJson<double>(mediumWeight),
+      'hardWeight': serializer.toJson<double>(hardWeight),
+      'passThreshold': serializer.toJson<double>(passThreshold),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+      'updatedAt': serializer.toJson<DateTime?>(updatedAt),
+    };
+  }
+
+  StudentPassConfig copyWith(
+          {int? id,
+          int? courseVersionId,
+          int? studentId,
+          double? easyWeight,
+          double? mediumWeight,
+          double? hardWeight,
+          double? passThreshold,
+          DateTime? createdAt,
+          Value<DateTime?> updatedAt = const Value.absent()}) =>
+      StudentPassConfig(
+        id: id ?? this.id,
+        courseVersionId: courseVersionId ?? this.courseVersionId,
+        studentId: studentId ?? this.studentId,
+        easyWeight: easyWeight ?? this.easyWeight,
+        mediumWeight: mediumWeight ?? this.mediumWeight,
+        hardWeight: hardWeight ?? this.hardWeight,
+        passThreshold: passThreshold ?? this.passThreshold,
+        createdAt: createdAt ?? this.createdAt,
+        updatedAt: updatedAt.present ? updatedAt.value : this.updatedAt,
+      );
+  StudentPassConfig copyWithCompanion(StudentPassConfigsCompanion data) {
+    return StudentPassConfig(
+      id: data.id.present ? data.id.value : this.id,
+      courseVersionId: data.courseVersionId.present
+          ? data.courseVersionId.value
+          : this.courseVersionId,
+      studentId: data.studentId.present ? data.studentId.value : this.studentId,
+      easyWeight:
+          data.easyWeight.present ? data.easyWeight.value : this.easyWeight,
+      mediumWeight: data.mediumWeight.present
+          ? data.mediumWeight.value
+          : this.mediumWeight,
+      hardWeight:
+          data.hardWeight.present ? data.hardWeight.value : this.hardWeight,
+      passThreshold: data.passThreshold.present
+          ? data.passThreshold.value
+          : this.passThreshold,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('StudentPassConfig(')
+          ..write('id: $id, ')
+          ..write('courseVersionId: $courseVersionId, ')
+          ..write('studentId: $studentId, ')
+          ..write('easyWeight: $easyWeight, ')
+          ..write('mediumWeight: $mediumWeight, ')
+          ..write('hardWeight: $hardWeight, ')
+          ..write('passThreshold: $passThreshold, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(id, courseVersionId, studentId, easyWeight,
+      mediumWeight, hardWeight, passThreshold, createdAt, updatedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is StudentPassConfig &&
+          other.id == this.id &&
+          other.courseVersionId == this.courseVersionId &&
+          other.studentId == this.studentId &&
+          other.easyWeight == this.easyWeight &&
+          other.mediumWeight == this.mediumWeight &&
+          other.hardWeight == this.hardWeight &&
+          other.passThreshold == this.passThreshold &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class StudentPassConfigsCompanion extends UpdateCompanion<StudentPassConfig> {
+  final Value<int> id;
+  final Value<int> courseVersionId;
+  final Value<int> studentId;
+  final Value<double> easyWeight;
+  final Value<double> mediumWeight;
+  final Value<double> hardWeight;
+  final Value<double> passThreshold;
+  final Value<DateTime> createdAt;
+  final Value<DateTime?> updatedAt;
+  const StudentPassConfigsCompanion({
+    this.id = const Value.absent(),
+    this.courseVersionId = const Value.absent(),
+    this.studentId = const Value.absent(),
+    this.easyWeight = const Value.absent(),
+    this.mediumWeight = const Value.absent(),
+    this.hardWeight = const Value.absent(),
+    this.passThreshold = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+  });
+  StudentPassConfigsCompanion.insert({
+    this.id = const Value.absent(),
+    required int courseVersionId,
+    required int studentId,
+    this.easyWeight = const Value.absent(),
+    this.mediumWeight = const Value.absent(),
+    this.hardWeight = const Value.absent(),
+    this.passThreshold = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+  })  : courseVersionId = Value(courseVersionId),
+        studentId = Value(studentId);
+  static Insertable<StudentPassConfig> custom({
+    Expression<int>? id,
+    Expression<int>? courseVersionId,
+    Expression<int>? studentId,
+    Expression<double>? easyWeight,
+    Expression<double>? mediumWeight,
+    Expression<double>? hardWeight,
+    Expression<double>? passThreshold,
+    Expression<DateTime>? createdAt,
+    Expression<DateTime>? updatedAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (courseVersionId != null) 'course_version_id': courseVersionId,
+      if (studentId != null) 'student_id': studentId,
+      if (easyWeight != null) 'easy_weight': easyWeight,
+      if (mediumWeight != null) 'medium_weight': mediumWeight,
+      if (hardWeight != null) 'hard_weight': hardWeight,
+      if (passThreshold != null) 'pass_threshold': passThreshold,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+    });
+  }
+
+  StudentPassConfigsCompanion copyWith(
+      {Value<int>? id,
+      Value<int>? courseVersionId,
+      Value<int>? studentId,
+      Value<double>? easyWeight,
+      Value<double>? mediumWeight,
+      Value<double>? hardWeight,
+      Value<double>? passThreshold,
+      Value<DateTime>? createdAt,
+      Value<DateTime?>? updatedAt}) {
+    return StudentPassConfigsCompanion(
+      id: id ?? this.id,
+      courseVersionId: courseVersionId ?? this.courseVersionId,
+      studentId: studentId ?? this.studentId,
+      easyWeight: easyWeight ?? this.easyWeight,
+      mediumWeight: mediumWeight ?? this.mediumWeight,
+      hardWeight: hardWeight ?? this.hardWeight,
+      passThreshold: passThreshold ?? this.passThreshold,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (courseVersionId.present) {
+      map['course_version_id'] = Variable<int>(courseVersionId.value);
+    }
+    if (studentId.present) {
+      map['student_id'] = Variable<int>(studentId.value);
+    }
+    if (easyWeight.present) {
+      map['easy_weight'] = Variable<double>(easyWeight.value);
+    }
+    if (mediumWeight.present) {
+      map['medium_weight'] = Variable<double>(mediumWeight.value);
+    }
+    if (hardWeight.present) {
+      map['hard_weight'] = Variable<double>(hardWeight.value);
+    }
+    if (passThreshold.present) {
+      map['pass_threshold'] = Variable<double>(passThreshold.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('StudentPassConfigsCompanion(')
+          ..write('id: $id, ')
+          ..write('courseVersionId: $courseVersionId, ')
+          ..write('studentId: $studentId, ')
+          ..write('easyWeight: $easyWeight, ')
+          ..write('mediumWeight: $mediumWeight, ')
+          ..write('hardWeight: $hardWeight, ')
+          ..write('passThreshold: $passThreshold, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $CourseRemoteLinksTable extends CourseRemoteLinks
     with TableInfo<$CourseRemoteLinksTable, CourseRemoteLink> {
   @override
@@ -8504,6 +8980,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $PromptTemplatesTable(this);
   late final $StudentPromptProfilesTable studentPromptProfiles =
       $StudentPromptProfilesTable(this);
+  late final $StudentPassConfigsTable studentPassConfigs =
+      $StudentPassConfigsTable(this);
   late final $CourseRemoteLinksTable courseRemoteLinks =
       $CourseRemoteLinksTable(this);
   late final $SyncItemStatesTable syncItemStates = $SyncItemStatesTable(this);
@@ -8527,6 +9005,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         apiConfigs,
         promptTemplates,
         studentPromptProfiles,
+        studentPassConfigs,
         courseRemoteLinks,
         syncItemStates,
         syncMetadataEntries
@@ -11966,6 +12445,239 @@ typedef $$StudentPromptProfilesTableProcessedTableManager
         ),
         StudentPromptProfile,
         PrefetchHooks Function()>;
+typedef $$StudentPassConfigsTableCreateCompanionBuilder
+    = StudentPassConfigsCompanion Function({
+  Value<int> id,
+  required int courseVersionId,
+  required int studentId,
+  Value<double> easyWeight,
+  Value<double> mediumWeight,
+  Value<double> hardWeight,
+  Value<double> passThreshold,
+  Value<DateTime> createdAt,
+  Value<DateTime?> updatedAt,
+});
+typedef $$StudentPassConfigsTableUpdateCompanionBuilder
+    = StudentPassConfigsCompanion Function({
+  Value<int> id,
+  Value<int> courseVersionId,
+  Value<int> studentId,
+  Value<double> easyWeight,
+  Value<double> mediumWeight,
+  Value<double> hardWeight,
+  Value<double> passThreshold,
+  Value<DateTime> createdAt,
+  Value<DateTime?> updatedAt,
+});
+
+class $$StudentPassConfigsTableFilterComposer
+    extends Composer<_$AppDatabase, $StudentPassConfigsTable> {
+  $$StudentPassConfigsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get courseVersionId => $composableBuilder(
+      column: $table.courseVersionId,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get studentId => $composableBuilder(
+      column: $table.studentId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<double> get easyWeight => $composableBuilder(
+      column: $table.easyWeight, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<double> get mediumWeight => $composableBuilder(
+      column: $table.mediumWeight, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<double> get hardWeight => $composableBuilder(
+      column: $table.hardWeight, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<double> get passThreshold => $composableBuilder(
+      column: $table.passThreshold, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+      column: $table.createdAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+      column: $table.updatedAt, builder: (column) => ColumnFilters(column));
+}
+
+class $$StudentPassConfigsTableOrderingComposer
+    extends Composer<_$AppDatabase, $StudentPassConfigsTable> {
+  $$StudentPassConfigsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get courseVersionId => $composableBuilder(
+      column: $table.courseVersionId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get studentId => $composableBuilder(
+      column: $table.studentId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<double> get easyWeight => $composableBuilder(
+      column: $table.easyWeight, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<double> get mediumWeight => $composableBuilder(
+      column: $table.mediumWeight,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<double> get hardWeight => $composableBuilder(
+      column: $table.hardWeight, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<double> get passThreshold => $composableBuilder(
+      column: $table.passThreshold,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+      column: $table.createdAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+      column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
+}
+
+class $$StudentPassConfigsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $StudentPassConfigsTable> {
+  $$StudentPassConfigsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get courseVersionId => $composableBuilder(
+      column: $table.courseVersionId, builder: (column) => column);
+
+  GeneratedColumn<int> get studentId =>
+      $composableBuilder(column: $table.studentId, builder: (column) => column);
+
+  GeneratedColumn<double> get easyWeight => $composableBuilder(
+      column: $table.easyWeight, builder: (column) => column);
+
+  GeneratedColumn<double> get mediumWeight => $composableBuilder(
+      column: $table.mediumWeight, builder: (column) => column);
+
+  GeneratedColumn<double> get hardWeight => $composableBuilder(
+      column: $table.hardWeight, builder: (column) => column);
+
+  GeneratedColumn<double> get passThreshold => $composableBuilder(
+      column: $table.passThreshold, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$StudentPassConfigsTableTableManager extends RootTableManager<
+    _$AppDatabase,
+    $StudentPassConfigsTable,
+    StudentPassConfig,
+    $$StudentPassConfigsTableFilterComposer,
+    $$StudentPassConfigsTableOrderingComposer,
+    $$StudentPassConfigsTableAnnotationComposer,
+    $$StudentPassConfigsTableCreateCompanionBuilder,
+    $$StudentPassConfigsTableUpdateCompanionBuilder,
+    (
+      StudentPassConfig,
+      BaseReferences<_$AppDatabase, $StudentPassConfigsTable, StudentPassConfig>
+    ),
+    StudentPassConfig,
+    PrefetchHooks Function()> {
+  $$StudentPassConfigsTableTableManager(
+      _$AppDatabase db, $StudentPassConfigsTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$StudentPassConfigsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$StudentPassConfigsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$StudentPassConfigsTableAnnotationComposer(
+                  $db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<int> id = const Value.absent(),
+            Value<int> courseVersionId = const Value.absent(),
+            Value<int> studentId = const Value.absent(),
+            Value<double> easyWeight = const Value.absent(),
+            Value<double> mediumWeight = const Value.absent(),
+            Value<double> hardWeight = const Value.absent(),
+            Value<double> passThreshold = const Value.absent(),
+            Value<DateTime> createdAt = const Value.absent(),
+            Value<DateTime?> updatedAt = const Value.absent(),
+          }) =>
+              StudentPassConfigsCompanion(
+            id: id,
+            courseVersionId: courseVersionId,
+            studentId: studentId,
+            easyWeight: easyWeight,
+            mediumWeight: mediumWeight,
+            hardWeight: hardWeight,
+            passThreshold: passThreshold,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+          ),
+          createCompanionCallback: ({
+            Value<int> id = const Value.absent(),
+            required int courseVersionId,
+            required int studentId,
+            Value<double> easyWeight = const Value.absent(),
+            Value<double> mediumWeight = const Value.absent(),
+            Value<double> hardWeight = const Value.absent(),
+            Value<double> passThreshold = const Value.absent(),
+            Value<DateTime> createdAt = const Value.absent(),
+            Value<DateTime?> updatedAt = const Value.absent(),
+          }) =>
+              StudentPassConfigsCompanion.insert(
+            id: id,
+            courseVersionId: courseVersionId,
+            studentId: studentId,
+            easyWeight: easyWeight,
+            mediumWeight: mediumWeight,
+            hardWeight: hardWeight,
+            passThreshold: passThreshold,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$StudentPassConfigsTableProcessedTableManager = ProcessedTableManager<
+    _$AppDatabase,
+    $StudentPassConfigsTable,
+    StudentPassConfig,
+    $$StudentPassConfigsTableFilterComposer,
+    $$StudentPassConfigsTableOrderingComposer,
+    $$StudentPassConfigsTableAnnotationComposer,
+    $$StudentPassConfigsTableCreateCompanionBuilder,
+    $$StudentPassConfigsTableUpdateCompanionBuilder,
+    (
+      StudentPassConfig,
+      BaseReferences<_$AppDatabase, $StudentPassConfigsTable, StudentPassConfig>
+    ),
+    StudentPassConfig,
+    PrefetchHooks Function()>;
 typedef $$CourseRemoteLinksTableCreateCompanionBuilder
     = CourseRemoteLinksCompanion Function({
   Value<int> id,
@@ -12541,6 +13253,8 @@ class $AppDatabaseManager {
       $$PromptTemplatesTableTableManager(_db, _db.promptTemplates);
   $$StudentPromptProfilesTableTableManager get studentPromptProfiles =>
       $$StudentPromptProfilesTableTableManager(_db, _db.studentPromptProfiles);
+  $$StudentPassConfigsTableTableManager get studentPassConfigs =>
+      $$StudentPassConfigsTableTableManager(_db, _db.studentPassConfigs);
   $$CourseRemoteLinksTableTableManager get courseRemoteLinks =>
       $$CourseRemoteLinksTableTableManager(_db, _db.courseRemoteLinks);
   $$SyncItemStatesTableTableManager get syncItemStates =>

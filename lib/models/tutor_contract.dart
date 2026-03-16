@@ -45,12 +45,8 @@ enum TutorHelpBias {
 }
 
 enum TutorFinishedAction {
-  nextQuestion('NEXT_QUESTION'),
   learn('LEARN'),
-  continueLearning('CONTINUE_LEARNING'),
-  tryQuestion('TRY_QUESTION'),
-  summarize('SUMMARIZE'),
-  pause('PAUSE');
+  review('REVIEW');
 
   const TutorFinishedAction(this.wireValue);
   final String wireValue;
@@ -67,6 +63,8 @@ enum TutorFinishedAction {
 }
 
 class TutorControlState {
+  static const Object _unset = Object();
+
   const TutorControlState({
     required this.version,
     required this.mode,
@@ -75,6 +73,7 @@ class TutorControlState {
     required this.helpBias,
     required this.allowedActions,
     required this.recommendedAction,
+    required this.activeReviewQuestion,
   });
 
   static const int currentVersion = 1;
@@ -86,6 +85,10 @@ class TutorControlState {
   final TutorHelpBias helpBias;
   final List<TutorFinishedAction> allowedActions;
   final TutorFinishedAction? recommendedAction;
+  final Map<String, dynamic>? activeReviewQuestion;
+
+  bool get hasActiveReviewQuestion =>
+      activeReviewQuestion != null && activeReviewQuestion!.isNotEmpty;
 
   TutorControlState copyWith({
     TutorMode? mode,
@@ -94,6 +97,7 @@ class TutorControlState {
     TutorHelpBias? helpBias,
     List<TutorFinishedAction>? allowedActions,
     TutorFinishedAction? recommendedAction,
+    Object? activeReviewQuestion = _unset,
   }) {
     return TutorControlState(
       version: version,
@@ -103,6 +107,9 @@ class TutorControlState {
       helpBias: helpBias ?? this.helpBias,
       allowedActions: allowedActions ?? this.allowedActions,
       recommendedAction: recommendedAction ?? this.recommendedAction,
+      activeReviewQuestion: identical(activeReviewQuestion, _unset)
+          ? this.activeReviewQuestion
+          : (activeReviewQuestion as Map<String, dynamic>?),
     );
   }
 
@@ -115,6 +122,7 @@ class TutorControlState {
       'help_bias': helpBias.wireValue,
       'allowed_actions': allowedActions.map((item) => item.wireValue).toList(),
       'recommended_action': recommendedAction?.wireValue,
+      'active_review_question': activeReviewQuestion,
     };
   }
 
@@ -173,6 +181,11 @@ class TutorControlState {
         recommended == null) {
       return null;
     }
+    final activeReviewQuestionRaw = json['active_review_question'];
+    if (activeReviewQuestionRaw != null &&
+        activeReviewQuestionRaw is! Map<String, dynamic>) {
+      return null;
+    }
     return TutorControlState(
       version: (json['version'] as num?)?.toInt() ?? currentVersion,
       mode: mode,
@@ -181,6 +194,9 @@ class TutorControlState {
       helpBias: helpBias,
       allowedActions: allowed,
       recommendedAction: recommended,
+      activeReviewQuestion: activeReviewQuestionRaw == null
+          ? null
+          : Map<String, dynamic>.from(activeReviewQuestionRaw as Map),
     );
   }
 
@@ -193,6 +209,7 @@ class TutorControlState {
       helpBias: TutorHelpBias.unchanged,
       allowedActions: const <TutorFinishedAction>[],
       recommendedAction: null,
+      activeReviewQuestion: null,
     );
   }
 
@@ -209,29 +226,49 @@ class TutorControlState {
         return decoded;
       }
     }
-    final mode = _modeFromWire(
-      (parsed['next_mode'] as String?) ?? (parsed['next_step'] as String?),
+    final finished = parsed['finished'];
+    if (finished is bool) {
+      final difficultyLevel = _normalizeLevel(parsed['difficulty']);
+      final text = (parsed['text'] as String?)?.trim();
+      final mistakes = _stringListFromValue(parsed['mistakes']);
+      final activeReviewQuestion = finished
+          ? null
+          : <String, dynamic>{
+              if (text != null && text.isNotEmpty) 'text': text,
+              if (difficultyLevel != null) 'difficulty': difficultyLevel,
+              if (mistakes.isNotEmpty) 'mistakes': mistakes,
+            };
+      return TutorControlState(
+        version: currentVersion,
+        mode: TutorMode.review,
+        step: finished ? TutorTurnStep.newTurn : TutorTurnStep.continueTurn,
+        turnFinished: finished,
+        helpBias: TutorHelpBias.unchanged,
+        allowedActions: const <TutorFinishedAction>[],
+        recommendedAction: TutorFinishedAction.fromWire(
+          (parsed['next_action'] as String?)?.trim().toUpperCase(),
+        ),
+        activeReviewQuestion: activeReviewQuestion,
+      );
+    }
+    final nextAction = TutorFinishedAction.fromWire(
+      (parsed['next_action'] as String?)?.trim().toUpperCase(),
     );
-    final turnState = (parsed['turn_state'] as String?)?.trim().toUpperCase();
-    final helpBias = TutorHelpBias.fromWire(
-      parsed['next_help_bias'] as String?,
-    );
-    if (mode == null || helpBias == null) {
+    final helpBias = TutorHelpBias.fromWire(parsed['next_help_bias'] as String?);
+    if (nextAction == null || helpBias == null) {
       return null;
     }
-    final finished = turnState == 'FINISHED';
     return TutorControlState(
       version: currentVersion,
-      mode: mode,
-      step: finished ? TutorTurnStep.newTurn : TutorTurnStep.continueTurn,
-      turnFinished: finished,
+      mode: nextAction == TutorFinishedAction.learn
+          ? TutorMode.learn
+          : TutorMode.review,
+      step: TutorTurnStep.newTurn,
+      turnFinished: true,
       helpBias: helpBias,
-      allowedActions: finished
-          ? _legacyAllowedActionsForMode(mode)
-          : const <TutorFinishedAction>[],
-      recommendedAction: finished
-          ? _legacyRecommendedAction(parsed: parsed, mode: mode)
-          : null,
+      allowedActions: const <TutorFinishedAction>[],
+      recommendedAction: nextAction,
+      activeReviewQuestion: null,
     );
   }
 
@@ -246,37 +283,28 @@ class TutorControlState {
     return null;
   }
 
-  static List<TutorFinishedAction> _legacyAllowedActionsForMode(
-    TutorMode mode,
-  ) {
-    if (mode == TutorMode.review) {
-      return const <TutorFinishedAction>[
-        TutorFinishedAction.nextQuestion,
-        TutorFinishedAction.learn,
-        TutorFinishedAction.summarize,
-        TutorFinishedAction.pause,
-      ];
+  static String? _normalizeLevel(Object? value) {
+    if (value is! String) {
+      return null;
     }
-    return const <TutorFinishedAction>[
-      TutorFinishedAction.continueLearning,
-      TutorFinishedAction.tryQuestion,
-      TutorFinishedAction.summarize,
-      TutorFinishedAction.pause,
-    ];
+    final normalized = value.trim().toLowerCase();
+    if (normalized == 'easy' ||
+        normalized == 'medium' ||
+        normalized == 'hard') {
+      return normalized;
+    }
+    return null;
   }
 
-  static TutorFinishedAction _legacyRecommendedAction({
-    required Map<String, dynamic> parsed,
-    required TutorMode mode,
-  }) {
-    final nextAction = (parsed['next_action'] as String?)?.trim().toUpperCase();
-    if (nextAction == 'SUMMARY') {
-      return TutorFinishedAction.summarize;
+  static List<String> _stringListFromValue(Object? value) {
+    if (value is! List) {
+      return const <String>[];
     }
-    if (mode == TutorMode.review) {
-      return TutorFinishedAction.nextQuestion;
-    }
-    return TutorFinishedAction.continueLearning;
+    return value
+        .whereType<String>()
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
   }
 }
 
@@ -286,6 +314,8 @@ class TutorEvidenceState {
     required this.policy,
     required this.gradedReviewCount,
     required this.summaryConsumedReviewCount,
+    required this.reviewCorrectTotal,
+    required this.reviewAttemptTotal,
     required this.easyPassedCount,
     required this.mediumPassedCount,
     required this.hardPassedCount,
@@ -300,6 +330,8 @@ class TutorEvidenceState {
   final String policy;
   final int gradedReviewCount;
   final int summaryConsumedReviewCount;
+  final int reviewCorrectTotal;
+  final int reviewAttemptTotal;
   final int easyPassedCount;
   final int mediumPassedCount;
   final int hardPassedCount;
@@ -313,6 +345,8 @@ class TutorEvidenceState {
     String? policy,
     int? gradedReviewCount,
     int? summaryConsumedReviewCount,
+    int? reviewCorrectTotal,
+    int? reviewAttemptTotal,
     int? easyPassedCount,
     int? mediumPassedCount,
     int? hardPassedCount,
@@ -325,6 +359,8 @@ class TutorEvidenceState {
       gradedReviewCount: gradedReviewCount ?? this.gradedReviewCount,
       summaryConsumedReviewCount:
           summaryConsumedReviewCount ?? this.summaryConsumedReviewCount,
+      reviewCorrectTotal: reviewCorrectTotal ?? this.reviewCorrectTotal,
+      reviewAttemptTotal: reviewAttemptTotal ?? this.reviewAttemptTotal,
       easyPassedCount: easyPassedCount ?? this.easyPassedCount,
       mediumPassedCount: mediumPassedCount ?? this.mediumPassedCount,
       hardPassedCount: hardPassedCount ?? this.hardPassedCount,
@@ -339,6 +375,8 @@ class TutorEvidenceState {
       'policy': policy,
       'graded_review_count': gradedReviewCount,
       'summary_consumed_review_count': summaryConsumedReviewCount,
+      'review_correct_total': reviewCorrectTotal,
+      'review_attempt_total': reviewAttemptTotal,
       'easy_passed_count': easyPassedCount,
       'medium_passed_count': mediumPassedCount,
       'hard_passed_count': hardPassedCount,
@@ -355,6 +393,8 @@ class TutorEvidenceState {
       policy: reviewOnlyPolicy,
       gradedReviewCount: 0,
       summaryConsumedReviewCount: 0,
+      reviewCorrectTotal: 0,
+      reviewAttemptTotal: 0,
       easyPassedCount: 0,
       mediumPassedCount: 0,
       hardPassedCount: 0,
@@ -388,6 +428,8 @@ class TutorEvidenceState {
       gradedReviewCount: (json['graded_review_count'] as num?)?.toInt() ?? 0,
       summaryConsumedReviewCount:
           (json['summary_consumed_review_count'] as num?)?.toInt() ?? 0,
+      reviewCorrectTotal: (json['review_correct_total'] as num?)?.toInt() ?? 0,
+      reviewAttemptTotal: (json['review_attempt_total'] as num?)?.toInt() ?? 0,
       easyPassedCount: (json['easy_passed_count'] as num?)?.toInt() ?? 0,
       mediumPassedCount: (json['medium_passed_count'] as num?)?.toInt() ?? 0,
       hardPassedCount: (json['hard_passed_count'] as num?)?.toInt() ?? 0,
@@ -406,45 +448,64 @@ class TutorEvidenceState {
   }) {
     final normalizedAction = actionMode.trim().toUpperCase();
     if (normalizedAction == 'REVIEW' && parsed != null) {
-      final control = TutorControlState.fromAssistantPayload(parsed);
-      final turnState = (parsed['turn_state'] as String?)?.trim().toUpperCase();
-      final grading = parsed['grading'];
-      final evidence = parsed['evidence'];
-      final turnFinished = control?.turnFinished ?? (turnState == 'FINISHED');
-      final isCorrect = grading is Map<String, dynamic> &&
-          grading['is_correct'] is bool &&
-          grading['is_correct'] == true;
-      final isGradedFinal = turnFinished && grading is Map<String, dynamic>;
-      final normalizedPassedLevel = passedLevel?.trim().toLowerCase();
-      return current.copyWith(
-        gradedReviewCount: current.gradedReviewCount + (isGradedFinal ? 1 : 0),
-        easyPassedCount: current.easyPassedCount +
-            (isGradedFinal && isCorrect && normalizedPassedLevel == 'easy'
-                ? 1
-                : 0),
-        mediumPassedCount: current.mediumPassedCount +
-            (isGradedFinal && isCorrect && normalizedPassedLevel == 'medium'
-                ? 1
-                : 0),
-        hardPassedCount: current.hardPassedCount +
-            (isGradedFinal && isCorrect && normalizedPassedLevel == 'hard'
-                ? 1
-                : 0),
-        lastAssessedAction: 'REVIEW',
-        lastEvidence: evidence is Map<String, dynamic>
-            ? Map<String, dynamic>.from(evidence)
-            : current.lastEvidence,
-      );
+      final finished = parsed['finished'];
+      if (finished is bool) {
+        final normalizedPassedLevel =
+            _normalizeLevel(parsed['difficulty']) ?? _normalizeLevel(passedLevel);
+        final mistakeTags = _stringListFromValue(parsed['mistakes']);
+        return current.copyWith(
+          gradedReviewCount: current.gradedReviewCount + (finished ? 1 : 0),
+          reviewCorrectTotal: current.reviewCorrectTotal + (finished ? 1 : 0),
+          reviewAttemptTotal: current.reviewAttemptTotal + (finished ? 1 : 0),
+          easyPassedCount: current.easyPassedCount +
+              (finished && normalizedPassedLevel == 'easy' ? 1 : 0),
+          mediumPassedCount: current.mediumPassedCount +
+              (finished && normalizedPassedLevel == 'medium' ? 1 : 0),
+          hardPassedCount: current.hardPassedCount +
+              (finished && normalizedPassedLevel == 'hard' ? 1 : 0),
+          lastAssessedAction: 'REVIEW',
+          lastEvidence: <String, dynamic>{
+            'difficulty': normalizedPassedLevel,
+            'finished': finished,
+            'mistakes': mistakeTags,
+          },
+        );
+      }
     }
     if (normalizedAction == 'LEARN') {
-      return current.copyWith(lastAssessedAction: 'LEARN');
-    }
-    if (normalizedAction == 'SUMMARY') {
       return current.copyWith(
-        lastAssessedAction: 'SUMMARY',
-        summaryConsumedReviewCount: current.gradedReviewCount,
+        lastAssessedAction: 'LEARN',
+        lastEvidence: <String, dynamic>{
+          'difficulty': _normalizeLevel(parsed?['difficulty']),
+          'mistakes': _stringListFromValue(parsed?['mistakes']),
+          'next_action': (parsed?['next_action'] as String?)?.trim(),
+        },
       );
     }
     return current;
+  }
+
+  static String? _normalizeLevel(Object? value) {
+    if (value is! String) {
+      return null;
+    }
+    final normalized = value.trim().toLowerCase();
+    if (normalized == 'easy' ||
+        normalized == 'medium' ||
+        normalized == 'hard') {
+      return normalized;
+    }
+    return null;
+  }
+
+  static List<String> _stringListFromValue(Object? value) {
+    if (value is! List) {
+      return const <String>[];
+    }
+    return value
+        .whereType<String>()
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
   }
 }

@@ -12,11 +12,8 @@ class PromptValidationResult {
 
 class PromptTemplateValidator {
   static const Set<String> _structuredPromptNames = {
-    'learn_init',
-    'learn_cont',
-    'review_init',
-    'review_cont',
-    'summary',
+    'learn',
+    'review',
   };
 
   Set<String> allSupportedVariables() {
@@ -42,47 +39,20 @@ class PromptTemplateValidator {
 
   Set<String> requiredVariables(String promptName) {
     switch (promptName) {
-      case 'learn_init':
+      case 'learn':
         return {
-          'kp_title',
           'kp_description',
+          'student_input',
           'lesson_content',
         };
-      case 'review_init':
+      case 'review':
         return {
-          'kp_title',
           'kp_description',
-          'types',
+          'student_input',
+          'active_review_question_json',
+          'target_difficulty',
           'presented_questions',
           'error_book_summary',
-          'practice_history_summary',
-          'current_mastery_level',
-          'prev_json',
-          'last_evidence',
-          'student_intent',
-          'current_difficulty_level',
-        };
-      case 'learn_cont':
-        return {
-          'recent_dialogue',
-          'prev_json',
-          'kp_title',
-          'kp_description',
-          'lesson_content',
-        };
-      case 'review_cont':
-        return {
-          'recent_dialogue',
-          'prev_json',
-          'student_intent',
-          'current_difficulty_level',
-        };
-      case 'summary':
-        return {
-          'practice_history_summary',
-          'error_book_summary',
-          'last_evidence',
-          'current_mastery_level',
         };
       default:
         return {};
@@ -92,9 +62,6 @@ class PromptTemplateValidator {
   Set<String> allowedVariables(String promptName) {
     final required = requiredVariables(promptName);
     const baseContext = {
-      'subject',
-      'course_version_id',
-      'kp_key',
       'kp_title',
       'kp_description',
       'student_summary',
@@ -102,23 +69,18 @@ class PromptTemplateValidator {
       'student_preferences',
     };
     const historyContext = {
-      'conversation_history',
-      'session_history',
       'student_input',
-      'student_intent',
+      'recent_chat',
       'help_bias',
     };
     const nextGenContext = {
       'lesson_content',
-      'types',
       'error_book_summary',
-      'practice_history_summary',
       'presented_questions',
-      'recent_dialogue',
-      'prev_json',
-      'last_evidence',
-      'current_mastery_level',
-      'current_difficulty_level',
+      'active_review_question_json',
+      'target_difficulty',
+      'review_correct_total',
+      'review_attempt_total',
     };
     if (_structuredPromptNames.contains(promptName)) {
       return {

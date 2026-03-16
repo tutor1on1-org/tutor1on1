@@ -170,9 +170,11 @@ class LlmService {
         client: client,
         baseUrl: settings.baseUrl,
         provider: provider,
+        promptName: promptName,
         model: modelToUse,
         apiKey: apiKey!,
         renderedPrompt: renderedPrompt,
+        schemaMap: schemaMap,
         timeoutSeconds: settings.timeoutSeconds,
         maxTokens: settings.maxTokens,
         isCancelled: isCancelled,
@@ -377,9 +379,11 @@ class LlmService {
         client: client,
         baseUrl: settings.baseUrl,
         provider: provider,
+        promptName: promptName,
         model: modelToUse,
         apiKey: apiKey!,
         renderedPrompt: renderedPrompt,
+        schemaMap: schemaMap,
         timeoutSeconds: settings.timeoutSeconds,
         maxTokens: settings.maxTokens,
         isCancelled: isCancelled,
@@ -537,10 +541,12 @@ class LlmService {
     required http.Client client,
     required String baseUrl,
     required LlmProvider provider,
+    required String promptName,
     required String model,
     required String reasoningEffort,
     required String apiKey,
     required String renderedPrompt,
+    required Map<String, dynamic>? schemaMap,
     required int timeoutSeconds,
     required int maxTokens,
     required bool Function() isCancelled,
@@ -548,8 +554,11 @@ class LlmService {
     final url = Uri.parse('${_normalizeBaseUrl(baseUrl)}${provider.chatPath}');
     final bodyMap = _buildRequestBody(
       provider: provider,
+      baseUrl: baseUrl,
+      promptName: promptName,
       model: model,
       renderedPrompt: renderedPrompt,
+      schemaMap: schemaMap,
       maxTokens: maxTokens,
       reasoningEffort: reasoningEffort,
       stream: false,
@@ -597,10 +606,12 @@ class LlmService {
     required http.Client client,
     required String baseUrl,
     required LlmProvider provider,
+    required String promptName,
     required String model,
     required String reasoningEffort,
     required String apiKey,
     required String renderedPrompt,
+    required Map<String, dynamic>? schemaMap,
     required int timeoutSeconds,
     required int maxTokens,
     required bool Function() isCancelled,
@@ -611,10 +622,12 @@ class LlmService {
         client: client,
         baseUrl: baseUrl,
         provider: provider,
+        promptName: promptName,
         model: model,
         reasoningEffort: reasoningEffort,
         apiKey: apiKey,
         renderedPrompt: renderedPrompt,
+        schemaMap: schemaMap,
         timeoutSeconds: timeoutSeconds,
         maxTokens: maxTokens,
         isCancelled: isCancelled,
@@ -624,8 +637,11 @@ class LlmService {
     final url = Uri.parse('${_normalizeBaseUrl(baseUrl)}${provider.chatPath}');
     final bodyMap = _buildRequestBody(
       provider: provider,
+      baseUrl: baseUrl,
+      promptName: promptName,
       model: model,
       renderedPrompt: renderedPrompt,
+      schemaMap: schemaMap,
       maxTokens: maxTokens,
       reasoningEffort: reasoningEffort,
       stream: true,
@@ -685,11 +701,14 @@ class LlmService {
               provider: provider,
             );
             if (extracted.responseText.isNotEmpty) {
-              LlmReasoningSupport.appendJsonAwareFragment(
+              final delta =
+                  LlmReasoningSupport.appendJsonAwareFragmentAndReturnDelta(
                 responseBuffer,
                 extracted.responseText,
               );
-              onChunk(extracted.responseText);
+              if (delta.isNotEmpty) {
+                onChunk(delta);
+              }
             }
             if ((extracted.reasoningText ?? '').isNotEmpty) {
               reasoningBuffer.write(extracted.reasoningText);
@@ -720,8 +739,11 @@ class LlmService {
 
   Map<String, dynamic> _buildRequestBody({
     required LlmProvider provider,
+    required String baseUrl,
+    required String promptName,
     required String model,
     required String renderedPrompt,
+    required Map<String, dynamic>? schemaMap,
     required int maxTokens,
     required String reasoningEffort,
     required bool stream,
@@ -744,6 +766,20 @@ class LlmService {
     } else if (stream && provider.id == 'openai') {
       bodyMap['stream_options'] = <String, dynamic>{
         'include_usage': true,
+      };
+    }
+    if (_shouldUseOpenAiStructuredOutputs(
+      provider: provider,
+      baseUrl: baseUrl,
+      schemaMap: schemaMap,
+    )) {
+      bodyMap['response_format'] = <String, dynamic>{
+        'type': 'json_schema',
+        'json_schema': <String, dynamic>{
+          'name': _buildStructuredOutputName(promptName),
+          'strict': true,
+          'schema': _stripSchemaMeta(schemaMap!),
+        },
       };
     }
     LlmReasoningSupport.applyRequestFields(
@@ -771,10 +807,12 @@ class LlmService {
     required http.Client client,
     required String baseUrl,
     required LlmProvider provider,
+    required String promptName,
     required String model,
     required String reasoningEffort,
     required String apiKey,
     required String renderedPrompt,
+    required Map<String, dynamic>? schemaMap,
     required int timeoutSeconds,
     required int maxTokens,
     required bool Function() isCancelled,
@@ -786,8 +824,11 @@ class LlmService {
     request.body = jsonEncode(
       _buildRequestBody(
         provider: provider,
+        baseUrl: baseUrl,
+        promptName: promptName,
         model: model,
         renderedPrompt: renderedPrompt,
+        schemaMap: schemaMap,
         maxTokens: maxTokens,
         reasoningEffort: reasoningEffort,
         stream: true,
@@ -852,11 +893,14 @@ class LlmService {
             final extracted =
                 LlmReasoningSupport.extractAnthropicEvent(payload);
             if (extracted.responseText.isNotEmpty) {
-              LlmReasoningSupport.appendJsonAwareFragment(
+              final delta =
+                  LlmReasoningSupport.appendJsonAwareFragmentAndReturnDelta(
                 responseBuffer,
                 extracted.responseText,
               );
-              onChunk(extracted.responseText);
+              if (delta.isNotEmpty) {
+                onChunk(delta);
+              }
             }
             if ((extracted.reasoningText ?? '').isNotEmpty) {
               reasoningBuffer.write(extracted.reasoningText);
@@ -896,7 +940,10 @@ class LlmService {
       if (isCancelled()) {
         rethrow;
       }
-      if (e is SocketException || e is HttpException || e is TimeoutException) {
+      if (e is SocketException ||
+          e is HandshakeException ||
+          e is HttpException ||
+          e is TimeoutException) {
         response = await request();
         return response;
       }
@@ -913,5 +960,35 @@ class LlmService {
       response = await request();
     }
     return response;
+  }
+
+  bool _shouldUseOpenAiStructuredOutputs({
+    required LlmProvider provider,
+    required String baseUrl,
+    required Map<String, dynamic>? schemaMap,
+  }) {
+    if (schemaMap == null) {
+      return false;
+    }
+    if (provider.id != 'openai') {
+      return false;
+    }
+    return _normalizeBaseUrl(baseUrl) == 'https://api.openai.com/v1';
+  }
+
+  String _buildStructuredOutputName(String promptName) {
+    final normalized = promptName
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9_]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_')
+        .replaceAll(RegExp(r'^_|_$'), '');
+    return normalized.isEmpty ? 'structured_output' : '${normalized}_output';
+  }
+
+  Map<String, dynamic> _stripSchemaMeta(Map<String, dynamic> schemaMap) {
+    final stripped = Map<String, dynamic>.from(schemaMap);
+    stripped.remove(r'$schema');
+    return stripped;
   }
 }

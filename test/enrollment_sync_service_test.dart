@@ -612,12 +612,12 @@ void main() {
           'teacher_username': 'teacher_pull_remote',
           'prompt_templates': <Map<String, dynamic>>[
             <String, dynamic>{
-              'prompt_name': 'learn_init',
+              'prompt_name': 'learn',
               'scope': 'course',
               'content': 'REMOTE COURSE PROMPT',
             },
             <String, dynamic>{
-              'prompt_name': 'review_cont',
+              'prompt_name': 'review',
               'scope': 'student',
               'content': 'REMOTE STUDENT PROMPT',
               'student_remote_user_id': 1702,
@@ -688,7 +688,7 @@ void main() {
 
       final activeCoursePrompt = await db.getActivePromptTemplate(
         teacherId: teacherId,
-        promptName: 'learn_init',
+        promptName: 'learn',
         courseKey: updatedCourse.sourcePath,
         studentId: null,
       );
@@ -697,7 +697,7 @@ void main() {
 
       final activeStudentPrompt = await db.getActivePromptTemplate(
         teacherId: teacherId,
-        promptName: 'review_cont',
+        promptName: 'review',
         courseKey: updatedCourse.sourcePath,
         studentId: studentId,
       );
@@ -768,18 +768,18 @@ void main() {
       );
       await db.insertPromptTemplate(
         teacherId: teacherId,
-        promptName: 'learn_init',
+        promptName: 'learn',
         content: 'GLOBAL PROMPT',
       );
       await db.insertPromptTemplate(
         teacherId: teacherId,
-        promptName: 'learn_init',
+        promptName: 'learn',
         content: 'COURSE PROMPT',
         courseKey: courseADir.path,
       );
       await db.insertPromptTemplate(
         teacherId: teacherId,
-        promptName: 'review_cont',
+        promptName: 'review',
         content: 'STUDENT PROMPT',
         courseKey: courseADir.path,
         studentId: studentId,

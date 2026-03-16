@@ -18,14 +18,10 @@ class _AlwaysFailAssetBundle extends CachingAssetBundle {
 void main() {
   test('uses emergency fallback prompts when bundled assets are unavailable',
       () async {
-    final repository =
-        PromptRepository(assetBundle: _AlwaysFailAssetBundle());
+    final repository = PromptRepository(assetBundle: _AlwaysFailAssetBundle());
     const promptNames = <String>[
-      'learn_init',
-      'learn_cont',
-      'review_init',
-      'review_cont',
-      'summary',
+      'learn',
+      'review',
     ];
 
     for (final promptName in promptNames) {
@@ -36,8 +32,7 @@ void main() {
   });
 
   test('throws for unknown prompt names when assets are unavailable', () async {
-    final repository =
-        PromptRepository(assetBundle: _AlwaysFailAssetBundle());
+    final repository = PromptRepository(assetBundle: _AlwaysFailAssetBundle());
     await expectLater(
       () => repository.loadBundledSystemPrompt('unknown_prompt'),
       throwsA(isA<StateError>()),

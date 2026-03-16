@@ -1,44 +1,31 @@
 import 'package:flutter/services.dart';
 
-import '../models/tutor_contract.dart';
-
-String? normalizeTutorTurnState(Object? value) {
-  if (value is! String) {
-    return null;
-  }
-  final normalized = value.trim().toUpperCase();
-  if (normalized == 'UNFINISHED' || normalized == 'FINISHED') {
-    return normalized;
-  }
-  return null;
-}
-
 bool hasActiveTutorTurn({
   required String action,
   required Map<String, dynamic>? parsed,
 }) {
-  if (action != 'learn' && action != 'review') {
+  final normalized = action.trim().toLowerCase();
+  if (normalized == 'review') {
+    return parsed?['finished'] == false;
+  }
+  if (normalized == 'learn') {
     return false;
   }
-  final control = TutorControlState.fromAssistantPayload(parsed);
-  if (control != null) {
-    return !control.turnFinished;
-  }
-  return normalizeTutorTurnState(parsed?['turn_state']) == 'UNFINISHED';
+  return false;
 }
 
 bool isFinishedTutorTurn({
   required String action,
   required Map<String, dynamic>? parsed,
 }) {
-  if (action != 'learn' && action != 'review') {
-    return false;
+  final normalized = action.trim().toLowerCase();
+  if (normalized == 'review') {
+    return parsed?['finished'] == true;
   }
-  final control = TutorControlState.fromAssistantPayload(parsed);
-  if (control != null) {
-    return control.turnFinished;
+  if (normalized == 'learn') {
+    return parsed != null;
   }
-  return normalizeTutorTurnState(parsed?['turn_state']) == 'FINISHED';
+  return false;
 }
 
 TextEditingValue normalizeDraftForSttRecording(TextEditingValue value) {
@@ -55,11 +42,8 @@ String resolveTutorPromptName({
   required bool wantsContinue,
 }) {
   final normalized = action.trim().toLowerCase();
-  if (normalized == 'learn') {
-    return wantsContinue ? 'learn_cont' : 'learn_init';
-  }
-  if (normalized == 'review') {
-    return wantsContinue ? 'review_cont' : 'review_init';
+  if (normalized == 'learn' || normalized == 'review') {
+    return normalized;
   }
   return normalized;
 }

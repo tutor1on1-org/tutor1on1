@@ -83,8 +83,7 @@ class ProgressEntries extends Table {
   IntColumn get litPercent => integer().withDefault(const Constant(0))();
   TextColumn get questionLevel => text().nullable()();
   IntColumn get easyPassedCount => integer().withDefault(const Constant(0))();
-  IntColumn get mediumPassedCount =>
-      integer().withDefault(const Constant(0))();
+  IntColumn get mediumPassedCount => integer().withDefault(const Constant(0))();
   IntColumn get hardPassedCount => integer().withDefault(const Constant(0))();
   TextColumn get summaryText => text().nullable()();
   TextColumn get summaryRawResponse => text().nullable()();
@@ -244,6 +243,23 @@ class StudentPromptProfiles extends Table {
   DateTimeColumn get updatedAt => dateTime().nullable()();
 }
 
+class StudentPassConfigs extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  IntColumn get courseVersionId => integer()();
+  IntColumn get studentId => integer()();
+  RealColumn get easyWeight => real().withDefault(const Constant(0.25))();
+  RealColumn get mediumWeight => real().withDefault(const Constant(0.5))();
+  RealColumn get hardWeight => real().withDefault(const Constant(1.0))();
+  RealColumn get passThreshold => real().withDefault(const Constant(1.0))();
+  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+  DateTimeColumn get updatedAt => dateTime().nullable()();
+
+  @override
+  List<Set<Column>> get uniqueKeys => [
+        {courseVersionId, studentId},
+      ];
+}
+
 class SyncItemStates extends Table {
   IntColumn get remoteUserId => integer()();
   TextColumn get domain => text()();
@@ -283,6 +299,7 @@ class SyncMetadataEntries extends Table {
     ApiConfigs,
     PromptTemplates,
     StudentPromptProfiles,
+    StudentPassConfigs,
     CourseRemoteLinks,
     SyncItemStates,
     SyncMetadataEntries,
@@ -306,7 +323,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 28;
+  int get schemaVersion => 29;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -460,6 +477,9 @@ class AppDatabase extends _$AppDatabase {
               'ALTER TABLE progress_entries '
               'ADD COLUMN hard_passed_count INTEGER NOT NULL DEFAULT 0',
             );
+          }
+          if (from < 29) {
+            await m.createTable(studentPassConfigs);
           }
         },
       );
@@ -1080,21 +1100,29 @@ WHERE p.student_id = ? AND p.kp_key <> ?
       courseVersionId: courseVersionId,
       kpKey: kpKey,
     );
-    final normalizedCounts = _normalizePassedCounts(
-      lit: lit,
-      litPercent: litPercent ?? 0,
-      questionLevel: null,
-      easyPassedCount: lit ? (existing?.easyPassedCount ?? 0) : 0,
-      mediumPassedCount: lit ? (existing?.mediumPassedCount ?? 0) : 0,
-      hardPassedCount: lit ? (existing?.hardPassedCount ?? 0) : 0,
-      fallbackHardForLit: lit,
-    );
-    final resolvedPercent = _deriveLitPercentFromPassedCounts(
-      easyPassedCount: normalizedCounts.easyPassedCount,
-      mediumPassedCount: normalizedCounts.mediumPassedCount,
-      hardPassedCount: normalizedCounts.hardPassedCount,
-      fallbackPercent: lit ? 100 : 0,
-    );
+    final normalizedCounts = existing == null
+        ? _normalizePassedCounts(
+            lit: lit,
+            litPercent: litPercent ?? 0,
+            questionLevel: null,
+            easyPassedCount: 0,
+            mediumPassedCount: 0,
+            hardPassedCount: 0,
+            fallbackHardForLit: lit,
+          )
+        : _NormalizedPassedCounts(
+            easyPassedCount: existing.easyPassedCount,
+            mediumPassedCount: existing.mediumPassedCount,
+            hardPassedCount: existing.hardPassedCount,
+          );
+    final resolvedPercent = litPercent == null
+        ? _deriveLitPercentFromPassedCounts(
+            easyPassedCount: normalizedCounts.easyPassedCount,
+            mediumPassedCount: normalizedCounts.mediumPassedCount,
+            hardPassedCount: normalizedCounts.hardPassedCount,
+            fallbackPercent: lit ? 100 : 0,
+          )
+        : litPercent.clamp(0, 100);
     if (existing == null) {
       await into(progressEntries).insert(
         ProgressEntriesCompanion.insert(
@@ -1140,12 +1168,12 @@ WHERE p.student_id = ? AND p.kp_key <> ?
       courseVersionId: courseVersionId,
       kpKey: kpKey,
     );
-    final easyCount = (existing?.easyPassedCount ?? 0) +
-        (normalized == 'easy' ? 1 : 0);
-    final mediumCount = (existing?.mediumPassedCount ?? 0) +
-        (normalized == 'medium' ? 1 : 0);
-    final hardCount = (existing?.hardPassedCount ?? 0) +
-        (normalized == 'hard' ? 1 : 0);
+    final easyCount =
+        (existing?.easyPassedCount ?? 0) + (normalized == 'easy' ? 1 : 0);
+    final mediumCount =
+        (existing?.mediumPassedCount ?? 0) + (normalized == 'medium' ? 1 : 0);
+    final hardCount =
+        (existing?.hardPassedCount ?? 0) + (normalized == 'hard' ? 1 : 0);
     final derivedLitPercent = _deriveLitPercentFromPassedCounts(
       easyPassedCount: easyCount,
       mediumPassedCount: mediumCount,
@@ -1289,16 +1317,16 @@ WHERE p.student_id = ? AND p.kp_key <> ?
     }
     final mergedEasyPassedCount =
         existing.easyPassedCount >= normalizedCounts.easyPassedCount
-        ? existing.easyPassedCount
-        : normalizedCounts.easyPassedCount;
+            ? existing.easyPassedCount
+            : normalizedCounts.easyPassedCount;
     final mergedMediumPassedCount =
         existing.mediumPassedCount >= normalizedCounts.mediumPassedCount
             ? existing.mediumPassedCount
             : normalizedCounts.mediumPassedCount;
     final mergedHardPassedCount =
         existing.hardPassedCount >= normalizedCounts.hardPassedCount
-        ? existing.hardPassedCount
-        : normalizedCounts.hardPassedCount;
+            ? existing.hardPassedCount
+            : normalizedCounts.hardPassedCount;
     final mergedLitPercent = _deriveLitPercentFromPassedCounts(
       easyPassedCount: mergedEasyPassedCount,
       mediumPassedCount: mergedMediumPassedCount,
@@ -2517,6 +2545,95 @@ HAVING COUNT(*) > 1
         .go();
   }
 
+  Future<StudentPassConfig?> getStudentPassConfig({
+    required int courseVersionId,
+    required int studentId,
+  }) {
+    return (select(studentPassConfigs)
+          ..where((tbl) =>
+              tbl.courseVersionId.equals(courseVersionId) &
+              tbl.studentId.equals(studentId))
+          ..limit(1))
+        .getSingleOrNull();
+  }
+
+  Future<ResolvedStudentPassRule> resolveStudentPassRule({
+    required int courseVersionId,
+    required int studentId,
+  }) async {
+    final config = await getStudentPassConfig(
+      courseVersionId: courseVersionId,
+      studentId: studentId,
+    );
+    return ResolvedStudentPassRule(
+      easyWeight:
+          config?.easyWeight ?? ResolvedStudentPassRule.defaultEasyWeight,
+      mediumWeight:
+          config?.mediumWeight ?? ResolvedStudentPassRule.defaultMediumWeight,
+      hardWeight:
+          config?.hardWeight ?? ResolvedStudentPassRule.defaultHardWeight,
+      passThreshold:
+          config?.passThreshold ?? ResolvedStudentPassRule.defaultPassThreshold,
+    );
+  }
+
+  Future<void> upsertStudentPassConfig({
+    required int courseVersionId,
+    required int studentId,
+    required double easyWeight,
+    required double mediumWeight,
+    required double hardWeight,
+    required double passThreshold,
+  }) async {
+    final now = DateTime.now();
+    final existing = await getStudentPassConfig(
+      courseVersionId: courseVersionId,
+      studentId: studentId,
+    );
+    if (existing == null) {
+      await into(studentPassConfigs).insert(
+        StudentPassConfigsCompanion.insert(
+          courseVersionId: courseVersionId,
+          studentId: studentId,
+          easyWeight: Value(easyWeight),
+          mediumWeight: Value(mediumWeight),
+          hardWeight: Value(hardWeight),
+          passThreshold: Value(passThreshold),
+          updatedAt: Value(now),
+        ),
+      );
+      return;
+    }
+    await (update(studentPassConfigs)
+          ..where((tbl) => tbl.id.equals(existing.id)))
+        .write(
+      StudentPassConfigsCompanion(
+        easyWeight: Value(easyWeight),
+        mediumWeight: Value(mediumWeight),
+        hardWeight: Value(hardWeight),
+        passThreshold: Value(passThreshold),
+        updatedAt: Value(now),
+      ),
+    );
+  }
+
+  Future<void> deleteStudentPassConfig({
+    required int courseVersionId,
+    required int studentId,
+  }) {
+    return (delete(studentPassConfigs)
+          ..where((tbl) =>
+              tbl.courseVersionId.equals(courseVersionId) &
+              tbl.studentId.equals(studentId)))
+        .go();
+  }
+
+  Future<void> deleteStudentPassConfigsForCourse(int courseVersionId) {
+    return (delete(studentPassConfigs)
+          ..where((tbl) => tbl.courseVersionId.equals(courseVersionId)))
+        .go();
+  }
+
   User _preferAuthCanonicalUser(User left, User right) {
     final leftPlaceholder = _isPlaceholderUser(left);
     final rightPlaceholder = _isPlaceholderUser(right);
@@ -2861,6 +2978,72 @@ class StudentPromptContext {
 
   final String profileText;
   final String preferencesText;
+}
+
+class ResolvedStudentPassRule {
+  const ResolvedStudentPassRule({
+    required this.easyWeight,
+    required this.mediumWeight,
+    required this.hardWeight,
+    required this.passThreshold,
+  });
+
+  static const double defaultEasyWeight = 0.25;
+  static const double defaultMediumWeight = 0.5;
+  static const double defaultHardWeight = 1.0;
+  static const double defaultPassThreshold = 1.0;
+
+  final double easyWeight;
+  final double mediumWeight;
+  final double hardWeight;
+  final double passThreshold;
+
+  double scoreForCounts({
+    required int easyCount,
+    required int mediumCount,
+    required int hardCount,
+  }) {
+    return easyCount * easyWeight +
+        mediumCount * mediumWeight +
+        hardCount * hardWeight;
+  }
+
+  bool litForCounts({
+    required int easyCount,
+    required int mediumCount,
+    required int hardCount,
+  }) {
+    return scoreForCounts(
+          easyCount: easyCount,
+          mediumCount: mediumCount,
+          hardCount: hardCount,
+        ) >=
+        passThreshold;
+  }
+
+  int litPercentForCounts({
+    required int easyCount,
+    required int mediumCount,
+    required int hardCount,
+  }) {
+    if (passThreshold <= 0) {
+      return 100;
+    }
+    final ratio = scoreForCounts(
+          easyCount: easyCount,
+          mediumCount: mediumCount,
+          hardCount: hardCount,
+        ) /
+        passThreshold;
+    final percent = (ratio * 100).round();
+    if (percent < 0) {
+      return 0;
+    }
+    if (percent > 100) {
+      return 100;
+    }
+    return percent;
+  }
 }
 
 class StudentSessionInfo {

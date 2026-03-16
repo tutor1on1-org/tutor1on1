@@ -190,6 +190,19 @@ void main() {
       );
     });
 
+    test('streaming delta preserves inserted spaces inside JSON string values',
+        () {
+      final buffer = StringBuffer('{"teacher_message":"You');
+
+      final delta = LlmReasoningSupport.appendJsonAwareFragmentAndReturnDelta(
+        buffer,
+        'already',
+      );
+
+      expect(delta, equals(' already'));
+      expect(buffer.toString(), equals('{"teacher_message":"You already'));
+    });
+
     test('reasoning log keeps requested effort even without returned text', () {
       const provider = LlmProvider(
         id: 'openai',

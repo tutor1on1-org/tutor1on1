@@ -14,7 +14,6 @@ import '../llm/llm_providers.dart';
 import '../models/tutor_action.dart';
 import '../models/tutor_contract.dart';
 import '../services/app_services.dart';
-import '../services/log_crypto_service.dart';
 import '../services/stt_service.dart';
 import '../services/tts_chunker.dart';
 import '../services/tts_service.dart';
@@ -47,14 +46,12 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   final FocusNode _inputFocus = FocusNode();
   final ScrollController _scrollController = ScrollController();
   bool _sending = false;
-  bool _summaryFailed = false;
   bool _closed = false;
   bool _loadingSession = true;
   bool _autoStartAttempted = false;
   TutorMode _mode = TutorMode.learn;
   TutorTurnStep _step = TutorTurnStep.newTurn;
   TutorHelpBias _helpBias = TutorHelpBias.unchanged;
-  List<TutorFinishedAction> _allowedActions = const <TutorFinishedAction>[];
   TutorFinishedAction? _recommendedAction;
   String? _sessionModel;
   String? _sessionTitle;
@@ -101,7 +98,6 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   bool _sttCancelHover = false;
   String? _pendingSttAudioPath;
   bool _applyingTranscription = false;
-  bool _summarySuggested = false;
   int _inputLineCount = 1;
   final GlobalKey _sttCancelKey = GlobalKey();
   final LayerLink _sttButtonLink = LayerLink();
@@ -176,11 +172,9 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     }
     if (session == null) {
       _closed = true;
-      _summaryFailed = false;
       _sessionTitle = null;
     } else {
       _closed = false;
-      _summaryFailed = session.status == 'summary_failed';
       _sessionTitle = session.title;
     }
     setState(() => _loadingSession = false);
@@ -493,25 +487,6 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                         },
                       ),
                     ),
-                    if (_summaryFailed)
-                      Padding(
-                        padding: const EdgeInsets.all(8),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(l10n.summaryFailedRetry),
-                            ),
-                            TextButton(
-                              onPressed: _showSummaryErrorDialog,
-                              child: Text(l10n.detailsButton),
-                            ),
-                            ElevatedButton(
-                              onPressed: _sending ? null : _requestSummary,
-                              child: Text(l10n.retryButton),
-                            ),
-                          ],
-                        ),
-                      ),
                     if (canInteract)
                       StreamBuilder<List<ChatMessage>>(
                         stream: db.watchMessagesForSession(widget.sessionId),
@@ -693,16 +668,13 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                             _actionButton(
                               key: const Key('learn_button'),
                               label: l10n.promptLearn,
-                              selected: _mode == TutorMode.learn &&
-                                  _step == TutorTurnStep.newTurn,
+                              selected: _isModeRecommended(TutorMode.learn),
                               onPressed: _sending ? null : _startNewLearnTurn,
                             ),
                             _actionButton(
                               key: const Key('review_button'),
                               label: l10n.promptReview,
-                              selected: _mode == TutorMode.review &&
-                                  _step == TutorTurnStep.newTurn &&
-                                  !_summarySuggested,
+                              selected: _isModeRecommended(TutorMode.review),
                               onPressed: _sending ? null : _startNewReviewTurn,
                             ),
                             _helpBiasChip(
@@ -775,12 +747,6 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                   Text(l10n.ttsPreparingLabel),
                                 ],
                               ),
-                            _actionButton(
-                              key: const Key('summary_button'),
-                              label: l10n.summaryButton,
-                              selected: _summarySuggested,
-                              onPressed: _sending ? null : _requestSummary,
-                            ),
                             TextButton(
                               key: const Key('exit_button'),
                               onPressed: _sending ? null : _exitSession,
@@ -901,9 +867,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
           : (next) {
               setState(() {
                 _helpBias = next ? bias : TutorHelpBias.unchanged;
-                _allowedActions = const <TutorFinishedAction>[];
                 _recommendedAction = null;
-                _summarySuggested = false;
               });
               unawaited(_persistVisibleControl(turnFinished: false));
             },
@@ -914,9 +878,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     setState(() {
       _mode = TutorMode.learn;
       _step = TutorTurnStep.newTurn;
-      _allowedActions = const <TutorFinishedAction>[];
       _recommendedAction = null;
-      _summarySuggested = false;
     });
     await _persistVisibleControl(turnFinished: false);
     await _sendMessage(allowEmpty: true);
@@ -926,9 +888,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     setState(() {
       _mode = TutorMode.review;
       _step = TutorTurnStep.newTurn;
-      _allowedActions = const <TutorFinishedAction>[];
       _recommendedAction = null;
-      _summarySuggested = false;
     });
     await _persistVisibleControl(turnFinished: false);
     await _sendMessage(allowEmpty: true);
@@ -1301,59 +1261,6 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     }
   }
 
-  Future<void> _requestSummary() async {
-    final l10n = AppLocalizations.of(context)!;
-    setState(() {
-      _sending = true;
-      _summarySuggested = false;
-    });
-    final db = context.read<AppDatabase>();
-    final sessionService = context.read<AppServices>().sessionService;
-    final modelOverride = _resolveModelOverride();
-    try {
-      await _persistVisibleControl(turnFinished: true);
-      final summarizeHandle = await sessionService.startSummarize(
-        sessionId: widget.sessionId,
-        courseVersion: widget.courseVersion,
-        node: widget.node,
-        modelOverride: modelOverride,
-        onPromptWarning: () =>
-            _showPersistentMessage(l10n.maxTokensTooSmallWarning),
-      );
-      _pending = summarizeHandle;
-      final result = await summarizeHandle.future;
-      _summaryFailed = !result.success;
-      if (result.success) {
-        final litPercent = result.litPercent;
-        if (litPercent != null && result.masterLevel != null) {
-          _showMessage(
-            l10n.summaryUpdatedStatus('$litPercent', result.masterLevel!),
-          );
-        } else if (litPercent != null) {
-          _showMessage(l10n.summaryUpdatedLit('$litPercent'));
-        } else {
-          _showMessage(l10n.summarySavedUnparsed);
-        }
-      } else {
-        await _showSummaryErrorDialog(
-          messageOverride: result.message,
-        );
-      }
-      if (result.success) {
-        await _applyPersistedSessionControl(db);
-      }
-    } catch (e) {
-      await _showSummaryErrorDialog(
-        messageOverride: e.toString(),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _sending = false);
-      }
-      _pending = null;
-    }
-  }
-
   Future<void> _exitSession() async {
     final sessionService = context.read<AppServices>().sessionService;
     await sessionService.closeSession(widget.sessionId);
@@ -1480,7 +1387,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     if (action == null) {
       return false;
     }
-    return action == 'learn' || action == 'review' || action == 'summary';
+    return action == 'learn' || action == 'review';
   }
 
   Future<void> _refreshAnswer(
@@ -1489,10 +1396,6 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   ) async {
     final action = message.action;
     if (action == null) {
-      return;
-    }
-    if (action == 'summary') {
-      await _requestSummary();
       return;
     }
     setState(() => _sending = true);
@@ -1664,46 +1567,6 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     });
   }
 
-  Future<void> _showSummaryErrorDialog({String? messageOverride}) async {
-    final l10n = AppLocalizations.of(context)!;
-    final db = context.read<AppDatabase>();
-    final session = await db.getSession(widget.sessionId);
-    final raw = session?.summaryRawResponse ?? '';
-    final progress = session == null
-        ? null
-        : await db.getProgress(
-            studentId: session.studentId,
-            courseVersionId: widget.courseVersion.id,
-            kpKey: widget.node.kpKey,
-          );
-    final progressRaw = progress?.summaryRawResponse ?? '';
-    var llmCall = await db.getLatestLlmCallForSession(
-      sessionId: widget.sessionId,
-      promptName: 'summary',
-    );
-    llmCall ??= await db.getLatestLlmCallForSession(
-      sessionId: widget.sessionId,
-      promptName: 'summarize',
-    );
-    final parseError = await LogCryptoService.instance.decryptForCurrentUser(
-      llmCall?.parseError,
-    );
-    final responseText = await LogCryptoService.instance.decryptForCurrentUser(
-      llmCall?.responseText,
-    );
-    final details = responseText?.isNotEmpty == true
-        ? responseText
-        : (raw.isNotEmpty
-            ? raw
-            : (progressRaw.isNotEmpty ? progressRaw : null));
-    final message = messageOverride ?? parseError ?? l10n.summaryFailedMessage;
-    await _showErrorDialog(
-      title: l10n.summaryFailedTitle,
-      message: message,
-      details: details,
-    );
-  }
-
   Future<void> _showErrorDialog({
     required String title,
     required String message,
@@ -1862,9 +1725,6 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     if (message.role == 'user') {
       return l10n.chatLabelStudent;
     }
-    if (message.action == 'summary') {
-      return l10n.chatLabelSummary;
-    }
     final actionLabel = _actionLabel(message.action, l10n);
     return l10n.chatLabelTutor(actionLabel);
   }
@@ -1875,8 +1735,6 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         return l10n.promptLearn;
       case 'review':
         return l10n.promptReview;
-      case 'summary':
-        return l10n.promptSummarize;
       default:
         return l10n.tutorReplyLabel;
     }
@@ -1895,23 +1753,15 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       return;
     }
     final control = _loadControlStateFromSession(session);
-    final nextSummarySuggested =
-        control.recommendedAction == TutorFinishedAction.summarize;
     if (control.mode != _mode ||
         control.step != _step ||
         control.helpBias != _helpBias ||
-        nextSummarySuggested != _summarySuggested ||
-        !_sameFinishedActions(control.allowedActions, _allowedActions) ||
         control.recommendedAction != _recommendedAction) {
       setState(() {
         _mode = control.mode;
         _step = control.step;
         _helpBias = control.helpBias;
-        _allowedActions = List<TutorFinishedAction>.unmodifiable(
-          control.allowedActions,
-        );
         _recommendedAction = control.recommendedAction;
-        _summarySuggested = nextSummarySuggested;
       });
     }
   }
@@ -1955,9 +1805,13 @@ class _ChatSessionPageState extends State<ChatSessionPage>
 
   Future<void> _persistVisibleControl({
     required bool turnFinished,
-    List<TutorFinishedAction>? allowedActions,
     TutorFinishedAction? recommendedAction,
-  }) {
+  }) async {
+    final db = context.read<AppDatabase>();
+    final session = await db.getSession(widget.sessionId);
+    final existing = _loadControlStateFromSession(session);
+    final preserveActiveQuestion =
+        _mode == TutorMode.review && _step == TutorTurnStep.continueTurn;
     return _persistControlState(
       TutorControlState(
         version: TutorControlState.currentVersion,
@@ -1965,9 +1819,10 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         step: _step,
         turnFinished: turnFinished,
         helpBias: _helpBias,
-        allowedActions:
-            turnFinished ? (allowedActions ?? _allowedActions) : const [],
+        allowedActions: const <TutorFinishedAction>[],
         recommendedAction: turnFinished ? recommendedAction : null,
+        activeReviewQuestion:
+            preserveActiveQuestion ? existing.activeReviewQuestion : null,
       ),
     );
   }
@@ -2004,33 +1859,18 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     required String action,
     required TutorTurnStep preferredStep,
   }) {
-    final normalized = action.trim().toLowerCase();
-    if (normalized == 'learn') {
-      return preferredStep == TutorTurnStep.continueTurn
-          ? 'learn_cont'
-          : 'learn_init';
-    }
-    if (normalized == 'review') {
-      return preferredStep == TutorTurnStep.continueTurn
-          ? 'review_cont'
-          : 'review_init';
-    }
-    return normalized;
+    return action.trim().toLowerCase();
   }
 
-  bool _sameFinishedActions(
-    List<TutorFinishedAction> left,
-    List<TutorFinishedAction> right,
-  ) {
-    if (left.length != right.length) {
-      return false;
+  bool _isModeRecommended(TutorMode mode) {
+    final recommended = _recommendedAction;
+    if (recommended == TutorFinishedAction.learn) {
+      return mode == TutorMode.learn;
     }
-    for (var i = 0; i < left.length; i++) {
-      if (left[i] != right[i]) {
-        return false;
-      }
+    if (recommended == TutorFinishedAction.review) {
+      return mode == TutorMode.review;
     }
-    return true;
+    return _mode == mode && _step == TutorTurnStep.newTurn;
   }
 
   List<_ErrorBookPreviewItem> _buildErrorBookPreview(

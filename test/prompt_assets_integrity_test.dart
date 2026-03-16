@@ -6,11 +6,8 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   const requiredPromptNames = <String>[
-    'learn_init',
-    'learn_cont',
-    'review_init',
-    'review_cont',
-    'summary',
+    'learn',
+    'review',
   ];
 
   for (final promptName in requiredPromptNames) {

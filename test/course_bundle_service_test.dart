@@ -207,7 +207,7 @@ void main() {
           'schema': 'family_teacher_prompt_bundle_v1',
           'teacher_username': 'alice',
           'prompt_templates': [
-            {'prompt_name': 'learn_init', 'content': 'Use examples'}
+            {'prompt_name': 'learn', 'content': 'Use examples'}
           ],
         };
         final metadataBytes =
