@@ -203,6 +203,18 @@ void main() {
       expect(buffer.toString(), equals('{"teacher_message":"You already'));
     });
 
+    test('streaming join does not insert spaces inside JSON keys', () {
+      final buffer = StringBuffer('{"mist');
+
+      final delta = LlmReasoningSupport.appendJsonAwareFragmentAndReturnDelta(
+        buffer,
+        'akes":[]}',
+      );
+
+      expect(delta, equals('akes":[]}'));
+      expect(buffer.toString(), equals('{"mistakes":[]}'));
+    });
+
     test('reasoning log keeps requested effort even without returned text', () {
       const provider = LlmProvider(
         id: 'openai',

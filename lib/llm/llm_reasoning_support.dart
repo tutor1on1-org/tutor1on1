@@ -433,7 +433,7 @@ class LlmReasoningSupport {
     if (!_isWordLike(previousChar) || !_isWordLike(nextChar)) {
       return false;
     }
-    return _isInsideJsonString(current);
+    return _isInsideJsonStringValue(current);
   }
 
   static bool _looksLikeJsonPayload(String value) {
@@ -441,9 +441,11 @@ class LlmReasoningSupport {
     return trimmed.startsWith('{') || trimmed.startsWith('[');
   }
 
-  static bool _isInsideJsonString(String value) {
+  static bool _isInsideJsonStringValue(String value) {
+    final containerStack = <_JsonContainerState>[];
     var inString = false;
     var escaping = false;
+    var currentStringIsValue = false;
     for (final codeUnit in value.codeUnits) {
       final character = String.fromCharCode(codeUnit);
       if (escaping) {
@@ -455,14 +457,71 @@ class LlmReasoningSupport {
         continue;
       }
       if (character == '"') {
-        inString = !inString;
+        if (inString) {
+          inString = false;
+          continue;
+        }
+        currentStringIsValue = _nextStringIsValue(containerStack);
+        inString = true;
+        continue;
+      }
+      if (inString) {
+        continue;
+      }
+      switch (character) {
+        case '{':
+          containerStack.add(_JsonContainerState.object());
+          break;
+        case '[':
+          containerStack.add(_JsonContainerState.array());
+          break;
+        case '}':
+        case ']':
+          if (containerStack.isNotEmpty) {
+            containerStack.removeLast();
+          }
+          break;
+        case ':':
+          if (containerStack.isNotEmpty && containerStack.last.isObject) {
+            containerStack.last.expectingObjectKey = false;
+          }
+          break;
+        case ',':
+          if (containerStack.isNotEmpty && containerStack.last.isObject) {
+            containerStack.last.expectingObjectKey = true;
+          }
+          break;
       }
     }
-    return inString;
+    return inString && currentStringIsValue;
   }
 
   static bool _isWhitespace(String value) => value.trim().isEmpty;
 
   static bool _isWordLike(String value) =>
       RegExp(r'[A-Za-z0-9]').hasMatch(value);
+
+  static bool _nextStringIsValue(List<_JsonContainerState> containerStack) {
+    if (containerStack.isEmpty) {
+      return true;
+    }
+    final current = containerStack.last;
+    if (!current.isObject) {
+      return true;
+    }
+    return !current.expectingObjectKey;
+  }
+}
+
+class _JsonContainerState {
+  _JsonContainerState.object()
+      : isObject = true,
+        expectingObjectKey = true;
+
+  _JsonContainerState.array()
+      : isObject = false,
+        expectingObjectKey = false;
+
+  final bool isObject;
+  bool expectingObjectKey;
 }

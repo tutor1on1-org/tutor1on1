@@ -348,3 +348,42 @@ flutter build windows
   - easy correct count
   - medium correct count
   - hard correct count
+
+## 2026-03-16 Streaming key-corruption root-cause fix
+
+- Branch: `simple`
+- User concern: repeated malformed JSON keys such as `mist akes` might be an app bug, not only bad LLM output.
+
+### Root-cause proof
+
+- Added a focused regression test proving the app's JSON fragment joiner inserted a space into a split key:
+  - current buffer: `{"mist`
+  - next fragment: `akes":[]}`
+  - old result: `{"mist akes":[]}`
+- Cause:
+  - the JSON-aware spacing helper inserted spaces whenever it was inside any JSON string
+  - it did not distinguish object key strings from value strings
+  - so valid streamed keys could be corrupted by the app during reassembly
+
+### Fix
+
+- Updated the JSON fragment joiner to insert recovery spaces only while inside JSON string values, never inside object keys.
+
+### Commands
+
+```powershell
+flutter test test\llm_reasoning_support_test.dart
+flutter test test\session_service_test.dart test\llm_call_repository_test.dart test\llm_reasoning_support_test.dart
+flutter analyze
+flutter test integration_test\live_albert_simple_flow_test.dart -d windows --plain-name "Albert prompt quality review flow prints 10 learn/review tutor calls"
+flutter build windows
+```
+
+### Result
+
+- Passed.
+- Focused proof test passed after the fix.
+- Broader tutor/service tests passed.
+- `flutter analyze`: passed.
+- Live Albert quality flow: passed.
+- Windows release build: passed.
