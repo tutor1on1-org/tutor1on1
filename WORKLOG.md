@@ -28,7 +28,7 @@ Last updated: 2026-03-12
 - API upload max size and Nginx `client_max_body_size` must match.
 
 ## Common checks
-- SSH smoke: `ssh -i C:\Users\kl\.ssh\id_rsa -o IdentitiesOnly=yes ecs-user@43.99.59.107 "hostname && whoami"`
+- SSH smoke: `ssh ecs-user@tutor1on1.org "hostname && whoami"`
 - Service status: `sudo systemctl status family-teacher-api.service`
 - API logs: `sudo tail -n 200 /var/log/family_teacher_remote/app.log`
 - Nginx logs: `sudo tail -n 200 /var/log/nginx/access.log`
@@ -37,6 +37,8 @@ Last updated: 2026-03-12
 ## SSH notes
 - Default remote user is `ecs-user`, not `root` or local Windows usernames.
 - Always try the explicit key path first: `-i C:\Users\kl\.ssh\id_rsa -o IdentitiesOnly=yes`.
+- Default remote host for manual ops is `tutor1on1.org`, so prefer `ssh ecs-user@tutor1on1.org`.
+- If `ssh ecs-user@tutor1on1.org` fails to log in, stop and report the failure instead of retrying other usernames or host variants.
 - If SSH fails with `Permission denied (publickey,...)`, verify the remote user before blaming the key.
 - If SSH fails with `banner exchange: Connection to UNKNOWN port -1: Connection refused` and `Test-NetConnection 43.99.59.107 -Port 22` reports `TcpTestSucceeded=False`, port `22` is closed or blocked from the current network, so server log inspection is blocked at transport level.
 
