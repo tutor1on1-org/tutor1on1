@@ -19,6 +19,7 @@ import '../services/tts_chunker.dart';
 import '../services/tts_service.dart';
 import '../services/tts_text_sanitizer.dart';
 import '../state/settings_controller.dart';
+import 'quit_app_flow.dart';
 import 'tutor_turn_logic.dart';
 import 'widgets/math_markdown_view.dart';
 
@@ -283,6 +284,11 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                     icon: const Icon(Icons.edit),
                     onPressed: _sending ? null : _renameSession,
                   ),
+                IconButton(
+                  tooltip: l10n.closeButton,
+                  icon: const Icon(Icons.close),
+                  onPressed: _handleQuitApp,
+                ),
               ],
             ),
             body: Stack(
@@ -1270,6 +1276,13 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     if (mounted) {
       Navigator.of(context).pop();
     }
+  }
+
+  Future<void> _handleQuitApp() {
+    return AppQuitFlow.handleQuit(
+      context,
+      requireTeacherPin: _mode == TutorMode.learn,
+    );
   }
 
   void _cancelRequest() {

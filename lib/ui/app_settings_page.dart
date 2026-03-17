@@ -2,9 +2,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:window_manager/window_manager.dart';
 import 'package:family_teacher/l10n/app_localizations.dart';
 
 import '../db/app_database.dart';
@@ -15,9 +13,9 @@ import '../security/hash_utils.dart';
 import '../security/pin_hasher.dart';
 import '../services/app_services.dart';
 import '../services/model_list_service.dart';
-import '../services/screen_lock_service.dart';
 import '../state/auth_controller.dart';
 import '../state/settings_controller.dart';
+import 'quit_app_flow.dart';
 import 'pages/llm_logs_page.dart';
 import 'pages/tts_logs_page.dart';
 import 'widgets/restart_widget.dart';
@@ -1250,7 +1248,7 @@ class _SettingsPageState extends State<SettingsPage> {
       return;
     }
     if (!enabled) {
-      final confirmed = await _confirmTeacherPin();
+      final confirmed = await AppQuitFlow.confirmTeacherPin(context);
       if (!confirmed) {
         return;
       }
@@ -1263,97 +1261,9 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _handleQuit() async {
     final settings = context.read<SettingsController>().settings;
     final requiresPin = settings?.studyModeEnabled ?? false;
-    if (requiresPin) {
-      final confirmed = await _confirmTeacherPin();
-      if (!confirmed) {
-        return;
-      }
-    }
-    await _quitApp();
-  }
-
-  Future<bool> _confirmTeacherPin() async {
-    final l10n = AppLocalizations.of(context)!;
-    final auth = context.read<AuthController>();
-    final db = context.read<AppDatabase>();
-    final user = auth.currentUser;
-    if (user == null) {
-      if (context.mounted) {
-        _showMessage(context, l10n.notLoggedInMessage);
-      }
-      return false;
-    }
-
-    User? teacher;
-    if (user.role == 'teacher') {
-      teacher = user;
-    } else if (user.teacherId != null) {
-      teacher = await db.getUserById(user.teacherId!);
-    }
-
-    if (teacher == null) {
-      if (context.mounted) {
-        _showMessage(context, l10n.teacherNotFoundMessage);
-      }
-      return false;
-    }
-
-    final pin = await _promptForPin(context);
-    if (pin == null || pin.isEmpty) {
-      return false;
-    }
-
-    final hash = PinHasher.hash(pin);
-    if (hash != teacher.pinHash) {
-      if (context.mounted) {
-        _showMessage(context, l10n.invalidPinMessage);
-      }
-      return false;
-    }
-
-    return true;
-  }
-
-  Future<String?> _promptForPin(BuildContext context) async {
-    final l10n = AppLocalizations.of(context)!;
-    final controller = TextEditingController();
-    final result = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(l10n.teacherPinTitle),
-        content: TextField(
-          controller: controller,
-          obscureText: true,
-          keyboardType: TextInputType.visiblePassword,
-          decoration: InputDecoration(labelText: l10n.pinLabel),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text(l10n.cancelButton),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(
-              controller.text.trim(),
-            ),
-            child: Text(l10n.confirmButton),
-          ),
-        ],
-      ),
+    await AppQuitFlow.handleQuit(
+      context,
+      requireTeacherPin: requiresPin,
     );
-    return result;
-  }
-
-  Future<void> _quitApp() async {
-    if (Platform.isAndroid || Platform.isIOS) {
-      SystemNavigator.pop();
-      return;
-    }
-    try {
-      await ScreenLockService.instance.allowCloseOnce();
-      await windowManager.setPreventClose(false);
-      await windowManager.close();
-    } catch (_) {}
-    exit(0);
   }
 }
