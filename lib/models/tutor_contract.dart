@@ -485,6 +485,39 @@ class TutorEvidenceState {
     return current;
   }
 
+  static TutorEvidenceState rebuildFromAssistantTurns({
+    required TutorEvidenceState seed,
+    required Iterable<TutorEvidenceAssistantTurn> turns,
+  }) {
+    var rebuilt = TutorEvidenceState(
+      version: seed.version,
+      policy: seed.policy,
+      gradedReviewCount: 0,
+      summaryConsumedReviewCount: 0,
+      reviewCorrectTotal: 0,
+      reviewAttemptTotal: 0,
+      easyPassedCount: 0,
+      mediumPassedCount: 0,
+      hardPassedCount: 0,
+      lastAssessedAction: null,
+      lastEvidence: null,
+    );
+    for (final turn in turns) {
+      rebuilt = TutorEvidenceState.updateFromAssistantPayload(
+        current: rebuilt,
+        actionMode: turn.actionMode,
+        parsed: turn.parsed,
+      );
+    }
+    final cappedSummaryConsumed =
+        seed.summaryConsumedReviewCount > rebuilt.gradedReviewCount
+            ? rebuilt.gradedReviewCount
+            : seed.summaryConsumedReviewCount;
+    return rebuilt.copyWith(
+      summaryConsumedReviewCount: cappedSummaryConsumed,
+    );
+  }
+
   static String? _normalizeLevel(Object? value) {
     if (value is! String) {
       return null;
@@ -508,4 +541,14 @@ class TutorEvidenceState {
         .where((item) => item.isNotEmpty)
         .toList(growable: false);
   }
+}
+
+class TutorEvidenceAssistantTurn {
+  const TutorEvidenceAssistantTurn({
+    required this.actionMode,
+    required this.parsed,
+  });
+
+  final String actionMode;
+  final Map<String, dynamic>? parsed;
 }

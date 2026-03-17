@@ -1755,9 +1755,8 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     if (!mounted) {
       return;
     }
+    final evidence = await _resolveSessionEvidence(db, session);
     final summaryLit = session?.summaryLit == true;
-    final evidence = TutorEvidenceState.fromJsonText(session?.evidenceStateJson) ??
-        TutorEvidenceState.initial();
     final control = _loadControlStateFromSession(session);
     if (control.mode != _mode ||
         control.step != _step ||
@@ -1779,6 +1778,40 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         hardCount: evidence.hardPassedCount,
       );
     }
+  }
+
+  Future<TutorEvidenceState> _resolveSessionEvidence(
+    AppDatabase db,
+    ChatSession? session,
+  ) async {
+    final stored =
+        TutorEvidenceState.fromJsonText(session?.evidenceStateJson) ??
+            TutorEvidenceState.initial();
+    if (session == null) {
+      return stored;
+    }
+    final messages = await db.getMessagesForSession(session.id);
+    final rebuilt = TutorEvidenceState.rebuildFromAssistantTurns(
+      seed: stored,
+      turns: messages
+          .where((message) => message.role == 'assistant')
+          .map(
+            (message) => TutorEvidenceAssistantTurn(
+              actionMode: message.action ?? '',
+              parsed: _extractMessageJson(message),
+            ),
+          ),
+    );
+    if (rebuilt.toJsonText() != stored.toJsonText()) {
+      await db.updateSessionContracts(
+        sessionId: session.id,
+        controlStateJson: session.controlStateJson,
+        controlStateUpdatedAt: session.controlStateUpdatedAt,
+        evidenceStateJson: rebuilt.toJsonText(),
+        evidenceStateUpdatedAt: DateTime.now(),
+      );
+    }
+    return rebuilt;
   }
 
   Future<void> _showPassedDialog({

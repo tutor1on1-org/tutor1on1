@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 
 import '../constants.dart';
 import '../db/app_database.dart';
+import '../models/tutor_contract.dart';
 import '../security/pin_hasher.dart';
 import 'remote_teacher_identity_service.dart';
 import 'session_crypto_service.dart';
@@ -2284,6 +2285,32 @@ class SessionSyncService {
               ),
             );
       }
+
+      final existingEvidence =
+          TutorEvidenceState.fromJsonText(payload['evidence_state_json'] as String?) ??
+              TutorEvidenceState.initial();
+      final rebuiltEvidence = TutorEvidenceState.rebuildFromAssistantTurns(
+        seed: existingEvidence,
+        turns: messages
+            .where((message) => message.role == 'assistant')
+            .map(
+              (message) => TutorEvidenceAssistantTurn(
+                actionMode: message.action ?? '',
+                parsed: _tryDecodeJsonObject(message.parsedJson ?? message.rawContent),
+              ),
+            ),
+      );
+      if (rebuiltEvidence.toJsonText() != existingEvidence.toJsonText()) {
+        await _db.updateSessionContracts(
+          sessionId: sessionId,
+          controlStateJson: (payload['control_state_json'] as String?)?.trim(),
+          controlStateUpdatedAt: DateTime.tryParse(
+            (payload['control_state_updated_at'] as String?) ?? '',
+          ),
+          evidenceStateJson: rebuiltEvidence.toJsonText(),
+          evidenceStateUpdatedAt: DateTime.now(),
+        );
+      }
     });
   }
 
@@ -2400,6 +2427,22 @@ class SessionSyncService {
       );
     }
     return messages;
+  }
+
+  Map<String, dynamic>? _tryDecodeJsonObject(String? input) {
+    final text = input?.trim() ?? '';
+    if (text.isEmpty) {
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is Map<String, dynamic>) {
+        return decoded;
+      }
+    } catch (_) {
+      return null;
+    }
+    return null;
   }
 
   Map<String, dynamic> _buildPayload({
