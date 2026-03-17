@@ -60,6 +60,13 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
       if (entry.responseText != null && responseText == null) {
         continue;
       }
+      final responseJson =
+          await LogCryptoService.instance.decryptForCurrentUser(
+        entry.responseJson,
+      );
+      if (entry.responseJson != null && responseJson == null) {
+        continue;
+      }
       final parseError = await LogCryptoService.instance.decryptForCurrentUser(
         entry.parseError,
       );
@@ -75,7 +82,7 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
           model: entry.model,
           baseUrl: entry.baseUrl,
           responseText: responseText,
-          responseJson: entry.responseJson,
+          responseJson: responseJson,
           parseValid: entry.parseValid,
           parseError: parseError,
           latencyMs: entry.latencyMs,
