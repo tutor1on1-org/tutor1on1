@@ -14,6 +14,7 @@ import '../../services/marketplace_api_service.dart';
 import '../../services/sync_log_repository.dart';
 import '../../services/teacher_marketplace_upload_service.dart';
 import '../../state/auth_controller.dart';
+import '../app_close_button.dart';
 import '../app_settings_page.dart';
 import 'course_version_page.dart';
 import 'marketplace_page.dart';
@@ -194,29 +195,33 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         Scaffold(
           appBar: AppBar(
             title: Text(l10n.teacherTitle(teacher.username)),
-            actions: [
-              IconButton(
-                icon: const Icon(Icons.store),
-                tooltip: l10n.marketplaceTitle,
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const MarketplacePage()),
-                  );
-                },
-              ),
-              IconButton(
-                icon: const Icon(Icons.settings),
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const SettingsPage()),
-                  );
-                },
-              ),
-              IconButton(
-                icon: const Icon(Icons.logout),
-                onPressed: () => auth.logout(),
-              ),
-            ],
+            actions: buildAppBarActionsWithClose(
+              context,
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.store),
+                  tooltip: l10n.marketplaceTitle,
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                          builder: (_) => const MarketplacePage()),
+                    );
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.settings),
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const SettingsPage()),
+                    );
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.logout),
+                  onPressed: () => auth.logout(),
+                ),
+              ],
+            ),
           ),
           body: Padding(
             padding: const EdgeInsets.all(16),
@@ -1350,12 +1355,15 @@ class _BundleVersionsPageState extends State<_BundleVersionsPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text('Bundle Versions - ${widget.courseSubject}'),
-        actions: [
-          IconButton(
-            onPressed: _load,
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
+        actions: buildAppBarActionsWithClose(
+          context,
+          actions: [
+            IconButton(
+              onPressed: _load,
+              icon: const Icon(Icons.refresh),
+            ),
+          ],
+        ),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),

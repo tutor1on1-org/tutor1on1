@@ -19,7 +19,7 @@ import '../services/tts_chunker.dart';
 import '../services/tts_service.dart';
 import '../services/tts_text_sanitizer.dart';
 import '../state/settings_controller.dart';
-import 'quit_app_flow.dart';
+import 'app_close_button.dart';
 import 'tutor_turn_logic.dart';
 import 'widgets/math_markdown_view.dart';
 
@@ -250,8 +250,11 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     }
 
     if (_loadingSession) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
+      return Scaffold(
+        appBar: AppBar(
+          actions: buildAppBarActionsWithClose(context),
+        ),
+        body: const Center(child: CircularProgressIndicator()),
       );
     }
 
@@ -277,19 +280,18 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                     ? _sessionTitle!.trim()
                     : l10n.sessionTitle(widget.sessionId),
               ),
-              actions: [
-                if (!_closed && !widget.readOnly)
-                  IconButton(
-                    tooltip: l10n.renameSessionButton,
-                    icon: const Icon(Icons.edit),
-                    onPressed: _sending ? null : _renameSession,
-                  ),
-                IconButton(
-                  tooltip: l10n.closeButton,
-                  icon: const Icon(Icons.close),
-                  onPressed: _handleQuitApp,
-                ),
-              ],
+              actions: buildAppBarActionsWithClose(
+                context,
+                actions: [
+                  if (!_closed && !widget.readOnly)
+                    IconButton(
+                      tooltip: l10n.renameSessionButton,
+                      icon: const Icon(Icons.edit),
+                      onPressed: _sending ? null : _renameSession,
+                    ),
+                ],
+                requireTeacherPin: _mode == TutorMode.learn,
+              ),
             ),
             body: Stack(
               children: [
@@ -1278,13 +1280,6 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     }
   }
 
-  Future<void> _handleQuitApp() {
-    return AppQuitFlow.handleQuit(
-      context,
-      requireTeacherPin: _mode == TutorMode.learn,
-    );
-  }
-
   void _cancelRequest() {
     _pending?.cancel();
     if (_ttsEnabled) {
@@ -1806,9 +1801,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     final messages = await db.getMessagesForSession(session.id);
     final rebuilt = TutorEvidenceState.rebuildFromAssistantTurns(
       seed: stored,
-      turns: messages
-          .where((message) => message.role == 'assistant')
-          .map(
+      turns: messages.where((message) => message.role == 'assistant').map(
             (message) => TutorEvidenceAssistantTurn(
               actionMode: message.action ?? '',
               parsed: _extractMessageJson(message),

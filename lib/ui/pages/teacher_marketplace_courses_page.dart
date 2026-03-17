@@ -9,6 +9,7 @@ import '../../l10n/app_localizations.dart';
 import '../../services/app_services.dart';
 import '../../services/course_bundle_service.dart';
 import '../../services/marketplace_api_service.dart';
+import '../app_close_button.dart';
 
 class TeacherMarketplaceCoursesPage extends StatefulWidget {
   const TeacherMarketplaceCoursesPage({super.key});
@@ -68,25 +69,28 @@ class _TeacherMarketplaceCoursesPageState
     return Scaffold(
       appBar: AppBar(
         title: Text(l10n.teacherMarketplaceTitle),
-        actions: [
-          IconButton(
-            icon: _deletingAll
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.delete_sweep_outlined),
-            tooltip: 'Delete all uploaded server courses',
-            onPressed: _loading || _deletingAll || _courses.isEmpty
-                ? null
-                : () => _deleteAllServerCourses(context),
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _load,
-          ),
-        ],
+        actions: buildAppBarActionsWithClose(
+          context,
+          actions: [
+            IconButton(
+              icon: _deletingAll
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.delete_sweep_outlined),
+              tooltip: 'Delete all uploaded server courses',
+              onPressed: _loading || _deletingAll || _courses.isEmpty
+                  ? null
+                  : () => _deleteAllServerCourses(context),
+            ),
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: _load,
+            ),
+          ],
+        ),
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _createCourse(context),

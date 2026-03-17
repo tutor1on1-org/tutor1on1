@@ -696,7 +696,8 @@ class _ProgressMergeState {
       easyPassedCount: easyPassedCount,
       mediumPassedCount: mediumPassedCount,
       hardPassedCount: hardPassedCount,
-      fallbackPercent: entry.litPercent > litPercent ? entry.litPercent : litPercent,
+      fallbackPercent:
+          entry.litPercent > litPercent ? entry.litPercent : litPercent,
     );
     if (entry.updatedAt.isAfter(updatedAt)) {
       summaryText = entry.summaryText;

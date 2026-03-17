@@ -1,4 +1,4 @@
-﻿class TtsChunker {
+class TtsChunker {
   TtsChunker({
     this.minStartChars = 3000,
     this.maxChunkChars = 5000,

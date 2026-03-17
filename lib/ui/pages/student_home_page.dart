@@ -11,6 +11,7 @@ import '../../services/marketplace_api_service.dart';
 import '../../services/sync_log_repository.dart';
 import '../../state/auth_controller.dart';
 import '../app_settings_page.dart';
+import '../app_close_button.dart';
 import '../progress_display.dart';
 import 'marketplace_page.dart';
 import 'skill_tree_page.dart';
@@ -412,29 +413,33 @@ class _StudentHomePageState extends State<StudentHomePage> {
         Scaffold(
           appBar: AppBar(
             title: Text(l10n.studentTitle(student.username)),
-            actions: [
-              IconButton(
-                icon: const Icon(Icons.store),
-                tooltip: l10n.marketplaceTitle,
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const MarketplacePage()),
-                  );
-                },
-              ),
-              IconButton(
-                icon: const Icon(Icons.settings),
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const SettingsPage()),
-                  );
-                },
-              ),
-              IconButton(
-                icon: const Icon(Icons.logout),
-                onPressed: () => auth.logout(),
-              ),
-            ],
+            actions: buildAppBarActionsWithClose(
+              context,
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.store),
+                  tooltip: l10n.marketplaceTitle,
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                          builder: (_) => const MarketplacePage()),
+                    );
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.settings),
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const SettingsPage()),
+                    );
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.logout),
+                  onPressed: () => auth.logout(),
+                ),
+              ],
+            ),
           ),
           body: Column(
             children: [

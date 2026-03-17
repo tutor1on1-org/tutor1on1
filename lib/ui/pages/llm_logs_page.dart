@@ -9,6 +9,7 @@ import '../../services/app_services.dart';
 import '../../services/log_crypto_service.dart';
 import '../../services/llm_log_repository.dart' as filelog;
 import '../../state/auth_controller.dart';
+import '../app_close_button.dart';
 
 class LlmLogsPage extends StatefulWidget {
   const LlmLogsPage({super.key});
@@ -264,13 +265,16 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(l10n.llmLogsTitle),
-        actions: [
-          IconButton(
-            onPressed: () => setState(_load),
-            icon: const Icon(Icons.refresh),
-            tooltip: l10n.refreshTooltip,
-          ),
-        ],
+        actions: buildAppBarActionsWithClose(
+          context,
+          actions: [
+            IconButton(
+              onPressed: () => setState(_load),
+              icon: const Icon(Icons.refresh),
+              tooltip: l10n.refreshTooltip,
+            ),
+          ],
+        ),
       ),
       body: FutureBuilder<List<_ViewLlmLogEntry>>(
         future: _future,

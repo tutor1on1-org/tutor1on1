@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../state/auth_controller.dart';
+import '../app_close_button.dart';
 
 class TeacherPendingPage extends StatelessWidget {
   const TeacherPendingPage({
@@ -25,12 +26,15 @@ class TeacherPendingPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: Text(title),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () => auth.logout(),
-          ),
-        ],
+        actions: buildAppBarActionsWithClose(
+          context,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.logout),
+              onPressed: () => auth.logout(),
+            ),
+          ],
+        ),
       ),
       body: Center(
         child: ConstrainedBox(

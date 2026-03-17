@@ -3,6 +3,7 @@ import 'package:family_teacher/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
 import '../../db/app_database.dart';
+import '../app_close_button.dart';
 import '../progress_display.dart';
 
 class ProgressPage extends StatelessWidget {
@@ -17,6 +18,7 @@ class ProgressPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: Text(l10n.progressTitle(courseVersion.subject)),
+        actions: buildAppBarActionsWithClose(context),
       ),
       body: FutureBuilder<List<_StudentProgress>>(
         future: _loadProgress(db),

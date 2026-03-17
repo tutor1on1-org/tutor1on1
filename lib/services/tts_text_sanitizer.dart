@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 
 import 'package:markdown/markdown.dart' as md;
 
@@ -75,8 +75,8 @@ class TtsTextSanitizer {
       }
 
       if (!_isEscaped(input, index) && _matchesAt(input, index, r'\[')) {
-        final end = _findClosingToken(input, index + 2, r'\]',
-            respectEscape: true);
+        final end =
+            _findClosingToken(input, index + 2, r'\]', respectEscape: true);
         if (end != -1) {
           final content = input.substring(index + 2, end);
           final placeholder = '@@M${mathSegments.length}@@';
@@ -91,8 +91,8 @@ class TtsTextSanitizer {
       }
 
       if (!_isEscaped(input, index) && _matchesAt(input, index, r'\(')) {
-        final end = _findClosingToken(input, index + 2, r'\)',
-            respectEscape: true);
+        final end =
+            _findClosingToken(input, index + 2, r'\)', respectEscape: true);
         if (end != -1) {
           final content = input.substring(index + 2, end);
           final placeholder = '@@M${mathSegments.length}@@';
@@ -185,9 +185,7 @@ class TtsTextSanitizer {
     for (final match in regex.allMatches(input)) {
       buffer.write(input.substring(cursor, match.start));
       final rawIndex = int.tryParse(match.group(1) ?? '');
-      if (rawIndex == null ||
-          rawIndex < 0 ||
-          rawIndex >= codeSegments.length) {
+      if (rawIndex == null || rawIndex < 0 || rawIndex >= codeSegments.length) {
         buffer.write(match.group(0));
       } else {
         buffer.write(codeSegments[rawIndex]);

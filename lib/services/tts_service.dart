@@ -150,9 +150,7 @@ class TtsService {
         sessionId: sessionId,
       );
       await _replayPlayer.setVolume(1.0);
-      await _replayPlayer
-          .setFilePath(path)
-          .timeout(const Duration(seconds: 8));
+      await _replayPlayer.setFilePath(path).timeout(const Duration(seconds: 8));
       await _logEvent(
         event: 'replay_start',
         message: 'Starting replay.',
@@ -334,6 +332,7 @@ class TtsService {
       playbackStarted = true;
       onPlaybackStart?.call(duration);
     }
+
     _logEvent(
       event: 'enqueue',
       message: 'Enqueued text for TTS.',
@@ -342,129 +341,126 @@ class TtsService {
       sessionId: sessionId,
     );
     final token = _queueToken;
-    _queue = _queue
-        .catchError((error) async {
-          await _logError(
-            message: 'Queue error (previous): $error',
+    _queue = _queue.catchError((error) async {
+      await _logError(
+        message: 'Queue error (previous): $error',
+        textSnippet: trimmed,
+        textLength: trimmed.length,
+        sessionId: sessionId,
+      );
+    }).then((_) async {
+      if (token != _queueToken) {
+        await _logEvent(
+          event: 'skip',
+          message: 'Queue token mismatch (stopped).',
+          textSnippet: trimmed,
+          textLength: trimmed.length,
+          sessionId: sessionId,
+        );
+        return;
+      }
+      await _logEvent(
+        event: 'start',
+        message: 'Queue processing started.',
+        textSnippet: trimmed,
+        textLength: trimmed.length,
+        sessionId: sessionId,
+      );
+      try {
+        final audioBytes = await _requestAudio(trimmed, sessionId: sessionId);
+        if (audioBytes == null) {
+          await _logEvent(
+            event: 'skip',
+            message: 'No audio bytes returned.',
             textSnippet: trimmed,
             textLength: trimmed.length,
             sessionId: sessionId,
           );
-        })
-        .then((_) async {
+          onPlaybackComplete?.call(false);
+          return;
+        }
+        if (audioDirectory != null &&
+            audioDirectory.trim().isNotEmpty &&
+            messageId != null) {
+          await _appendMessageAudio(
+            baseDir: audioDirectory.trim(),
+            messageId: messageId,
+            bytes: audioBytes,
+            sessionId: sessionId,
+          );
+        }
+        if (token != _queueToken) {
+          await _logEvent(
+            event: 'skip',
+            message: 'Queue token mismatch after request.',
+            textSnippet: trimmed,
+            textLength: trimmed.length,
+            sessionId: sessionId,
+          );
+          return;
+        }
+        final file = await _writeTempAudio(audioBytes);
+        final stopToken = _stopToken;
+        try {
           if (token != _queueToken) {
             await _logEvent(
               event: 'skip',
-              message: 'Queue token mismatch (stopped).',
+              message: 'Queue token mismatch before playback.',
               textSnippet: trimmed,
               textLength: trimmed.length,
               sessionId: sessionId,
             );
             return;
           }
-          await _logEvent(
-            event: 'start',
-            message: 'Queue processing started.',
+          await _saveLastAudio(
+            audioBytes,
             textSnippet: trimmed,
             textLength: trimmed.length,
             sessionId: sessionId,
           );
-          try {
-            final audioBytes =
-                await _requestAudio(trimmed, sessionId: sessionId);
-            if (audioBytes == null) {
-              await _logEvent(
-                event: 'skip',
-                message: 'No audio bytes returned.',
-                textSnippet: trimmed,
-                textLength: trimmed.length,
-                sessionId: sessionId,
-              );
-              onPlaybackComplete?.call(false);
-              return;
-            }
-            if (audioDirectory != null &&
-                audioDirectory.trim().isNotEmpty &&
-                messageId != null) {
-              await _appendMessageAudio(
-                baseDir: audioDirectory.trim(),
-                messageId: messageId,
-                bytes: audioBytes,
-                sessionId: sessionId,
-              );
-            }
-            if (token != _queueToken) {
-              await _logEvent(
-                event: 'skip',
-                message: 'Queue token mismatch after request.',
-                textSnippet: trimmed,
-                textLength: trimmed.length,
-                sessionId: sessionId,
-              );
-              return;
-            }
-            final file = await _writeTempAudio(audioBytes);
-            final stopToken = _stopToken;
-            try {
-              if (token != _queueToken) {
-                await _logEvent(
-                  event: 'skip',
-                  message: 'Queue token mismatch before playback.',
-                  textSnippet: trimmed,
-                  textLength: trimmed.length,
-                  sessionId: sessionId,
-                );
-                return;
-              }
-              await _saveLastAudio(
-                audioBytes,
-                textSnippet: trimmed,
-                textLength: trimmed.length,
-                sessionId: sessionId,
-              );
-              final played = await _playFile(
-                file,
-                sessionId: sessionId,
-                textSnippet: trimmed,
-                textLength: trimmed.length,
-                sourceTag: 'queue',
-                stopToken: stopToken,
-                onPlaybackStart: notifyPlaybackStart,
-              );
-              if (!played) {
-                await _logEvent(
-                  event: 'skip',
-                  message: 'Playback did not complete.',
-                  textSnippet: trimmed,
-                  textLength: trimmed.length,
-                  sessionId: sessionId,
-                );
-                onPlaybackComplete?.call(false);
-              } else {
-                onPlaybackComplete?.call(true);
-              }
-            } catch (error) {
-              await _logError(
-                message: 'Playback failed: $error',
-                textSnippet: trimmed,
-                textLength: trimmed.length,
-                sessionId: sessionId,
-              );
-              onPlaybackComplete?.call(false);
-            } finally {
-              if (await file.exists()) {
-                await file.delete();
-              }
-            }
-          } catch (error) {
-            await _logError(
-              message: 'Queue execution failed: $error',
+          final played = await _playFile(
+            file,
+            sessionId: sessionId,
+            textSnippet: trimmed,
+            textLength: trimmed.length,
+            sourceTag: 'queue',
+            stopToken: stopToken,
+            onPlaybackStart: notifyPlaybackStart,
+          );
+          if (!played) {
+            await _logEvent(
+              event: 'skip',
+              message: 'Playback did not complete.',
               textSnippet: trimmed,
               textLength: trimmed.length,
               sessionId: sessionId,
             );
+            onPlaybackComplete?.call(false);
+          } else {
+            onPlaybackComplete?.call(true);
           }
-        });
+        } catch (error) {
+          await _logError(
+            message: 'Playback failed: $error',
+            textSnippet: trimmed,
+            textLength: trimmed.length,
+            sessionId: sessionId,
+          );
+          onPlaybackComplete?.call(false);
+        } finally {
+          if (await file.exists()) {
+            await file.delete();
+          }
+        }
+      } catch (error) {
+        await _logError(
+          message: 'Queue execution failed: $error',
+          textSnippet: trimmed,
+          textLength: trimmed.length,
+          sessionId: sessionId,
+        );
+      }
+    });
   }
 
   Future<List<int>?> _requestAudio(
@@ -625,14 +621,17 @@ class TtsService {
       startSub?.cancel();
       startSub = null;
     }
+
     void stopStateSub() {
       stateSub?.cancel();
       stateSub = null;
     }
+
     void stopStartTimer() {
       startTimer?.cancel();
       startTimer = null;
     }
+
     try {
       await player.setVolume(1.0);
       await _logEvent(
@@ -642,9 +641,7 @@ class TtsService {
         textLength: textLength,
         sessionId: sessionId,
       );
-      await player
-          .setFilePath(file.path)
-          .timeout(const Duration(seconds: 8));
+      await player.setFilePath(file.path).timeout(const Duration(seconds: 8));
       await _logEvent(
         event: 'set_file_done',
         message: 'Audio file ready ($tag).',
@@ -724,8 +721,7 @@ class TtsService {
   }) async {
     try {
       final dir = await getApplicationDocumentsDirectory();
-      final file =
-          File('${dir.path}${Platform.pathSeparator}tts_last.mp3');
+      final file = File('${dir.path}${Platform.pathSeparator}tts_last.mp3');
       await file.writeAsBytes(bytes, flush: true);
       await _logEvent(
         event: 'saved',
@@ -777,8 +773,7 @@ class TtsService {
     final providerId = (settings.providerId ?? '').trim().toLowerCase();
     final isSiliconflow =
         providerId == 'siliconflow' || baseUrl.contains('siliconflow');
-    final isOpenAi =
-        providerId == 'openai' || baseUrl.contains('openai.com');
+    final isOpenAi = providerId == 'openai' || baseUrl.contains('openai.com');
     final model = (settings.ttsModel ?? '').trim();
     if (model.isEmpty) {
       return null;

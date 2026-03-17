@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../db/app_database.dart';
 import '../../services/app_services.dart';
 import '../../state/auth_controller.dart';
+import '../app_close_button.dart';
 import '../progress_display.dart';
 import '../tutor_session_page.dart';
 
@@ -49,10 +50,20 @@ class _NodeDetailPageState extends State<NodeDetailPage> {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     if (_loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return Scaffold(
+        appBar: AppBar(
+          actions: buildAppBarActionsWithClose(context),
+        ),
+        body: const Center(child: CircularProgressIndicator()),
+      );
     }
     if (_node == null || _courseVersion == null) {
-      return Scaffold(body: Center(child: Text(l10n.nodeNotFound)));
+      return Scaffold(
+        appBar: AppBar(
+          actions: buildAppBarActionsWithClose(context),
+        ),
+        body: Center(child: Text(l10n.nodeNotFound)),
+      );
     }
     final auth = context.read<AuthController>();
     final currentUser = auth.currentUser;
@@ -63,6 +74,7 @@ class _NodeDetailPageState extends State<NodeDetailPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(_node!.title),
+        actions: buildAppBarActionsWithClose(context),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),

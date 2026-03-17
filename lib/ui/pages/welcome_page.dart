@@ -6,6 +6,7 @@ import '../../services/app_services.dart';
 import '../../services/marketplace_api_service.dart';
 import '../../state/auth_controller.dart';
 import '../../state/settings_controller.dart';
+import '../app_close_button.dart';
 import '../app_settings_page.dart';
 
 class WelcomePage extends StatefulWidget {
@@ -87,19 +88,22 @@ class _WelcomePageState extends State<WelcomePage> {
       child: Scaffold(
         appBar: AppBar(
           title: Text(l10n.appTitle),
-          actions: [
-            IconButton(
-              key: const Key('open_settings'),
-              icon: const Icon(Icons.settings),
-              onPressed: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const SettingsPage(),
-                  ),
-                );
-              },
-            ),
-          ],
+          actions: buildAppBarActionsWithClose(
+            context,
+            actions: [
+              IconButton(
+                key: const Key('open_settings'),
+                icon: const Icon(Icons.settings),
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const SettingsPage(),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
           bottom: TabBar(
             tabs: [
               Tab(text: l10n.loginTab),

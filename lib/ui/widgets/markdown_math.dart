@@ -74,8 +74,7 @@ List<InlineSegment> tokenizeInlineSegments(String input) {
       continue;
     }
 
-    final content =
-        input.substring(match.start + match.startToken.length, end);
+    final content = input.substring(match.start + match.startToken.length, end);
     final raw = input.substring(match.start, end + match.endToken.length);
     segments.add(
       InlineSegment.math(

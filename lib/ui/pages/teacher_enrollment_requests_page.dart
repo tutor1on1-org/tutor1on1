@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../l10n/app_localizations.dart';
 import '../../services/app_services.dart';
 import '../../services/marketplace_api_service.dart';
+import '../app_close_button.dart';
 
 class TeacherEnrollmentRequestsPage extends StatefulWidget {
   const TeacherEnrollmentRequestsPage({super.key});
@@ -64,12 +65,15 @@ class _TeacherEnrollmentRequestsPageState
     return Scaffold(
       appBar: AppBar(
         title: Text(l10n.enrollmentRequestsTitle),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _load,
-          ),
-        ],
+        actions: buildAppBarActionsWithClose(
+          context,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: _load,
+            ),
+          ],
+        ),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())

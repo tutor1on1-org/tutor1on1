@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'app.dart';
 import 'services/app_services.dart';
+import 'ui/app_close_button.dart';
 
 class AppBootstrap extends StatefulWidget {
   const AppBootstrap({super.key});
@@ -30,15 +31,21 @@ class _AppBootstrapState extends State<AppBootstrap> {
       future: _servicesFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
-          return const MaterialApp(
+          return MaterialApp(
             home: Scaffold(
-              body: Center(child: CircularProgressIndicator()),
+              appBar: AppBar(
+                actions: buildAppBarActionsWithClose(context),
+              ),
+              body: const Center(child: CircularProgressIndicator()),
             ),
           );
         }
         if (snapshot.hasError) {
           return MaterialApp(
             home: Scaffold(
+              appBar: AppBar(
+                actions: buildAppBarActionsWithClose(context),
+              ),
               body: Center(
                 child: Text('Failed to start app: ${snapshot.error}'),
               ),

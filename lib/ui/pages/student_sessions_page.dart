@@ -3,6 +3,7 @@ import 'package:family_teacher/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
 import '../../db/app_database.dart';
+import '../app_close_button.dart';
 
 class StudentSessionsPage extends StatefulWidget {
   const StudentSessionsPage({
@@ -40,6 +41,7 @@ class _StudentSessionsPageState extends State<StudentSessionsPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(l10n.studentSessionsTitle(widget.student.username)),
+        actions: buildAppBarActionsWithClose(context),
       ),
       body: FutureBuilder<List<StudentSessionInfo>>(
         future: _sessionsFuture,
@@ -89,7 +91,8 @@ class _StudentSessionsPageState extends State<StudentSessionsPage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(subtitleParts.join(' | ')),
-                          Text('Summary LIT: ${session.summaryLit ? 'Yes' : 'No'}'),
+                          Text(
+                              'Summary LIT: ${session.summaryLit ? 'Yes' : 'No'}'),
                           if (summaryPreview.isNotEmpty)
                             Text(
                               'Summary: $summaryPreview',

@@ -15,6 +15,7 @@ import '../services/app_services.dart';
 import '../services/model_list_service.dart';
 import '../state/auth_controller.dart';
 import '../state/settings_controller.dart';
+import 'app_close_button.dart';
 import 'quit_app_flow.dart';
 import 'pages/llm_logs_page.dart';
 import 'pages/tts_logs_page.dart';
@@ -77,7 +78,12 @@ class _SettingsPageState extends State<SettingsPage> {
     final currentUser = auth.currentUser;
 
     if (settings == null || settingsController.isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return Scaffold(
+        appBar: AppBar(
+          actions: buildAppBarActionsWithClose(context),
+        ),
+        body: const Center(child: CircularProgressIndicator()),
+      );
     }
 
     final envBaseUrl = Platform.environment['OPENAI_BASE_URL']?.trim() ?? '';
@@ -125,6 +131,7 @@ class _SettingsPageState extends State<SettingsPage> {
       child: Scaffold(
         appBar: AppBar(
           title: Text(l10n.settingsTitle),
+          actions: buildAppBarActionsWithClose(context),
           bottom: TabBar(
             tabs: [
               Tab(text: l10n.generalTab),

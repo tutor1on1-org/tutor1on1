@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../services/app_services.dart';
 import '../../services/marketplace_api_service.dart';
 import '../../state/auth_controller.dart';
+import '../app_close_button.dart';
 
 class AdminHomePage extends StatefulWidget {
   const AdminHomePage({super.key});
@@ -77,16 +78,19 @@ class _AdminHomePageState extends State<AdminHomePage> {
               Tab(text: 'Subject Labels'),
             ],
           ),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              onPressed: _load,
-            ),
-            IconButton(
-              icon: const Icon(Icons.logout),
-              onPressed: () => auth.logout(),
-            ),
-          ],
+          actions: buildAppBarActionsWithClose(
+            context,
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                onPressed: _load,
+              ),
+              IconButton(
+                icon: const Icon(Icons.logout),
+                onPressed: () => auth.logout(),
+              ),
+            ],
+          ),
         ),
         body: _loading
             ? const Center(child: CircularProgressIndicator())

@@ -6,6 +6,7 @@ import '../../llm/prompt_repository.dart';
 import '../../services/app_services.dart';
 import '../../services/prompt_template_validator.dart';
 import 'package:family_teacher/l10n/app_localizations.dart';
+import '../app_close_button.dart';
 
 class PromptSettingsPage extends StatefulWidget {
   const PromptSettingsPage({super.key, required this.teacherId});
@@ -104,6 +105,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(l10n.promptTemplatesTitle),
+        actions: buildAppBarActionsWithClose(context),
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),

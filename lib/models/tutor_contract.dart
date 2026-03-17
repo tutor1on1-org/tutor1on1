@@ -254,7 +254,8 @@ class TutorControlState {
     final nextAction = TutorFinishedAction.fromWire(
       (parsed['next_action'] as String?)?.trim().toUpperCase(),
     );
-    final helpBias = TutorHelpBias.fromWire(parsed['next_help_bias'] as String?);
+    final helpBias =
+        TutorHelpBias.fromWire(parsed['next_help_bias'] as String?);
     if (nextAction == null || helpBias == null) {
       return null;
     }
@@ -450,8 +451,8 @@ class TutorEvidenceState {
     if (normalizedAction == 'REVIEW' && parsed != null) {
       final finished = parsed['finished'];
       if (finished is bool) {
-        final normalizedPassedLevel =
-            _normalizeLevel(parsed['difficulty']) ?? _normalizeLevel(passedLevel);
+        final normalizedPassedLevel = _normalizeLevel(parsed['difficulty']) ??
+            _normalizeLevel(passedLevel);
         final mistakeTags = _stringListFromValue(parsed['mistakes']);
         return current.copyWith(
           gradedReviewCount: current.gradedReviewCount + (finished ? 1 : 0),

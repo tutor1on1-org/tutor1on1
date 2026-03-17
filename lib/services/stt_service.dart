@@ -114,21 +114,21 @@ class SttService {
       _amplitudeSubscription ??= _recorder
           .onAmplitudeChanged(const Duration(milliseconds: 120))
           .listen((amplitude) {
-            if (!_recording) {
-              return;
-            }
-            final current = amplitude.current;
-            final maxValue = amplitude.max;
-            if (current == 0 && maxValue == 0) {
-              return;
-            }
-            _recordAmplitudeHasData = true;
-            final localMax = math.max(current, maxValue);
-            final peak = _recordPeakDb;
-            if (peak == null || localMax > peak) {
-              _recordPeakDb = localMax;
-            }
-          });
+        if (!_recording) {
+          return;
+        }
+        final current = amplitude.current;
+        final maxValue = amplitude.max;
+        if (current == 0 && maxValue == 0) {
+          return;
+        }
+        _recordAmplitudeHasData = true;
+        final localMax = math.max(current, maxValue);
+        final peak = _recordPeakDb;
+        if (peak == null || localMax > peak) {
+          _recordPeakDb = localMax;
+        }
+      });
       await _logEvent(
         event: 'stt_record_start',
         message: 'Recording started.',
@@ -303,8 +303,7 @@ class SttService {
             const Duration(seconds: 60),
           );
       final response = await http.Response.fromStream(streamed);
-      final traceId =
-          response.headers['x-siliconcloud-trace-id'] ??
+      final traceId = response.headers['x-siliconcloud-trace-id'] ??
           response.headers['x-request-id'];
       if (response.statusCode < 200 || response.statusCode >= 300) {
         await _logError(
@@ -687,8 +686,7 @@ class SttService {
         if (!lower.contains('${p.separator}stt_')) {
           continue;
         }
-        final hasKnownExtension =
-            lower.endsWith('.m4a') ||
+        final hasKnownExtension = lower.endsWith('.m4a') ||
             lower.endsWith('.wav') ||
             lower.endsWith('.aac') ||
             lower.endsWith('.mp4') ||
@@ -842,8 +840,7 @@ class SttService {
           }
         } else if (info.bitsPerSample == 24) {
           for (var i = 0; i + 2 < data.length; i += 3) {
-            var value =
-                data[i] | (data[i + 1] << 8) | (data[i + 2] << 16);
+            var value = data[i] | (data[i + 1] << 8) | (data[i + 2] << 16);
             if ((value & 0x800000) != 0) {
               value -= 0x1000000;
             }

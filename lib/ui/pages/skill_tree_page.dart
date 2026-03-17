@@ -13,6 +13,7 @@ import '../../models/skill_tree.dart';
 import '../progress_display.dart';
 import '../../services/app_services.dart';
 import '../../state/auth_controller.dart';
+import '../app_close_button.dart';
 import '../tutor_session_page.dart';
 import '../widgets/pan_scroll_view.dart';
 
@@ -261,12 +262,21 @@ class _SkillTreePageState extends State<SkillTreePage> {
     final targetStudentId = isStudent ? currentUser?.id : _teacherStudentId;
 
     if (_loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return Scaffold(
+        appBar: AppBar(
+          title: Text(l10n.skillTreeTitle),
+          actions: buildAppBarActionsWithClose(context),
+        ),
+        body: const Center(child: CircularProgressIndicator()),
+      );
     }
 
     if (_parseResult == null) {
       return Scaffold(
-        appBar: AppBar(title: Text(l10n.skillTreeTitle)),
+        appBar: AppBar(
+          title: Text(l10n.skillTreeTitle),
+          actions: buildAppBarActionsWithClose(context),
+        ),
         body: Padding(
           padding: const EdgeInsets.all(16),
           child: SelectableText(_error ?? l10n.noNodesYet),
@@ -275,7 +285,10 @@ class _SkillTreePageState extends State<SkillTreePage> {
     }
     if (_parseResult!.nodes.isEmpty) {
       return Scaffold(
-        appBar: AppBar(title: Text(l10n.skillTreeTitle)),
+        appBar: AppBar(
+          title: Text(l10n.skillTreeTitle),
+          actions: buildAppBarActionsWithClose(context),
+        ),
         body: Padding(
           padding: const EdgeInsets.all(16),
           child: SelectableText(_rawContent ?? l10n.noNodesYet),
@@ -304,6 +317,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(l10n.skillTreeTitle),
+        actions: buildAppBarActionsWithClose(context),
       ),
       body: StreamBuilder<List<ProgressEntry>>(
         stream: targetStudentId == null
@@ -317,8 +331,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
               entry.kpKey: _resolveLitPercent(entry),
           };
           final litMap = {
-            for (final entry in progress)
-              entry.kpKey: entry.lit,
+            for (final entry in progress) entry.kpKey: entry.lit,
           };
           _nodeProgress
             ..clear()

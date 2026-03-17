@@ -4,6 +4,7 @@ import 'package:family_teacher/l10n/app_localizations.dart';
 
 import '../../services/app_services.dart';
 import '../../services/tts_log_repository.dart';
+import '../app_close_button.dart';
 
 class TtsLogsPage extends StatefulWidget {
   const TtsLogsPage({super.key});
@@ -32,13 +33,16 @@ class _TtsLogsPageState extends State<TtsLogsPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(l10n.ttsLogsTitle),
-        actions: [
-          IconButton(
-            onPressed: () => setState(_load),
-            icon: const Icon(Icons.refresh),
-            tooltip: l10n.refreshTooltip,
-          ),
-        ],
+        actions: buildAppBarActionsWithClose(
+          context,
+          actions: [
+            IconButton(
+              onPressed: () => setState(_load),
+              icon: const Icon(Icons.refresh),
+              tooltip: l10n.refreshTooltip,
+            ),
+          ],
+        ),
       ),
       body: FutureBuilder<List<TtsLogEntry>>(
         future: _future,
@@ -113,8 +117,8 @@ class _TtsLogsPageState extends State<TtsLogsPage> {
                 const SizedBox(height: 12),
                 Text(l10n.ttsMessageLabel),
                 ...ordered.map((entry) {
-                  final status = entry.statusCode?.toString() ??
-                      l10n.ttsStatusUnknown;
+                  final status =
+                      entry.statusCode?.toString() ?? l10n.ttsStatusUnknown;
                   final text =
                       '[${_formatTime(entry.createdAt)}] ${entry.event} ($status) ${entry.message}';
                   return Padding(

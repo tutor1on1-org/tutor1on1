@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../services/app_services.dart';
 import '../../services/marketplace_api_service.dart';
+import '../app_close_button.dart';
 
 class SubjectAdminPage extends StatefulWidget {
   const SubjectAdminPage({super.key});
@@ -61,18 +62,21 @@ class _SubjectAdminPageState extends State<SubjectAdminPage> {
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Subject Admin'),
+          actions: buildAppBarActionsWithClose(
+            context,
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                onPressed: _load,
+              ),
+            ],
+          ),
           bottom: const TabBar(
             tabs: [
               Tab(text: 'Teacher Requests'),
               Tab(text: 'Course Uploads'),
             ],
           ),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              onPressed: _load,
-            ),
-          ],
         ),
         body: _loading
             ? const Center(child: CircularProgressIndicator())

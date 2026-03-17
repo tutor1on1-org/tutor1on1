@@ -10,6 +10,7 @@ import '../../db/app_database.dart';
 import '../../services/app_services.dart';
 import '../../services/course_import_service.dart';
 import '../../services/course_service.dart';
+import '../app_close_button.dart';
 import '../pages/skill_tree_page.dart';
 
 class CourseVersionPage extends StatefulWidget {
@@ -63,8 +64,11 @@ class _CourseVersionPageState extends State<CourseVersionPage> {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     if (_loading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
+      return Scaffold(
+        appBar: AppBar(
+          actions: buildAppBarActionsWithClose(context),
+        ),
+        body: const Center(child: CircularProgressIndicator()),
       );
     }
 
@@ -73,6 +77,7 @@ class _CourseVersionPageState extends State<CourseVersionPage> {
         title: Text(
           l10n.createCourseTitle,
         ),
+        actions: buildAppBarActionsWithClose(context),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),

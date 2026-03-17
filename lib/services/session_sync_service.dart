@@ -294,11 +294,8 @@ class SessionSyncService {
     );
   }
 
-  Future<void> _uploadPendingProgress(
-    User currentUser,
-    int remoteUserId,
-    {required SyncRunStats stats}
-  ) async {
+  Future<void> _uploadPendingProgress(User currentUser, int remoteUserId,
+      {required SyncRunStats stats}) async {
     if (currentUser.role != 'student') {
       return;
     }
@@ -583,13 +580,13 @@ class SessionSyncService {
       await _api.uploadProgressChunkBatch(
         chunk.map((item) => item.upload).toList(growable: false),
       );
-    stats.addUploaded(
-      count: chunk.length,
-      bytes: chunk.fold<int>(
+      stats.addUploaded(
+        count: chunk.length,
+        bytes: chunk.fold<int>(
           0,
           (total, item) => total + _progressChunkUploadSize(item.upload),
-      ),
-    );
+        ),
+      );
       for (final prepared in chunk) {
         await _mirrorProgressChunkUploadToDownloadState(
           remoteUserId: remoteUserId,
@@ -861,11 +858,8 @@ class SessionSyncService {
         message.contains('progress sync payload');
   }
 
-  Future<void> _uploadPendingSessions(
-    User currentUser,
-    int remoteUserId,
-    {required SyncRunStats stats}
-  ) async {
+  Future<void> _uploadPendingSessions(User currentUser, int remoteUserId,
+      {required SyncRunStats stats}) async {
     if (_sessionUploadCacheService != null) {
       await _uploadPendingSessionsFromChapterCache(
         currentUser: currentUser,
@@ -1444,11 +1438,8 @@ class SessionSyncService {
   }
 
   Future<void> _downloadRemoteData(
-    User currentUser,
-    int remoteUserId,
-    SimpleKeyPair keyPair,
-    {required SyncRunStats stats}
-  ) async {
+      User currentUser, int remoteUserId, SimpleKeyPair keyPair,
+      {required SyncRunStats stats}) async {
     final includeProgress =
         currentUser.role == 'student' || currentUser.role == 'teacher';
     final manifestScopeKey = _downloadManifestScopeKey(currentUser);
@@ -1539,7 +1530,9 @@ class SessionSyncService {
       ),
     );
     stats.addDownloaded(
-      count: payload.sessions.length + payload.progressChunks.length + payload.progressRows.length,
+      count: payload.sessions.length +
+          payload.progressChunks.length +
+          payload.progressRows.length,
       bytes: payload.sessions.fold<int>(
             0,
             (total, item) => total + _sessionDownloadSize(item),
@@ -2286,17 +2279,16 @@ class SessionSyncService {
             );
       }
 
-      final existingEvidence =
-          TutorEvidenceState.fromJsonText(payload['evidence_state_json'] as String?) ??
-              TutorEvidenceState.initial();
+      final existingEvidence = TutorEvidenceState.fromJsonText(
+              payload['evidence_state_json'] as String?) ??
+          TutorEvidenceState.initial();
       final rebuiltEvidence = TutorEvidenceState.rebuildFromAssistantTurns(
         seed: existingEvidence,
-        turns: messages
-            .where((message) => message.role == 'assistant')
-            .map(
+        turns: messages.where((message) => message.role == 'assistant').map(
               (message) => TutorEvidenceAssistantTurn(
                 actionMode: message.action ?? '',
-                parsed: _tryDecodeJsonObject(message.parsedJson ?? message.rawContent),
+                parsed: _tryDecodeJsonObject(
+                    message.parsedJson ?? message.rawContent),
               ),
             ),
       );
@@ -2754,62 +2746,68 @@ class SessionSyncService {
   }
 
   int _sessionDownloadSize(SessionSyncItem item) {
-    return utf8.encode(
-      jsonEncode(<String, Object?>{
-        'cursor_id': item.cursorId,
-        'session_sync_id': item.sessionSyncId,
-        'course_id': item.courseId,
-        'teacher_user_id': item.teacherUserId,
-        'student_user_id': item.studentUserId,
-        'sender_user_id': item.senderUserId,
-        'chapter_key': item.chapterKey,
-        'updated_at': item.updatedAt,
-        'envelope': item.envelope,
-        'envelope_hash': item.envelopeHash,
-      }),
-    ).length;
+    return utf8
+        .encode(
+          jsonEncode(<String, Object?>{
+            'cursor_id': item.cursorId,
+            'session_sync_id': item.sessionSyncId,
+            'course_id': item.courseId,
+            'teacher_user_id': item.teacherUserId,
+            'student_user_id': item.studentUserId,
+            'sender_user_id': item.senderUserId,
+            'chapter_key': item.chapterKey,
+            'updated_at': item.updatedAt,
+            'envelope': item.envelope,
+            'envelope_hash': item.envelopeHash,
+          }),
+        )
+        .length;
   }
 
   int _progressChunkDownloadSize(ProgressSyncChunkItem item) {
-    return utf8.encode(
-      jsonEncode(<String, Object?>{
-        'cursor_id': item.cursorId,
-        'course_id': item.courseId,
-        'course_subject': item.courseSubject,
-        'teacher_user_id': item.teacherUserId,
-        'student_user_id': item.studentUserId,
-        'chapter_key': item.chapterKey,
-        'item_count': item.itemCount,
-        'updated_at': item.updatedAt,
-        'envelope': item.envelope,
-        'envelope_hash': item.envelopeHash,
-      }),
-    ).length;
+    return utf8
+        .encode(
+          jsonEncode(<String, Object?>{
+            'cursor_id': item.cursorId,
+            'course_id': item.courseId,
+            'course_subject': item.courseSubject,
+            'teacher_user_id': item.teacherUserId,
+            'student_user_id': item.studentUserId,
+            'chapter_key': item.chapterKey,
+            'item_count': item.itemCount,
+            'updated_at': item.updatedAt,
+            'envelope': item.envelope,
+            'envelope_hash': item.envelopeHash,
+          }),
+        )
+        .length;
   }
 
   int _progressDownloadSize(ProgressSyncItem item) {
-    return utf8.encode(
-      jsonEncode(<String, Object?>{
-        'cursor_id': item.cursorId,
-        'course_id': item.courseId,
-        'course_subject': item.courseSubject,
-        'teacher_user_id': item.teacherUserId,
-        'student_user_id': item.studentUserId,
-        'kp_key': item.kpKey,
-        'lit': item.lit,
-        'lit_percent': item.litPercent,
-        'question_level': item.questionLevel,
-        'easy_passed_count': item.easyPassedCount,
-        'medium_passed_count': item.mediumPassedCount,
-        'hard_passed_count': item.hardPassedCount,
-        'summary_text': item.summaryText,
-        'summary_raw_response': item.summaryRawResponse,
-        'summary_valid': item.summaryValid,
-        'updated_at': item.updatedAt,
-        'envelope': item.envelope,
-        'envelope_hash': item.envelopeHash,
-      }),
-    ).length;
+    return utf8
+        .encode(
+          jsonEncode(<String, Object?>{
+            'cursor_id': item.cursorId,
+            'course_id': item.courseId,
+            'course_subject': item.courseSubject,
+            'teacher_user_id': item.teacherUserId,
+            'student_user_id': item.studentUserId,
+            'kp_key': item.kpKey,
+            'lit': item.lit,
+            'lit_percent': item.litPercent,
+            'question_level': item.questionLevel,
+            'easy_passed_count': item.easyPassedCount,
+            'medium_passed_count': item.mediumPassedCount,
+            'hard_passed_count': item.hardPassedCount,
+            'summary_text': item.summaryText,
+            'summary_raw_response': item.summaryRawResponse,
+            'summary_valid': item.summaryValid,
+            'updated_at': item.updatedAt,
+            'envelope': item.envelope,
+            'envelope_hash': item.envelopeHash,
+          }),
+        )
+        .length;
   }
 
   Future<void> _mirrorSessionUploadToDownloadState({

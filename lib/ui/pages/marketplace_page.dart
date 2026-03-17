@@ -11,6 +11,7 @@ import '../../services/course_bundle_service.dart';
 import '../../services/marketplace_api_service.dart';
 import '../../services/remote_teacher_identity_service.dart';
 import '../../state/auth_controller.dart';
+import '../app_close_button.dart';
 
 class MarketplacePage extends StatefulWidget {
   const MarketplacePage({super.key});
@@ -266,12 +267,15 @@ class _MarketplacePageState extends State<MarketplacePage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(l10n.marketplaceTitle),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _load,
-          ),
-        ],
+        actions: buildAppBarActionsWithClose(
+          context,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: _load,
+            ),
+          ],
+        ),
       ),
       body: Column(
         children: [
