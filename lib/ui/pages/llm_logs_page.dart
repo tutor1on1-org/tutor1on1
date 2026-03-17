@@ -94,6 +94,7 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
     }
 
     final dbAttemptsByHash = <String, List<_DbAttempt>>{};
+    final dbIdentityByHash = <String, _DbAttempt>{};
     final unmatchedDb = <_DbAttempt>[];
     for (final entry in resolvedDb) {
       final hash = entry.callHash.trim();
@@ -102,6 +103,7 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
         continue;
       }
       dbAttemptsByHash.putIfAbsent(hash, () => <_DbAttempt>[]).add(entry);
+      dbIdentityByHash.putIfAbsent(hash, () => entry);
     }
     for (final attempts in dbAttemptsByHash.values) {
       attempts.sort((a, b) => a.createdAt.compareTo(b.createdAt));
@@ -117,6 +119,10 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
               entry.callHash,
             )
           : null;
+      final identityDb = _lookupDbIdentity(
+        dbIdentityByHash,
+        entry.callHash,
+      );
       combined.add(
         _ViewLlmLogEntry(
           createdAt: entry.createdAt,
@@ -125,14 +131,16 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
           baseUrl: matchedDb?.baseUrl ?? entry.baseUrl,
           mode: matchedDb?.mode ?? entry.mode,
           callHash: entry.callHash ?? matchedDb?.callHash ?? '',
-          teacherId: matchedDb?.teacherId ?? entry.teacherId,
-          studentId: matchedDb?.studentId ?? entry.studentId,
+          teacherId:
+              matchedDb?.teacherId ?? identityDb?.teacherId ?? entry.teacherId,
+          studentId:
+              matchedDb?.studentId ?? identityDb?.studentId ?? entry.studentId,
           courseVersionId: matchedDb?.courseVersionId ?? entry.courseVersionId,
           sessionId: matchedDb?.sessionId ?? entry.sessionId,
           kpKey: matchedDb?.kpKey ?? entry.kpKey,
           action: matchedDb?.action ?? entry.action,
-          teacherName: matchedDb?.teacherName,
-          studentName: matchedDb?.studentName,
+          teacherName: matchedDb?.teacherName ?? identityDb?.teacherName,
+          studentName: matchedDb?.studentName ?? identityDb?.studentName,
           renderedPrompt: matchedDb?.renderedPrompt,
           responseText: matchedDb?.responseText,
           responseJson: matchedDb?.responseJson,
@@ -211,6 +219,17 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
       return null;
     }
     return queue.removeAt(0);
+  }
+
+  _DbAttempt? _lookupDbIdentity(
+    Map<String, _DbAttempt> attemptsByHash,
+    String? callHash,
+  ) {
+    final hash = (callHash ?? '').trim();
+    if (hash.isEmpty) {
+      return null;
+    }
+    return attemptsByHash[hash];
   }
 
   Map<String, dynamic> _buildMetadata(filelog.LlmLogEntry entry) {
@@ -304,7 +323,8 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
     List<_ViewLlmLogEntry> entries,
     AppLocalizations l10n,
   ) {
-    final grouped = <String, Map<String, Map<String, List<_ViewLlmLogEntry>>>>{};
+    final grouped =
+        <String, Map<String, Map<String, List<_ViewLlmLogEntry>>>>{};
     for (final entry in entries) {
       final teacherKey = _teacherLabel(entry, l10n);
       final studentKey = _studentLabel(entry, l10n);
