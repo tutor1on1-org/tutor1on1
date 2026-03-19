@@ -1,7 +1,7 @@
 import 'dart:convert';
 
-import 'package:flutter/material.dart';
 import 'package:family_teacher/l10n/app_localizations.dart';
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../db/app_database.dart' as db;
@@ -10,6 +10,9 @@ import '../../services/log_crypto_service.dart';
 import '../../services/llm_log_repository.dart' as filelog;
 import '../../state/auth_controller.dart';
 import '../app_close_button.dart';
+import 'llm_log_view_data.dart';
+
+typedef _ViewLlmLogEntry = LlmLogViewEntry;
 
 class LlmLogsPage extends StatefulWidget {
   const LlmLogsPage({super.key});
@@ -41,8 +44,16 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
     final services = context.read<AppServices>();
     final dbEntries = await database.getLlmLogEntries();
     final fileEntries = await services.llmLogRepository.loadEntries();
+    final usernamesById = await _loadUsernamesById(
+      database,
+      _collectRelevantUserIds(
+        dbEntries: dbEntries,
+        fileEntries: fileEntries,
+        current: current,
+      ),
+    );
 
-    final resolvedDb = <_DbAttempt>[];
+    final resolvedDb = <LlmLogDbAttemptInput>[];
     for (final entry in dbEntries) {
       if (!_isRelevantDbEntry(entry, current)) {
         continue;
@@ -75,8 +86,7 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
         continue;
       }
       resolvedDb.add(
-        _DbAttempt(
-          id: entry.id,
+        LlmLogDbAttemptInput(
           callHash: entry.callHash,
           promptName: entry.promptName,
           renderedPrompt: renderedPrompt,
@@ -95,106 +105,47 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
           action: entry.action,
           createdAt: entry.createdAt,
           mode: entry.mode,
-          teacherName: entry.teacherName,
-          studentName: entry.studentName,
+          teacherName: _resolveUsername(
+            existingName: entry.teacherName,
+            fallbackName: usernamesById[entry.teacherId],
+          ),
+          studentName: _resolveUsername(
+            existingName: entry.studentName,
+            fallbackName: usernamesById[entry.studentId],
+          ),
         ),
       );
     }
 
-    final dbAttemptsByHash = <String, List<_DbAttempt>>{};
-    final dbIdentityByHash = <String, _DbAttempt>{};
-    final unmatchedDb = <_DbAttempt>[];
-    for (final entry in resolvedDb) {
-      final hash = entry.callHash.trim();
-      if (hash.isEmpty) {
-        unmatchedDb.add(entry);
-        continue;
-      }
-      dbAttemptsByHash.putIfAbsent(hash, () => <_DbAttempt>[]).add(entry);
-      dbIdentityByHash.putIfAbsent(hash, () => entry);
-    }
-    for (final attempts in dbAttemptsByHash.values) {
-      attempts.sort((a, b) => a.createdAt.compareTo(b.createdAt));
-    }
+    final resolvedFileEntries = fileEntries
+        .map(
+          (entry) => LlmLogFileEventInput(
+            createdAt: entry.createdAt,
+            promptName: entry.promptName,
+            model: entry.model,
+            baseUrl: entry.baseUrl,
+            mode: entry.mode,
+            status: entry.status,
+            callHash: entry.callHash,
+            parseValid: entry.parseValid,
+            parseError: entry.parseError,
+            teacherId: entry.teacherId,
+            studentId: entry.studentId,
+            teacherName: usernamesById[entry.teacherId],
+            studentName: usernamesById[entry.studentId],
+            courseVersionId: entry.courseVersionId,
+            sessionId: entry.sessionId,
+            kpKey: entry.kpKey,
+            action: entry.action,
+            metadata: _buildMetadata(entry),
+          ),
+        )
+        .toList(growable: false);
 
-    final sortedFileEntries = [...fileEntries]
-      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
-    final combined = <_ViewLlmLogEntry>[];
-    for (final entry in sortedFileEntries) {
-      final matchedDb = _isModelAttempt(entry)
-          ? _takeNextDbAttempt(
-              dbAttemptsByHash,
-              entry.callHash,
-            )
-          : null;
-      final identityDb = _lookupDbIdentity(
-        dbIdentityByHash,
-        entry.callHash,
-      );
-      combined.add(
-        _ViewLlmLogEntry(
-          createdAt: entry.createdAt,
-          promptName: matchedDb?.promptName ?? entry.promptName,
-          model: matchedDb?.model ?? entry.model,
-          baseUrl: matchedDb?.baseUrl ?? entry.baseUrl,
-          mode: matchedDb?.mode ?? entry.mode,
-          callHash: entry.callHash ?? matchedDb?.callHash ?? '',
-          teacherId:
-              matchedDb?.teacherId ?? identityDb?.teacherId ?? entry.teacherId,
-          studentId:
-              matchedDb?.studentId ?? identityDb?.studentId ?? entry.studentId,
-          courseVersionId: matchedDb?.courseVersionId ?? entry.courseVersionId,
-          sessionId: matchedDb?.sessionId ?? entry.sessionId,
-          kpKey: matchedDb?.kpKey ?? entry.kpKey,
-          action: matchedDb?.action ?? entry.action,
-          teacherName: matchedDb?.teacherName ?? identityDb?.teacherName,
-          studentName: matchedDb?.studentName ?? identityDb?.studentName,
-          renderedPrompt: matchedDb?.renderedPrompt,
-          responseText: matchedDb?.responseText,
-          responseJson: matchedDb?.responseJson,
-          parseValid: matchedDb?.parseValid ?? entry.parseValid,
-          parseError: matchedDb?.parseError ?? entry.parseError,
-          metadata: _buildMetadata(entry),
-        ),
-      );
-    }
-
-    for (final attempts in dbAttemptsByHash.values) {
-      unmatchedDb.addAll(attempts);
-    }
-    unmatchedDb.sort((a, b) => a.createdAt.compareTo(b.createdAt));
-    for (final entry in unmatchedDb) {
-      combined.add(
-        _ViewLlmLogEntry(
-          createdAt: entry.createdAt,
-          promptName: entry.promptName,
-          model: entry.model,
-          baseUrl: entry.baseUrl,
-          mode: entry.mode,
-          callHash: entry.callHash,
-          teacherId: entry.teacherId,
-          studentId: entry.studentId,
-          courseVersionId: entry.courseVersionId,
-          sessionId: entry.sessionId,
-          kpKey: entry.kpKey,
-          action: entry.action,
-          teacherName: entry.teacherName,
-          studentName: entry.studentName,
-          renderedPrompt: entry.renderedPrompt,
-          responseText: entry.responseText,
-          responseJson: entry.responseJson,
-          parseValid: entry.parseValid,
-          parseError: entry.parseError,
-          metadata: <String, dynamic>{
-            'source': 'llm_calls_only',
-            'latency_ms': entry.latencyMs,
-          },
-        ),
-      );
-    }
-
-    combined.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    return combined;
+    return buildLlmLogViewEntries(
+      dbAttempts: resolvedDb,
+      fileEvents: resolvedFileEntries,
+    );
   }
 
   bool _isRelevantDbEntry(db.LlmLogEntry entry, db.User current) {
@@ -207,37 +158,63 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
     return false;
   }
 
-  bool _isModelAttempt(filelog.LlmLogEntry entry) {
-    return entry.latencyMs != null ||
-        entry.parseValid != null ||
-        (entry.reasoningText?.trim().isNotEmpty ?? false) ||
-        (entry.status.trim().toLowerCase() == 'ok');
+  Set<int> _collectRelevantUserIds({
+    required List<db.LlmLogEntry> dbEntries,
+    required List<filelog.LlmLogEntry> fileEntries,
+    required db.User current,
+  }) {
+    final ids = <int>{};
+    for (final entry in dbEntries) {
+      if (!_isRelevantDbEntry(entry, current)) {
+        continue;
+      }
+      if (entry.teacherId != null) {
+        ids.add(entry.teacherId!);
+      }
+      if (entry.studentId != null) {
+        ids.add(entry.studentId!);
+      }
+    }
+    for (final entry in fileEntries) {
+      if (entry.teacherId != null) {
+        ids.add(entry.teacherId!);
+      }
+      if (entry.studentId != null) {
+        ids.add(entry.studentId!);
+      }
+    }
+    return ids;
   }
 
-  _DbAttempt? _takeNextDbAttempt(
-    Map<String, List<_DbAttempt>> attemptsByHash,
-    String? callHash,
-  ) {
-    final hash = (callHash ?? '').trim();
-    if (hash.isEmpty) {
-      return null;
+  Future<Map<int, String>> _loadUsernamesById(
+    db.AppDatabase database,
+    Set<int> ids,
+  ) async {
+    final usernamesById = <int, String>{};
+    for (final id in ids) {
+      final user = await database.getUserById(id);
+      final username = user?.username.trim() ?? '';
+      if (username.isEmpty) {
+        continue;
+      }
+      usernamesById[id] = username;
     }
-    final queue = attemptsByHash[hash];
-    if (queue == null || queue.isEmpty) {
-      return null;
-    }
-    return queue.removeAt(0);
+    return usernamesById;
   }
 
-  _DbAttempt? _lookupDbIdentity(
-    Map<String, _DbAttempt> attemptsByHash,
-    String? callHash,
-  ) {
-    final hash = (callHash ?? '').trim();
-    if (hash.isEmpty) {
-      return null;
+  String? _resolveUsername({
+    required String? existingName,
+    required String? fallbackName,
+  }) {
+    final normalizedExisting = existingName?.trim();
+    if (normalizedExisting != null && normalizedExisting.isNotEmpty) {
+      return normalizedExisting;
     }
-    return attemptsByHash[hash];
+    final normalizedFallback = fallbackName?.trim();
+    if (normalizedFallback != null && normalizedFallback.isNotEmpty) {
+      return normalizedFallback;
+    }
+    return null;
   }
 
   Map<String, dynamic> _buildMetadata(filelog.LlmLogEntry entry) {
@@ -313,7 +290,7 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
                               ),
                             ),
                             subtitle: Text(
-                              '${entry.model} • ${entry.mode} • ${_statusLabel(entry, l10n)}',
+                              '${entry.model} - ${entry.modeSummary} - ${_statusLabel(entry, l10n)}',
                             ),
                             onTap: () => _showDetails(entry, l10n),
                           );
@@ -340,9 +317,16 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
       final teacherKey = _teacherLabel(entry, l10n);
       final studentKey = _studentLabel(entry, l10n);
       final dateKey = _formatDate(entry.createdAt);
-      grouped.putIfAbsent(teacherKey, () => {});
-      grouped[teacherKey]!.putIfAbsent(studentKey, () => {});
-      grouped[teacherKey]![studentKey]!.putIfAbsent(dateKey, () => []);
+      grouped.putIfAbsent(
+        teacherKey,
+        () => <String, Map<String, List<_ViewLlmLogEntry>>>{},
+      );
+      grouped[teacherKey]!.putIfAbsent(
+        studentKey,
+        () => <String, List<_ViewLlmLogEntry>>{},
+      );
+      grouped[teacherKey]![studentKey]!
+          .putIfAbsent(dateKey, () => <_ViewLlmLogEntry>[]);
       grouped[teacherKey]![studentKey]![dateKey]!.add(entry);
     }
     return grouped;
@@ -364,7 +348,7 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
               children: [
                 Text(l10n.llmTimeLabel(entry.createdAt.toIso8601String())),
                 Text(l10n.llmPromptLabel(entry.promptName)),
-                Text(l10n.llmModeValueLabel(entry.mode)),
+                Text(l10n.llmModeValueLabel(entry.modeSummary)),
                 Text(l10n.llmModelLabel(entry.model)),
                 Text(l10n.llmBaseUrlLabel(entry.baseUrl)),
                 if (entry.callHash.isNotEmpty)
@@ -376,28 +360,7 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
                 if ((entry.action ?? '').isNotEmpty)
                   Text(l10n.llmActionLabel(entry.action!)),
                 const SizedBox(height: 12),
-                const Text('Metadata'),
-                SelectableText(_prettyJson(entry.metadata)),
-                if ((entry.renderedPrompt ?? '').isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Text(l10n.llmRenderedPromptLabel),
-                  SelectableText(entry.renderedPrompt!),
-                ],
-                if ((entry.responseText ?? '').isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Text(l10n.llmResponseLabel),
-                  SelectableText(entry.responseText!),
-                ],
-                if ((entry.responseJson ?? '').isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  const Text('Response JSON'),
-                  SelectableText(entry.responseJson!),
-                ],
-                if ((entry.parseError ?? '').isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Text(l10n.llmParseErrorLabel),
-                  SelectableText(entry.parseError!),
-                ],
+                SelectableText(_prettyJson(entry.toExchangeRecord())),
               ],
             ),
           ),
@@ -462,7 +425,7 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
   }
 
   String _statusLabel(_ViewLlmLogEntry entry, AppLocalizations l10n) {
-    final status = (entry.metadata['status'] as String?)?.trim();
+    final status = entry.status?.trim();
     if (status != null && status.isNotEmpty) {
       return status;
     }
@@ -471,98 +434,4 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
     }
     return entry.parseValid == true ? l10n.llmStatusOk : l10n.llmStatusError;
   }
-}
-
-class _ViewLlmLogEntry {
-  _ViewLlmLogEntry({
-    required this.createdAt,
-    required this.promptName,
-    required this.model,
-    required this.baseUrl,
-    required this.mode,
-    required this.callHash,
-    required this.metadata,
-    this.teacherId,
-    this.studentId,
-    this.courseVersionId,
-    this.sessionId,
-    this.kpKey,
-    this.action,
-    this.teacherName,
-    this.studentName,
-    this.renderedPrompt,
-    this.responseText,
-    this.responseJson,
-    this.parseValid,
-    this.parseError,
-  });
-
-  final DateTime createdAt;
-  final String promptName;
-  final String model;
-  final String baseUrl;
-  final String mode;
-  final String callHash;
-  final int? teacherId;
-  final int? studentId;
-  final int? courseVersionId;
-  final int? sessionId;
-  final String? kpKey;
-  final String? action;
-  final String? teacherName;
-  final String? studentName;
-  final String? renderedPrompt;
-  final String? responseText;
-  final String? responseJson;
-  final bool? parseValid;
-  final String? parseError;
-  final Map<String, dynamic> metadata;
-}
-
-class _DbAttempt {
-  _DbAttempt({
-    required this.id,
-    required this.callHash,
-    required this.promptName,
-    required this.renderedPrompt,
-    required this.model,
-    required this.baseUrl,
-    required this.responseText,
-    required this.responseJson,
-    required this.parseValid,
-    required this.parseError,
-    required this.latencyMs,
-    required this.teacherId,
-    required this.studentId,
-    required this.courseVersionId,
-    required this.sessionId,
-    required this.kpKey,
-    required this.action,
-    required this.createdAt,
-    required this.mode,
-    required this.teacherName,
-    required this.studentName,
-  });
-
-  final int id;
-  final String callHash;
-  final String promptName;
-  final String renderedPrompt;
-  final String model;
-  final String baseUrl;
-  final String? responseText;
-  final String? responseJson;
-  final bool? parseValid;
-  final String? parseError;
-  final int? latencyMs;
-  final int? teacherId;
-  final int? studentId;
-  final int? courseVersionId;
-  final int? sessionId;
-  final String? kpKey;
-  final String? action;
-  final DateTime createdAt;
-  final String mode;
-  final String? teacherName;
-  final String? studentName;
 }

@@ -19,4 +19,11 @@ void main() {
       expect(content, contains('You are a one-on-one teacher.'));
     });
   }
+
+  test('bundled review prompt includes recent chat context', () async {
+    final repository = PromptRepository();
+    final content = await repository.loadBundledSystemPrompt('review');
+    expect(content, contains('{{recent_chat}}'));
+    expect(content, contains('Use recent_chat'));
+  });
 }
