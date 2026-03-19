@@ -262,6 +262,10 @@ h2 {
   color: #f0c770;
 }
 
+.cta-card .actions {
+  margin-top: 0;
+}
+
 .footer {
   flex-wrap: wrap;
   gap: 8px 20px;

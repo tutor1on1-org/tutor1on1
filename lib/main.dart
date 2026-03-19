@@ -9,6 +9,10 @@ import 'ui/widgets/restart_widget.dart';
 
 final SingleInstanceService _singleInstanceService =
     SingleInstanceService('family_teacher');
+
+bool get _supportsDesktopWindowing =>
+    Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   if (Platform.isWindows) {
@@ -18,8 +22,11 @@ Future<void> main() async {
     }
   }
 
-  if (Platform.isWindows) {
+  if (_supportsDesktopWindowing) {
     await windowManager.ensureInitialized();
+  }
+
+  if (Platform.isWindows) {
     const windowOptions = WindowOptions(
       title: 'Tutor1on1',
     );

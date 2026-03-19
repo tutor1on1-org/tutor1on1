@@ -1,9 +1,10 @@
 # WORKLOG
-Last updated: 2026-03-12
+Last updated: 2026-03-19
 
 ## Remote host (active)
 - Provider: AliCloud ECS
 - API host: `api.tutor1on1.org`
+- Website host: `www.tutor1on1.org` (`tutor1on1.org` redirects here)
 - SSH host: `43.99.59.107`
 - SSH user: `ecs-user`
 - SSH key: `C:\Users\kl\.ssh\id_rsa`
@@ -16,6 +17,8 @@ Last updated: 2026-03-12
 - Env file: `/etc/family_teacher_remote/env`
 - Logs: `/var/log/family_teacher_remote/app.log`
 - Storage root: `/var/lib/family_teacher_remote/storage`
+- Public download root: `/var/lib/family_teacher_remote/public`
+- Website static root: `/var/www/tutor1on1_site`
 
 ## Local data paths (this machine)
 - `getApplicationDocumentsDirectory()` resolves to `C:\Mac\Home\Documents`
@@ -53,6 +56,14 @@ Last updated: 2026-03-12
 3. Verify health endpoint and log tail.
 
 Historical setup timeline moved to `LOGBOOK.md`.
+
+## Remote server updates (2026-03-19, Android + Windows + website release)
+- Published canonical Android APK to `https://api.tutor1on1.org/downloads/family_teacher.apk`.
+- Published canonical Windows ZIP to `https://api.tutor1on1.org/downloads/family_teacher.zip`.
+- Synced the static website under `/var/www/tutor1on1_site`.
+- Current canonical downloads:
+  - APK SHA-256: `9ef48c7754843a6e55e26dbcf5de463198a319e495d62fb653b201245c954790`
+  - ZIP SHA-256: `7ba173c9c38584c422d19d4f73209de7fb3bdf7227945aa21554196155c9d054`
 
 ## Remote server updates (2026-03-08, current Windows release)
 - Added sync download endpoints:

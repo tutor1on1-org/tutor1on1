@@ -419,7 +419,7 @@
   "restoreCompletedMessage": "数据库已恢复，正在重启...",
   "appSectionTitle": "应用",
   "studyModeLabel": "学习模式",
-  "studyModeDescription": "置顶，10 秒后锁屏，禁用 Alt+F4。",
+  "studyModeDescription": "保持常亮，进入全屏或沉浸模式，退出时需要教师 PIN。",
   "quitButton": "退出（教师密码）",
   "notLoggedInMessage": "未登录。",
   "teacherNotFoundMessage": "未找到教师账号。",

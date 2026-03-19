@@ -1,5 +1,5 @@
 # SCRIPTS
-Last updated: 2026-03-15
+Last updated: 2026-03-19
 
 All commands are expected from repository root (`C:\family_teacher\app`) unless stated otherwise.
 
@@ -62,12 +62,26 @@ Current integration flow covers deterministic auth-gated register/logout/login p
 
 ## Local app run and release build
 ```powershell
+flutter build apk --release
 flutter run -d windows
 flutter build windows --release
 ```
 Required workflow gate: run release build before updating `DONEs.md` after code changes.
 
 ## Utility scripts
+### Android release publish (build + upload)
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/publish_android_release.ps1
+```
+Optional flags:
+- `-SkipBuild` (reuse existing `build/app/outputs/flutter-apk/app-release.apk`)
+
+Default safeguards:
+- Publishes candidate first as `family_teacher_candidate.apk`.
+- Verifies remote SHA-256 against the local APK before promotion.
+- Verifies both candidate and canonical public download URLs.
+- Cleans old versioned APK artifacts after promotion.
+
 ### Windows release publish (build + zip + upload)
 ```powershell
 powershell -ExecutionPolicy Bypass -File skills/windows_release_publish/scripts/publish_windows_release.ps1
@@ -83,6 +97,15 @@ Default safeguards:
 - ZIP validator checks required runtime files and prompt asset UTF-8 readability.
 - ZIP packaging uses `System.IO.Compression` for Windows Explorer compatibility.
 - Remote publish uses candidate-first promotion before replacing canonical `family_teacher.zip`.
+
+### Website static publish
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/publish_website_static.ps1
+```
+Default safeguards:
+- Syncs the tracked `web/` directory into `/var/www/tutor1on1_site`.
+- Verifies the remote website tree after upload.
+- Verifies `/`, `/help/`, `/zh/`, and `/zh/help/` return HTTP 200 and still reference `family_teacher.apk`.
 
 ### Auth API smoke test
 ```powershell

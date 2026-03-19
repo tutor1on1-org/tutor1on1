@@ -9,6 +9,7 @@ import '../db/app_database.dart';
 import '../security/pin_hasher.dart';
 import '../services/screen_lock_service.dart';
 import '../state/auth_controller.dart';
+import '../state/settings_controller.dart';
 import '../l10n/app_localizations.dart';
 
 class AppQuitFlow {
@@ -18,7 +19,13 @@ class AppQuitFlow {
     BuildContext context, {
     required bool requireTeacherPin,
   }) async {
-    if (requireTeacherPin) {
+    final settingsController = Provider.of<SettingsController?>(
+      context,
+      listen: false,
+    );
+    final requiresStudyModePin =
+        settingsController?.settings?.studyModeEnabled ?? false;
+    if (requireTeacherPin || requiresStudyModePin) {
       final confirmed = await confirmTeacherPin(context);
       if (!confirmed) {
         return false;

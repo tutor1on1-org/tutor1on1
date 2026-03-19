@@ -419,7 +419,7 @@
   "restoreCompletedMessage": "Database restored. Restarting...",
   "appSectionTitle": "App",
   "studyModeLabel": "Study mode",
-  "studyModeDescription": "Keep on top, lock screen after 10s, disable Alt+F4.",
+  "studyModeDescription": "Keep screen awake, use fullscreen or immersive mode, and require teacher PIN to exit.",
   "quitButton": "Quit (Teacher Password)",
   "notLoggedInMessage": "Not logged in.",
   "teacherNotFoundMessage": "Teacher account not found.",

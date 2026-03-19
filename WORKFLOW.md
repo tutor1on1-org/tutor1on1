@@ -1,21 +1,21 @@
 # WORKFLOW
-Last updated: 2026-03-08
+Last updated: 2026-03-19
 
 ## Standard workflow
-For app changes, the default same-turn handoff is: validate, build, git, and publish unless the user explicitly skips a step.
+For app changes, the default same-turn handoff is: validate, build, git, and publish unless the user explicitly skips a step. For public app releases, the default publish set is Android APK, then Windows ZIP, then website static sync.
 
 1. Understand scope and locate the true failing/target layer.
 2. For bugs, reproduce with evidence first (logs, repro script, or minimal failing test).
 3. Implement the minimal correct root-cause change.
 4. Run a self-battle before handoff: summarize the conclusion, criticize it, then refine the answer or fix.
 5. Validate changed path first, then adjacent regressions, then end-to-end path when feasible.
-6. Run concrete builds before reporting done (`flutter build windows --release` for app changes; `go build -o family-teacher-api ./cmd/server` for backend changes).
+6. Run concrete builds before reporting done (`flutter build apk --release` and `flutter build windows --release` for public app releases; `go build -o family-teacher-api ./cmd/server` for backend changes).
 7. Update memory docs intentionally; the memory hook auto-consolidates only memory markdown files whose line-count delta is `>10` from `scripts/memory_line_snapshot.json`.
 8. Update docs (`BUGS.md`, `LOGBOOK.md`, `TODOS.md`, `DONEs.md`) as applicable.
 9. Run `powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1 -NoPostHook`.
 10. Stage changes with `git add -A` before commit unless a file is clearly temporary/log-only and should stay untracked; in that case add/update `.gitignore` instead of relying on selective staging.
 11. Commit and push in the same turn after validation unless the user explicitly says not to do one of them.
-12. For app changes, publish/upload the remote Windows release in the same turn unless the user explicitly says to skip it.
+12. For app changes, publish/upload the remote Android APK, remote Windows release, and website static files in the same turn unless the user explicitly says to skip one.
 13. Do not hand off app changes as "done" before commit + push + publish complete; if one step is blocked, report the blocker explicitly instead of silently stopping early.
 14. If backend under `remote/` changed, rebuild/deploy/restart per the remote ops workflow before reporting done.
 

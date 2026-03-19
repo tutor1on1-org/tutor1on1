@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:family_teacher/l10n/app_localizations.dart';
@@ -5,6 +7,7 @@ import 'package:family_teacher/l10n/app_localizations.dart';
 import 'services/app_services.dart';
 import 'state/auth_controller.dart';
 import 'state/settings_controller.dart';
+import 'ui/quit_app_flow.dart';
 import 'ui/pages/admin_home_page.dart';
 import 'ui/pages/teacher_pending_page.dart';
 import 'ui/pages/student_home_page.dart';
@@ -43,6 +46,10 @@ class FamilyTeacherApp extends StatelessWidget {
             locale: locale,
             supportedLocales: AppLocalizations.supportedLocales,
             localizationsDelegates: AppLocalizations.localizationsDelegates,
+            builder: (context, child) => _StudyModeExitGuard(
+              enabled: settings?.studyModeEnabled ?? false,
+              child: child ?? const SizedBox.shrink(),
+            ),
             theme: ThemeData(
               useMaterial3: true,
               colorSchemeSeed: Colors.teal,
@@ -60,6 +67,49 @@ class FamilyTeacherApp extends StatelessWidget {
         },
       ),
     );
+  }
+}
+
+class _StudyModeExitGuard extends StatefulWidget {
+  const _StudyModeExitGuard({
+    required this.enabled,
+    required this.child,
+  });
+
+  final bool enabled;
+  final Widget child;
+
+  @override
+  State<_StudyModeExitGuard> createState() => _StudyModeExitGuardState();
+}
+
+class _StudyModeExitGuardState extends State<_StudyModeExitGuard> {
+  bool _quitFlowRunning = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope<Object?>(
+      canPop: !widget.enabled,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop || !widget.enabled || _quitFlowRunning) {
+          return;
+        }
+        _quitFlowRunning = true;
+        unawaited(_handleStudyModeExit(context));
+      },
+      child: widget.child,
+    );
+  }
+
+  Future<void> _handleStudyModeExit(BuildContext context) async {
+    try {
+      await AppQuitFlow.handleQuit(
+        context,
+        requireTeacherPin: false,
+      );
+    } finally {
+      _quitFlowRunning = false;
+    }
   }
 }
 
