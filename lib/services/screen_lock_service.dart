@@ -50,10 +50,10 @@ class ScreenLockService with WidgetsBindingObserver, WindowListener {
     if (_bridge.shouldUseFullScreenSoftMode) {
       await _bridge.setFullScreen(true);
     }
-    if (_bridge.isWindows) {
+    if (_bridge.isWindows || _bridge.isMacOS) {
       _watchTimer?.cancel();
       _watchTimer = Timer.periodic(lockDelay, (_) {
-        unawaited(_enforceWindowsFocus());
+        unawaited(_enforceDesktopWindowState());
       });
     }
   }
@@ -104,6 +104,10 @@ class ScreenLockService with WidgetsBindingObserver, WindowListener {
     if (_bridge.isWindows) {
       _attemptRefocus();
       _startLockTimer();
+      return;
+    }
+    if (_bridge.isMacOS) {
+      _startLockTimer();
     }
   }
 
@@ -127,7 +131,7 @@ class ScreenLockService with WidgetsBindingObserver, WindowListener {
   void _startLockTimer() {
     _lockTimer?.cancel();
     _lockTimer = Timer(lockDelay, () {
-      unawaited(_lockWindowsIfBlurred());
+      unawaited(_recoverAfterBlurTimeout());
     });
   }
 
@@ -153,29 +157,44 @@ class ScreenLockService with WidgetsBindingObserver, WindowListener {
     }
   }
 
-  Future<void> _enforceWindowsFocus() async {
-    if (!_enabled || !_bridge.isWindows) {
+  Future<void> _enforceDesktopWindowState() async {
+    if (!_enabled || (!_bridge.isWindows && !_bridge.isMacOS)) {
       return;
     }
     final focused = await _bridge.isFocused();
     if (!focused) {
-      _lockWindows();
+      if (_bridge.isWindows) {
+        _lockWindows();
+      } else {
+        await _recoverMacOSWindowState();
+      }
       return;
     }
-    final isTop = await _bridge.isAlwaysOnTop();
-    if (!isTop) {
-      await _bridge.setAlwaysOnTop(true);
+    await _reapplyDesktopWindowState();
+  }
+
+  Future<void> _recoverAfterBlurTimeout() async {
+    if (!_enabled || (!_bridge.isWindows && !_bridge.isMacOS)) {
+      return;
+    }
+    final focused = await _bridge.isFocused();
+    if (!focused) {
+      if (_bridge.isWindows) {
+        _lockWindows();
+      } else {
+        await _recoverMacOSWindowState();
+      }
+    } else if (_bridge.isMacOS) {
+      await _reapplyDesktopWindowState();
     }
   }
 
-  Future<void> _lockWindowsIfBlurred() async {
-    if (!_enabled || !_bridge.isWindows) {
+  Future<void> _recoverMacOSWindowState() async {
+    if (!_enabled || !_bridge.isMacOS) {
       return;
     }
-    final focused = await _bridge.isFocused();
-    if (!focused) {
-      _lockWindows();
-    }
+    await _attemptRefocus();
+    await _reapplyDesktopWindowState();
   }
 
   Future<void> _attemptRefocus() async {

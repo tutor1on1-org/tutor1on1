@@ -43,6 +43,30 @@ void main() {
     expect(bridge.screenAwake, isFalse);
   });
 
+  test('macOS study mode restores window after blur timeout', () async {
+    final bridge = FakeStudyModePlatformBridge(isMacOS: true);
+    final service = ScreenLockService(
+      bridge: bridge,
+      lockDelay: const Duration(milliseconds: 10),
+    );
+
+    await service.start();
+    bridge.focused = false;
+    bridge.alwaysOnTop = false;
+    bridge.fullScreen = false;
+
+    service.onWindowBlur();
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(bridge.workstationLocked, isFalse);
+    expect(bridge.showCalls, greaterThanOrEqualTo(1));
+    expect(bridge.focusCalls, greaterThanOrEqualTo(1));
+    expect(bridge.alwaysOnTop, isTrue);
+    expect(bridge.fullScreen, isTrue);
+    await service.stop();
+  });
+
   test('windows study mode still locks after blur timeout', () async {
     final bridge = FakeStudyModePlatformBridge(
       isWindows: true,
