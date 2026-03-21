@@ -711,7 +711,10 @@ class LlmService {
               }
             }
             if ((extracted.reasoningText ?? '').isNotEmpty) {
-              reasoningBuffer.write(extracted.reasoningText);
+              LlmReasoningSupport.appendReasoningFragment(
+                reasoningBuffer,
+                extracted.reasoningText!,
+              );
             }
             if (extracted.reasoningTokens != null) {
               reasoningTokens = extracted.reasoningTokens;
@@ -903,7 +906,10 @@ class LlmService {
               }
             }
             if ((extracted.reasoningText ?? '').isNotEmpty) {
-              reasoningBuffer.write(extracted.reasoningText);
+              LlmReasoningSupport.appendReasoningFragment(
+                reasoningBuffer,
+                extracted.reasoningText!,
+              );
             }
             if (extracted.reasoningTokens != null) {
               reasoningTokens = extracted.reasoningTokens;

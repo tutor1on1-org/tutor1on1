@@ -149,3 +149,8 @@ Last updated: 2026-03-11
 - Symptom: tapping login/register on Android release can produce no visible response for teacher/student auth flows.
 - Root cause: the new device-bound auth path read platform device metadata before calling the API, and uncaught errors from hostname/device-identity lookup escaped the async button handler instead of becoming a user-visible auth failure.
 - Prevention: treat platform hostname lookup as best-effort only, fallback to a safe device name/fingerprint seed when it fails, and catch/surface any pre-request device/storage errors in `AuthController` so the UI reports the failure instead of looking unresponsive.
+
+30. Streamed reasoning/session text must normalize fragment seams instead of trimming or injecting literal spaces
+- Symptom: the `think`/reasoning section or exported session output can show doubled spaces such as `step  next`, or earlier builds can collapse word boundaries entirely.
+- Root cause: one fix stopped trimming per-fragment whitespace to preserve real provider spacing, but the downstream joiners still either blindly appended raw fragments or rebuilt them with a literal `' '` separator.
+- Prevention: preserve raw fragment text, but normalize only the seam between adjacent fragments: collapse overlapping inline whitespace to the larger run, and insert one space only when two word fragments would otherwise collapse.

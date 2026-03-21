@@ -1,5 +1,5 @@
 # WORKFLOW
-Last updated: 2026-03-19
+Last updated: 2026-03-21
 
 ## Standard workflow
 For app changes, the default same-turn handoff is: validate, build, git, and publish unless the user explicitly skips a step. For public app releases, the default publish set is Android APK, then Windows ZIP, then website static sync.
@@ -18,6 +18,13 @@ For app changes, the default same-turn handoff is: validate, build, git, and pub
 12. For app changes, publish/upload the remote Android APK, remote Windows release, and website static files in the same turn unless the user explicitly says to skip one.
 13. Do not hand off app changes as "done" before commit + push + publish complete; if one step is blocked, report the blocker explicitly instead of silently stopping early.
 14. If backend under `remote/` changed, rebuild/deploy/restart per the remote ops workflow before reporting done.
+
+## Windows hotfix publish procedure
+1. Reproduce the bug and capture one deterministic validation command or repro script.
+2. Run the changed-path test first, then `powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1 -NoPostHook`.
+3. Publish the desktop artifact with `powershell -ExecutionPolicy Bypass -File skills/windows_release_publish/scripts/publish_windows_release.ps1`.
+4. If the worktree is already dirty, review unrelated paths and stage only the intended release scope; report excluded sibling-repo or preexisting changes explicitly.
+5. Commit and push after validation evidence is collected, then report the public artifact verification result.
 
 ## Bug-fix discipline
 1. Reproduce with evidence (logs, script, or minimal failing test).

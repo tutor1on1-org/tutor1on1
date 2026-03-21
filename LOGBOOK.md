@@ -1,6 +1,10 @@
 # LOGBOOK
 Historical timeline. Keep active runbook details in `WORKLOG.md`.
 
+## 2026-03-21
+- Fixed reasoning/session-output fragment seam handling so streamed `think` text and relay-exported session messages no longer double spaces or collapse word boundaries at chunk joins.
+- Documented a concrete Windows hotfix publish procedure in `WORKFLOW.md` and recorded the seam-normalization rule in `BUGS.md` / `LESSONS.md`.
+
 ## 2026-02-06
 - Prompt repository and template validator expanded for new prompt names and variables.
 - Session behavior changed to allow empty first student input to trigger first tutor response.

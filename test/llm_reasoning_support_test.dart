@@ -272,6 +272,22 @@ void main() {
       expect(extracted.reasoningText, equals(' next step'));
     });
 
+    test('streamed reasoning collapses duplicated seam spaces', () {
+      final buffer = StringBuffer('step ');
+
+      LlmReasoningSupport.appendReasoningFragment(buffer, ' next');
+
+      expect(buffer.toString(), equals('step next'));
+    });
+
+    test('streamed reasoning inserts a missing word boundary space', () {
+      final buffer = StringBuffer('step');
+
+      LlmReasoningSupport.appendReasoningFragment(buffer, 'next');
+
+      expect(buffer.toString(), equals('step next'));
+    });
+
     test('reasoning log keeps requested effort even without returned text', () {
       const provider = LlmProvider(
         id: 'openai',

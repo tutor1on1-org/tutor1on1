@@ -246,7 +246,7 @@ class LlmReasoningSupport {
         if (type != 'reasoning') {
           continue;
         }
-        buffer.write(_extractReasoningValue(item));
+        appendReasoningFragment(buffer, _extractReasoningValue(item));
       }
     }
     final choices = payload['choices'];
@@ -261,11 +261,11 @@ class LlmReasoningSupport {
         }
         final reasoningContent = message['reasoning_content'];
         if (reasoningContent is String) {
-          buffer.write(reasoningContent);
+          appendReasoningFragment(buffer, reasoningContent);
         }
         final reasoning = message['reasoning'];
         if (reasoning != null) {
-          buffer.write(_extractReasoningValue(reasoning));
+          appendReasoningFragment(buffer, _extractReasoningValue(reasoning));
         }
       }
     }
@@ -307,7 +307,7 @@ class LlmReasoningSupport {
       if (type == 'thinking') {
         final text = block['thinking'] ?? block['text'];
         if (text is String) {
-          buffer.write(text);
+          appendReasoningFragment(buffer, text);
         }
       }
     }
@@ -353,7 +353,7 @@ class LlmReasoningSupport {
     if (value is List) {
       final buffer = StringBuffer();
       for (final item in value) {
-        buffer.write(_extractReasoningValue(item));
+        appendReasoningFragment(buffer, _extractReasoningValue(item));
       }
       return buffer.toString();
     }
@@ -404,6 +404,21 @@ class LlmReasoningSupport {
     return value;
   }
 
+  static void appendReasoningFragment(
+    StringBuffer buffer,
+    String fragment,
+  ) {
+    if (fragment.isEmpty) {
+      return;
+    }
+    final current = buffer.toString();
+    if (current.isEmpty) {
+      buffer.write(fragment);
+      return;
+    }
+    buffer.write(_normalizeNaturalLanguageFragmentSeam(current, fragment));
+  }
+
   static void appendJsonAwareFragment(
     StringBuffer buffer,
     String fragment,
@@ -444,6 +459,32 @@ class LlmReasoningSupport {
     return buffer.toString();
   }
 
+  static String _normalizeNaturalLanguageFragmentSeam(
+    String current,
+    String next,
+  ) {
+    if (current.isEmpty || next.isEmpty) {
+      return next;
+    }
+    final trailingWhitespace = _trailingInlineWhitespaceCount(current);
+    final leadingWhitespace = _leadingInlineWhitespaceCount(next);
+    if (trailingWhitespace > 0 && leadingWhitespace > 0) {
+      final overlap = trailingWhitespace < leadingWhitespace
+          ? trailingWhitespace
+          : leadingWhitespace;
+      return next.substring(overlap);
+    }
+    final previousChar = current[current.length - 1];
+    final nextChar = next[0];
+    if (_isWhitespace(previousChar) || _isWhitespace(nextChar)) {
+      return next;
+    }
+    if (_isWordLike(previousChar) && _isWordLike(nextChar)) {
+      return ' $next';
+    }
+    return next;
+  }
+
   static bool _shouldInsertJsonStringSpace(String current, String next) {
     if (current.isEmpty || next.isEmpty) {
       return false;
@@ -465,6 +506,23 @@ class LlmReasoningSupport {
   static bool _looksLikeJsonPayload(String value) {
     final trimmed = value.trimLeft();
     return trimmed.startsWith('{') || trimmed.startsWith('[');
+  }
+
+  static int _leadingInlineWhitespaceCount(String value) {
+    var count = 0;
+    while (count < value.length && _isInlineWhitespace(value[count])) {
+      count += 1;
+    }
+    return count;
+  }
+
+  static int _trailingInlineWhitespaceCount(String value) {
+    var count = 0;
+    while (count < value.length &&
+        _isInlineWhitespace(value[value.length - 1 - count])) {
+      count += 1;
+    }
+    return count;
   }
 
   static bool _isInsideJsonStringValue(String value) {
@@ -523,6 +581,9 @@ class LlmReasoningSupport {
   }
 
   static bool _isWhitespace(String value) => value.trim().isEmpty;
+
+  static bool _isInlineWhitespace(String value) =>
+      value == ' ' || value == '\t';
 
   static bool _isWordLike(String value) =>
       RegExp(r'[A-Za-z0-9]').hasMatch(value);

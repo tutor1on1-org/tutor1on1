@@ -1,6 +1,7 @@
 # DONES
-Last updated: 2026-03-08
+Last updated: 2026-03-21
 
+- Fixed streamed reasoning/session-output spacing regressions: reasoning fragments now use seam-normalized joins instead of trim-all or raw-append, relay session readers rebuild `output_text` without injecting duplicate spaces, and regression coverage was added for both duplicate-space and missing-space seam cases.
 - Replaced deterministic memory consolidation with Codex memory hook automation: `scripts/hook_memory_update.ps1` now triggers on tracked line-count delta `>10`, reuses a dedicated session, updates only target memory docs, and tracks snapshot in `scripts/memory_line_snapshot.json`; pre-push now runs memory hook before validation and blocks push until memory updates are committed.
 - Improved student tutor interaction contract: added explicit student intent controls in chat UI (`Auto`, `Need Hint`, `My Attempt`, `Final`) and passed `student_intent` into prompt rendering for LEARN/REVIEW flows.
 - Upgraded REVIEW continuation schema/prompt contract with required `answer_state` (`HELP_REQUEST` | `PARTIAL_ATTEMPT` | `FINAL_ANSWER`) and added regression tests for schema enforcement.
