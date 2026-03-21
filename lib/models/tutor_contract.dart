@@ -74,9 +74,10 @@ class TutorControlState {
     required this.allowedActions,
     required this.recommendedAction,
     required this.activeReviewQuestion,
+    required this.justPassedKpEvent,
   });
 
-  static const int currentVersion = 1;
+  static const int currentVersion = 2;
 
   final int version;
   final TutorMode mode;
@@ -86,6 +87,7 @@ class TutorControlState {
   final List<TutorFinishedAction> allowedActions;
   final TutorFinishedAction? recommendedAction;
   final Map<String, dynamic>? activeReviewQuestion;
+  final TutorJustPassedKpEvent? justPassedKpEvent;
 
   bool get hasActiveReviewQuestion =>
       activeReviewQuestion != null && activeReviewQuestion!.isNotEmpty;
@@ -98,6 +100,7 @@ class TutorControlState {
     List<TutorFinishedAction>? allowedActions,
     TutorFinishedAction? recommendedAction,
     Object? activeReviewQuestion = _unset,
+    Object? justPassedKpEvent = _unset,
   }) {
     return TutorControlState(
       version: version,
@@ -110,6 +113,9 @@ class TutorControlState {
       activeReviewQuestion: identical(activeReviewQuestion, _unset)
           ? this.activeReviewQuestion
           : (activeReviewQuestion as Map<String, dynamic>?),
+      justPassedKpEvent: identical(justPassedKpEvent, _unset)
+          ? this.justPassedKpEvent
+          : (justPassedKpEvent as TutorJustPassedKpEvent?),
     );
   }
 
@@ -123,6 +129,7 @@ class TutorControlState {
       'allowed_actions': allowedActions.map((item) => item.wireValue).toList(),
       'recommended_action': recommendedAction?.wireValue,
       'active_review_question': activeReviewQuestion,
+      'just_passed_kp_event': justPassedKpEvent?.toJson(),
     };
   }
 
@@ -186,6 +193,12 @@ class TutorControlState {
         activeReviewQuestionRaw is! Map<String, dynamic>) {
       return null;
     }
+    final justPassedKpEvent = TutorJustPassedKpEvent.fromJson(
+      json['just_passed_kp_event'],
+    );
+    if (json['just_passed_kp_event'] != null && justPassedKpEvent == null) {
+      return null;
+    }
     return TutorControlState(
       version: (json['version'] as num?)?.toInt() ?? currentVersion,
       mode: mode,
@@ -197,6 +210,7 @@ class TutorControlState {
       activeReviewQuestion: activeReviewQuestionRaw == null
           ? null
           : Map<String, dynamic>.from(activeReviewQuestionRaw as Map),
+      justPassedKpEvent: justPassedKpEvent,
     );
   }
 
@@ -210,6 +224,7 @@ class TutorControlState {
       allowedActions: const <TutorFinishedAction>[],
       recommendedAction: null,
       activeReviewQuestion: null,
+      justPassedKpEvent: null,
     );
   }
 
@@ -249,6 +264,7 @@ class TutorControlState {
           (parsed['next_action'] as String?)?.trim().toUpperCase(),
         ),
         activeReviewQuestion: activeReviewQuestion,
+        justPassedKpEvent: null,
       );
     }
     final nextAction = TutorFinishedAction.fromWire(
@@ -270,6 +286,7 @@ class TutorControlState {
       allowedActions: const <TutorFinishedAction>[],
       recommendedAction: nextAction,
       activeReviewQuestion: null,
+      justPassedKpEvent: null,
     );
   }
 
@@ -306,6 +323,42 @@ class TutorControlState {
         .map((item) => item.trim())
         .where((item) => item.isNotEmpty)
         .toList(growable: false);
+  }
+}
+
+class TutorJustPassedKpEvent {
+  const TutorJustPassedKpEvent({
+    required this.easyPassedCount,
+    required this.mediumPassedCount,
+    required this.hardPassedCount,
+  });
+
+  final int easyPassedCount;
+  final int mediumPassedCount;
+  final int hardPassedCount;
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'easy_passed_count': easyPassedCount,
+      'medium_passed_count': mediumPassedCount,
+      'hard_passed_count': hardPassedCount,
+    };
+  }
+
+  static TutorJustPassedKpEvent? fromJson(Object? value) {
+    if (value is! Map) {
+      return null;
+    }
+    return TutorJustPassedKpEvent(
+      easyPassedCount: _readNonNegativeCount(value['easy_passed_count']),
+      mediumPassedCount: _readNonNegativeCount(value['medium_passed_count']),
+      hardPassedCount: _readNonNegativeCount(value['hard_passed_count']),
+    );
+  }
+
+  static int _readNonNegativeCount(Object? value) {
+    final count = (value as num?)?.toInt() ?? 0;
+    return count < 0 ? 0 : count;
   }
 }
 

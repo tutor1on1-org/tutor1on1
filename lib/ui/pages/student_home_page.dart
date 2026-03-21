@@ -10,6 +10,7 @@ import '../../services/app_services.dart';
 import '../../services/marketplace_api_service.dart';
 import '../../services/sync_log_repository.dart';
 import '../../state/auth_controller.dart';
+import '../../state/settings_controller.dart';
 import '../app_settings_page.dart';
 import '../app_close_button.dart';
 import '../progress_display.dart';
@@ -156,6 +157,10 @@ class _StudentHomePageState extends State<StudentHomePage> {
       stats.absorb(
         await services.sessionSyncService.syncIfReady(currentUser: user),
       );
+      await _syncRemoteStudyMode(
+        services: services,
+        user: user,
+      );
     } catch (error) {
       syncError = error;
     } finally {
@@ -196,6 +201,41 @@ class _StudentHomePageState extends State<StudentHomePage> {
       _setPersistentMessage(
         l10n.sessionSyncFailed('Sync log write failed: $logError'),
       );
+    }
+  }
+
+  Future<void> _syncRemoteStudyMode({
+    required AppServices services,
+    required User user,
+  }) async {
+    if (user.role != 'student' ||
+        (user.remoteUserId ?? 0) <= 0 ||
+        !mounted) {
+      return;
+    }
+    final settingsController = context.read<SettingsController>();
+    final snapshot = await services.deviceIdentityService.snapshot();
+    final response = await _marketplaceApi.heartbeatStudentDevice(
+      deviceKey: snapshot.deviceKey,
+      deviceName: snapshot.deviceName,
+      platform: snapshot.platform,
+      timezoneName: snapshot.timezoneName,
+      timezoneOffsetMinutes: snapshot.timezoneOffsetMinutes,
+      localWeekday: snapshot.localWeekday,
+      localMinuteOfDay: snapshot.localMinuteOfDay,
+      currentStudyModeEnabled:
+          settingsController.settings?.studyModeEnabled ?? false,
+      appVersion: snapshot.appVersion,
+    );
+    final pinHash = response.controlPinHash.trim();
+    if (pinHash.isEmpty) {
+      await services.secureStorage.deleteRemoteStudyModePinHash();
+    } else {
+      await services.secureStorage.writeRemoteStudyModePinHash(pinHash);
+    }
+    final localEnabled = settingsController.settings?.studyModeEnabled ?? false;
+    if (localEnabled != response.effectiveEnabled) {
+      await settingsController.updateStudyMode(response.effectiveEnabled);
     }
   }
 

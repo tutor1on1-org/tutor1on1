@@ -144,3 +144,8 @@ Last updated: 2026-03-11
 - Symptom: LLM logs or course ownership can show `remote_teacher_<id>` instead of the real teacher name, even when the server already knows the teacher name.
 - Root cause: student enrollment sync created remote teacher placeholder users from `teacher_id` only and never renamed them when `teacher_name` became available.
 - Prevention: pass `teacher_name` into remote teacher resolution and upgrade placeholder usernames to the real server teacher name whenever the local record is still placeholder-only.
+
+29. Android release login can appear dead before the auth request starts
+- Symptom: tapping login/register on Android release can produce no visible response for teacher/student auth flows.
+- Root cause: the new device-bound auth path read platform device metadata before calling the API, and uncaught errors from hostname/device-identity lookup escaped the async button handler instead of becoming a user-visible auth failure.
+- Prevention: treat platform hostname lookup as best-effort only, fallback to a safe device name/fingerprint seed when it fails, and catch/surface any pre-request device/storage errors in `AuthController` so the UI reports the failure instead of looking unresponsive.

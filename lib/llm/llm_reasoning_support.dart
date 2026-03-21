@@ -47,6 +47,18 @@ class LlmReasoningSupport {
               normalizedEffort == ReasoningEffort.none ? 'disabled' : 'enabled',
         };
         return;
+      case ReasoningControlStyle.siliconFlowThinkingBudget:
+        if (normalizedEffort == ReasoningEffort.none) {
+          bodyMap['enable_thinking'] = false;
+          bodyMap.remove('thinking_budget');
+          return;
+        }
+        bodyMap['enable_thinking'] = true;
+        bodyMap['thinking_budget'] = _siliconFlowBudgetForEffort(
+          effort: normalizedEffort,
+          maxTokens: maxTokens,
+        );
+        return;
       case ReasoningControlStyle.anthropicThinking:
         if (normalizedEffort == ReasoningEffort.none) {
           return;
@@ -127,13 +139,13 @@ class LlmReasoningSupport {
     String? reasoningText,
     int? reasoningTokens,
   }) {
+    final rawReasoningText = reasoningText;
     return jsonEncode(<String, dynamic>{
       'provider_id': provider.id,
       'model': model,
       'reasoning_effort': normalizeEffort(reasoningEffort),
-      'reasoning_text': (reasoningText ?? '').trim().isEmpty
-          ? null
-          : (reasoningText ?? '').trim(),
+      'reasoning_text':
+          (rawReasoningText ?? '').trim().isEmpty ? null : rawReasoningText,
       'reasoning_tokens': reasoningTokens,
     });
   }
@@ -146,6 +158,21 @@ class LlmReasoningSupport {
       ReasoningEffort.low => 2048,
       ReasoningEffort.high => 16384,
       _ => 8192,
+    };
+    if (maxTokens <= 0) {
+      return requested;
+    }
+    return requested > maxTokens ? maxTokens : requested;
+  }
+
+  static int _siliconFlowBudgetForEffort({
+    required String effort,
+    required int maxTokens,
+  }) {
+    final requested = switch (effort) {
+      ReasoningEffort.low => 2048,
+      ReasoningEffort.high => 6144,
+      _ => 4096,
     };
     if (maxTokens <= 0) {
       return requested;
@@ -371,11 +398,10 @@ class LlmReasoningSupport {
   }
 
   static String? _normalizeJoinedText(String? value) {
-    final trimmed = value?.trim();
-    if (trimmed == null || trimmed.isEmpty) {
+    if (value == null || value.trim().isEmpty) {
       return null;
     }
-    return trimmed;
+    return value;
   }
 
   static void appendJsonAwareFragment(

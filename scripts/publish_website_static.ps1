@@ -109,17 +109,40 @@ try {
   }
   $remoteOutput | ForEach-Object { Write-Host $_ }
 
-  $paths = @(
+  $http200Paths = @(
     '/',
     '/help/',
+    '/install/',
+    '/install/android/',
+    '/install/windows/',
+    '/install/macos/',
     '/zh/',
-    '/zh/help/'
+    '/zh/help/',
+    '/zh/install/',
+    '/zh/install/android/',
+    '/zh/install/windows/',
+    '/zh/install/macos/'
   )
-  foreach ($path in $paths) {
+  foreach ($path in $http200Paths) {
     $url = "$($SiteBaseUrl.TrimEnd('/'))$path"
     Write-Host "==> Verify page: $url"
     Assert-Http200 -Url $url
-    Assert-BodyContains -Url $url -LiteralText 'family_teacher.apk'
+  }
+
+  $bodyChecks = @(
+    @{ Path = '/install/'; LiteralText = 'api.tutor1on1.org/downloads/' },
+    @{ Path = '/install/android/'; LiteralText = 'family_teacher.apk' },
+    @{ Path = '/install/windows/'; LiteralText = 'family_teacher.zip' },
+    @{ Path = '/install/macos/'; LiteralText = 'Tutor1on1-macos-universal.zip' },
+    @{ Path = '/zh/install/'; LiteralText = 'api.tutor1on1.org/downloads/' },
+    @{ Path = '/zh/install/android/'; LiteralText = 'family_teacher.apk' },
+    @{ Path = '/zh/install/windows/'; LiteralText = 'family_teacher.zip' },
+    @{ Path = '/zh/install/macos/'; LiteralText = 'Tutor1on1-macos-universal.zip' }
+  )
+  foreach ($check in $bodyChecks) {
+    $url = "$($SiteBaseUrl.TrimEnd('/'))$($check.Path)"
+    Write-Host "==> Verify page content: $url"
+    Assert-BodyContains -Url $url -LiteralText $check.LiteralText
   }
 
   Write-Host '==> Website publish completed'

@@ -50,7 +50,6 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   bool _closed = false;
   bool _loadingSession = true;
   bool _autoStartAttempted = false;
-  bool _lastKnownSummaryLit = false;
   TutorMode _mode = TutorMode.learn;
   TutorTurnStep _step = TutorTurnStep.newTurn;
   TutorHelpBias _helpBias = TutorHelpBias.unchanged;
@@ -175,11 +174,9 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     if (session == null) {
       _closed = true;
       _sessionTitle = null;
-      _lastKnownSummaryLit = false;
     } else {
       _closed = false;
       _sessionTitle = session.title;
-      _lastKnownSummaryLit = session.summaryLit == true;
     }
     setState(() => _loadingSession = false);
     await _applyPersistedSessionControl(db);
@@ -230,7 +227,8 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         _ttsPlaybackActive || _ttsStreamPaused || _ttsChunkInFlight;
     final canInteract = !_closed && !widget.readOnly;
     final sttBusy = _sttPressActive || _sttRecording || _sttTranscribing;
-    final enterToSend = settings?.enterToSend ?? true;
+    final enterToSend = !Platform.isAndroid && (settings?.enterToSend ?? true);
+    final compactControls = Platform.isAndroid;
     final shortcutMap = <ShortcutActivator, Intent>{
       const SingleActivator(
         LogicalKeyboardKey.enter,
@@ -662,109 +660,162 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                     if (canInteract)
                       Padding(
                         padding: const EdgeInsets.all(8),
-                        child: Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: [
-                            SizedBox(
-                              width: 260,
-                              child: _buildModelSelector(
-                                db: db,
-                                currentModel: settings?.model ?? '',
-                                provider: provider,
-                                l10n: l10n,
-                              ),
-                            ),
-                            _actionButton(
-                              key: const Key('learn_button'),
-                              label: l10n.promptLearn,
-                              selected: _isModeRecommended(TutorMode.learn),
-                              onPressed: _sending ? null : _startNewLearnTurn,
-                            ),
-                            _actionButton(
-                              key: const Key('review_button'),
-                              label: l10n.promptReview,
-                              selected: _isModeRecommended(TutorMode.review),
-                              onPressed: _sending ? null : _startNewReviewTurn,
-                            ),
-                            _helpBiasChip(
-                              label: 'Easier',
-                              bias: TutorHelpBias.easier,
-                            ),
-                            _helpBiasChip(
-                              label: 'Harder',
-                              bias: TutorHelpBias.harder,
-                            ),
-                            const SizedBox(width: 12),
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Text('TTS'),
-                                Tooltip(
-                                  message: ttsSupported
-                                      ? ''
-                                      : l10n.ttsRequiresOpenAi,
-                                  child: Switch(
-                                    value: _ttsEnabled,
-                                    onChanged: (_sending || !ttsSupported)
-                                        ? null
-                                        : (value) {
-                                            setState(() => _ttsEnabled = value);
-                                            if (!value) {
-                                              _stopLiveTts();
-                                            }
-                                          },
-                                  ),
-                                ),
-                                IconButton(
-                                  tooltip: _ttsStreamPaused
-                                      ? l10n.ttsResumeTooltip
-                                      : l10n.ttsPauseTooltip,
-                                  icon: Icon(
-                                    _ttsStreamPaused
-                                        ? Icons.play_arrow
-                                        : Icons.pause,
-                                  ),
-                                  onPressed: (!_ttsEnabled ||
-                                          !(_ttsPlaybackActive ||
-                                              _ttsStreamPaused))
-                                      ? null
-                                      : (_ttsStreamPaused
-                                          ? _resumeLiveTts
-                                          : _pauseLiveTts),
-                                ),
-                                IconButton(
-                                  tooltip: l10n.ttsStopTooltip,
-                                  icon: const Icon(Icons.stop),
-                                  onPressed:
-                                      (!_ttsEnabled || !livePlaybackActive)
-                                          ? null
-                                          : _stopLiveTts,
-                                ),
-                              ],
-                            ),
-                            if (_ttsEnabled && _ttsPreparingFirstChunk)
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
+                        child: compactControls
+                            ? Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2),
+                                  SingleChildScrollView(
+                                    scrollDirection: Axis.horizontal,
+                                    child: Row(
+                                      children: [
+                                        _buildCompactModelSelector(
+                                          db: db,
+                                          currentModel: settings?.model ?? '',
+                                          provider: provider,
+                                          l10n: l10n,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        _actionButton(
+                                          key: const Key('learn_button'),
+                                          label: l10n.promptLearn,
+                                          selected: _isModeRecommended(
+                                            TutorMode.learn,
+                                          ),
+                                          onPressed: _sending
+                                              ? null
+                                              : _startNewLearnTurn,
+                                          compact: true,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        _actionButton(
+                                          key: const Key('review_button'),
+                                          label: l10n.promptReview,
+                                          selected: _isModeRecommended(
+                                            TutorMode.review,
+                                          ),
+                                          onPressed: _sending
+                                              ? null
+                                              : _startNewReviewTurn,
+                                          compact: true,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        _helpBiasChip(
+                                          label: 'Easier',
+                                          bias: TutorHelpBias.easier,
+                                          compact: true,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        _helpBiasChip(
+                                          label: 'Harder',
+                                          bias: TutorHelpBias.harder,
+                                          compact: true,
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                  const SizedBox(width: 8),
-                                  Text(l10n.ttsPreparingLabel),
+                                  const SizedBox(height: 8),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
+                                    children: [
+                                      _buildTtsControls(
+                                        l10n: l10n,
+                                        ttsSupported: ttsSupported,
+                                        livePlaybackActive: livePlaybackActive,
+                                      ),
+                                      if (_ttsEnabled &&
+                                          _ttsPreparingFirstChunk)
+                                        Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const SizedBox(
+                                              width: 16,
+                                              height: 16,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Text(l10n.ttsPreparingLabel),
+                                          ],
+                                        ),
+                                      TextButton(
+                                        key: const Key('exit_button'),
+                                        onPressed:
+                                            _sending ? null : _exitSession,
+                                        child: Text(l10n.exitButton),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              )
+                            : Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  SizedBox(
+                                    width: 260,
+                                    child: _buildModelSelector(
+                                      db: db,
+                                      currentModel: settings?.model ?? '',
+                                      provider: provider,
+                                      l10n: l10n,
+                                    ),
+                                  ),
+                                  _actionButton(
+                                    key: const Key('learn_button'),
+                                    label: l10n.promptLearn,
+                                    selected:
+                                        _isModeRecommended(TutorMode.learn),
+                                    onPressed:
+                                        _sending ? null : _startNewLearnTurn,
+                                  ),
+                                  _actionButton(
+                                    key: const Key('review_button'),
+                                    label: l10n.promptReview,
+                                    selected:
+                                        _isModeRecommended(TutorMode.review),
+                                    onPressed:
+                                        _sending ? null : _startNewReviewTurn,
+                                  ),
+                                  _helpBiasChip(
+                                    label: 'Easier',
+                                    bias: TutorHelpBias.easier,
+                                  ),
+                                  _helpBiasChip(
+                                    label: 'Harder',
+                                    bias: TutorHelpBias.harder,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  _buildTtsControls(
+                                    l10n: l10n,
+                                    ttsSupported: ttsSupported,
+                                    livePlaybackActive: livePlaybackActive,
+                                  ),
+                                  if (_ttsEnabled && _ttsPreparingFirstChunk)
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(l10n.ttsPreparingLabel),
+                                      ],
+                                    ),
+                                  TextButton(
+                                    key: const Key('exit_button'),
+                                    onPressed: _sending ? null : _exitSession,
+                                    child: Text(l10n.exitButton),
+                                  ),
                                 ],
                               ),
-                            TextButton(
-                              key: const Key('exit_button'),
-                              onPressed: _sending ? null : _exitSession,
-                              child: Text(l10n.exitButton),
-                            ),
-                          ],
-                        ),
                       ),
                   ],
                 ),
@@ -851,15 +902,34 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     required String label,
     required bool selected,
     required VoidCallback? onPressed,
+    bool compact = false,
   }) {
     final theme = Theme.of(context);
     final selectedStyle = ElevatedButton.styleFrom(
       backgroundColor: theme.colorScheme.tertiaryContainer,
       foregroundColor: theme.colorScheme.onTertiaryContainer,
+      padding: compact
+          ? const EdgeInsets.symmetric(horizontal: 12, vertical: 10)
+          : null,
+      minimumSize: compact ? Size.zero : null,
+      tapTargetSize: compact
+          ? MaterialTapTargetSize.shrinkWrap
+          : MaterialTapTargetSize.padded,
+      visualDensity: compact ? VisualDensity.compact : null,
     );
     return ElevatedButton(
       key: key,
-      style: selected ? selectedStyle : null,
+      style: selected
+          ? selectedStyle
+          : (compact
+              ? ElevatedButton.styleFrom(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                )
+              : null),
       onPressed: onPressed,
       child: Text(label),
     );
@@ -868,11 +938,16 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   Widget _helpBiasChip({
     required String label,
     required TutorHelpBias bias,
+    bool compact = false,
   }) {
     final selected = _helpBias == bias;
     return FilterChip(
       label: Text(label),
       selected: selected,
+      materialTapTargetSize: compact
+          ? MaterialTapTargetSize.shrinkWrap
+          : MaterialTapTargetSize.padded,
+      visualDensity: compact ? VisualDensity.compact : null,
       onSelected: _sending
           ? null
           : (next) {
@@ -882,6 +957,47 @@ class _ChatSessionPageState extends State<ChatSessionPage>
               });
               unawaited(_persistVisibleControl(turnFinished: false));
             },
+    );
+  }
+
+  Widget _buildTtsControls({
+    required AppLocalizations l10n,
+    required bool ttsSupported,
+    required bool livePlaybackActive,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text('TTS'),
+        Tooltip(
+          message: ttsSupported ? '' : l10n.ttsRequiresOpenAi,
+          child: Switch(
+            value: _ttsEnabled,
+            onChanged: (_sending || !ttsSupported)
+                ? null
+                : (value) {
+                    setState(() => _ttsEnabled = value);
+                    if (!value) {
+                      _stopLiveTts();
+                    }
+                  },
+          ),
+        ),
+        IconButton(
+          tooltip:
+              _ttsStreamPaused ? l10n.ttsResumeTooltip : l10n.ttsPauseTooltip,
+          icon: Icon(_ttsStreamPaused ? Icons.play_arrow : Icons.pause),
+          onPressed: (!_ttsEnabled || !(_ttsPlaybackActive || _ttsStreamPaused))
+              ? null
+              : (_ttsStreamPaused ? _resumeLiveTts : _pauseLiveTts),
+        ),
+        IconButton(
+          tooltip: l10n.ttsStopTooltip,
+          icon: const Icon(Icons.stop),
+          onPressed:
+              (!_ttsEnabled || !livePlaybackActive) ? null : _stopLiveTts,
+        ),
+      ],
     );
   }
 
@@ -1724,6 +1840,99 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     );
   }
 
+  Widget _buildCompactModelSelector({
+    required AppDatabase db,
+    required String currentModel,
+    required LlmProvider provider,
+    required AppLocalizations l10n,
+  }) {
+    return StreamBuilder<List<ApiConfig>>(
+      stream: db.watchApiConfigs(),
+      builder: (context, snapshot) {
+        final configs = snapshot.data ?? [];
+        final models = <String>{
+          ...provider.models.map((model) => model.trim()).where(
+                (model) => model.isNotEmpty,
+              ),
+          if (currentModel.trim().isNotEmpty) currentModel.trim(),
+          ...configs
+              .where(
+                (config) =>
+                    _normalizeBaseUrl(config.baseUrl) ==
+                    _normalizeBaseUrl(provider.baseUrl),
+              )
+              .map((config) => config.model.trim())
+              .where((m) => m.isNotEmpty),
+        }.toList()
+          ..sort();
+        final selected = (_sessionModel?.trim().isNotEmpty == true)
+            ? _sessionModel!.trim()
+            : currentModel.trim();
+        final value = models.contains(selected)
+            ? selected
+            : (models.isNotEmpty ? models.first : selected);
+        if ((_sessionModel == null ||
+                !_sessionModel!.trim().isNotEmpty ||
+                !models.contains(_sessionModel!.trim())) &&
+            value.isNotEmpty) {
+          _sessionModel = value;
+        }
+        return PopupMenuButton<String>(
+          key: ValueKey('compact_model_$value'),
+          enabled: !_sending && models.isNotEmpty,
+          tooltip: l10n.modelLabel,
+          onSelected: (model) {
+            setState(() => _sessionModel = model);
+          },
+          itemBuilder: (context) => models
+              .map(
+                (model) => PopupMenuItem<String>(
+                  value: model,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 280),
+                    child: Text(model, overflow: TextOverflow.ellipsis),
+                  ),
+                ),
+              )
+              .toList(),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: Theme.of(context).colorScheme.outline,
+              ),
+              borderRadius: BorderRadius.circular(20),
+              color: Theme.of(context).colorScheme.surface,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.tune, size: 18),
+                const SizedBox(width: 6),
+                Text(_compactModelLabel(value, l10n.modelLabel)),
+                const SizedBox(width: 4),
+                const Icon(Icons.arrow_drop_down),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  String _compactModelLabel(String model, String fallback) {
+    final trimmed = model.trim();
+    if (trimmed.isEmpty) {
+      return fallback;
+    }
+    final slashIndex = trimmed.lastIndexOf('/');
+    final base = slashIndex >= 0 ? trimmed.substring(slashIndex + 1) : trimmed;
+    if (base.length <= 22) {
+      return base;
+    }
+    return '${base.substring(0, 22)}...';
+  }
+
   String _normalizeBaseUrl(String value) {
     var trimmed = value.trim();
     if (trimmed.endsWith('/')) {
@@ -1763,8 +1972,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     if (!mounted) {
       return;
     }
-    final evidence = await _resolveSessionEvidence(db, session);
-    final summaryLit = session?.summaryLit == true;
+    await _resolveSessionEvidence(db, session);
     final control = _loadControlStateFromSession(session);
     if (control.mode != _mode ||
         control.step != _step ||
@@ -1777,13 +1985,18 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         _recommendedAction = control.recommendedAction;
       });
     }
-    final shouldShowPassedDialog = !_lastKnownSummaryLit && summaryLit;
-    _lastKnownSummaryLit = summaryLit;
-    if (shouldShowPassedDialog) {
+    final justPassedKpEvent = control.justPassedKpEvent;
+    if (justPassedKpEvent != null) {
       await _showPassedDialog(
-        easyCount: evidence.easyPassedCount,
-        mediumCount: evidence.mediumPassedCount,
-        hardCount: evidence.hardPassedCount,
+        easyCount: justPassedKpEvent.easyPassedCount,
+        mediumCount: justPassedKpEvent.mediumPassedCount,
+        hardCount: justPassedKpEvent.hardPassedCount,
+      );
+      if (!mounted) {
+        return;
+      }
+      await _persistControlState(
+        control.copyWith(justPassedKpEvent: null),
       );
     }
   }
@@ -1908,6 +2121,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         recommendedAction: turnFinished ? recommendedAction : null,
         activeReviewQuestion:
             preserveActiveQuestion ? existing.activeReviewQuestion : null,
+        justPassedKpEvent: existing.justPassedKpEvent,
       ),
     );
   }

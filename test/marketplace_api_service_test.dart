@@ -120,4 +120,64 @@ void main() {
     expect(await storage.readAuthAccessToken(), equals('fresh-token'));
     expect(await storage.readAuthRefreshToken(), equals('refresh-2'));
   });
+
+  test('listAccountDevices decodes current-device flags', () async {
+    final api = MarketplaceApiService(
+      secureStorage: _TokenSecureStorageService(accessToken: 'token'),
+      baseUrl: 'https://example.com',
+      client: MockClient((request) async {
+        expect(request.headers['Authorization'], equals('Bearer token'));
+        expect(request.url.path, equals('/api/account/devices'));
+        return http.Response(
+          '''
+[
+  {
+    "device_key":"device-a",
+    "device_name":"Laptop",
+    "platform":"windows",
+    "timezone_name":"UTC",
+    "timezone_offset_minutes":0,
+    "app_version":"1.0.0",
+    "last_seen_at":"2026-03-19T10:00:00Z",
+    "online":true,
+    "is_current":true
+  }
+]
+''',
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    final devices = await api.listAccountDevices();
+
+    expect(devices, hasLength(1));
+    expect(devices.first.deviceName, equals('Laptop'));
+    expect(devices.first.isCurrent, isTrue);
+    expect(devices.first.online, isTrue);
+  });
+
+  test('deleteAccountDevice returns current-device flag', () async {
+    final api = MarketplaceApiService(
+      secureStorage: _TokenSecureStorageService(accessToken: 'token'),
+      baseUrl: 'https://example.com',
+      client: MockClient((request) async {
+        expect(request.method, equals('POST'));
+        expect(
+          request.url.path,
+          equals('/api/account/devices/device-a/delete'),
+        );
+        return http.Response(
+          '{"deleted_current_device":true}',
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    final result = await api.deleteAccountDevice('device-a');
+
+    expect(result.deletedCurrentDevice, isTrue);
+  });
 }

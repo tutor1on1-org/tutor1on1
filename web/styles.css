@@ -32,6 +32,21 @@ a {
   text-decoration: none;
 }
 
+code {
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: rgba(23, 34, 49, 0.08);
+  font-family:
+    "SFMono-Regular",
+    ui-monospace,
+    "Cascadia Code",
+    "Source Code Pro",
+    Menlo,
+    Consolas,
+    monospace;
+  font-size: 0.94em;
+}
+
 .shell {
   width: min(1080px, calc(100vw - 32px));
   margin: 0 auto;
@@ -87,20 +102,29 @@ a {
 .lead,
 .card p,
 .panel li,
-.footer,
-.lang-link {
+.footer {
   color: var(--ink-soft);
 }
 
 .topnav {
-  display: inline-flex;
-  gap: 12px;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
-.lang-link {
-  padding: 8px 12px;
-  border-radius: 999px;
-  border: 1px solid transparent;
+.topnav-table {
+  border: 0;
+  border-collapse: collapse;
+  white-space: nowrap;
+}
+
+.topnav-table td {
+  padding: 0;
+  border: 0;
+  vertical-align: middle;
+}
+
+.topnav-table td + td {
+  padding-left: 12px;
 }
 
 .nav-link,
@@ -108,10 +132,43 @@ a {
   color: var(--ink-soft);
 }
 
-.lang-link.is-active {
+.nav-action {
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  white-space: nowrap;
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.nav-action:hover,
+.lang-select:focus {
   border-color: var(--line);
   background: rgba(255, 255, 255, 0.75);
-  color: var(--ink);
+  outline: none;
+}
+
+.lang-select {
+  min-width: 92px;
+  padding-right: 34px;
+  font: inherit;
+  color: var(--ink-soft);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position:
+    calc(100% - 17px) calc(50% - 2px),
+    calc(100% - 12px) calc(50% - 2px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
 }
 
 .hero {
@@ -251,6 +308,10 @@ h2 {
   line-height: 1.85;
 }
 
+.help-list li + li {
+  margin-top: 8px;
+}
+
 .cta-card {
   gap: 16px;
   flex-wrap: wrap;
@@ -264,6 +325,10 @@ h2 {
 
 .cta-card .actions {
   margin-top: 0;
+}
+
+.card .actions {
+  margin-top: 18px;
 }
 
 .footer {

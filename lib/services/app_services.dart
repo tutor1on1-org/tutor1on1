@@ -5,6 +5,7 @@ import '../llm/schema_validator.dart';
 import 'backup_service.dart';
 import 'course_artifact_service.dart';
 import 'course_service.dart';
+import 'device_identity_service.dart';
 import 'enrollment_sync_service.dart';
 import 'llm_call_repository.dart';
 import 'llm_log_repository.dart';
@@ -29,6 +30,7 @@ class AppServices {
     required this.db,
     required this.settingsRepository,
     required this.secureStorage,
+    required this.deviceIdentityService,
     required this.promptRepository,
     required this.schemaValidator,
     required this.llmService,
@@ -49,6 +51,7 @@ class AppServices {
   final AppDatabase db;
   final SettingsRepository settingsRepository;
   final SecureStorageService secureStorage;
+  final DeviceIdentityService deviceIdentityService;
   final PromptRepository promptRepository;
   final SchemaValidator schemaValidator;
   final LlmService llmService;
@@ -74,6 +77,7 @@ class AppServices {
     final settingsRepository = SettingsRepository(db);
     final secureStorage = SecureStorageService();
     await secureStorage.ensureReadableOrReset();
+    final deviceIdentityService = DeviceIdentityService(secureStorage);
     final settings = await settingsRepository.load();
     final baseUrl = settings.baseUrl.trim();
     final legacyKey = await secureStorage.readApiKey();
@@ -145,6 +149,7 @@ class AppServices {
       db: db,
       settingsRepository: settingsRepository,
       secureStorage: secureStorage,
+      deviceIdentityService: deviceIdentityService,
       promptRepository: promptRepository,
       schemaValidator: schemaValidator,
       llmService: llmService,

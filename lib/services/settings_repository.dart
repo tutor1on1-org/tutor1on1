@@ -79,6 +79,12 @@ class SettingsRepository {
         );
         needsUpdate = true;
       }
+      if (Platform.isAndroid && existing.enterToSend) {
+        companion = companion.copyWith(
+          enterToSend: const Value(false),
+        );
+        needsUpdate = true;
+      }
       if (needsUpdate) {
         await (_db.update(_db.appSettings)
               ..where((tbl) => tbl.id.equals(existing.id)))
@@ -109,7 +115,7 @@ class SettingsRepository {
             ttsTextLeadMs: const Value(1000),
             ttsAudioPath: Value(ttsAudioPath),
             sttAutoSend: const Value(false),
-            enterToSend: const Value(true),
+            enterToSend: Value(!Platform.isAndroid),
             studyModeEnabled: const Value(false),
             logDirectory: Value(logDirectory),
             llmLogPath: Value(logPaths['llm']!),

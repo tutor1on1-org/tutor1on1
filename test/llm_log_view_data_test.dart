@@ -67,7 +67,7 @@ void main() {
             'source': 'llm_jsonl',
             'latency_ms': 1200,
             'reasoning_text':
-                '{"provider_id":"openai","reasoning_text":"first think"}',
+                '{"provider_id":"openai","reasoning_text":" first think "}',
           },
         ),
         LlmLogFileEventInput(
@@ -120,7 +120,7 @@ void main() {
     final firstAttempt = attempts.first as Map<String, dynamic>;
     expect(firstAttempt['request'], equals('prompt'));
     expect(firstAttempt['response'], isA<Map<String, dynamic>>());
-    expect(firstAttempt['reasoning'], equals('first think'));
+    expect(firstAttempt['reasoning'], equals(' first think '));
     expect(firstAttempt.containsKey('response_json'), isFalse);
     expect(firstAttempt.containsKey('metadata'), isFalse);
   });

@@ -6,17 +6,17 @@
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta
     name="description"
-    content="Tutor1on1 is a Windows and Android learning app where teachers publish structured courses and students study through guided tutor sessions, enrollment workflows, and private progress sync."
+    content="Tutor1on1 is a Windows, Android, and macOS learning app where teachers publish structured courses and students study through guided tutor sessions, enrollment workflows, and private progress sync."
   >
   <meta
     name="keywords"
-    content="Tutor1on1, family teacher, Windows app, Android app, structured courses, AI tutoring, teacher workflow, student review"
+    content="Tutor1on1, family teacher, Windows app, Android app, macOS app, structured courses, AI tutoring, teacher workflow, student review"
   >
   <meta content="#f4efe6" name="theme-color">
   <meta property="og:title" content="Tutor1on1">
   <meta
     property="og:description"
-    content="Structured course publishing, guided tutor sessions, and progress sync across Windows and Android."
+    content="Structured course publishing, guided tutor sessions, and progress sync across Windows, Android, and macOS."
   >
   <meta property="og:type" content="website">
 
@@ -26,6 +26,7 @@
   <link rel="icon" type="image/png" href="favicon.png">
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="styles.css">
+  <script src="/site.js"></script>
 </head>
 <body>
   <div class="shell">
@@ -34,13 +35,22 @@
         <span class="brand-mark">T1</span>
         <span class="brand-text">
           <strong>Tutor1on1</strong>
-          <span>Windows and Android learning app</span>
+          <span>Windows, Android, and macOS learning app</span>
         </span>
       </a>
-      <nav class="topnav" aria-label="Language switcher">
-        <a class="nav-link" href="/help/">Help</a>
-        <a class="lang-link is-active" href="/">EN</a>
-        <a class="lang-link" href="/zh/">中文</a>
+      <nav class="topnav" aria-label="Navigation and language">
+        <table class="topnav-table" role="presentation">
+          <tr>
+            <td><a class="nav-link nav-action" href="/help/">Help</a></td>
+            <td><a class="nav-link nav-action" href="/install/">Install</a></td>
+            <td>
+              <select class="lang-select nav-action" aria-label="Language" data-language-switcher>
+                <option value="en">EN</option>
+                <option value="zh">中文</option>
+              </select>
+            </td>
+          </tr>
+        </table>
       </nav>
     </header>
 
@@ -50,15 +60,10 @@
         <h1>Teach with a course. Learn with a guided session.</h1>
         <p class="lead">
           Tutor1on1 connects course publishing, enrollment, guided tutoring, and
-          private progress sync in one product for Windows and Android.
+          private progress sync in one product for Windows, Android, and macOS.
         </p>
         <div class="actions">
-          <a class="button button-primary" href="https://api.tutor1on1.org/downloads/family_teacher.zip">
-            Download Windows ZIP
-          </a>
-          <a class="button button-secondary" href="https://api.tutor1on1.org/downloads/family_teacher.apk">
-            Download Android APK
-          </a>
+          <a class="button button-primary" href="/install/">Open install guide</a>
           <a class="button button-secondary" href="#workflow">See workflow</a>
         </div>
       </section>
@@ -106,7 +111,7 @@
           <h2>Move from exposure to review with less friction.</h2>
           <ul>
             <li>Guided learn and review sessions</li>
-            <li>Local-first Windows and Android usage</li>
+            <li>Local-first Windows, Android, and macOS usage</li>
             <li>Downloadable approved bundles</li>
             <li>Cross-device continuity when sync is enabled</li>
           </ul>
@@ -117,16 +122,9 @@
         <div class="cta-card">
           <div>
             <p class="eyebrow">Choose your platform</p>
-            <h2>Install Tutor1on1 on Windows or Android.</h2>
+            <h2>Install Tutor1on1 on Windows, Android, or macOS.</h2>
           </div>
-          <div class="actions">
-            <a class="button button-primary" href="https://api.tutor1on1.org/downloads/family_teacher.zip">
-              Windows ZIP
-            </a>
-            <a class="button button-secondary" href="https://api.tutor1on1.org/downloads/family_teacher.apk">
-              Android APK
-            </a>
-          </div>
+          <a class="button button-primary" href="/install/">Open install guide</a>
         </div>
       </section>
     </main>

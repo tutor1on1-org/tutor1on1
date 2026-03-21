@@ -65,6 +65,16 @@ Historical setup timeline moved to `LOGBOOK.md`.
   - APK SHA-256: `9ef48c7754843a6e55e26dbcf5de463198a319e495d62fb653b201245c954790`
   - ZIP SHA-256: `7ba173c9c38584c422d19d4f73209de7fb3bdf7227945aa21554196155c9d054`
 
+## Remote server updates (2026-03-20, study-mode/device-control backend deploy)
+- Applied DB migration `remote/db/migrations/0011_study_mode_device_control.up.sql` on production.
+- Deployed updated API binary to `/opt/family_teacher_remote/bin/family-teacher-api`.
+- Restarted `family-teacher-api.service`; current service start time is `2026-03-20 12:21:15 CST`.
+- Verified:
+  - health endpoint `https://api.tutor1on1.org/health` returned `{"status":"ok"}` after restart.
+  - new protected route `GET /api/account/devices` returns `401 unauthorized` without auth, confirming the route is live instead of missing/`404`.
+  - `powershell -ExecutionPolicy Bypass -File scripts/test_auth.ps1 -BaseUrl "https://api.tutor1on1.org"` passed after deploy.
+- Incident lesson: the 2026-03-19 client release published APK/ZIP/site before the matching backend deploy. Future backend-affecting releases must include migration + API deploy in the same turn before handoff.
+
 ## Remote server updates (2026-03-08, current Windows release)
 - Added sync download endpoints:
   - `GET /api/sync/download-manifest`

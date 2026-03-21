@@ -31,6 +31,9 @@ class SecureStorageService {
   static const _apiKeyBasePrefix = 'api_key_base:';
   static const _authAccessTokenKey = 'auth_access_token';
   static const _authRefreshTokenKey = 'auth_refresh_token';
+  static const _authDeviceKey = 'auth_device_key';
+  static const _authDeviceNameKey = 'auth_device_name';
+  static const _remoteStudyModePinHashKey = 'remote_study_mode_pin_hash';
   static const _userPrivateKeyPrefix = 'user_private_key:';
   static const _userPublicKeyPrefix = 'user_public_key:';
   static const _sessionSyncCursorPrefix = 'session_sync_cursor:';
@@ -185,6 +188,40 @@ class SecureStorageService {
   Future<void> deleteAuthTokens() async {
     await _storage.delete(key: _authAccessTokenKey);
     await _storage.delete(key: _authRefreshTokenKey);
+  }
+
+  Future<String?> readAuthDeviceKey() => _storage.read(key: _authDeviceKey);
+
+  Future<void> writeAuthDeviceKey(String value) {
+    return _storage.write(
+      key: _authDeviceKey,
+      value: value.trim(),
+    );
+  }
+
+  Future<String?> readAuthDeviceName() =>
+      _storage.read(key: _authDeviceNameKey);
+
+  Future<void> writeAuthDeviceName(String value) {
+    return _storage.write(
+      key: _authDeviceNameKey,
+      value: value.trim(),
+    );
+  }
+
+  Future<String?> readRemoteStudyModePinHash() {
+    return _storage.read(key: _remoteStudyModePinHashKey);
+  }
+
+  Future<void> writeRemoteStudyModePinHash(String value) {
+    return _storage.write(
+      key: _remoteStudyModePinHashKey,
+      value: value.trim(),
+    );
+  }
+
+  Future<void> deleteRemoteStudyModePinHash() {
+    return _storage.delete(key: _remoteStudyModePinHashKey);
   }
 
   Future<String?> readUserPrivateKey(int remoteUserId) {
@@ -536,11 +573,19 @@ class SecureStorageService {
     final seed = [
       Platform.operatingSystem,
       Platform.operatingSystemVersion,
-      Platform.localHostname,
+      _safeLocalHostname(),
       Platform.numberOfProcessors.toString(),
       Platform.pathSeparator,
     ].join('|');
     return sha256Hex(seed);
+  }
+
+  static String _safeLocalHostname() {
+    try {
+      return Platform.localHostname.trim();
+    } catch (_) {
+      return '';
+    }
   }
 
   bool _isWindowsDpapiDecryptFailure(Object error) {

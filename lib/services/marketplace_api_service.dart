@@ -607,6 +607,251 @@ class EnsureBundleResult {
   final int courseId;
 }
 
+class TeacherControlPinStatus {
+  TeacherControlPinStatus({
+    required this.configured,
+  });
+
+  final bool configured;
+
+  factory TeacherControlPinStatus.fromJson(Map<String, dynamic> json) {
+    return TeacherControlPinStatus(
+      configured: (json['configured'] as bool?) ?? false,
+    );
+  }
+}
+
+class AccountDeviceSummary {
+  AccountDeviceSummary({
+    required this.deviceKey,
+    required this.deviceName,
+    required this.platform,
+    required this.timezoneName,
+    required this.timezoneOffsetMinutes,
+    required this.appVersion,
+    required this.lastSeenAt,
+    required this.online,
+    required this.isCurrent,
+  });
+
+  final String deviceKey;
+  final String deviceName;
+  final String platform;
+  final String timezoneName;
+  final int timezoneOffsetMinutes;
+  final String appVersion;
+  final String lastSeenAt;
+  final bool online;
+  final bool isCurrent;
+
+  factory AccountDeviceSummary.fromJson(Map<String, dynamic> json) {
+    return AccountDeviceSummary(
+      deviceKey: (json['device_key'] as String?) ?? '',
+      deviceName: (json['device_name'] as String?) ?? '',
+      platform: (json['platform'] as String?) ?? '',
+      timezoneName: (json['timezone_name'] as String?) ?? '',
+      timezoneOffsetMinutes:
+          (json['timezone_offset_minutes'] as num?)?.toInt() ?? 0,
+      appVersion: (json['app_version'] as String?) ?? '',
+      lastSeenAt: (json['last_seen_at'] as String?) ?? '',
+      online: (json['online'] as bool?) ?? false,
+      isCurrent: (json['is_current'] as bool?) ?? false,
+    );
+  }
+}
+
+class DeleteAccountDeviceResult {
+  DeleteAccountDeviceResult({
+    required this.deletedCurrentDevice,
+  });
+
+  final bool deletedCurrentDevice;
+
+  factory DeleteAccountDeviceResult.fromJson(Map<String, dynamic> json) {
+    return DeleteAccountDeviceResult(
+      deletedCurrentDevice: (json['deleted_current_device'] as bool?) ?? false,
+    );
+  }
+}
+
+class TeacherStudentDevice {
+  TeacherStudentDevice({
+    required this.deviceKey,
+    required this.deviceName,
+    required this.platform,
+    required this.timezoneName,
+    required this.timezoneOffsetMinutes,
+    required this.online,
+    required this.lastSeenAt,
+    required this.currentStudyModeEnabled,
+    required this.effectiveStudyModeEnabled,
+    required this.effectiveSource,
+    required this.effectiveScheduleId,
+    required this.effectiveScheduleLabel,
+    required this.controllerTeacherUserId,
+    required this.controllerTeacherName,
+  });
+
+  final String deviceKey;
+  final String deviceName;
+  final String platform;
+  final String timezoneName;
+  final int timezoneOffsetMinutes;
+  final bool online;
+  final String lastSeenAt;
+  final bool currentStudyModeEnabled;
+  final bool effectiveStudyModeEnabled;
+  final String effectiveSource;
+  final int effectiveScheduleId;
+  final String effectiveScheduleLabel;
+  final int controllerTeacherUserId;
+  final String controllerTeacherName;
+
+  factory TeacherStudentDevice.fromJson(Map<String, dynamic> json) {
+    return TeacherStudentDevice(
+      deviceKey: (json['device_key'] as String?) ?? '',
+      deviceName: (json['device_name'] as String?) ?? '',
+      platform: (json['platform'] as String?) ?? '',
+      timezoneName: (json['timezone_name'] as String?) ?? '',
+      timezoneOffsetMinutes:
+          (json['timezone_offset_minutes'] as num?)?.toInt() ?? 0,
+      online: (json['online'] as bool?) ?? false,
+      lastSeenAt: (json['last_seen_at'] as String?) ?? '',
+      currentStudyModeEnabled:
+          (json['current_study_mode_enabled'] as bool?) ?? false,
+      effectiveStudyModeEnabled:
+          (json['effective_study_mode_enabled'] as bool?) ?? false,
+      effectiveSource: (json['effective_source'] as String?) ?? '',
+      effectiveScheduleId:
+          (json['effective_schedule_id'] as num?)?.toInt() ?? 0,
+      effectiveScheduleLabel:
+          (json['effective_schedule_label'] as String?) ?? '',
+      controllerTeacherUserId:
+          (json['controller_teacher_user_id'] as num?)?.toInt() ?? 0,
+      controllerTeacherName: (json['controller_teacher_name'] as String?) ?? '',
+    );
+  }
+}
+
+class TeacherStudentDeviceSummary {
+  TeacherStudentDeviceSummary({
+    required this.studentUserId,
+    required this.studentUsername,
+    required this.hasTeacherControlPin,
+    required this.teacherManualOverride,
+    required this.devices,
+  });
+
+  final int studentUserId;
+  final String studentUsername;
+  final bool hasTeacherControlPin;
+  final bool? teacherManualOverride;
+  final List<TeacherStudentDevice> devices;
+
+  factory TeacherStudentDeviceSummary.fromJson(Map<String, dynamic> json) {
+    final rawDevices = json['devices'];
+    final devices = rawDevices is List
+        ? rawDevices
+            .whereType<Map<String, dynamic>>()
+            .map(TeacherStudentDevice.fromJson)
+            .toList()
+        : <TeacherStudentDevice>[];
+    return TeacherStudentDeviceSummary(
+      studentUserId: (json['student_user_id'] as num?)?.toInt() ?? 0,
+      studentUsername: (json['student_username'] as String?) ?? '',
+      hasTeacherControlPin: (json['has_teacher_control_pin'] as bool?) ?? false,
+      teacherManualOverride: (json['teacher_manual_override'] as bool?),
+      devices: devices,
+    );
+  }
+}
+
+class StudyModeScheduleSummary {
+  StudyModeScheduleSummary({
+    required this.scheduleId,
+    required this.mode,
+    required this.enabled,
+    required this.startAtUtc,
+    required this.endAtUtc,
+    required this.localWeekday,
+    required this.localStartMinuteOfDay,
+    required this.localEndMinuteOfDay,
+    required this.timezoneNameSnapshot,
+    required this.timezoneOffsetSnapshotMinutes,
+    required this.status,
+    required this.displayLabel,
+    required this.updatedAt,
+  });
+
+  final int scheduleId;
+  final String mode;
+  final bool enabled;
+  final String startAtUtc;
+  final String endAtUtc;
+  final int localWeekday;
+  final int localStartMinuteOfDay;
+  final int localEndMinuteOfDay;
+  final String timezoneNameSnapshot;
+  final int timezoneOffsetSnapshotMinutes;
+  final String status;
+  final String displayLabel;
+  final String updatedAt;
+
+  factory StudyModeScheduleSummary.fromJson(Map<String, dynamic> json) {
+    return StudyModeScheduleSummary(
+      scheduleId: (json['schedule_id'] as num?)?.toInt() ?? 0,
+      mode: (json['mode'] as String?) ?? '',
+      enabled: (json['enabled'] as bool?) ?? false,
+      startAtUtc: (json['start_at_utc'] as String?) ?? '',
+      endAtUtc: (json['end_at_utc'] as String?) ?? '',
+      localWeekday: (json['local_weekday'] as num?)?.toInt() ?? 0,
+      localStartMinuteOfDay:
+          (json['local_start_minute_of_day'] as num?)?.toInt() ?? 0,
+      localEndMinuteOfDay:
+          (json['local_end_minute_of_day'] as num?)?.toInt() ?? 0,
+      timezoneNameSnapshot: (json['timezone_name_snapshot'] as String?) ?? '',
+      timezoneOffsetSnapshotMinutes:
+          (json['timezone_offset_snapshot_minutes'] as num?)?.toInt() ?? 0,
+      status: (json['status'] as String?) ?? '',
+      displayLabel: (json['display_label'] as String?) ?? '',
+      updatedAt: (json['updated_at'] as String?) ?? '',
+    );
+  }
+}
+
+class StudentDeviceHeartbeatResponse {
+  StudentDeviceHeartbeatResponse({
+    required this.effectiveEnabled,
+    required this.effectiveSource,
+    required this.controllerTeacherUserId,
+    required this.controllerTeacherName,
+    required this.controlPinHash,
+    required this.activeScheduleId,
+    required this.activeScheduleLabel,
+  });
+
+  final bool effectiveEnabled;
+  final String effectiveSource;
+  final int controllerTeacherUserId;
+  final String controllerTeacherName;
+  final String controlPinHash;
+  final int activeScheduleId;
+  final String activeScheduleLabel;
+
+  factory StudentDeviceHeartbeatResponse.fromJson(Map<String, dynamic> json) {
+    return StudentDeviceHeartbeatResponse(
+      effectiveEnabled: (json['effective_enabled'] as bool?) ?? false,
+      effectiveSource: (json['effective_source'] as String?) ?? '',
+      controllerTeacherUserId:
+          (json['controller_teacher_user_id'] as num?)?.toInt() ?? 0,
+      controllerTeacherName: (json['controller_teacher_name'] as String?) ?? '',
+      controlPinHash: (json['control_pin_hash'] as String?) ?? '',
+      activeScheduleId: (json['active_schedule_id'] as num?)?.toInt() ?? 0,
+      activeScheduleLabel: (json['active_schedule_label'] as String?) ?? '',
+    );
+  }
+}
+
 class MarketplaceApiService {
   MarketplaceApiService({
     required SecureStorageService secureStorage,
@@ -788,6 +1033,148 @@ class MarketplaceApiService {
       etag: response.headers['etag'],
       notModified: false,
     );
+  }
+
+  Future<TeacherControlPinStatus> getTeacherControlPinStatus() async {
+    final response = await _get('/api/teacher/control-pin/status');
+    if (response is! Map<String, dynamic>) {
+      throw MarketplaceApiException('Unexpected response format.');
+    }
+    return TeacherControlPinStatus.fromJson(response);
+  }
+
+  Future<List<AccountDeviceSummary>> listAccountDevices() async {
+    final response = await _get('/api/account/devices');
+    return _decodeList(
+      response,
+      (json) => AccountDeviceSummary.fromJson(json),
+    );
+  }
+
+  Future<DeleteAccountDeviceResult> deleteAccountDevice(
+    String deviceKey,
+  ) async {
+    final response = await _post(
+      '/api/account/devices/${Uri.encodeComponent(deviceKey.trim())}/delete',
+      {},
+    );
+    if (response is! Map<String, dynamic>) {
+      throw MarketplaceApiException('Unexpected response format.');
+    }
+    return DeleteAccountDeviceResult.fromJson(response);
+  }
+
+  Future<void> upsertTeacherControlPin({
+    required String controlPin,
+  }) async {
+    await _post('/api/teacher/control-pin', {
+      'control_pin': controlPin.trim(),
+    });
+  }
+
+  Future<List<TeacherStudentDeviceSummary>> listTeacherStudentDevices() async {
+    final response = await _get('/api/teacher/student-devices');
+    return _decodeList(
+      response,
+      (json) => TeacherStudentDeviceSummary.fromJson(json),
+    );
+  }
+
+  Future<void> setStudentStudyModeOverride({
+    required int studentUserId,
+    required bool enabled,
+    required String controlPin,
+  }) async {
+    await _post(
+      '/api/teacher/students/$studentUserId/study-mode/override',
+      {
+        'enabled': enabled,
+        'control_pin': controlPin.trim(),
+      },
+    );
+  }
+
+  Future<List<StudyModeScheduleSummary>> listStudentStudyModeSchedules(
+    int studentUserId,
+  ) async {
+    final response = await _get(
+      '/api/teacher/students/$studentUserId/study-mode/schedules',
+    );
+    return _decodeList(
+      response,
+      (json) => StudyModeScheduleSummary.fromJson(json),
+    );
+  }
+
+  Future<void> createStudentStudyModeSchedule({
+    required int studentUserId,
+    required String mode,
+    required bool enabled,
+    required String controlPin,
+    String startAtUtc = '',
+    String endAtUtc = '',
+    int localWeekday = 0,
+    int localStartMinuteOfDay = 0,
+    int localEndMinuteOfDay = 0,
+    String timezoneNameSnapshot = '',
+    int timezoneOffsetSnapshotMinutes = 0,
+  }) async {
+    await _post(
+      '/api/teacher/students/$studentUserId/study-mode/schedules',
+      {
+        'mode': mode.trim(),
+        'enabled': enabled,
+        'control_pin': controlPin.trim(),
+        'start_at_utc': startAtUtc.trim(),
+        'end_at_utc': endAtUtc.trim(),
+        'local_weekday': localWeekday,
+        'local_start_minute_of_day': localStartMinuteOfDay,
+        'local_end_minute_of_day': localEndMinuteOfDay,
+        'timezone_name_snapshot': timezoneNameSnapshot.trim(),
+        'timezone_offset_snapshot_minutes': timezoneOffsetSnapshotMinutes,
+      },
+    );
+  }
+
+  Future<void> deleteStudentStudyModeSchedule({
+    required int studentUserId,
+    required int scheduleId,
+    required String controlPin,
+  }) async {
+    await _post(
+      '/api/teacher/students/$studentUserId/study-mode/schedules/$scheduleId/delete',
+      {
+        'control_pin': controlPin.trim(),
+      },
+    );
+  }
+
+  Future<StudentDeviceHeartbeatResponse> heartbeatStudentDevice({
+    required String deviceKey,
+    required String deviceName,
+    required String platform,
+    required String timezoneName,
+    required int timezoneOffsetMinutes,
+    required int localWeekday,
+    required int localMinuteOfDay,
+    required bool currentStudyModeEnabled,
+    String appVersion = '',
+  }) async {
+    final response = await _post('/api/student/device/heartbeat', {
+      'device_key': deviceKey.trim(),
+      'device_name': deviceName.trim(),
+      'platform': platform.trim(),
+      'timezone_name': timezoneName.trim(),
+      'timezone_offset_minutes': timezoneOffsetMinutes,
+      'local_weekday': localWeekday,
+      'local_minute_of_day': localMinuteOfDay,
+      'current_study_mode_enabled': currentStudyModeEnabled,
+      'app_version': appVersion.trim(),
+    });
+    if (response is! Map<String, dynamic>) {
+      throw MarketplaceApiException('Unexpected response format.');
+    }
+    return StudentDeviceHeartbeatResponse.fromJson(response);
   }
 
   Future<TeacherCourseSummary> createTeacherCourse({

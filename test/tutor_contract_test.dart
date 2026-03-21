@@ -1,7 +1,32 @@
 import 'package:family_teacher/models/tutor_contract.dart';
+import 'package:family_teacher/models/tutor_action.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('control state round-trips a just-passed event', () {
+    const control = TutorControlState(
+      version: TutorControlState.currentVersion,
+      mode: TutorMode.review,
+      step: TutorTurnStep.newTurn,
+      turnFinished: true,
+      helpBias: TutorHelpBias.unchanged,
+      allowedActions: <TutorFinishedAction>[TutorFinishedAction.review],
+      recommendedAction: TutorFinishedAction.review,
+      activeReviewQuestion: null,
+      justPassedKpEvent: TutorJustPassedKpEvent(
+        easyPassedCount: 1,
+        mediumPassedCount: 2,
+        hardPassedCount: 3,
+      ),
+    );
+
+    final decoded = TutorControlState.fromJsonText(control.toJsonText());
+
+    expect(decoded?.justPassedKpEvent?.easyPassedCount, equals(1));
+    expect(decoded?.justPassedKpEvent?.mediumPassedCount, equals(2));
+    expect(decoded?.justPassedKpEvent?.hardPassedCount, equals(3));
+  });
+
   test('rebuilds evidence counts from finished review turns', () {
     final seed = TutorEvidenceState(
       version: TutorEvidenceState.currentVersion,

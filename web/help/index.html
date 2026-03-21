@@ -6,7 +6,7 @@
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta
     name="description"
-    content="Tutor1on1 help page: learn how teachers publish courses, how students enroll and study, and how Windows and Android sync workflows work."
+    content="Tutor1on1 help page: learn how teachers publish courses, how students enroll and study, and how Windows, Android, and macOS sync workflows work."
   >
   <meta content="#f5f0e7" name="theme-color">
   <title>Tutor1on1 Help</title>
@@ -14,6 +14,7 @@
   <link rel="icon" type="image/png" href="../favicon.png">
   <link rel="manifest" href="../manifest.json">
   <link rel="stylesheet" href="../styles.css">
+  <script src="/site.js"></script>
 </head>
 <body>
   <div class="shell">
@@ -26,9 +27,18 @@
         </span>
       </a>
       <nav class="topnav" aria-label="Navigation and language">
-        <a class="nav-link" href="/">Home</a>
-        <a class="lang-link is-active" href="/help/">EN</a>
-        <a class="lang-link" href="/zh/help/">中文</a>
+        <table class="topnav-table" role="presentation">
+          <tr>
+            <td><a class="nav-link nav-action" href="/">Home</a></td>
+            <td><a class="nav-link nav-action" href="/install/">Install</a></td>
+            <td>
+              <select class="lang-select nav-action" aria-label="Language" data-language-switcher>
+                <option value="en">EN</option>
+                <option value="zh">中文</option>
+              </select>
+            </td>
+          </tr>
+        </table>
       </nav>
     </header>
 
@@ -37,7 +47,7 @@
         <p class="eyebrow">How to use Tutor1on1</p>
         <h1>Quick help for teachers and students.</h1>
         <p class="lead">
-          Tutor1on1 is available on Windows and Android. Teachers publish structured
+          Tutor1on1 is available on Windows, Android, and macOS. Teachers publish structured
           courses. Students enroll, download approved content, and study through
           guided sessions.
         </p>
@@ -46,7 +56,7 @@
       <section class="content-block">
         <h2>1. First launch</h2>
         <ol class="help-list">
-          <li>Open the Windows app or install the Android APK.</li>
+          <li>Open the install guide and choose Windows, Android, or macOS.</li>
           <li>Choose a language if needed.</li>
           <li>Open Settings and configure the required API keys, then save them before you start using tutor features.</li>
           <li>Use the tabs on the welcome page to log in, register as a teacher, or register as a student.</li>
@@ -129,16 +139,9 @@
         <div class="cta-card">
           <div>
             <p class="eyebrow">Need the app first</p>
-            <h2>Download the current Windows or Android build.</h2>
+            <h2>Open the platform install guide.</h2>
           </div>
-          <div class="actions">
-            <a class="button button-primary" href="https://api.tutor1on1.org/downloads/family_teacher.zip">
-              Windows ZIP
-            </a>
-            <a class="button button-secondary" href="https://api.tutor1on1.org/downloads/family_teacher.apk">
-              Android APK
-            </a>
-          </div>
+          <a class="button button-primary" href="/install/">Install Tutor1on1</a>
         </div>
       </section>
     </main>

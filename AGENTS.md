@@ -21,3 +21,6 @@
 ## Experience updates
 - Canonical experience log moved to `LESSONS.md` to keep AGENTS concise and always-injected context small.
 - App-change handoff discipline is defined in `WORKFLOW.md` and `LESSONS.md`: self-battle, build, validate, update memory, push, and publish/upload the remote release unless the user explicitly skips a step.
+- Public web links should use `www.tutor1on1.org` for site pages and `api.tutor1on1.org/downloads/` for downloadable artifacts; do not publish raw IP URLs.
+- Website localization uses mirrored `/` and `/zh/` static paths with shared `/site.js`; keep language detection and path switching centralized there instead of duplicating per-page logic.
+- Public macOS downloads must be Release builds signed as `Developer ID Application` with Hardened Runtime and notarization; do not publish raw `flutter build macos` output as the final user artifact.

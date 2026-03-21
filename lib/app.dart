@@ -26,7 +26,11 @@ class FamilyTeacherApp extends StatelessWidget {
         Provider<AppServices>.value(value: services),
         Provider.value(value: services.db),
         ChangeNotifierProvider(
-          create: (_) => AuthController(services.db, services.secureStorage),
+          create: (_) => AuthController(
+            services.db,
+            services.secureStorage,
+            deviceIdentityService: services.deviceIdentityService,
+          ),
         ),
         ChangeNotifierProvider(
           create: (_) => SettingsController(services.settingsRepository),

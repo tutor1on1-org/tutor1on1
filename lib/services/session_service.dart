@@ -103,6 +103,22 @@ class _TutorRequestContext {
   final String? reviewPassedLevel;
 }
 
+class _ProgressPassSnapshot {
+  const _ProgressPassSnapshot({
+    required this.easyPassedCount,
+    required this.mediumPassedCount,
+    required this.hardPassedCount,
+    required this.lit,
+    required this.litPercent,
+  });
+
+  final int easyPassedCount;
+  final int mediumPassedCount;
+  final int hardPassedCount;
+  final bool lit;
+  final int litPercent;
+}
+
 class SessionService {
   SessionService(
     this._db,
@@ -661,18 +677,83 @@ class SessionService {
       fallbackMode:
           request.actionMode == 'review' ? TutorMode.review : TutorMode.learn,
     );
-    final nextControl = _deriveNextControlState(
-      current: currentControl,
-      actionMode: request.actionMode,
-      parsed: parsed,
-      helpBias: _normalizeHelpBias(parsed?['next_help_bias'] as String?),
-    );
     final currentEvidence = _loadSessionEvidenceState(session);
     final nextEvidence = TutorEvidenceState.updateFromAssistantPayload(
       current: currentEvidence,
       actionMode: request.actionMode,
       parsed: parsed,
       passedLevel: request.reviewPassedLevel,
+    );
+    final studentId = request.llmContext.studentId;
+    TutorJustPassedKpEvent? nextJustPassedKpEvent =
+        currentControl.justPassedKpEvent;
+    _ProgressPassSnapshot? previousProgressSnapshot;
+    ResolvedStudentPassRule? passRule;
+    if (request.actionMode == 'review' && studentId != null && studentId > 0) {
+      passRule = await _db.resolveStudentPassRule(
+        courseVersionId: request.courseVersionId,
+        studentId: studentId,
+      );
+      previousProgressSnapshot = _resolveProgressPassSnapshot(
+        progress: await _db.getProgress(
+          studentId: studentId,
+          courseVersionId: request.courseVersionId,
+          kpKey: request.kpKey,
+        ),
+        passRule: passRule,
+      );
+    }
+    await _updateReviewProgressIfNeeded(
+      actionMode: request.actionMode,
+      studentId: studentId,
+      courseVersionId: request.courseVersionId,
+      kpKey: request.kpKey,
+      studentIntent: request.resolvedStudentIntent,
+      parsedJsonText: resolution.payload.parsedJson,
+      passedLevel: request.reviewPassedLevel,
+    );
+    if (request.actionMode == 'review' && studentId != null && studentId > 0) {
+      final progress = await _db.getProgress(
+        studentId: studentId,
+        courseVersionId: request.courseVersionId,
+        kpKey: request.kpKey,
+      );
+      final resolvedSnapshot = _resolveProgressPassSnapshot(
+        progress: progress,
+        passRule: passRule!,
+      );
+      if (previousProgressSnapshot != null &&
+          !previousProgressSnapshot.lit &&
+          resolvedSnapshot.lit) {
+        nextJustPassedKpEvent = TutorJustPassedKpEvent(
+          easyPassedCount: resolvedSnapshot.easyPassedCount,
+          mediumPassedCount: resolvedSnapshot.mediumPassedCount,
+          hardPassedCount: resolvedSnapshot.hardPassedCount,
+        );
+      }
+      await (_db.update(_db.chatSessions)
+            ..where((tbl) => tbl.id.equals(request.sessionId)))
+          .write(
+        ChatSessionsCompanion(
+          summaryLit: Value(resolvedSnapshot.lit),
+          summaryLitPercent: Value(resolvedSnapshot.litPercent),
+        ),
+      );
+      await _db.setProgressLit(
+        studentId: studentId,
+        courseVersionId: request.courseVersionId,
+        kpKey: request.kpKey,
+        lit: resolvedSnapshot.lit,
+        litPercent: resolvedSnapshot.litPercent,
+      );
+    }
+    final nextControl = _deriveNextControlState(
+      current: currentControl,
+      actionMode: request.actionMode,
+      parsed: parsed,
+      helpBias: _normalizeHelpBias(parsed?['next_help_bias'] as String?),
+    ).copyWith(
+      justPassedKpEvent: nextJustPassedKpEvent,
     );
     await _db.updateSessionContracts(
       sessionId: request.sessionId,
@@ -681,52 +762,6 @@ class SessionService {
       evidenceStateJson: nextEvidence.toJsonText(),
       evidenceStateUpdatedAt: DateTime.now(),
     );
-    await _updateReviewProgressIfNeeded(
-      actionMode: request.actionMode,
-      studentId: request.llmContext.studentId,
-      courseVersionId: request.courseVersionId,
-      kpKey: request.kpKey,
-      studentIntent: request.resolvedStudentIntent,
-      parsedJsonText: resolution.payload.parsedJson,
-      passedLevel: request.reviewPassedLevel,
-    );
-    final studentId = request.llmContext.studentId;
-    if (request.actionMode == 'review' && studentId != null && studentId > 0) {
-      final progress = await _db.getProgress(
-        studentId: studentId,
-        courseVersionId: request.courseVersionId,
-        kpKey: request.kpKey,
-      );
-      final passRule = await _db.resolveStudentPassRule(
-        courseVersionId: request.courseVersionId,
-        studentId: studentId,
-      );
-      final resolvedLit = passRule.litForCounts(
-        easyCount: progress?.easyPassedCount ?? 0,
-        mediumCount: progress?.mediumPassedCount ?? 0,
-        hardCount: progress?.hardPassedCount ?? 0,
-      );
-      final resolvedLitPercent = passRule.litPercentForCounts(
-        easyCount: progress?.easyPassedCount ?? 0,
-        mediumCount: progress?.mediumPassedCount ?? 0,
-        hardCount: progress?.hardPassedCount ?? 0,
-      );
-      await (_db.update(_db.chatSessions)
-            ..where((tbl) => tbl.id.equals(request.sessionId)))
-          .write(
-        ChatSessionsCompanion(
-          summaryLit: Value(resolvedLit),
-          summaryLitPercent: Value(resolvedLitPercent),
-        ),
-      );
-      await _db.setProgressLit(
-        studentId: studentId,
-        courseVersionId: request.courseVersionId,
-        kpKey: request.kpKey,
-        lit: resolvedLit,
-        litPercent: resolvedLitPercent,
-      );
-    }
     await _appendTutorPersistLog(
       request: request,
       resolution: resolution,
@@ -1260,6 +1295,30 @@ class SessionService {
   TutorEvidenceState _loadSessionEvidenceState(ChatSession? session) {
     return TutorEvidenceState.fromJsonText(session?.evidenceStateJson) ??
         TutorEvidenceState.initial();
+  }
+
+  _ProgressPassSnapshot _resolveProgressPassSnapshot({
+    required ProgressEntry? progress,
+    required ResolvedStudentPassRule passRule,
+  }) {
+    final easyPassedCount = progress?.easyPassedCount ?? 0;
+    final mediumPassedCount = progress?.mediumPassedCount ?? 0;
+    final hardPassedCount = progress?.hardPassedCount ?? 0;
+    return _ProgressPassSnapshot(
+      easyPassedCount: easyPassedCount,
+      mediumPassedCount: mediumPassedCount,
+      hardPassedCount: hardPassedCount,
+      lit: passRule.litForCounts(
+        easyCount: easyPassedCount,
+        mediumCount: mediumPassedCount,
+        hardCount: hardPassedCount,
+      ),
+      litPercent: passRule.litPercentForCounts(
+        easyCount: easyPassedCount,
+        mediumCount: mediumPassedCount,
+        hardCount: hardPassedCount,
+      ),
+    );
   }
 
   String _buildErrorBookSummary({

@@ -718,6 +718,107 @@ void main() {
   );
 
   test(
+    'teacher first sync force-redownloads placeholder remote course when latest hash lookup is unavailable',
+    () async {
+      final teacherId = await db.createUser(
+        username: 'dennis_placeholder',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 1901,
+      );
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'UK_MATH_7-13',
+        granularity: 1,
+        textbookText: '',
+        sourcePath: null,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 10,
+      );
+      final teacher = await db.getUserById(teacherId);
+      expect(teacher, isNotNull);
+
+      final remoteDir = await _createCourseFolder(
+        label: 'teacher_force_redownload_placeholder',
+        rootTitle: 'UK MATH Remote Topic',
+      );
+      tempPaths.add(remoteDir.path);
+      final remoteBundle = await CourseBundleService().createBundleFromFolder(
+        remoteDir.path,
+      );
+      tempFiles.add(remoteBundle.path);
+      final remoteHash =
+          await CourseBundleService().computeBundleSemanticHash(remoteBundle);
+
+      final secureStorage = _TestSecureStorageService();
+      await secureStorage.writeInstalledCourseBundleVersion(
+        remoteUserId: 1901,
+        remoteCourseId: 10,
+        versionId: 32,
+      );
+      final staleSyncAt = DateTime.utc(2026, 3, 12, 10, 3, 36);
+      await secureStorage.writeSyncItemState(
+        remoteUserId: 1901,
+        domain: 'enrollment_sync_teacher_upload',
+        scopeKey: 'course:10',
+        contentHash: remoteHash,
+        lastChangedAt: staleSyncAt,
+        lastSyncedAt: staleSyncAt,
+      );
+      final api = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+        teacherCourses: <TeacherCourseSummary>[
+          TeacherCourseSummary(
+            courseId: 10,
+            subject: 'UK_MATH_7-13',
+            grade: '',
+            description: '',
+            visibility: 'public',
+            publishedAt: '',
+            latestBundleVersionId: 32,
+            latestBundleHash: '',
+            status: 'active',
+          ),
+        ],
+        latestCourseBundleInfoNotFound: true,
+        bundleFilesByVersionId: <int, File>{32: remoteBundle},
+      );
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService: CourseService(db),
+        marketplaceApi: api,
+        promptRepository: PromptRepository(db: db),
+        courseArtifactService: CourseArtifactService(),
+      );
+
+      final stats = await service.syncIfReady(currentUser: teacher!);
+
+      final repairedCourse = await db.getCourseVersionById(courseVersionId);
+      expect(repairedCourse, isNotNull);
+      expect(repairedCourse!.sourcePath, isNotNull);
+      expect(repairedCourse.sourcePath, isNotEmpty);
+      expect(Directory(repairedCourse.sourcePath!).existsSync(), isTrue);
+      final nodes = await db.getCourseNodes(courseVersionId);
+      expect(nodes, isNotEmpty);
+      expect(api.downloadBundleCalls, equals(1));
+      expect(api.uploadedBundles, isEmpty);
+      expect(stats.downloadedCount, equals(1));
+      expect(stats.downloadedBytes, greaterThan(0));
+      expect(api.latestCourseBundleInfoCalls, equals(2));
+      expect(
+        await secureStorage.readInstalledCourseBundleVersion(
+          remoteUserId: 1901,
+          remoteCourseId: 10,
+        ),
+        equals(32),
+      );
+    },
+  );
+
+  test(
     'teacher upload reuses loaded course manifest and excludes teacher-global prompts',
     () async {
       final teacherId = await db.createUser(

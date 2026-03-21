@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta content="width=device-width, initial-scale=1.0" name="viewport">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta
+    name="description"
+    content="Tutor1on1 macOS 安装说明：下载 ZIP，解压 Tutor1on1.app，拖到 Applications，然后正常打开。"
+  >
+  <meta content="#f5f0e7" name="theme-color">
+  <title>在 macOS 上安装 Tutor1on1</title>
+  <link rel="apple-touch-icon" href="../../../icons/Icon-192.png">
+  <link rel="icon" type="image/png" href="../../../favicon.png">
+  <link rel="manifest" href="../../../manifest.json">
+  <link rel="stylesheet" href="../../../styles.css">
+  <script src="/site.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="/zh/install/">
+        <span class="brand-mark">T1</span>
+        <span class="brand-text">
+          <strong>Tutor1on1</strong>
+          <span>macOS 安装</span>
+        </span>
+      </a>
+      <nav class="topnav" aria-label="Navigation and language">
+        <table class="topnav-table" role="presentation">
+          <tr>
+            <td><a class="nav-link nav-action" href="/zh/">首页</a></td>
+            <td><a class="nav-link nav-action" href="/zh/install/">安装</a></td>
+            <td>
+              <select class="lang-select nav-action" aria-label="语言" data-language-switcher>
+                <option value="en">EN</option>
+                <option value="zh">中文</option>
+              </select>
+            </td>
+          </tr>
+        </table>
+      </nav>
+    </header>
+
+    <main class="page">
+      <section class="hero hero-compact">
+        <p class="eyebrow">macOS</p>
+        <h1>解压应用，拖到 Applications，再打开。</h1>
+        <p class="lead">
+          当前 macOS 版本以 ZIP 形式发布，ZIP 内包含 <code>Tutor1on1.app</code>。
+          裸 <code>.app</code> 实际上是目录 bundle，不适合直接作为单个下载文件发布。
+        </p>
+        <div class="actions">
+          <a class="button button-primary" href="https://api.tutor1on1.org/downloads/Tutor1on1-macos-universal.zip">
+            下载 macOS ZIP
+          </a>
+        </div>
+      </section>
+
+      <section class="content-block">
+        <h2>为什么用 ZIP，不直接放 <code>.app</code>？</h2>
+        <ul class="help-list">
+          <li>macOS 的 <code>.app</code> 本质上是一个目录 bundle，不是单个扁平文件。</li>
+          <li>ZIP 可以把整个 app bundle 作为一个完整下载物保存下来。</li>
+          <li><code>.dmg</code> 也可以，但 ZIP 是当前更简单的发布格式。</li>
+        </ul>
+      </section>
+
+      <section class="content-block">
+        <h2>安装步骤</h2>
+        <ol class="help-list">
+          <li>下载 <code>Tutor1on1-macos-universal.zip</code>。</li>
+          <li>双击 ZIP，解压出 <code>Tutor1on1.app</code>。</li>
+          <li>把 <code>Tutor1on1.app</code> 拖到 <code>/Applications</code>。</li>
+          <li>从 Applications、Launchpad、Spotlight 或 Finder 中打开它。</li>
+          <li>如果首次启动遇到 Gatekeeper 提示，可在 Finder 中右键应用，再选择<strong>打开</strong>。</li>
+        </ol>
+      </section>
+
+      <section class="content-block">
+        <h2>从其他应用或脚本启动</h2>
+        <ul class="help-list">
+          <li>如果已经安装到 Applications，可用 <code>open -a "Tutor1on1"</code> 启动。</li>
+          <li>如果还未安装，也可以按路径启动 bundle：<code>open "/path/to/Tutor1on1.app"</code>。</li>
+          <li>正常用户流程仍然是：解压，拖到 Applications，然后像普通应用一样运行。</li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Tutor1on1 macOS</p>
+      <p><a class="footer-link" href="/zh/install/">所有平台</a></p>
+      <p>ZIP 内含 Tutor1on1.app。</p>
+    </footer>
+  </div>
+</body>
+</html>

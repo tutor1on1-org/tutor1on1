@@ -65,6 +65,7 @@ Current integration flow covers deterministic auth-gated register/logout/login p
 flutter build apk --release
 flutter run -d windows
 flutter build windows --release
+flutter build macos --release
 ```
 Required workflow gate: run release build before updating `DONEs.md` after code changes.
 
@@ -105,7 +106,34 @@ powershell -ExecutionPolicy Bypass -File scripts/publish_website_static.ps1
 Default safeguards:
 - Syncs the tracked `web/` directory into `/var/www/tutor1on1_site`.
 - Verifies the remote website tree after upload.
-- Verifies `/`, `/help/`, `/zh/`, and `/zh/help/` return HTTP 200 and still reference `family_teacher.apk`.
+- Verifies home/help/install pages return HTTP 200 and that install pages still reference the canonical download artifacts under `api.tutor1on1.org/downloads/`.
+
+### macOS notarized release package
+Create notary credentials once on the Mac:
+```bash
+xcrun notarytool store-credentials "tutor1on1-notary" \
+  --apple-id "YOUR_APPLE_ID" \
+  --team-id "YOUR_TEAM_ID" \
+  --password "YOUR_APP_SPECIFIC_PASSWORD"
+```
+
+Recommended release flow:
+1. In Xcode, set the Runner Release signing certificate to `Developer ID Application` and keep Hardened Runtime enabled.
+2. Archive/export the signed `Tutor1on1.app` from Xcode for outside-App-Store distribution.
+3. Package, notarize, staple, and validate:
+```bash
+MACOS_NOTARY_KEYCHAIN_PROFILE=tutor1on1-notary \
+  bash scripts/notarize_macos_release.sh --app "/path/to/Tutor1on1.app"
+```
+
+Optional flag:
+- `--skip-notarize` (package and signature-verify only; not for public release)
+
+Default safeguards:
+- Fails if the expected `Tutor1on1` app binary is missing.
+- Verifies the app signature before notarization.
+- Prints detected binary architectures with `lipo -archs`.
+- Staples the accepted ticket and validates Gatekeeper with `spctl`.
 
 ### Auth API smoke test
 ```powershell

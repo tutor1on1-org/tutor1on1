@@ -113,6 +113,36 @@ void main() {
       );
       expect(openAiBody['reasoning_effort'], equals(ReasoningEffort.high));
 
+      const siliconFlow = LlmProvider(
+        id: 'siliconflow',
+        label: 'SiliconFlow',
+        baseUrl: 'https://api.siliconflow.cn/v1',
+        models: <String>['deepseek-ai/DeepSeek-V3.2'],
+        maxTokensParam: MaxTokensParam.maxTokens,
+        reasoningControlStyle: ReasoningControlStyle.siliconFlowThinkingBudget,
+      );
+      final siliconFlowBody = <String, dynamic>{};
+      LlmReasoningSupport.applyRequestFields(
+        bodyMap: siliconFlowBody,
+        provider: siliconFlow,
+        model: 'deepseek-ai/DeepSeek-V3.2',
+        reasoningEffort: ReasoningEffort.medium,
+        maxTokens: 8000,
+      );
+      expect(siliconFlowBody['enable_thinking'], isTrue);
+      expect(siliconFlowBody['thinking_budget'], equals(4096));
+
+      final siliconFlowDisabledBody = <String, dynamic>{};
+      LlmReasoningSupport.applyRequestFields(
+        bodyMap: siliconFlowDisabledBody,
+        provider: siliconFlow,
+        model: 'deepseek-ai/DeepSeek-V3.2',
+        reasoningEffort: ReasoningEffort.none,
+        maxTokens: 8000,
+      );
+      expect(siliconFlowDisabledBody['enable_thinking'], isFalse);
+      expect(siliconFlowDisabledBody.containsKey('thinking_budget'), isFalse);
+
       const deepSeek = LlmProvider(
         id: 'deepseek',
         label: 'DeepSeek',
@@ -215,6 +245,33 @@ void main() {
       expect(buffer.toString(), equals('{"mistakes":[]}'));
     });
 
+    test('preserves leading spaces in streamed reasoning fragments', () {
+      const provider = LlmProvider(
+        id: 'deepseek',
+        label: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com/v1',
+        models: <String>['deepseek-reasoner'],
+        maxTokensParam: MaxTokensParam.maxTokens,
+        reasoningControlStyle: ReasoningControlStyle.deepSeekThinking,
+      );
+      final payload = <String, dynamic>{
+        'choices': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'delta': <String, dynamic>{
+              'reasoning_content': ' next step',
+            },
+          },
+        ],
+      };
+
+      final extracted = LlmReasoningSupport.extractResponse(
+        payload: payload,
+        provider: provider,
+      );
+
+      expect(extracted.reasoningText, equals(' next step'));
+    });
+
     test('reasoning log keeps requested effort even without returned text', () {
       const provider = LlmProvider(
         id: 'openai',
@@ -236,6 +293,28 @@ void main() {
       expect(decoded['reasoning_effort'], equals(ReasoningEffort.medium));
       expect(decoded['reasoning_text'], isNull);
       expect(decoded['reasoning_tokens'], isNull);
+    });
+
+    test('reasoning log preserves reasoning text verbatim', () {
+      const provider = LlmProvider(
+        id: 'openai',
+        label: 'OpenAI',
+        baseUrl: 'https://api.openai.com/v1',
+        models: <String>['gpt-5.4'],
+        maxTokensParam: MaxTokensParam.auto,
+        reasoningControlStyle: ReasoningControlStyle.openAiEffort,
+      );
+
+      final encoded = LlmReasoningSupport.encodeReasoningLog(
+        provider: provider,
+        model: 'gpt-5.4',
+        reasoningEffort: ReasoningEffort.medium,
+        reasoningText: ' Keep exact spacing. ',
+      );
+
+      expect(encoded, isNotNull);
+      final decoded = jsonDecode(encoded!) as Map<String, dynamic>;
+      expect(decoded['reasoning_text'], equals(' Keep exact spacing. '));
     });
   });
 }

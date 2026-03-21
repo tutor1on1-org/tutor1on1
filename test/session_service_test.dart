@@ -451,7 +451,8 @@ void main() {
     final message = await _latestAssistantMessage(db, fixture.sessionId);
 
     expect(message.content, equals('Visible answer.'));
-    expect(message.rawContent, contains('<think>hidden chain of thought</think>'));
+    expect(
+        message.rawContent, contains('<think>hidden chain of thought</think>'));
   });
 
   test(
@@ -490,6 +491,7 @@ void main() {
     expect(control.activeReviewQuestion?['difficulty'], equals('easy'));
     expect(evidence.reviewCorrectTotal, equals(0));
     expect(evidence.reviewAttemptTotal, equals(0));
+    expect(control.justPassedKpEvent, isNull);
   });
 
   test('finished review increments local counters and flips lit after two wins',
@@ -546,6 +548,7 @@ void main() {
     await second.future;
 
     final evidence = await _sessionEvidence(db, fixture.sessionId);
+    final control = await _sessionControl(db, fixture.sessionId);
     session = await db.getSession(fixture.sessionId);
 
     expect(evidence.reviewCorrectTotal, equals(2));
@@ -554,6 +557,9 @@ void main() {
     expect(evidence.hardPassedCount, equals(1));
     expect(evidence.lastEvidence?['mistakes'],
         equals(<String>['ordering_integers']));
+    expect(control.justPassedKpEvent?.easyPassedCount, equals(0));
+    expect(control.justPassedKpEvent?.mediumPassedCount, equals(1));
+    expect(control.justPassedKpEvent?.hardPassedCount, equals(1));
     expect(session?.summaryLit, isTrue);
   });
 
@@ -654,15 +660,238 @@ void main() {
     await handle.future;
 
     final session = await db.getSession(fixture.sessionId);
+    final control = await _sessionControl(db, fixture.sessionId);
     final progress = await db.getProgress(
       studentId: fixture.studentId,
       courseVersionId: fixture.courseVersion.id,
       kpKey: fixture.node.kpKey,
     );
 
+    expect(control.justPassedKpEvent?.easyPassedCount, equals(1));
+    expect(control.justPassedKpEvent?.mediumPassedCount, equals(0));
+    expect(control.justPassedKpEvent?.hardPassedCount, equals(0));
     expect(session?.summaryLit, isTrue);
     expect(session?.summaryLitPercent, equals(100));
     expect(progress?.lit, isTrue);
     expect(progress?.litPercent, equals(100));
+  });
+
+  test('just-passed event uses post-update global progress counts', () async {
+    final fixture = await _createTutorFixture(db: db, service: service);
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': 'Correct medium review.',
+            'difficulty': 'medium',
+            'mistakes': <String>[],
+            'next_action': 'review',
+            'finished': true,
+          }),
+          callHash: 'global_counts_seed',
+        ),
+      ),
+    );
+
+    final first = await service.startTutorAction(
+      sessionId: fixture.sessionId,
+      mode: 'review',
+      studentInput: 'medium answer',
+      courseVersion: fixture.courseVersion,
+      node: fixture.node,
+    );
+    await first.future;
+
+    final secondSessionId = await service.startSession(
+      studentId: fixture.studentId,
+      courseVersionId: fixture.courseVersion.id,
+      kpKey: fixture.node.kpKey,
+    );
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': 'Correct hard review.',
+            'difficulty': 'hard',
+            'mistakes': <String>[],
+            'next_action': 'review',
+            'finished': true,
+          }),
+          callHash: 'global_counts_pass',
+        ),
+      ),
+    );
+
+    final second = await service.startTutorAction(
+      sessionId: secondSessionId,
+      mode: 'review',
+      studentInput: 'hard answer',
+      courseVersion: fixture.courseVersion,
+      node: fixture.node,
+    );
+    await second.future;
+
+    final control = await _sessionControl(db, secondSessionId);
+    final progress = await db.getProgress(
+      studentId: fixture.studentId,
+      courseVersionId: fixture.courseVersion.id,
+      kpKey: fixture.node.kpKey,
+    );
+    final session = await db.getSession(secondSessionId);
+
+    expect(control.justPassedKpEvent?.easyPassedCount, equals(0));
+    expect(control.justPassedKpEvent?.mediumPassedCount, equals(1));
+    expect(control.justPassedKpEvent?.hardPassedCount, equals(1));
+    expect(progress?.mediumPassedCount, equals(1));
+    expect(progress?.hardPassedCount, equals(1));
+    expect(session?.summaryLit, isTrue);
+  });
+
+  test('unfinished review on an already-passed KP does not emit a pass event',
+      () async {
+    final fixture = await _createTutorFixture(db: db, service: service);
+    await db.upsertStudentPassConfig(
+      courseVersionId: fixture.courseVersion.id,
+      studentId: fixture.studentId,
+      easyWeight: 1,
+      mediumWeight: 1,
+      hardWeight: 1,
+      passThreshold: 1,
+    );
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': 'Correct.',
+            'difficulty': 'easy',
+            'mistakes': <String>[],
+            'next_action': 'review',
+            'finished': true,
+          }),
+          callHash: 'first_pass',
+        ),
+      ),
+    );
+
+    final first = await service.startTutorAction(
+      sessionId: fixture.sessionId,
+      mode: 'review',
+      studentInput: '2',
+      courseVersion: fixture.courseVersion,
+      node: fixture.node,
+    );
+    await first.future;
+
+    final secondSessionId = await service.startSession(
+      studentId: fixture.studentId,
+      courseVersionId: fixture.courseVersion.id,
+      kpKey: fixture.node.kpKey,
+    );
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': 'Keep working on the same question.',
+            'difficulty': 'easy',
+            'mistakes': <String>[],
+            'next_action': 'review',
+            'finished': false,
+          }),
+          callHash: 'already_passed_unfinished',
+        ),
+      ),
+    );
+
+    final second = await service.startTutorAction(
+      sessionId: secondSessionId,
+      mode: 'review',
+      studentInput: '',
+      courseVersion: fixture.courseVersion,
+      node: fixture.node,
+    );
+    await second.future;
+
+    final control = await _sessionControl(db, secondSessionId);
+    final session = await db.getSession(secondSessionId);
+
+    expect(control.justPassedKpEvent, isNull);
+    expect(control.turnFinished, isFalse);
+    expect(session?.summaryLit, isTrue);
+  });
+
+  test('reviewing an already-passed KP does not re-award the pass event',
+      () async {
+    final fixture = await _createTutorFixture(db: db, service: service);
+    await db.upsertStudentPassConfig(
+      courseVersionId: fixture.courseVersion.id,
+      studentId: fixture.studentId,
+      easyWeight: 1,
+      mediumWeight: 1,
+      hardWeight: 1,
+      passThreshold: 1,
+    );
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': 'Correct.',
+            'difficulty': 'easy',
+            'mistakes': <String>[],
+            'next_action': 'review',
+            'finished': true,
+          }),
+          callHash: 'already_passed_seed',
+        ),
+      ),
+    );
+
+    final first = await service.startTutorAction(
+      sessionId: fixture.sessionId,
+      mode: 'review',
+      studentInput: '2',
+      courseVersion: fixture.courseVersion,
+      node: fixture.node,
+    );
+    await first.future;
+
+    final secondSessionId = await service.startSession(
+      studentId: fixture.studentId,
+      courseVersionId: fixture.courseVersion.id,
+      kpKey: fixture.node.kpKey,
+    );
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': 'Correct again.',
+            'difficulty': 'easy',
+            'mistakes': <String>[],
+            'next_action': 'review',
+            'finished': true,
+          }),
+          callHash: 'already_passed_repeat',
+        ),
+      ),
+    );
+
+    final second = await service.startTutorAction(
+      sessionId: secondSessionId,
+      mode: 'review',
+      studentInput: '3',
+      courseVersion: fixture.courseVersion,
+      node: fixture.node,
+    );
+    await second.future;
+
+    final control = await _sessionControl(db, secondSessionId);
+    final progress = await db.getProgress(
+      studentId: fixture.studentId,
+      courseVersionId: fixture.courseVersion.id,
+      kpKey: fixture.node.kpKey,
+    );
+
+    expect(control.justPassedKpEvent, isNull);
+    expect(progress?.easyPassedCount, equals(2));
+    expect(progress?.lit, isTrue);
   });
 }

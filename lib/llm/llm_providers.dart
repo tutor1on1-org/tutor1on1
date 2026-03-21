@@ -14,6 +14,7 @@ enum ReasoningControlStyle {
   openAiEffort,
   anthropicThinking,
   deepSeekThinking,
+  siliconFlowThinkingBudget,
 }
 
 class LlmProvider {
@@ -145,7 +146,7 @@ class LlmProviders {
           'deepseek-ai/DeepSeek-V3.2',
         ],
         maxTokensParam: MaxTokensParam.maxTokens,
-        reasoningControlStyle: ReasoningControlStyle.deepSeekThinking,
+        reasoningControlStyle: ReasoningControlStyle.siliconFlowThinkingBudget,
       ),
       const LlmProvider(
         id: 'deepseek',

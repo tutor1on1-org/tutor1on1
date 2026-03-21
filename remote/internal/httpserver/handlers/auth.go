@@ -44,6 +44,7 @@ type registerRequest struct {
 	Username string `json:"username"`
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	authDevicePayload
 }
 
 type registerTeacherRequest struct {
@@ -56,11 +57,13 @@ type registerTeacherRequest struct {
 	Contact          string  `json:"contact"`
 	ContactPublished bool    `json:"contact_published"`
 	SubjectLabelIDs  []int64 `json:"subject_label_ids"`
+	authDevicePayload
 }
 
 type loginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+	authDevicePayload
 }
 
 type changePasswordRequest struct {
@@ -84,6 +87,20 @@ type refreshRequest struct {
 
 type revokeRequest struct {
 	RefreshToken string `json:"refresh_token"`
+}
+
+type authDevicePayload struct {
+	DeviceKey             string `json:"device_key"`
+	DeviceName            string `json:"device_name"`
+	Platform              string `json:"platform"`
+	TimezoneName          string `json:"timezone_name"`
+	TimezoneOffsetMinutes int    `json:"timezone_offset_minutes"`
+	AppVersion            string `json:"app_version"`
+}
+
+type authDeviceSession struct {
+	DeviceKey          string
+	DeviceSessionNonce string
 }
 
 func (h *AuthHandler) Register(c *fiber.Ctx) error {
@@ -118,7 +135,14 @@ func (h *AuthHandler) RegisterStudent(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "user insert failed")
 	}
-	return h.issueTokensWithRole(c, userID, "student", nil)
+	deviceSession, deviceErr := h.createAuthDeviceSession(userID, req.authDevicePayload)
+	if deviceErr != nil {
+		if errors.Is(deviceErr, errDeviceLimitReached) {
+			return fiber.NewError(fiber.StatusConflict, "device limit reached")
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, "device session failed")
+	}
+	return h.issueTokensWithRole(c, userID, "student", nil, deviceSession)
 }
 
 func (h *AuthHandler) RegisterTeacher(c *fiber.Ctx) error {
@@ -195,7 +219,20 @@ func (h *AuthHandler) RegisterTeacher(c *fiber.Ctx) error {
 	if err := tx.Commit(); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
 	}
-	return h.issueTokensWithRole(c, userID, "teacher_pending", &teacherID)
+	deviceSession, deviceErr := h.createAuthDeviceSession(userID, req.authDevicePayload)
+	if deviceErr != nil {
+		if errors.Is(deviceErr, errDeviceLimitReached) {
+			return fiber.NewError(fiber.StatusConflict, "device limit reached")
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, "device session failed")
+	}
+	return h.issueTokensWithRole(
+		c,
+		userID,
+		"teacher_pending",
+		&teacherID,
+		deviceSession,
+	)
 }
 
 func (h *AuthHandler) Login(c *fiber.Ctx) error {
@@ -218,7 +255,14 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "role lookup failed")
 	}
-	return h.issueTokensWithRole(c, userID, role, teacherID)
+	deviceSession, deviceErr := h.createAuthDeviceSession(userID, req.authDevicePayload)
+	if deviceErr != nil {
+		if errors.Is(deviceErr, errDeviceLimitReached) {
+			return fiber.NewError(fiber.StatusConflict, "device limit reached")
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, "device session failed")
+	}
+	return h.issueTokensWithRole(c, userID, role, teacherID, deviceSession)
 }
 
 func (h *AuthHandler) ChangePassword(c *fiber.Ctx) error {
@@ -388,20 +432,49 @@ func (h *AuthHandler) Refresh(c *fiber.Ctx) error {
 	}
 	hash := hashToken(token)
 	var (
-		id        int64
-		userID    int64
-		expiresAt time.Time
-		revokedAt *time.Time
+		id                 int64
+		userID             int64
+		expiresAt          time.Time
+		revokedAt          *time.Time
+		deviceKey          sql.NullString
+		deviceSessionNonce sql.NullString
 	)
 	row := h.store.DB.QueryRow(
-		"SELECT id, user_id, expires_at, revoked_at FROM refresh_tokens WHERE token_hash = ? LIMIT 1",
+		`SELECT id, user_id, expires_at, revoked_at, device_key, device_session_nonce
+		 FROM refresh_tokens
+		 WHERE token_hash = ? LIMIT 1`,
 		hash,
 	)
-	if err := row.Scan(&id, &userID, &expiresAt, &revokedAt); err != nil {
+	if err := row.Scan(
+		&id,
+		&userID,
+		&expiresAt,
+		&revokedAt,
+		&deviceKey,
+		&deviceSessionNonce,
+	); err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "invalid refresh token")
 	}
 	if revokedAt != nil || time.Now().After(expiresAt) {
 		return fiber.NewError(fiber.StatusUnauthorized, "refresh token expired")
+	}
+	normalizedDeviceKey := strings.TrimSpace(deviceKey.String)
+	normalizedSessionNonce := strings.TrimSpace(deviceSessionNonce.String)
+	if !deviceKey.Valid || !deviceSessionNonce.Valid ||
+		normalizedDeviceKey == "" || normalizedSessionNonce == "" {
+		return fiber.NewError(fiber.StatusUnauthorized, "invalid refresh token")
+	}
+	active, activeErr := isActiveAppUserDeviceSession(
+		h.store.DB,
+		userID,
+		normalizedDeviceKey,
+		normalizedSessionNonce,
+	)
+	if activeErr != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "device session validation failed")
+	}
+	if !active {
+		return fiber.NewError(fiber.StatusUnauthorized, "invalid refresh token")
 	}
 	if _, err := h.store.DB.Exec(
 		"UPDATE refresh_tokens SET revoked_at = NOW() WHERE id = ?",
@@ -413,7 +486,16 @@ func (h *AuthHandler) Refresh(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "role lookup failed")
 	}
-	return h.issueTokensWithRole(c, userID, role, teacherID)
+	return h.issueTokensWithRole(
+		c,
+		userID,
+		role,
+		teacherID,
+		authDeviceSession{
+			DeviceKey:          normalizedDeviceKey,
+			DeviceSessionNonce: normalizedSessionNonce,
+		},
+	)
 }
 
 func (h *AuthHandler) Revoke(c *fiber.Ctx) error {
@@ -441,8 +523,9 @@ func (h *AuthHandler) issueTokensWithRole(
 	userID int64,
 	role string,
 	teacherID *int64,
+	deviceSession authDeviceSession,
 ) error {
-	accessToken, err := h.newAccessToken(userID)
+	accessToken, err := h.newAccessToken(userID, deviceSession)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "access token failed")
 	}
@@ -453,8 +536,18 @@ func (h *AuthHandler) issueTokensWithRole(
 	refreshHash := hashToken(refreshToken)
 	expiresAt := time.Now().Add(time.Duration(h.cfg.RefreshTokenTTLDays) * 24 * time.Hour)
 	_, err = h.store.DB.Exec(
-		"INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)",
-		userID, refreshHash, expiresAt,
+		`INSERT INTO refresh_tokens (
+		   user_id,
+		   device_key,
+		   device_session_nonce,
+		   token_hash,
+		   expires_at
+		 ) VALUES (?, ?, ?, ?, ?)`,
+		userID,
+		nullableString(deviceSession.DeviceKey),
+		nullableString(deviceSession.DeviceSessionNonce),
+		refreshHash,
+		expiresAt,
 	)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "refresh token save failed")
@@ -470,14 +563,48 @@ func (h *AuthHandler) issueTokensWithRole(
 	})
 }
 
-func (h *AuthHandler) newAccessToken(userID int64) (string, error) {
+func (h *AuthHandler) newAccessToken(
+	userID int64,
+	deviceSession authDeviceSession,
+) (string, error) {
 	claims := jwt.MapClaims{
 		"sub": userID,
 		"exp": time.Now().Add(time.Duration(h.cfg.AccessTokenTTLMin) * time.Minute).Unix(),
 		"iat": time.Now().Unix(),
 	}
+	if strings.TrimSpace(deviceSession.DeviceKey) != "" {
+		claims["device_key"] = strings.TrimSpace(deviceSession.DeviceKey)
+	}
+	if strings.TrimSpace(deviceSession.DeviceSessionNonce) != "" {
+		claims["device_session_nonce"] = strings.TrimSpace(deviceSession.DeviceSessionNonce)
+	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(h.cfg.JWTSecret))
+}
+
+func (h *AuthHandler) createAuthDeviceSession(
+	userID int64,
+	payload authDevicePayload,
+) (authDeviceSession, error) {
+	sessionNonce, normalized, err := upsertAppUserDeviceSession(
+		h.store.DB,
+		userID,
+		appUserDeviceSessionInput{
+			DeviceKey:             payload.DeviceKey,
+			DeviceName:            payload.DeviceName,
+			Platform:              payload.Platform,
+			TimezoneName:          payload.TimezoneName,
+			TimezoneOffsetMinutes: payload.TimezoneOffsetMinutes,
+			AppVersion:            payload.AppVersion,
+		},
+	)
+	if err != nil {
+		return authDeviceSession{}, err
+	}
+	return authDeviceSession{
+		DeviceKey:          normalized.DeviceKey,
+		DeviceSessionNonce: sessionNonce,
+	}, nil
 }
 
 func (h *AuthHandler) getUserAuthByUsername(username string) (int64, string, error) {

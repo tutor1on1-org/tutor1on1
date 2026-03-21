@@ -7,6 +7,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../db/app_database.dart';
 import '../security/pin_hasher.dart';
+import '../services/app_services.dart';
 import '../services/screen_lock_service.dart';
 import '../state/auth_controller.dart';
 import '../state/settings_controller.dart';
@@ -47,14 +48,23 @@ class AppQuitFlow {
       return false;
     }
 
+    var expectedPinHash = '';
     User? teacher;
     if (user.role == 'teacher') {
       teacher = user;
     } else if (user.teacherId != null) {
       teacher = await db.getUserById(user.teacherId!);
     }
+    if (teacher != null) {
+      expectedPinHash = teacher.pinHash;
+    } else {
+      final services = context.read<AppServices>();
+      expectedPinHash =
+          (await services.secureStorage.readRemoteStudyModePinHash())?.trim() ??
+              '';
+    }
 
-    if (teacher == null) {
+    if (expectedPinHash.isEmpty) {
       if (context.mounted) {
         _showMessage(context, l10n.teacherNotFoundMessage);
       }
@@ -67,7 +77,7 @@ class AppQuitFlow {
     }
 
     final hash = PinHasher.hash(pin);
-    if (hash != teacher.pinHash) {
+    if (hash != expectedPinHash) {
       if (context.mounted) {
         _showMessage(context, l10n.invalidPinMessage);
       }

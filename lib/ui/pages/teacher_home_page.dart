@@ -23,6 +23,7 @@ import 'skill_tree_page.dart';
 import 'student_sessions_page.dart';
 import 'subject_admin_page.dart';
 import 'teacher_enrollment_requests_page.dart';
+import 'teacher_study_mode_page.dart';
 import '../widgets/server_sync_overlay.dart';
 
 class TeacherHomePage extends StatefulWidget {
@@ -282,6 +283,16 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                         );
                       },
                       child: const Text('Subject Admin'),
+                    ),
+                    ElevatedButton(
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const TeacherStudyModePage(),
+                          ),
+                        );
+                      },
+                      child: const Text('Student Study Mode'),
                     ),
                   ],
                 ),

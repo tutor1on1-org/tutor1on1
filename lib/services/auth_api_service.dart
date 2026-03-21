@@ -60,10 +60,24 @@ class AuthApiService {
   Future<AuthResponse> login({
     required String username,
     required String password,
+    required String deviceKey,
+    required String deviceName,
+    required String platform,
+    required String timezoneName,
+    required int timezoneOffsetMinutes,
+    String appVersion = '',
   }) async {
     return _post('/api/auth/login', {
       'username': username.trim(),
       'password': password,
+      ..._devicePayload(
+        deviceKey: deviceKey,
+        deviceName: deviceName,
+        platform: platform,
+        timezoneName: timezoneName,
+        timezoneOffsetMinutes: timezoneOffsetMinutes,
+        appVersion: appVersion,
+      ),
     });
   }
 
@@ -71,11 +85,25 @@ class AuthApiService {
     required String username,
     required String email,
     required String password,
+    required String deviceKey,
+    required String deviceName,
+    required String platform,
+    required String timezoneName,
+    required int timezoneOffsetMinutes,
+    String appVersion = '',
   }) async {
     return _post('/api/auth/register-student', {
       'username': username.trim(),
       'email': email.trim(),
       'password': password,
+      ..._devicePayload(
+        deviceKey: deviceKey,
+        deviceName: deviceName,
+        platform: platform,
+        timezoneName: timezoneName,
+        timezoneOffsetMinutes: timezoneOffsetMinutes,
+        appVersion: appVersion,
+      ),
     });
   }
 
@@ -89,6 +117,12 @@ class AuthApiService {
     String? avatarUrl,
     String? contact,
     bool contactPublished = false,
+    required String deviceKey,
+    required String deviceName,
+    required String platform,
+    required String timezoneName,
+    required int timezoneOffsetMinutes,
+    String appVersion = '',
   }) async {
     return _post('/api/auth/register-teacher', {
       'username': username.trim(),
@@ -100,6 +134,14 @@ class AuthApiService {
       'contact': contact?.trim() ?? '',
       'contact_published': contactPublished,
       'subject_label_ids': subjectLabelIds,
+      ..._devicePayload(
+        deviceKey: deviceKey,
+        deviceName: deviceName,
+        platform: platform,
+        timezoneName: timezoneName,
+        timezoneOffsetMinutes: timezoneOffsetMinutes,
+        appVersion: appVersion,
+      ),
     });
   }
 
@@ -126,6 +168,24 @@ class AuthApiService {
       throw AuthApiException('Unexpected response format.');
     }
     return AuthResponse.fromJson(decoded);
+  }
+
+  Map<String, dynamic> _devicePayload({
+    required String deviceKey,
+    required String deviceName,
+    required String platform,
+    required String timezoneName,
+    required int timezoneOffsetMinutes,
+    String appVersion = '',
+  }) {
+    return {
+      'device_key': deviceKey.trim(),
+      'device_name': deviceName.trim(),
+      'platform': platform.trim(),
+      'timezone_name': timezoneName.trim(),
+      'timezone_offset_minutes': timezoneOffsetMinutes,
+      'app_version': appVersion.trim(),
+    };
   }
 
   static http.Client _buildClient(bool allowInsecureTls) {

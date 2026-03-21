@@ -4,23 +4,30 @@ import '../constants.dart';
 import '../db/app_database.dart';
 import '../security/pin_hasher.dart';
 import '../services/auth_api_service.dart';
+import '../services/device_identity_service.dart';
 import '../services/log_crypto_service.dart';
 import '../services/secure_storage_service.dart';
 
 class AuthController extends ChangeNotifier {
   AuthController(
-    this._db,
-    this._secureStorage, {
+    AppDatabase db,
+    SecureStorageService secureStorage, {
     AuthApiService? authApi,
-  }) : _authApi = authApi ??
+    DeviceIdentityService? deviceIdentityService,
+  })  : _authApi = authApi ??
             AuthApiService(
               baseUrl: kAuthBaseUrl,
               allowInsecureTls: kAuthAllowInsecureTls,
-            );
+            ),
+        _db = db,
+        _secureStorage = secureStorage,
+        _deviceIdentityService =
+            deviceIdentityService ?? DeviceIdentityService(secureStorage);
 
   final AppDatabase _db;
   final SecureStorageService _secureStorage;
   final AuthApiService _authApi;
+  final DeviceIdentityService _deviceIdentityService;
   User? _currentUser;
   String? _lastError;
 
@@ -31,9 +38,16 @@ class AuthController extends ChangeNotifier {
     _lastError = null;
     final normalizedUsername = username.trim().toLowerCase();
     try {
+      final device = await _deviceIdentityService.snapshot();
       final response = await _authApi.login(
         username: normalizedUsername,
         password: password,
+        deviceKey: device.deviceKey,
+        deviceName: device.deviceName,
+        platform: device.platform,
+        timezoneName: device.timezoneName,
+        timezoneOffsetMinutes: device.timezoneOffsetMinutes,
+        appVersion: device.appVersion,
       );
       await _persistAuth(response, normalizedUsername, password);
       return true;
@@ -48,6 +62,9 @@ class AuthController extends ChangeNotifier {
         return true;
       }
       _lastError = error.message;
+      return false;
+    } on Object catch (error) {
+      _lastError = 'Login failed: $error';
       return false;
     }
   }
@@ -65,6 +82,7 @@ class AuthController extends ChangeNotifier {
   }) async {
     _lastError = null;
     try {
+      final device = await _deviceIdentityService.snapshot();
       final response = await _authApi.registerTeacher(
         username: username,
         email: email,
@@ -75,10 +93,19 @@ class AuthController extends ChangeNotifier {
         avatarUrl: avatarUrl,
         contact: contact,
         contactPublished: contactPublished,
+        deviceKey: device.deviceKey,
+        deviceName: device.deviceName,
+        platform: device.platform,
+        timezoneName: device.timezoneName,
+        timezoneOffsetMinutes: device.timezoneOffsetMinutes,
+        appVersion: device.appVersion,
       );
       return await _persistAuth(response, username, password);
     } on AuthApiException catch (error) {
       _lastError = error.message;
+      return null;
+    } on Object catch (error) {
+      _lastError = 'Registration failed: $error';
       return null;
     }
   }
@@ -90,14 +117,24 @@ class AuthController extends ChangeNotifier {
   }) async {
     _lastError = null;
     try {
+      final device = await _deviceIdentityService.snapshot();
       final response = await _authApi.registerStudent(
         username: username,
         email: email,
         password: password,
+        deviceKey: device.deviceKey,
+        deviceName: device.deviceName,
+        platform: device.platform,
+        timezoneName: device.timezoneName,
+        timezoneOffsetMinutes: device.timezoneOffsetMinutes,
+        appVersion: device.appVersion,
       );
       return await _persistAuth(response, username, password);
     } on AuthApiException catch (error) {
       _lastError = error.message;
+      return null;
+    } on Object catch (error) {
+      _lastError = 'Registration failed: $error';
       return null;
     }
   }
@@ -111,6 +148,7 @@ class AuthController extends ChangeNotifier {
       accessToken: response.accessToken,
       refreshToken: response.refreshToken,
     );
+    await _secureStorage.deleteRemoteStudyModePinHash();
     final normalizedUsername = username.trim().toLowerCase();
     final hashed = PinHasher.hash(password);
     _currentUser = await _db.upsertAuthenticatedUser(
@@ -141,6 +179,7 @@ class AuthController extends ChangeNotifier {
     _currentUser = null;
     _lastError = null;
     await _secureStorage.deleteAuthTokens();
+    await _secureStorage.deleteRemoteStudyModePinHash();
     notifyListeners();
   }
 

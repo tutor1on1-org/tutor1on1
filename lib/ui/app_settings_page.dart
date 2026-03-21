@@ -12,11 +12,13 @@ import '../llm/llm_reasoning_support.dart';
 import '../security/hash_utils.dart';
 import '../security/pin_hasher.dart';
 import '../services/app_services.dart';
+import '../services/marketplace_api_service.dart';
 import '../services/model_list_service.dart';
 import '../state/auth_controller.dart';
 import '../state/settings_controller.dart';
 import 'app_close_button.dart';
 import 'quit_app_flow.dart';
+import 'pages/account_devices_page.dart';
 import 'pages/llm_logs_page.dart';
 import 'pages/tts_logs_page.dart';
 import 'widgets/restart_widget.dart';
@@ -29,6 +31,7 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
+  final _deviceNameController = TextEditingController();
   final _timeoutController = TextEditingController();
   final _maxTokensController = TextEditingController();
   final _ttsDelayController = TextEditingController();
@@ -50,6 +53,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _ttsModelOverride = false;
   bool _sttModelOverride = false;
   bool _modelsLoaded = false;
+  bool _deviceNameLoaded = false;
   bool _apiTesting = false;
   String? _apiTestError;
   List<String> _textModelOptions = const [];
@@ -58,6 +62,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   void dispose() {
+    _deviceNameController.dispose();
     _timeoutController.dispose();
     _maxTokensController.dispose();
     _ttsDelayController.dispose();
@@ -118,10 +123,11 @@ class _SettingsPageState extends State<SettingsPage> {
       _logDirectoryController.text = settings.logDirectory ?? '';
       _mode = settings.llmMode;
       _sttAutoSend = settings.sttAutoSend;
-      _enterToSend = settings.enterToSend;
+      _enterToSend = Platform.isAndroid ? false : settings.enterToSend;
       _studyModeEnabled = settings.studyModeEnabled;
       _initialized = true;
     }
+    _maybeLoadDeviceName(services);
 
     final provider = _resolveProvider(providers, settings);
     _maybeLoadApiKey(services, provider.baseUrl);
@@ -192,6 +198,23 @@ class _SettingsPageState extends State<SettingsPage> {
     });
   }
 
+  void _maybeLoadDeviceName(AppServices services) {
+    if (_deviceNameLoaded) {
+      return;
+    }
+    _deviceNameLoaded = true;
+    Future.microtask(() async {
+      final deviceName =
+          await services.deviceIdentityService.readDeviceNameOrDefault();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _deviceNameController.text = deviceName;
+      });
+    });
+  }
+
   Widget _buildGeneralTab({
     required BuildContext context,
     required AppLocalizations l10n,
@@ -209,6 +232,24 @@ class _SettingsPageState extends State<SettingsPage> {
           l10n.generalTab,
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
+        TextField(
+          decoration: const InputDecoration(labelText: 'Device name'),
+          controller: _deviceNameController,
+        ),
+        if (currentUser != null) ...[
+          const SizedBox(height: 8),
+          OutlinedButton(
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const AccountDevicesPage(),
+                ),
+              );
+            },
+            child: const Text('Manage registered devices'),
+          ),
+        ],
+        const SizedBox(height: 8),
         TextField(
           decoration: InputDecoration(labelText: l10n.timeoutSecondsLabel),
           controller: _timeoutController,
@@ -236,8 +277,10 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         SwitchListTile(
           title: Text(l10n.enterToSendLabel),
-          value: _enterToSend,
-          onChanged: (value) => setState(() => _enterToSend = value),
+          value: Platform.isAndroid ? false : _enterToSend,
+          onChanged: Platform.isAndroid
+              ? null
+              : (value) => setState(() => _enterToSend = value),
         ),
         const SizedBox(height: 8),
         Row(
@@ -337,6 +380,9 @@ class _SettingsPageState extends State<SettingsPage> {
             final logDir = _logDirectoryController.text.trim();
             final resolvedLogDir =
                 logDir.isEmpty ? (settings.logDirectory ?? '').trim() : logDir;
+            await services.deviceIdentityService.writeDeviceName(
+              _deviceNameController.text,
+            );
             await settingsController.update(
               providerId: provider.id,
               baseUrl: provider.baseUrl,
@@ -359,7 +405,7 @@ class _SettingsPageState extends State<SettingsPage> {
               logDirectory: resolvedLogDir,
               llmMode: _mode,
               sttAutoSend: _sttAutoSend,
-              enterToSend: _enterToSend,
+              enterToSend: Platform.isAndroid ? false : _enterToSend,
               studyModeEnabled: _studyModeEnabled,
             );
             if (context.mounted) {
@@ -409,6 +455,14 @@ class _SettingsPageState extends State<SettingsPage> {
                 currentUser,
               ),
               child: Text(l10n.changeStudentPasswordButton),
+            ),
+          if (currentUser.role == 'teacher')
+            ElevatedButton(
+              onPressed: () => _showSetRemoteControlPinDialog(
+                context,
+                services,
+              ),
+              child: const Text('Set remote study control PIN'),
             ),
         ],
         const Divider(height: 32),
@@ -716,7 +770,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   logDirectory: resolvedLogDir,
                   llmMode: _mode,
                   sttAutoSend: _sttAutoSend,
-                  enterToSend: _enterToSend,
+                  enterToSend: Platform.isAndroid ? false : _enterToSend,
                   studyModeEnabled: _studyModeEnabled,
                 );
                 await services.secureStorage
@@ -1246,6 +1300,63 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Future<void> _showSetRemoteControlPinDialog(
+    BuildContext context,
+    AppServices services,
+  ) async {
+    final pinController = TextEditingController();
+    final confirmController = TextEditingController();
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Remote study control PIN'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: pinController,
+              decoration: const InputDecoration(labelText: 'New PIN'),
+              obscureText: true,
+            ),
+            TextField(
+              controller: confirmController,
+              decoration: const InputDecoration(labelText: 'Confirm PIN'),
+              obscureText: true,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final pin = pinController.text.trim();
+              final confirm = confirmController.text.trim();
+              if (pin.isEmpty || confirm.isEmpty) {
+                return;
+              }
+              if (pin != confirm) {
+                _showMessage(context, 'PINs do not match.');
+                return;
+              }
+              final api = MarketplaceApiService(
+                secureStorage: services.secureStorage,
+              );
+              await api.upsertTeacherControlPin(controlPin: pin);
+              if (context.mounted) {
+                Navigator.of(dialogContext).pop();
+                _showMessage(context, 'Remote study control PIN updated.');
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
       ),
     );
   }

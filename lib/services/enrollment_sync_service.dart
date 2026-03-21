@@ -539,6 +539,12 @@ class EnrollmentSyncService {
       initializeOnly: firstSync,
       summary: summary,
     );
+    await _repairTeacherCoursesMissingLocalMaterialization(
+      currentUser: currentUser,
+      remoteUserId: remoteUserId,
+      remoteCourses: remoteCourses,
+      summary: summary,
+    );
     if (firstSync) {
       await _cleanupTeacherLocalDuplicates(currentUser.id);
       return;
@@ -950,14 +956,15 @@ class EnrollmentSyncService {
     final localCourses = await _db.getCourseVersionsForTeacher(currentUser.id);
     for (final course in localCourses) {
       final sourcePath = (course.sourcePath ?? '').trim();
-      if (_courseArtifactService != null) {
-        await _ensureCourseArtifacts(course);
-      }
       final hasArtifacts = _courseArtifactService != null &&
           await _hasCachedCourseArtifacts(course.id);
-      if (!hasArtifacts &&
-          (sourcePath.isEmpty || !Directory(sourcePath).existsSync())) {
+      final hasSourceFolder =
+          sourcePath.isNotEmpty && Directory(sourcePath).existsSync();
+      if (!hasArtifacts && !hasSourceFolder) {
         continue;
+      }
+      if (_courseArtifactService != null && !hasArtifacts) {
+        await _ensureCourseArtifacts(course);
       }
       final target = await _resolveTeacherUploadTarget(
         courseVersionId: course.id,
@@ -1039,6 +1046,59 @@ class EnrollmentSyncService {
           await preparedBundle.bundleFile.delete();
         }
       }
+    }
+  }
+
+  Future<void> _repairTeacherCoursesMissingLocalMaterialization({
+    required User currentUser,
+    required int remoteUserId,
+    required List<TeacherCourseSummary> remoteCourses,
+    required _SyncTransferSummary summary,
+  }) async {
+    final remoteCoursesById = <int, TeacherCourseSummary>{
+      for (final remoteCourse in remoteCourses)
+        remoteCourse.courseId: remoteCourse,
+    };
+    final localCourses = await _db.getCourseVersionsForTeacher(currentUser.id);
+    for (final course in localCourses) {
+      final hasArtifacts = _courseArtifactService != null &&
+          await _hasCachedCourseArtifacts(course.id);
+      if (hasArtifacts) {
+        continue;
+      }
+      final sourcePath = (course.sourcePath ?? '').trim();
+      final hasSourceFolder =
+          sourcePath.isNotEmpty && Directory(sourcePath).existsSync();
+      if (hasSourceFolder) {
+        continue;
+      }
+      final remoteCourseId = await _db.getRemoteCourseId(course.id);
+      if (remoteCourseId == null || remoteCourseId <= 0) {
+        continue;
+      }
+      final remoteCourse = remoteCoursesById[remoteCourseId];
+      if (remoteCourse == null) {
+        continue;
+      }
+      final latestBundleVersionId = remoteCourse.latestBundleVersionId ?? 0;
+      if (latestBundleVersionId <= 0) {
+        continue;
+      }
+      final remoteBundle = await _resolveRemoteBundleInfo(
+        remoteCourseId: remoteCourseId,
+        courseSubject: remoteCourse.subject,
+        latestBundleVersionId: latestBundleVersionId,
+        latestBundleHash: remoteCourse.latestBundleHash,
+      );
+      await _downloadAndImportTeacherCourse(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+        remoteCourseId: remoteCourseId,
+        courseSubject: remoteCourse.subject,
+        bundleVersionId: remoteBundle.bundleVersionId,
+        existingCourseVersionId: course.id,
+        summary: summary,
+      );
     }
   }
 
