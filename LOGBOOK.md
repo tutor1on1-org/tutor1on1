@@ -48,6 +48,9 @@ Historical timeline. Keep active runbook details in `WORKLOG.md`.
 - Added upload hash dedupe, version retention (latest 5), and teacher bundle-version APIs.
 - Reorganized top-level docs: `AGENTS.md` reduced to doc index; operational/process content moved into `README.md`, `WORKFLOW.md`, `SCRIPTS.md`, `BUGS.md`, and `LOGBOOK.md`.
 
+## 2026-03-22
+- Added a current-KP student-session footer badge showing `easy/medium/hard/percent`, wired to live `progress_entries` updates and teacher pass-config weights/threshold, with display percent allowed to exceed `100%`.
+
 ## 2026-02-27
 - Added Codex-based memory update hook (`scripts/hook_memory_update.ps1`) with trigger `line-count delta >10` versus tracked snapshot (`scripts/memory_line_snapshot.json`), target-only file updates, and append suggestions for other memory docs.
 - Added dedicated memory-hook session lifecycle (create if missing, resume if present) using local `.git/memory_hook_state.json` and sub-agent prompt source `scripts/hook_memory_update_prompt.txt`.

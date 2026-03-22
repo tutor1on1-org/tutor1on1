@@ -18,8 +18,10 @@ import '../services/stt_service.dart';
 import '../services/tts_chunker.dart';
 import '../services/tts_service.dart';
 import '../services/tts_text_sanitizer.dart';
+import '../state/auth_controller.dart';
 import '../state/settings_controller.dart';
 import 'app_close_button.dart';
+import 'session_progress_display.dart';
 import 'tutor_turn_logic.dart';
 import 'widgets/math_markdown_view.dart';
 
@@ -200,6 +202,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     final l10n = AppLocalizations.of(context)!;
     final db = context.read<AppDatabase>();
     final settings = context.watch<SettingsController>().settings;
+    final currentUser = context.watch<AuthController>().currentUser;
     final envBaseUrl = Platform.environment['OPENAI_BASE_URL']?.trim() ?? '';
     final envModel = Platform.environment['OPENAI_MODEL']?.trim() ?? '';
     final providers = LlmProviders.defaultProviders(
@@ -229,6 +232,14 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     final sttBusy = _sttPressActive || _sttRecording || _sttTranscribing;
     final enterToSend = !Platform.isAndroid && (settings?.enterToSend ?? true);
     final compactControls = Platform.isAndroid;
+    final footerProgressBadge = currentUser?.role == 'student'
+        ? _SessionFooterProgressBadge(
+            db: db,
+            studentId: currentUser!.id,
+            courseVersionId: widget.courseVersion.id,
+            kpKey: widget.node.kpKey,
+          )
+        : null;
     final shortcutMap = <ShortcutActivator, Intent>{
       const SingleActivator(
         LogicalKeyboardKey.enter,
@@ -663,54 +674,69 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                             ? Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  SingleChildScrollView(
-                                    scrollDirection: Axis.horizontal,
-                                    child: Row(
-                                      children: [
-                                        _buildCompactModelSelector(
-                                          db: db,
-                                          currentModel: settings?.model ?? '',
-                                          provider: provider,
-                                          l10n: l10n,
-                                        ),
-                                        const SizedBox(width: 8),
-                                        _actionButton(
-                                          key: const Key('learn_button'),
-                                          label: l10n.promptLearn,
-                                          selected: _isModeRecommended(
-                                            TutorMode.learn,
-                                          ),
-                                          onPressed: _sending
-                                              ? null
-                                              : _startNewLearnTurn,
-                                          compact: true,
-                                        ),
-                                        const SizedBox(width: 8),
-                                        _actionButton(
-                                          key: const Key('review_button'),
-                                          label: l10n.promptReview,
-                                          selected: _isModeRecommended(
-                                            TutorMode.review,
-                                          ),
-                                          onPressed: _sending
-                                              ? null
-                                              : _startNewReviewTurn,
-                                          compact: true,
-                                        ),
-                                        const SizedBox(width: 8),
-                                        _helpBiasChip(
-                                          label: 'Easier',
-                                          bias: TutorHelpBias.easier,
-                                          compact: true,
-                                        ),
-                                        const SizedBox(width: 8),
-                                        _helpBiasChip(
-                                          label: 'Harder',
-                                          bias: TutorHelpBias.harder,
-                                          compact: true,
-                                        ),
+                                  Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.center,
+                                    children: [
+                                      if (footerProgressBadge != null) ...[
+                                        footerProgressBadge,
+                                        const SizedBox(width: 12),
                                       ],
-                                    ),
+                                      Expanded(
+                                        child: SingleChildScrollView(
+                                          scrollDirection: Axis.horizontal,
+                                          child: Row(
+                                            children: [
+                                              _buildCompactModelSelector(
+                                                db: db,
+                                                currentModel:
+                                                    settings?.model ?? '',
+                                                provider: provider,
+                                                l10n: l10n,
+                                              ),
+                                              const SizedBox(width: 8),
+                                              _actionButton(
+                                                key: const Key('learn_button'),
+                                                label: l10n.promptLearn,
+                                                selected: _isModeRecommended(
+                                                  TutorMode.learn,
+                                                ),
+                                                onPressed: _sending
+                                                    ? null
+                                                    : _startNewLearnTurn,
+                                                compact: true,
+                                              ),
+                                              const SizedBox(width: 8),
+                                              _actionButton(
+                                                key: const Key(
+                                                  'review_button',
+                                                ),
+                                                label: l10n.promptReview,
+                                                selected: _isModeRecommended(
+                                                  TutorMode.review,
+                                                ),
+                                                onPressed: _sending
+                                                    ? null
+                                                    : _startNewReviewTurn,
+                                                compact: true,
+                                              ),
+                                              const SizedBox(width: 8),
+                                              _helpBiasChip(
+                                                label: 'Easier',
+                                                bias: TutorHelpBias.easier,
+                                                compact: true,
+                                              ),
+                                              const SizedBox(width: 8),
+                                              _helpBiasChip(
+                                                label: 'Harder',
+                                                bias: TutorHelpBias.harder,
+                                                compact: true,
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                   const SizedBox(height: 8),
                                   Wrap(
@@ -755,6 +781,8 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                 runSpacing: 8,
                                 crossAxisAlignment: WrapCrossAlignment.center,
                                 children: [
+                                  if (footerProgressBadge != null)
+                                    footerProgressBadge,
                                   SizedBox(
                                     width: 260,
                                     child: _buildModelSelector(
@@ -2808,6 +2836,79 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       sessionId: widget.sessionId,
       kpKey: widget.node.kpKey,
       action: _mode.promptName,
+    );
+  }
+}
+
+class _SessionFooterProgressBadge extends StatelessWidget {
+  const _SessionFooterProgressBadge({
+    required this.db,
+    required this.studentId,
+    required this.courseVersionId,
+    required this.kpKey,
+  });
+
+  final AppDatabase db;
+  final int studentId;
+  final int courseVersionId;
+  final String kpKey;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return StreamBuilder<ResolvedStudentPassRule>(
+      stream: db.watchResolvedStudentPassRule(
+        courseVersionId: courseVersionId,
+        studentId: studentId,
+      ),
+      initialData: const ResolvedStudentPassRule(
+        easyWeight: ResolvedStudentPassRule.defaultEasyWeight,
+        mediumWeight: ResolvedStudentPassRule.defaultMediumWeight,
+        hardWeight: ResolvedStudentPassRule.defaultHardWeight,
+        passThreshold: ResolvedStudentPassRule.defaultPassThreshold,
+      ),
+      builder: (context, passRuleSnapshot) {
+        if (passRuleSnapshot.hasError) {
+          Error.throwWithStackTrace(
+            passRuleSnapshot.error!,
+            passRuleSnapshot.stackTrace ?? StackTrace.current,
+          );
+        }
+        final passRule = passRuleSnapshot.data!;
+        return StreamBuilder<ProgressEntry?>(
+          stream: db.watchProgress(
+            studentId: studentId,
+            courseVersionId: courseVersionId,
+            kpKey: kpKey,
+          ),
+          builder: (context, progressSnapshot) {
+            if (progressSnapshot.hasError) {
+              Error.throwWithStackTrace(
+                progressSnapshot.error!,
+                progressSnapshot.stackTrace ?? StackTrace.current,
+              );
+            }
+            final display = SessionProgressDisplayValue.fromProgress(
+              passRule: passRule,
+              progress: progressSnapshot.data,
+            );
+            return Container(
+              key: const Key('student_session_progress_badge'),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                display.compactLabel,
+                style: theme.textTheme.labelLarge?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }

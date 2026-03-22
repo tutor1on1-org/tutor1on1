@@ -1021,6 +1021,19 @@ ORDER BY s.started_at DESC
         .getSingleOrNull();
   }
 
+  Stream<ProgressEntry?> watchProgress({
+    required int studentId,
+    required int courseVersionId,
+    required String kpKey,
+  }) {
+    return (select(progressEntries)
+          ..where((tbl) =>
+              tbl.studentId.equals(studentId) &
+              tbl.courseVersionId.equals(courseVersionId) &
+              tbl.kpKey.equals(kpKey)))
+        .watchSingleOrNull();
+  }
+
   Future<DateTime?> getLatestProgressUpdatedAtForSync({
     required int studentId,
   }) async {
@@ -2626,6 +2639,18 @@ HAVING COUNT(*) > 1
         .getSingleOrNull();
   }
 
+  Stream<StudentPassConfig?> watchStudentPassConfig({
+    required int courseVersionId,
+    required int studentId,
+  }) {
+    return (select(studentPassConfigs)
+          ..where((tbl) =>
+              tbl.courseVersionId.equals(courseVersionId) &
+              tbl.studentId.equals(studentId))
+          ..limit(1))
+        .watchSingleOrNull();
+  }
+
   Future<ResolvedStudentPassRule> resolveStudentPassRule({
     required int courseVersionId,
     required int studentId,
@@ -2643,6 +2668,27 @@ HAVING COUNT(*) > 1
           config?.hardWeight ?? ResolvedStudentPassRule.defaultHardWeight,
       passThreshold:
           config?.passThreshold ?? ResolvedStudentPassRule.defaultPassThreshold,
+    );
+  }
+
+  Stream<ResolvedStudentPassRule> watchResolvedStudentPassRule({
+    required int courseVersionId,
+    required int studentId,
+  }) {
+    return watchStudentPassConfig(
+      courseVersionId: courseVersionId,
+      studentId: studentId,
+    ).map(
+      (config) => ResolvedStudentPassRule(
+        easyWeight:
+            config?.easyWeight ?? ResolvedStudentPassRule.defaultEasyWeight,
+        mediumWeight:
+            config?.mediumWeight ?? ResolvedStudentPassRule.defaultMediumWeight,
+        hardWeight:
+            config?.hardWeight ?? ResolvedStudentPassRule.defaultHardWeight,
+        passThreshold: config?.passThreshold ??
+            ResolvedStudentPassRule.defaultPassThreshold,
+      ),
     );
   }
 
