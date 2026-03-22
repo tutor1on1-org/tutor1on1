@@ -165,7 +165,7 @@ void main() {
       );
     });
 
-    test('rejoins split JSON string fragments with spaces inside values', () {
+    test('rejoins split JSON string fragments without inserting spaces', () {
       const provider = LlmProvider(
         id: 'openai',
         label: 'OpenAI',
@@ -181,27 +181,20 @@ void main() {
               'content': <Map<String, dynamic>>[
                 <String, dynamic>{
                   'type': 'text',
-                  'text': '{"teacher_message":"You',
+                  'text': '{"teacher_message":"Gal',
                 },
                 <String, dynamic>{
                   'type': 'text',
-                  'text': 'already',
+                  'text': 'ilean relat',
                 },
                 <String, dynamic>{
                   'type': 'text',
-                  'text': 'did',
+                  'text': 'ivity says the laws of mechanics are the same in every inert',
                 },
                 <String, dynamic>{
                   'type': 'text',
-                  'text': 'the',
-                },
-                <String, dynamic>{
-                  'type': 'text',
-                  'text': 'hard',
-                },
-                <String, dynamic>{
-                  'type': 'text',
-                  'text': 'part."}',
+                  'text':
+                      'ial frame. An inertial frame is one where a free object moves at constant velocity in a straight line unless a force acts."}',
                 },
               ],
             },
@@ -216,21 +209,39 @@ void main() {
 
       expect(
         extracted.responseText,
-        equals('{"teacher_message":"You already did the hard part."}'),
+        equals(
+          '{"teacher_message":"Galilean relativity says the laws of mechanics are the same in every inertial frame. An inertial frame is one where a free object moves at constant velocity in a straight line unless a force acts."}',
+        ),
       );
     });
 
-    test('streaming delta preserves inserted spaces inside JSON string values',
+    test('streaming delta preserves split words inside JSON string values',
         () {
-      final buffer = StringBuffer('{"teacher_message":"You');
+      final buffer = StringBuffer('{"teacher_message":"Gal');
 
       final delta = LlmReasoningSupport.appendJsonAwareFragmentAndReturnDelta(
         buffer,
-        'already',
+        'ilean',
       );
 
-      expect(delta, equals(' already'));
-      expect(buffer.toString(), equals('{"teacher_message":"You already'));
+      expect(delta, equals('ilean'));
+      expect(buffer.toString(), equals('{"teacher_message":"Galilean'));
+    });
+
+    test('streaming delta collapses duplicated seam spaces inside JSON values',
+        () {
+      final buffer = StringBuffer('{"teacher_message":"Newton ');
+
+      final delta = LlmReasoningSupport.appendJsonAwareFragmentAndReturnDelta(
+        buffer,
+        ' laws are consistent."}',
+      );
+
+      expect(delta, equals('laws are consistent."}'));
+      expect(
+        buffer.toString(),
+        equals('{"teacher_message":"Newton laws are consistent."}'),
+      );
     });
 
     test('streaming join does not insert spaces inside JSON keys', () {

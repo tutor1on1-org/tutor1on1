@@ -1,6 +1,7 @@
 # DONES
-Last updated: 2026-03-21
+Last updated: 2026-03-22
 
+- Fixed structured tutor-message spacing regression: structured JSON stream reassembly now preserves split words like `Gal` + `ilean` and `inert` + `ial` instead of inventing spaces, added overlap-only seam regression coverage, updated `BUGS.md` / `LESSONS.md`, and republished the Android APK plus Windows ZIP.
 - Fixed streamed reasoning/session-output spacing regressions: reasoning fragments now use seam-normalized joins instead of trim-all or raw-append, relay session readers rebuild `output_text` without injecting duplicate spaces, and regression coverage was added for both duplicate-space and missing-space seam cases.
 - Replaced deterministic memory consolidation with Codex memory hook automation: `scripts/hook_memory_update.ps1` now triggers on tracked line-count delta `>10`, reuses a dedicated session, updates only target memory docs, and tracks snapshot in `scripts/memory_line_snapshot.json`; pre-push now runs memory hook before validation and blocks push until memory updates are committed.
 - Improved student tutor interaction contract: added explicit student intent controls in chat UI (`Auto`, `Need Hint`, `My Attempt`, `Final`) and passed `student_intent` into prompt rendering for LEARN/REVIEW flows.

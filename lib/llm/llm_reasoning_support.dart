@@ -434,14 +434,9 @@ class LlmReasoningSupport {
       return '';
     }
     final current = buffer.toString();
-    final delta = StringBuffer();
-    if (_shouldInsertJsonStringSpace(current, fragment)) {
-      buffer.write(' ');
-      delta.write(' ');
-    }
-    buffer.write(fragment);
-    delta.write(fragment);
-    return delta.toString();
+    final normalized = _normalizeJsonFragmentSeam(current, fragment);
+    buffer.write(normalized);
+    return normalized;
   }
 
   static String _joinJsonAwareFragments(List<String> fragments) {
@@ -485,27 +480,19 @@ class LlmReasoningSupport {
     return next;
   }
 
-  static bool _shouldInsertJsonStringSpace(String current, String next) {
+  static String _normalizeJsonFragmentSeam(String current, String next) {
     if (current.isEmpty || next.isEmpty) {
-      return false;
+      return next;
     }
-    if (!_looksLikeJsonPayload(current)) {
-      return false;
+    final trailingWhitespace = _trailingInlineWhitespaceCount(current);
+    final leadingWhitespace = _leadingInlineWhitespaceCount(next);
+    if (trailingWhitespace > 0 && leadingWhitespace > 0) {
+      final overlap = trailingWhitespace < leadingWhitespace
+          ? trailingWhitespace
+          : leadingWhitespace;
+      return next.substring(overlap);
     }
-    final previousChar = current[current.length - 1];
-    final nextChar = next[0];
-    if (_isWhitespace(previousChar) || _isWhitespace(nextChar)) {
-      return false;
-    }
-    if (!_isWordLike(previousChar) || !_isWordLike(nextChar)) {
-      return false;
-    }
-    return _isInsideJsonStringValue(current);
-  }
-
-  static bool _looksLikeJsonPayload(String value) {
-    final trimmed = value.trimLeft();
-    return trimmed.startsWith('{') || trimmed.startsWith('[');
+    return next;
   }
 
   static int _leadingInlineWhitespaceCount(String value) {
@@ -525,61 +512,6 @@ class LlmReasoningSupport {
     return count;
   }
 
-  static bool _isInsideJsonStringValue(String value) {
-    final containerStack = <_JsonContainerState>[];
-    var inString = false;
-    var escaping = false;
-    var currentStringIsValue = false;
-    for (final codeUnit in value.codeUnits) {
-      final character = String.fromCharCode(codeUnit);
-      if (escaping) {
-        escaping = false;
-        continue;
-      }
-      if (character == r'\') {
-        escaping = true;
-        continue;
-      }
-      if (character == '"') {
-        if (inString) {
-          inString = false;
-          continue;
-        }
-        currentStringIsValue = _nextStringIsValue(containerStack);
-        inString = true;
-        continue;
-      }
-      if (inString) {
-        continue;
-      }
-      switch (character) {
-        case '{':
-          containerStack.add(_JsonContainerState.object());
-          break;
-        case '[':
-          containerStack.add(_JsonContainerState.array());
-          break;
-        case '}':
-        case ']':
-          if (containerStack.isNotEmpty) {
-            containerStack.removeLast();
-          }
-          break;
-        case ':':
-          if (containerStack.isNotEmpty && containerStack.last.isObject) {
-            containerStack.last.expectingObjectKey = false;
-          }
-          break;
-        case ',':
-          if (containerStack.isNotEmpty && containerStack.last.isObject) {
-            containerStack.last.expectingObjectKey = true;
-          }
-          break;
-      }
-    }
-    return inString && currentStringIsValue;
-  }
-
   static bool _isWhitespace(String value) => value.trim().isEmpty;
 
   static bool _isInlineWhitespace(String value) =>
@@ -587,28 +519,4 @@ class LlmReasoningSupport {
 
   static bool _isWordLike(String value) =>
       RegExp(r'[A-Za-z0-9]').hasMatch(value);
-
-  static bool _nextStringIsValue(List<_JsonContainerState> containerStack) {
-    if (containerStack.isEmpty) {
-      return true;
-    }
-    final current = containerStack.last;
-    if (!current.isObject) {
-      return true;
-    }
-    return !current.expectingObjectKey;
-  }
-}
-
-class _JsonContainerState {
-  _JsonContainerState.object()
-      : isObject = true,
-        expectingObjectKey = true;
-
-  _JsonContainerState.array()
-      : isObject = false,
-        expectingObjectKey = false;
-
-  final bool isObject;
-  bool expectingObjectKey;
 }

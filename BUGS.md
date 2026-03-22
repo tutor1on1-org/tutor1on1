@@ -150,7 +150,7 @@ Last updated: 2026-03-11
 - Root cause: the new device-bound auth path read platform device metadata before calling the API, and uncaught errors from hostname/device-identity lookup escaped the async button handler instead of becoming a user-visible auth failure.
 - Prevention: treat platform hostname lookup as best-effort only, fallback to a safe device name/fingerprint seed when it fails, and catch/surface any pre-request device/storage errors in `AuthController` so the UI reports the failure instead of looking unresponsive.
 
-30. Streamed reasoning/session text must normalize fragment seams instead of trimming or injecting literal spaces
-- Symptom: the `think`/reasoning section or exported session output can show doubled spaces such as `step  next`, or earlier builds can collapse word boundaries entirely.
-- Root cause: one fix stopped trimming per-fragment whitespace to preserve real provider spacing, but the downstream joiners still either blindly appended raw fragments or rebuilt them with a literal `' '` separator.
-- Prevention: preserve raw fragment text, but normalize only the seam between adjacent fragments: collapse overlapping inline whitespace to the larger run, and insert one space only when two word fragments would otherwise collapse.
+30. Fragment seam repair must distinguish natural-language streams from structured JSON tutor payloads
+- Symptom: streamed `think` text can show doubled spaces such as `step  next`, and the visible tutor reply can also gain bogus spaces inside words such as `Gal ilean`, `relat ivity`, or `inert ial`.
+- Root cause: the app reused one seam-repair heuristic for two different data shapes. Natural-language reasoning fragments sometimes need a recovered word-boundary space, but structured JSON tutor fragments are token-level byte slices that can split inside a word. A March 21 hotfix treated any alphanumeric seam inside streamed JSON as a missing space and corrupted valid tutor text.
+- Prevention: keep separate joiners. Natural-language reasoning may insert one space when two word fragments would otherwise collapse, but structured JSON reassembly must preserve raw provider bytes and only collapse duplicated explicit boundary whitespace. Never guess missing spaces inside streamed JSON strings.
