@@ -1,5 +1,5 @@
 # BUGS
-Last updated: 2026-03-11
+Last updated: 2026-03-23
 
 ## Active watch
 - Student import race after bundle download (monitoring): fixed by awaiting archive extraction in client bundle service (`f77e7e0`); keep watching for recurrence in production-like flow.
@@ -164,3 +164,13 @@ Last updated: 2026-03-11
 - Symptom: student relogin can fail course sync with `Bad state: Node names are immutable for existing IDs...` even when no teacher uploaded a new course.
 - Root cause: client sync treated a subject-matched local course as if it were the same remote course, persisted that weak link, and later tried to in-place override it with the real server bundle. The immutability guard then correctly rejected mismatched node text under the same KP ids.
 - Prevention: never trust a student `remoteCourseId` link without stored bundle identity for that same remote course (`installed bundle version` or synced bundle hash). If the link is weak, import the server bundle as a fresh local course, migrate the student's sessions/progress, and then rebind the remote course to the new local copy.
+
+33. Student session footer progress can disappear even when the data is present
+- Symptom: the model dropdown still renders on the student tutor page, but the new `easy/medium/hard/percent` badge is missing.
+- Root cause: the badge was inserted into an already-tight desktop footer strip without reworking the row constraints, so the footer overflowed horizontally and the badge could be clipped out of view in release builds.
+- Prevention: keep the badge pinned on the left and make the rest of the tutor footer horizontally scrollable instead of relying on one tight fixed row; add a widget test that renders the real footer at a constrained width and asserts the badge and model selector both remain visible.
+
+34. Teacher PIN quit prompts can stick after study mode is no longer active
+- Symptom: closing the app, logging out, or deleting the current device can still ask for the teacher PIN even though study mode is no longer active.
+- Root cause: `StudyModeController` kept stale enforced state when the same student account re-synced, and quit gating trusted that cached runtime state without first refreshing or clearing it.
+- Prevention: same-student auth sync must clear stale enforced state, and the shared quit flow must refresh current study-mode state before deciding whether a teacher PIN is required.

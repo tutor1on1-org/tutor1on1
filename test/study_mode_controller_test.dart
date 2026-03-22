@@ -101,6 +101,35 @@ void main() {
     expect(bridge.screenAwake, isFalse);
     expect(bridge.studyUiEnabled, isFalse);
   });
+
+  test('same student auth sync clears stale enforced study mode state',
+      () async {
+    final bridge = FakeStudyModePlatformBridge(isAndroid: true);
+    final service = ScreenLockService(bridge: bridge);
+    final controller = StudyModeController(screenLockService: service);
+    addTearDown(service.stop);
+
+    final student = _studentUser();
+    await controller.syncAuthUser(student);
+    await controller.applyHeartbeat(
+      student,
+      StudentDeviceHeartbeatResponse(
+        effectiveEnabled: true,
+        effectiveSource: 'manual',
+        controllerTeacherUserId: 47,
+        controllerTeacherName: 'teacher_d',
+        activeScheduleId: 0,
+        activeScheduleLabel: '',
+      ),
+    );
+
+    await controller.syncAuthUser(student);
+
+    expect(controller.enabled, isFalse);
+    expect(controller.requiresTeacherPin, isFalse);
+    expect(bridge.screenAwake, isFalse);
+    expect(bridge.studyUiEnabled, isFalse);
+  });
 }
 
 User _studentUser() {

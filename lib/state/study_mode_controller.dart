@@ -37,12 +37,13 @@ class StudyModeController extends ChangeNotifier {
       await clear();
       return;
     }
-    if (_activeStudentUserId == user!.id &&
-        _activeStudentRemoteUserId == remoteUserId) {
-      return;
-    }
+    final sameStudent = _activeStudentUserId == user!.id &&
+        _activeStudentRemoteUserId == remoteUserId;
     _activeStudentUserId = user.id;
     _activeStudentRemoteUserId = remoteUserId;
+    if (sameStudent && !_enabled && _effectiveSource == 'default') {
+      return;
+    }
     await _setState(
       enabled: false,
       effectiveSource: 'default',

@@ -2,6 +2,9 @@
 Historical timeline. Keep active runbook details in `WORKLOG.md`.
 
 ## 2026-03-23
+- Fixed the student session footer/quit root causes together: the tutor footer now keeps the `easy/medium/hard/percent` badge visible by making the desktop control strip scroll-safe and the model dropdown expand safely, while study-mode quit gating now clears stale same-student runtime state and refreshes the live heartbeat decision before prompting for a teacher PIN.
+- Added regression coverage for the real failure modes: `test/tutor_session_page_footer_test.dart` renders the student tutor footer at constrained width and asserts the badge plus model selector both stay visible, and `test/study_mode_controller_test.dart` now covers same-student auth sync clearing stale study-mode enforcement.
+- Published fresh public artifacts and verified hashes/URLs: Android APK `154e259358a307d67a6d944e1bb248f4bd6dfe3a6ce882e6202c577e2b67a130`, Windows ZIP `2fc8e004d93a1a9c880ed26baf5338c5e3bdce3abc027958fa193d684cec49b1`, plus website static sync for install-page link checks.
 - Fixed student course-sync identity handling: session download no longer binds `remoteCourseId` on subject-only fallback reuse, and enrollment sync now trusts an existing student remote-course link only when local bundle identity exists; weak links are replaced by a fresh server import plus student-data migration.
 - Added regression coverage for the Albert-style stale-link case where a weakly linked local course must be replaced instead of overridden in place.
 - Published fresh public artifacts and verified hashes/URLs: Android APK `b285ea040045a526e31134585472679239f54322d5bd13c4b1a117ae1cfcd537`, Windows ZIP `4288d496ce071a1fd11947ff3530074b25726bba0e08cd87ff870b829c2506f0`, plus website static sync for install-page link checks.

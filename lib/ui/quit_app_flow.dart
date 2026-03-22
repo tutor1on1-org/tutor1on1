@@ -29,18 +29,45 @@ class AppQuitFlow {
       context,
       listen: false,
     );
-    if (studyMode == null || !studyMode.requiresTeacherPin) {
+    if (studyMode == null) {
       return true;
     }
-    return confirmTeacherPin(context);
+    await _refreshStudyModeStateIfPossible(
+      context,
+      studyMode: studyMode,
+    );
+    if (!studyMode.requiresTeacherPin) {
+      return true;
+    }
+    return _confirmTeacherPinWithCurrentState(
+      context,
+      studyMode: studyMode,
+    );
   }
 
   static Future<bool> confirmTeacherPin(BuildContext context) async {
-    final l10n = AppLocalizations.of(context)!;
     final studyMode = context.read<StudyModeController?>();
-    if (studyMode == null || !studyMode.requiresTeacherPin) {
+    if (studyMode == null) {
       return true;
     }
+    await _refreshStudyModeStateIfPossible(
+      context,
+      studyMode: studyMode,
+    );
+    if (!studyMode.requiresTeacherPin) {
+      return true;
+    }
+    return _confirmTeacherPinWithCurrentState(
+      context,
+      studyMode: studyMode,
+    );
+  }
+
+  static Future<bool> _confirmTeacherPinWithCurrentState(
+    BuildContext context, {
+    required StudyModeController studyMode,
+  }) async {
+    final l10n = AppLocalizations.of(context)!;
     final auth = context.read<AuthController>();
     final user = auth.currentUser;
     if (user == null ||
@@ -61,6 +88,45 @@ class AppQuitFlow {
       pin: pin,
       studyMode: studyMode,
     );
+  }
+
+  static Future<void> _refreshStudyModeStateIfPossible(
+    BuildContext context, {
+    required StudyModeController studyMode,
+  }) async {
+    final auth = context.read<AuthController>();
+    final user = auth.currentUser;
+    if (user == null ||
+        user.role != 'student' ||
+        (user.remoteUserId ?? 0) <= 0) {
+      await studyMode.clear();
+      return;
+    }
+    final hadTeacherPinRequirement = studyMode.requiresTeacherPin;
+    final services = context.read<AppServices>();
+    final api = MarketplaceApiService(secureStorage: services.secureStorage);
+    try {
+      final snapshot = await services.deviceIdentityService.snapshot();
+      final response = await api.heartbeatStudentDevice(
+        deviceKey: snapshot.deviceKey,
+        deviceName: snapshot.deviceName,
+        platform: snapshot.platform,
+        timezoneName: snapshot.timezoneName,
+        timezoneOffsetMinutes: snapshot.timezoneOffsetMinutes,
+        localWeekday: snapshot.localWeekday,
+        localMinuteOfDay: snapshot.localMinuteOfDay,
+        currentStudyModeEnabled: studyMode.enabled,
+        appVersion: snapshot.appVersion,
+      );
+      await studyMode.applyHeartbeat(user, response);
+    } on Object catch (error) {
+      if (hadTeacherPinRequirement && context.mounted) {
+        _showMessage(
+          context,
+          'Failed to refresh study mode state before quit: $error',
+        );
+      }
+    }
   }
 
   static Future<String?> _promptForPin(BuildContext context) async {

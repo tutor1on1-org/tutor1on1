@@ -45,6 +45,7 @@ class ChatSessionPage extends StatefulWidget {
 
 class _ChatSessionPageState extends State<ChatSessionPage>
     with WidgetsBindingObserver {
+  late AppServices _services;
   final _inputController = TextEditingController();
   final FocusNode _inputFocus = FocusNode();
   final ScrollController _scrollController = ScrollController();
@@ -114,19 +115,19 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _services = context.read<AppServices>();
+  }
+
+  @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     if (_ttsEnabled) {
-      context.read<AppServices>().ttsService.stop(sessionId: widget.sessionId);
+      _services.ttsService.stop(sessionId: widget.sessionId);
     }
-    context
-        .read<AppServices>()
-        .ttsService
-        .stopReplay(sessionId: widget.sessionId);
-    context
-        .read<AppServices>()
-        .sttService
-        .cancelRecording(sessionId: widget.sessionId);
+    _services.ttsService.stopReplay(sessionId: widget.sessionId);
+    _services.sttService.cancelRecording(sessionId: widget.sessionId);
     _ttsGateTimer?.cancel();
     _ttsDisplayFlushTimer?.cancel();
     _ttsWordTimer?.cancel();
@@ -776,70 +777,98 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                   ),
                                 ],
                               )
-                            : Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                crossAxisAlignment: WrapCrossAlignment.center,
+                            : Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
                                 children: [
-                                  if (footerProgressBadge != null)
+                                  if (footerProgressBadge != null) ...[
                                     footerProgressBadge,
-                                  SizedBox(
-                                    width: 260,
-                                    child: _buildModelSelector(
-                                      db: db,
-                                      currentModel: settings?.model ?? '',
-                                      provider: provider,
-                                      l10n: l10n,
+                                    const SizedBox(width: 12),
+                                  ],
+                                  Expanded(
+                                    child: SingleChildScrollView(
+                                      scrollDirection: Axis.horizontal,
+                                      child: Row(
+                                        children: [
+                                          SizedBox(
+                                            width: 320,
+                                            child: _buildModelSelector(
+                                              db: db,
+                                              currentModel:
+                                                  settings?.model ?? '',
+                                              provider: provider,
+                                              l10n: l10n,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          _actionButton(
+                                            key: const Key('learn_button'),
+                                            label: l10n.promptLearn,
+                                            selected: _isModeRecommended(
+                                              TutorMode.learn,
+                                            ),
+                                            onPressed: _sending
+                                                ? null
+                                                : _startNewLearnTurn,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          _actionButton(
+                                            key: const Key('review_button'),
+                                            label: l10n.promptReview,
+                                            selected: _isModeRecommended(
+                                              TutorMode.review,
+                                            ),
+                                            onPressed: _sending
+                                                ? null
+                                                : _startNewReviewTurn,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          _helpBiasChip(
+                                            label: 'Easier',
+                                            bias: TutorHelpBias.easier,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          _helpBiasChip(
+                                            label: 'Harder',
+                                            bias: TutorHelpBias.harder,
+                                          ),
+                                          const SizedBox(width: 12),
+                                          _buildTtsControls(
+                                            l10n: l10n,
+                                            ttsSupported: ttsSupported,
+                                            livePlaybackActive:
+                                                livePlaybackActive,
+                                          ),
+                                          if (_ttsEnabled &&
+                                              _ttsPreparingFirstChunk) ...[
+                                            const SizedBox(width: 8),
+                                            Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                const SizedBox(
+                                                  width: 16,
+                                                  height: 16,
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                    strokeWidth: 2,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 8),
+                                                Text(
+                                                  l10n.ttsPreparingLabel,
+                                                ),
+                                              ],
+                                            ),
+                                          ],
+                                          const SizedBox(width: 8),
+                                          TextButton(
+                                            key: const Key('exit_button'),
+                                            onPressed:
+                                                _sending ? null : _exitSession,
+                                            child: Text(l10n.exitButton),
+                                          ),
+                                        ],
+                                      ),
                                     ),
-                                  ),
-                                  _actionButton(
-                                    key: const Key('learn_button'),
-                                    label: l10n.promptLearn,
-                                    selected:
-                                        _isModeRecommended(TutorMode.learn),
-                                    onPressed:
-                                        _sending ? null : _startNewLearnTurn,
-                                  ),
-                                  _actionButton(
-                                    key: const Key('review_button'),
-                                    label: l10n.promptReview,
-                                    selected:
-                                        _isModeRecommended(TutorMode.review),
-                                    onPressed:
-                                        _sending ? null : _startNewReviewTurn,
-                                  ),
-                                  _helpBiasChip(
-                                    label: 'Easier',
-                                    bias: TutorHelpBias.easier,
-                                  ),
-                                  _helpBiasChip(
-                                    label: 'Harder',
-                                    bias: TutorHelpBias.harder,
-                                  ),
-                                  const SizedBox(width: 12),
-                                  _buildTtsControls(
-                                    l10n: l10n,
-                                    ttsSupported: ttsSupported,
-                                    livePlaybackActive: livePlaybackActive,
-                                  ),
-                                  if (_ttsEnabled && _ttsPreparingFirstChunk)
-                                    Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        const SizedBox(
-                                          width: 16,
-                                          height: 16,
-                                          child: CircularProgressIndicator(
-                                              strokeWidth: 2),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Text(l10n.ttsPreparingLabel),
-                                      ],
-                                    ),
-                                  TextButton(
-                                    key: const Key('exit_button'),
-                                    onPressed: _sending ? null : _exitSession,
-                                    child: Text(l10n.exitButton),
                                   ),
                                 ],
                               ),
@@ -1842,15 +1871,30 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         return DropdownButtonFormField<String>(
           key: ValueKey(value),
           initialValue: value.isNotEmpty ? value : null,
+          isExpanded: true,
           decoration: InputDecoration(
             labelText: l10n.modelLabel,
             border: const OutlineInputBorder(),
           ),
+          selectedItemBuilder: (context) => models
+              .map(
+                (model) => Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    model,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              )
+              .toList(),
           items: models
               .map(
                 (model) => DropdownMenuItem(
                   value: model,
-                  child: Text(model),
+                  child: Text(
+                    model,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
               )
               .toList(),
