@@ -165,6 +165,33 @@ void main() {
       );
     });
 
+    test('preserves whitespace-only streamed JSON fragments', () {
+      const provider = LlmProvider(
+        id: 'openai',
+        label: 'OpenAI',
+        baseUrl: 'https://api.openai.com/v1',
+        models: <String>['gpt-5.4'],
+        maxTokensParam: MaxTokensParam.auto,
+        reasoningControlStyle: ReasoningControlStyle.openAiEffort,
+      );
+      final payload = <String, dynamic>{
+        'choices': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'delta': <String, dynamic>{
+              'content': ' ',
+            },
+          },
+        ],
+      };
+
+      final extracted = LlmReasoningSupport.extractResponse(
+        payload: payload,
+        provider: provider,
+      );
+
+      expect(extracted.responseText, equals(' '));
+    });
+
     test('rejoins split JSON string fragments without inserting spaces', () {
       const provider = LlmProvider(
         id: 'openai',
@@ -226,6 +253,34 @@ void main() {
 
       expect(delta, equals('ilean'));
       expect(buffer.toString(), equals('{"teacher_message":"Galilean'));
+    });
+
+    test('streaming delta preserves spaces around number fragments', () {
+      final buffer = StringBuffer('{"teacher_message":"Lesson');
+
+      final firstDelta =
+          LlmReasoningSupport.appendJsonAwareFragmentAndReturnDelta(
+            buffer,
+            ' ',
+          );
+      final secondDelta =
+          LlmReasoningSupport.appendJsonAwareFragmentAndReturnDelta(
+            buffer,
+            '2',
+          );
+      final thirdDelta =
+          LlmReasoningSupport.appendJsonAwareFragmentAndReturnDelta(
+            buffer,
+            ' examples."}',
+          );
+
+      expect(firstDelta, equals(' '));
+      expect(secondDelta, equals('2'));
+      expect(thirdDelta, equals(' examples."}'));
+      expect(
+        buffer.toString(),
+        equals('{"teacher_message":"Lesson 2 examples."}'),
+      );
     });
 
     test('streaming delta collapses duplicated seam spaces inside JSON values',

@@ -398,7 +398,7 @@ class LlmReasoningSupport {
   }
 
   static String? _normalizeJoinedText(String? value) {
-    if (value == null || value.trim().isEmpty) {
+    if (value == null || value.isEmpty) {
       return null;
     }
     return value;

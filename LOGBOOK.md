@@ -2,9 +2,11 @@
 Historical timeline. Keep active runbook details in `WORKLOG.md`.
 
 ## 2026-03-22
+- Refined the structured tutor-message spacing diagnosis: the actual shared bug was dropping whitespace-only fragments during extraction, which showed up most clearly around number-adjacent seams; the earlier alphanumeric seam heuristic was only masking that loss and could also create bogus mid-word spaces.
+- Updated the shared extractor so standalone whitespace fragments survive, and extended regression coverage for standalone-space, number-boundary, mid-word, and duplicated-whitespace seam cases.
 - Fixed the tutor-message spacing regression introduced by the 2026-03-21 JSON spacing hotfix: structured JSON fragment reassembly no longer inserts guessed spaces inside split words and now only dedupes overlapping explicit boundary whitespace.
 - Validated the hotfix with `flutter test test/llm_reasoning_support_test.dart`, `dart analyze lib/llm/llm_reasoning_support.dart lib/llm/llm_service.dart test/llm_reasoning_support_test.dart`, and `powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1 -NoPostHook`.
-- Published fresh public artifacts and verified hashes/URLs: Android APK `3205ae6d350e9eaa8c8b6d227b58d214cbe99e421a40cd8fefd1617e7d79dce2`, Windows ZIP `b8bfbeee5a0b08bf9771e1182ea6136061d7ca9ade5729c4eb7e8924b4057107`, plus website static sync for install-page link checks.
+- Published fresh public artifacts and verified hashes/URLs: Android APK `b857ff4342a06384163f033268247f0df5506771f08ad6a3224b6408576d741a`, Windows ZIP `63b9d3dacaf129adf10e69c282fef2899718ab8e12c91ca0c10f986be883f722`, plus website static sync for install-page link checks.
 
 ## 2026-03-21
 - Fixed reasoning/session-output fragment seam handling so streamed `think` text and relay-exported session messages no longer double spaces or collapse word boundaries at chunk joins.
