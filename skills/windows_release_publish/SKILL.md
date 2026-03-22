@@ -12,7 +12,7 @@ Build the Windows app, package it as `family_teacher.zip`, upload it to the remo
 
 ## Default behavior
 1. Run prompt-asset gate: `flutter test test/prompt_assets_integrity_test.dart`.
-2. Run `flutter build windows --release`.
+2. Run `flutter build windows --release` so the local `build/windows/x64/runner/Release` tree is refreshed before packaging/upload.
 3. Package `build/windows/x64/runner/Release` into `build/family_teacher.zip`.
 4. Validate ZIP artifact entries and prompt asset decoding using `scripts/validate_windows_release_zip.ps1`.
 5. Upload ZIP to remote `/tmp/family_teacher.zip`.
@@ -29,7 +29,8 @@ powershell -ExecutionPolicy Bypass -File skills/windows_release_publish/scripts/
 
 ## Useful options
 ```powershell
-# Reuse existing local build output (skip flutter build)
+# Reuse existing local build output only if `build/windows/x64/runner/Release`
+# was already rebuilt for the exact commit you are publishing
 powershell -ExecutionPolicy Bypass -File skills/windows_release_publish/scripts/publish_windows_release.ps1 -SkipBuild
 
 # Build + zip only (no upload)
@@ -55,3 +56,4 @@ powershell -ExecutionPolicy Bypass -File skills/windows_release_publish/scripts/
 - The script is intentionally fail-fast. It throws on any mismatch or non-200 link check.
 - It uses absolute command paths on remote host because remote `PATH` may be empty.
 - Candidate-first promotion avoids publishing a broken canonical ZIP when upload content is malformed.
+- A Windows server publish is incomplete if the local `build/windows/x64/runner/Release` output is stale. The local Release tree must match the uploaded ZIP for the same commit.

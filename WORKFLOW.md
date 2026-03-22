@@ -9,7 +9,7 @@ For app changes, the default same-turn handoff is: validate, build, git, and pub
 3. Implement the minimal correct root-cause change.
 4. Run a self-battle before handoff: summarize the conclusion, criticize it, then refine the answer or fix.
 5. Validate changed path first, then adjacent regressions, then end-to-end path when feasible.
-6. Run concrete builds before reporting done (`flutter build apk --release` and `flutter build windows --release` for public app releases; `go build -o family-teacher-api ./cmd/server` for backend changes).
+6. Run concrete builds before reporting done (`flutter build apk --release` and `flutter build windows --release` for public app releases; `go build -o family-teacher-api ./cmd/server` for backend changes). For Windows publishes, the uploaded ZIP must come from the freshly updated local `build/windows/x64/runner/Release` output for the same commit; do not server-upload a stale local Release directory.
 7. Update memory docs intentionally; the memory hook auto-consolidates only memory markdown files whose line-count delta is `>10` from `scripts/memory_line_snapshot.json`.
 8. Update docs (`BUGS.md`, `LOGBOOK.md`, `TODOS.md`, `DONEs.md`) as applicable.
 9. Run `powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1 -NoPostHook`.
@@ -22,9 +22,11 @@ For app changes, the default same-turn handoff is: validate, build, git, and pub
 ## Windows hotfix publish procedure
 1. Reproduce the bug and capture one deterministic validation command or repro script.
 2. Run the changed-path test first, then `powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1 -NoPostHook`.
-3. Publish the desktop artifact with `powershell -ExecutionPolicy Bypass -File skills/windows_release_publish/scripts/publish_windows_release.ps1`.
-4. If the worktree is already dirty, review unrelated paths and stage only the intended release scope; report excluded sibling-repo or preexisting changes explicitly.
-5. Commit and push after validation evidence is collected, then report the public artifact verification result.
+3. Refresh the local desktop release first with `flutter build windows --release`, or verify the existing local `build/windows/x64/runner/Release` was already rebuilt for the exact commit being published.
+4. Publish the desktop artifact with `powershell -ExecutionPolicy Bypass -File skills/windows_release_publish/scripts/publish_windows_release.ps1`.
+5. After upload, treat the refreshed local `build/windows/x64/runner/Release` tree as the canonical local copy of the published desktop release; if it is stale, the release is incomplete.
+6. If the worktree is already dirty, review unrelated paths and stage only the intended release scope; report excluded sibling-repo or preexisting changes explicitly.
+7. Commit and push after validation evidence is collected, then report the public artifact verification result.
 
 ## Bug-fix discipline
 1. Reproduce with evidence (logs, script, or minimal failing test).
