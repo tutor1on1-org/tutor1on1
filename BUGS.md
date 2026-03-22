@@ -159,3 +159,8 @@ Last updated: 2026-03-11
 - Symptom: clicking the global `X` during a student session could show `teacher account not found`, and students could also bypass enforcement through logout/current-device deletion when teacher study mode was active.
 - Root cause: teacher-enforced study mode was mixed with a persistent local settings toggle and a page-specific quit policy; the app tried to prove the teacher PIN from local state or a cached `control_pin_hash` on the student device instead of from one shared live enforcement path.
 - Prevention: keep teacher-enforced study mode as student-only runtime state driven by the heartbeat decision, gate quit/logout/current-device deletion through one shared confirmation flow, and verify the control PIN against the server instead of caching the hash on the student device.
+
+32. Student login sync can bind a remote course to the wrong local course
+- Symptom: student relogin can fail course sync with `Bad state: Node names are immutable for existing IDs...` even when no teacher uploaded a new course.
+- Root cause: client sync treated a subject-matched local course as if it were the same remote course, persisted that weak link, and later tried to in-place override it with the real server bundle. The immutability guard then correctly rejected mismatched node text under the same KP ids.
+- Prevention: never trust a student `remoteCourseId` link without stored bundle identity for that same remote course (`installed bundle version` or synced bundle hash). If the link is weak, import the server bundle as a fresh local course, migrate the student's sessions/progress, and then rebind the remote course to the new local copy.

@@ -1819,6 +1819,7 @@ class SessionSyncService {
     var courseVersionId = await _db.getCourseVersionIdForRemoteCourse(
       resolved.courseId,
     );
+    var shouldBindRemoteCourseLink = courseVersionId != null;
     if (courseVersionId == null && localTeacherId != null) {
       courseVersionId = await _findLocalCourseVersionBySubject(
         teacherId: localTeacherId,
@@ -1841,6 +1842,7 @@ class SessionSyncService {
         textbookText: '',
         sourcePath: null,
       );
+      shouldBindRemoteCourseLink = true;
     }
     if (localTeacherId != null) {
       await _ensureCourseTeacher(
@@ -1848,10 +1850,12 @@ class SessionSyncService {
         expectedTeacherId: localTeacherId,
       );
     }
-    await _bindRemoteCourseLinkIfNeeded(
-      courseVersionId: courseVersionId,
-      remoteCourseId: resolved.courseId,
-    );
+    if (shouldBindRemoteCourseLink) {
+      await _bindRemoteCourseLinkIfNeeded(
+        courseVersionId: courseVersionId,
+        remoteCourseId: resolved.courseId,
+      );
+    }
     final localStudentId = await _resolveLocalStudentId(
       currentUser: currentUser,
       studentRemoteId: item.studentUserId,
@@ -2111,6 +2115,7 @@ class SessionSyncService {
     );
 
     var courseVersionId = await _db.getCourseVersionIdForRemoteCourse(courseId);
+    var shouldBindRemoteCourseLink = courseVersionId != null;
     if (courseVersionId == null && localTeacherId != null) {
       courseVersionId = await _findLocalCourseVersionBySubject(
         teacherId: localTeacherId,
@@ -2131,6 +2136,7 @@ class SessionSyncService {
         textbookText: '',
         sourcePath: null,
       );
+      shouldBindRemoteCourseLink = true;
     }
     if (localTeacherId != null) {
       await _ensureCourseTeacher(
@@ -2138,10 +2144,12 @@ class SessionSyncService {
         expectedTeacherId: localTeacherId,
       );
     }
-    await _bindRemoteCourseLinkIfNeeded(
-      courseVersionId: courseVersionId,
-      remoteCourseId: courseId,
-    );
+    if (shouldBindRemoteCourseLink) {
+      await _bindRemoteCourseLinkIfNeeded(
+        courseVersionId: courseVersionId,
+        remoteCourseId: courseId,
+      );
+    }
     if (courseSubject.isNotEmpty) {
       await _ensureCourseSubject(
         courseVersionId: courseVersionId,

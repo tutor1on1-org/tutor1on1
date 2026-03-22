@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:path/path.dart' as p;
 
-import '../db/app_database.dart';
+import '../db/app_database.dart' hide SyncItemState;
 import '../llm/prompt_repository.dart';
 import 'course_artifact_service.dart';
 import 'course_bundle_service.dart';
@@ -356,17 +356,24 @@ class EnrollmentSyncService {
         latestBundleVersionId: latestBundleVersionId,
         latestBundleHash: enrollment.latestBundleHash,
       );
-      final syncedCourse = await _syncRemoteCourseFromServer(
+      final syncResult = await _syncRemoteCourseFromServer(
         remoteUserId: remoteUserId,
         remoteCourseId: enrollment.courseId,
         courseSubject: enrollment.courseSubject,
         latestBundleVersionId: remoteBundle.bundleVersionId,
         latestBundleHash: remoteBundle.hash,
+        syncStateDomain: _syncDomainStudentCourseBundles,
         readLocalHash: (_, __) => _readStudentCourseSyncHash(
           remoteUserId: remoteUserId,
           remoteCourseId: enrollment.courseId,
         ),
         onHashesMatch: (_, __) async {},
+        shouldTrustLinkedCourse:
+            (_, installedVersion, syncState) =>
+                _hasTrustedStudentBundleIdentity(
+          installedVersion: installedVersion,
+          syncState: syncState,
+        ),
         importRemoteCourse: (resolvedCourseVersionId) =>
             _downloadAndImportCourse(
           enrollment: enrollment,
@@ -385,6 +392,7 @@ class EnrollmentSyncService {
           summary: summary,
         ),
       );
+      final syncedCourse = syncResult.course;
       existingCourseVersionId = syncedCourse.id;
       await _ensureCourseTeacher(
         courseVersionId: existingCourseVersionId,
@@ -394,6 +402,16 @@ class EnrollmentSyncService {
         courseVersionId: existingCourseVersionId,
         remoteCourseId: enrollment.courseId,
       );
+      final replacedCourseVersionId = syncResult.replacedCourseVersionId;
+      if (replacedCourseVersionId != null &&
+          replacedCourseVersionId != existingCourseVersionId) {
+        await _db.migrateStudentCourseData(
+          studentId: currentUser.id,
+          fromCourseVersionId: replacedCourseVersionId,
+          toCourseVersionId: existingCourseVersionId,
+        );
+        await _cleanupCourseIfOrphaned(replacedCourseVersionId);
+      }
       await _db.assignStudent(
         studentId: currentUser.id,
         courseVersionId: existingCourseVersionId,
@@ -681,6 +699,7 @@ class EnrollmentSyncService {
         courseSubject: remoteCourse.subject,
         latestBundleVersionId: remoteBundle.bundleVersionId,
         latestBundleHash: remoteBundle.hash,
+        syncStateDomain: _syncDomainTeacherCourseUpload,
         readLocalHash: (localCourse, _) => _computeTeacherCourseSyncHash(
           teacher: currentUser,
           course: localCourse,
@@ -780,6 +799,12 @@ class EnrollmentSyncService {
   Future<_ResolvedCourseSyncState> _resolveCourseSyncState({
     required int remoteUserId,
     required int remoteCourseId,
+    required String syncStateDomain,
+    bool Function(
+      CourseVersion localCourse,
+      int? installedVersion,
+      SyncItemState? syncState,
+    )? shouldTrustLinkedCourse,
   }) async {
     final courseVersionId =
         await _db.getCourseVersionIdForRemoteCourse(remoteCourseId);
@@ -787,6 +812,11 @@ class EnrollmentSyncService {
         await _secureStorage.readInstalledCourseBundleVersion(
       remoteUserId: remoteUserId,
       remoteCourseId: remoteCourseId,
+    );
+    final syncState = await _secureStorage.readSyncItemState(
+      remoteUserId: remoteUserId,
+      domain: syncStateDomain,
+      scopeKey: _teacherCourseScopeKey(remoteCourseId),
     );
     final localCourse = courseVersionId == null
         ? null
@@ -797,6 +827,17 @@ class EnrollmentSyncService {
         installedVersion: installedVersion,
         localCourse: null,
         canBuildLocalBundle: false,
+        replacedCourseVersionId: null,
+      );
+    }
+    if (shouldTrustLinkedCourse != null &&
+        !shouldTrustLinkedCourse(localCourse, installedVersion, syncState)) {
+      return _ResolvedCourseSyncState(
+        courseVersionId: null,
+        installedVersion: installedVersion,
+        localCourse: null,
+        canBuildLocalBundle: false,
+        replacedCourseVersionId: localCourse.id,
       );
     }
     if (_courseArtifactService == null) {
@@ -818,15 +859,17 @@ class EnrollmentSyncService {
       installedVersion: installedVersion,
       localCourse: localCourse,
       canBuildLocalBundle: hasCachedArtifacts,
+      replacedCourseVersionId: null,
     );
   }
 
-  Future<CourseVersion> _syncRemoteCourseFromServer({
+  Future<_RemoteCourseSyncResult> _syncRemoteCourseFromServer({
     required int remoteUserId,
     required int remoteCourseId,
     required String courseSubject,
     required int latestBundleVersionId,
     required String latestBundleHash,
+    required String syncStateDomain,
     required Future<String?> Function(
       CourseVersion localCourse,
       int? installedVersion,
@@ -842,39 +885,75 @@ class EnrollmentSyncService {
       String localHash,
       int? installedVersion,
     ) onHashesDiffer,
+    bool Function(
+      CourseVersion localCourse,
+      int? installedVersion,
+      SyncItemState? syncState,
+    )? shouldTrustLinkedCourse,
   }) async {
     final remoteHash = latestBundleHash.trim();
     final localState = await _resolveCourseSyncState(
       remoteUserId: remoteUserId,
       remoteCourseId: remoteCourseId,
+      syncStateDomain: syncStateDomain,
+      shouldTrustLinkedCourse: shouldTrustLinkedCourse,
     );
     if (remoteHash.isEmpty) {
       if (localState.localCourse != null &&
           localState.installedVersion != null &&
           latestBundleVersionId <= localState.installedVersion!) {
-        return localState.localCourse!;
+        return _RemoteCourseSyncResult(
+          course: localState.localCourse!,
+          replacedCourseVersionId: localState.replacedCourseVersionId,
+        );
       }
-      return importRemoteCourse(localState.courseVersionId);
+      return _RemoteCourseSyncResult(
+        course: await importRemoteCourse(localState.courseVersionId),
+        replacedCourseVersionId: localState.replacedCourseVersionId,
+      );
     }
     if (localState.localCourse == null || !localState.canBuildLocalBundle) {
-      return importRemoteCourse(localState.courseVersionId);
+      return _RemoteCourseSyncResult(
+        course: await importRemoteCourse(localState.courseVersionId),
+        replacedCourseVersionId: localState.replacedCourseVersionId,
+      );
     }
     final localHash = (await readLocalHash(
                 localState.localCourse!, localState.installedVersion))
             ?.trim() ??
         '';
     if (localHash.isEmpty) {
-      return importRemoteCourse(localState.courseVersionId);
+      return _RemoteCourseSyncResult(
+        course: await importRemoteCourse(localState.courseVersionId),
+        replacedCourseVersionId: localState.replacedCourseVersionId,
+      );
     }
     if (localHash == remoteHash) {
       await onHashesMatch(localState.localCourse!, localHash);
-      return localState.localCourse!;
+      return _RemoteCourseSyncResult(
+        course: localState.localCourse!,
+        replacedCourseVersionId: localState.replacedCourseVersionId,
+      );
     }
-    return onHashesDiffer(
-      localState.localCourse!,
-      localHash,
-      localState.installedVersion,
+    return _RemoteCourseSyncResult(
+      course: await onHashesDiffer(
+        localState.localCourse!,
+        localHash,
+        localState.installedVersion,
+      ),
+      replacedCourseVersionId: localState.replacedCourseVersionId,
     );
+  }
+
+  bool _hasTrustedStudentBundleIdentity({
+    required int? installedVersion,
+    required SyncItemState? syncState,
+  }) {
+    if (installedVersion != null && installedVersion > 0) {
+      return true;
+    }
+    final contentHash = syncState?.contentHash.trim() ?? '';
+    return contentHash.isNotEmpty;
   }
 
   Future<String?> _readStudentCourseSyncHash({
@@ -1994,12 +2073,24 @@ class _ResolvedCourseSyncState {
     required this.installedVersion,
     required this.localCourse,
     required this.canBuildLocalBundle,
+    required this.replacedCourseVersionId,
   });
 
   final int? courseVersionId;
   final int? installedVersion;
   final CourseVersion? localCourse;
   final bool canBuildLocalBundle;
+  final int? replacedCourseVersionId;
+}
+
+class _RemoteCourseSyncResult {
+  const _RemoteCourseSyncResult({
+    required this.course,
+    required this.replacedCourseVersionId,
+  });
+
+  final CourseVersion course;
+  final int? replacedCourseVersionId;
 }
 
 class _SyncTransferSummary {

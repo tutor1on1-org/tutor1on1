@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -1071,6 +1072,152 @@ void main() {
       );
       expect(movedProgress, isNotNull);
       expect(movedProgress!.lit, isTrue);
+    },
+  );
+
+  test(
+    'student sync replaces weak remote link with fresh import and migrates data',
+    () async {
+      final studentId = await db.createUser(
+        username: 'student_weak_remote_link',
+        pinHash: 'hash',
+        role: 'student',
+        remoteUserId: 963,
+      );
+      final localTeacherId = await db.createUser(
+        username: 'remote_teacher_weak_link',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 9913,
+      );
+      final localDir = await _createCourseFolder(
+        label: 'student_weak_remote_link_local',
+        rootTitle: 'Local Topic',
+      );
+      final remoteDir = await _createCourseFolder(
+        label: 'student_weak_remote_link_remote',
+        rootTitle: 'Remote Topic',
+      );
+      tempPaths.add(localDir.path);
+      tempPaths.add(remoteDir.path);
+      final remoteBundle = await CourseBundleService().createBundleFromFolder(
+        remoteDir.path,
+      );
+      tempFiles.add(remoteBundle.path);
+      final remoteHash =
+          await CourseBundleService().computeBundleSemanticHash(remoteBundle);
+
+      final staleCourseId = await db.createCourseVersion(
+        teacherId: localTeacherId,
+        subject: 'MATH',
+        granularity: 1,
+        textbookText: '1 Local Topic',
+        sourcePath: localDir.path,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: staleCourseId,
+        remoteCourseId: 8107,
+      );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: staleCourseId,
+      );
+      await db.upsertProgress(
+        studentId: studentId,
+        courseVersionId: staleCourseId,
+        kpKey: '1',
+        lit: true,
+      );
+      final startedAt = DateTime.parse('2026-03-03T08:00:00Z');
+      final sessionId = await db.into(db.chatSessions).insert(
+            ChatSessionsCompanion.insert(
+              studentId: studentId,
+              courseVersionId: staleCourseId,
+              kpKey: '1',
+              title: const Value('Local Session'),
+              status: const Value('active'),
+              startedAt: Value(startedAt),
+            ),
+          );
+      await db.into(db.chatMessages).insert(
+            ChatMessagesCompanion.insert(
+              sessionId: sessionId,
+              role: 'assistant',
+              content: 'LOCAL_MESSAGE',
+              createdAt: Value(startedAt),
+            ),
+          );
+
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+
+      final secureStorage = _TestSecureStorageService();
+      final api = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+        enrollments: <EnrollmentSummary>[
+          EnrollmentSummary(
+            enrollmentId: 17,
+            courseId: 8107,
+            teacherId: 9913,
+            status: 'approved',
+            assignedAt: '2026-03-03T00:00:00Z',
+            courseSubject: 'MATH',
+            teacherName: 'remote_teacher_weak_link',
+            latestBundleVersionId: 57,
+            latestBundleHash: remoteHash,
+          ),
+        ],
+        bundleFilesByVersionId: <int, File>{57: remoteBundle},
+      );
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService: CourseService(db),
+        marketplaceApi: api,
+        promptRepository: PromptRepository(db: db),
+        courseArtifactService: CourseArtifactService(),
+      );
+
+      await service.syncIfReady(currentUser: student!);
+
+      final linkedCourseId = await db.getCourseVersionIdForRemoteCourse(8107);
+      expect(linkedCourseId, isNotNull);
+      expect(linkedCourseId, isNot(equals(staleCourseId)));
+
+      final assigned = await db.getAssignedCoursesForStudent(studentId);
+      expect(assigned.length, equals(1));
+      expect(assigned.first.id, equals(linkedCourseId));
+
+      final staleCourse = await db.getCourseVersionById(staleCourseId);
+      expect(staleCourse, isNull);
+
+      final importedCourse = await db.getCourseVersionById(linkedCourseId!);
+      expect(importedCourse, isNotNull);
+      expect(importedCourse!.textbookText, contains('Remote Topic'));
+
+      final movedProgress = await db.getProgress(
+        studentId: studentId,
+        courseVersionId: linkedCourseId,
+        kpKey: '1',
+      );
+      expect(movedProgress, isNotNull);
+      expect(movedProgress!.lit, isTrue);
+
+      final movedSession = await db.getSession(sessionId);
+      expect(movedSession, isNotNull);
+      expect(movedSession!.courseVersionId, equals(linkedCourseId));
+      final movedMessages = await db.getMessagesForSession(sessionId);
+      expect(movedMessages, hasLength(1));
+      expect(movedMessages.single.content, equals('LOCAL_MESSAGE'));
+
+      expect(api.downloadBundleCalls, equals(1));
+      expect(
+        await secureStorage.readInstalledCourseBundleVersion(
+          remoteUserId: 963,
+          remoteCourseId: 8107,
+        ),
+        equals(57),
+      );
     },
   );
 

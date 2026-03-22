@@ -3,6 +3,9 @@ Last updated: 2026-03-19
 
 All commands are expected from repository root (`C:\family_teacher\app`) unless stated otherwise.
 
+## Host shell alias
+- `codexlast relay_letta_tutor` reopens the latest `relay_letta_tutor` Codex relay session and prints the relay name, session id, session path, message count, and numbered recent messages; when relaying its output to the user, keep the raw line layout and omit message timestamps.
+
 ## Local secrets policy
 - Keep real credentials only in local `.env` (untracked).
 - Use `.env.example` as the sanitized template and never commit real secrets.
