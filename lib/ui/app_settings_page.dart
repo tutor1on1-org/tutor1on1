@@ -49,7 +49,6 @@ class _SettingsPageState extends State<SettingsPage> {
   String? _sttModelSelection;
   bool _sttAutoSend = false;
   bool _enterToSend = true;
-  bool _studyModeEnabled = false;
   bool _ttsModelOverride = false;
   bool _sttModelOverride = false;
   bool _modelsLoaded = false;
@@ -124,7 +123,6 @@ class _SettingsPageState extends State<SettingsPage> {
       _mode = settings.llmMode;
       _sttAutoSend = settings.sttAutoSend;
       _enterToSend = Platform.isAndroid ? false : settings.enterToSend;
-      _studyModeEnabled = settings.studyModeEnabled;
       _initialized = true;
     }
     _maybeLoadDeviceName(services);
@@ -406,7 +404,6 @@ class _SettingsPageState extends State<SettingsPage> {
               llmMode: _mode,
               sttAutoSend: _sttAutoSend,
               enterToSend: Platform.isAndroid ? false : _enterToSend,
-              studyModeEnabled: _studyModeEnabled,
             );
             if (context.mounted) {
               _showMessage(context, l10n.settingsSavedMessage);
@@ -511,13 +508,6 @@ class _SettingsPageState extends State<SettingsPage> {
         Text(
           l10n.appSectionTitle,
           style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: Text(l10n.studyModeLabel),
-          subtitle: Text(l10n.studyModeDescription),
-          value: _studyModeEnabled,
-          onChanged: (value) => _handleStudyModeToggle(value),
         ),
         ElevatedButton(
           onPressed: _handleQuit,
@@ -771,7 +761,6 @@ class _SettingsPageState extends State<SettingsPage> {
                   llmMode: _mode,
                   sttAutoSend: _sttAutoSend,
                   enterToSend: Platform.isAndroid ? false : _enterToSend,
-                  studyModeEnabled: _studyModeEnabled,
                 );
                 await services.secureStorage
                     .writeApiKeyForBaseUrl(provider.baseUrl, apiKey);
@@ -1361,27 +1350,7 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Future<void> _handleStudyModeToggle(bool enabled) async {
-    if (enabled == _studyModeEnabled) {
-      return;
-    }
-    if (!enabled) {
-      final confirmed = await AppQuitFlow.confirmTeacherPin(context);
-      if (!confirmed) {
-        return;
-      }
-    }
-    setState(() => _studyModeEnabled = enabled);
-    final settingsController = context.read<SettingsController>();
-    await settingsController.updateStudyMode(enabled);
-  }
-
   Future<void> _handleQuit() async {
-    final settings = context.read<SettingsController>().settings;
-    final requiresPin = settings?.studyModeEnabled ?? false;
-    await AppQuitFlow.handleQuit(
-      context,
-      requireTeacherPin: requiresPin,
-    );
+    await AppQuitFlow.handleQuit(context);
   }
 }

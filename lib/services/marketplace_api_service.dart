@@ -825,7 +825,6 @@ class StudentDeviceHeartbeatResponse {
     required this.effectiveSource,
     required this.controllerTeacherUserId,
     required this.controllerTeacherName,
-    required this.controlPinHash,
     required this.activeScheduleId,
     required this.activeScheduleLabel,
   });
@@ -834,7 +833,6 @@ class StudentDeviceHeartbeatResponse {
   final String effectiveSource;
   final int controllerTeacherUserId;
   final String controllerTeacherName;
-  final String controlPinHash;
   final int activeScheduleId;
   final String activeScheduleLabel;
 
@@ -845,7 +843,6 @@ class StudentDeviceHeartbeatResponse {
       controllerTeacherUserId:
           (json['controller_teacher_user_id'] as num?)?.toInt() ?? 0,
       controllerTeacherName: (json['controller_teacher_name'] as String?) ?? '',
-      controlPinHash: (json['control_pin_hash'] as String?) ?? '',
       activeScheduleId: (json['active_schedule_id'] as num?)?.toInt() ?? 0,
       activeScheduleLabel: (json['active_schedule_label'] as String?) ?? '',
     );
@@ -1175,6 +1172,18 @@ class MarketplaceApiService {
       throw MarketplaceApiException('Unexpected response format.');
     }
     return StudentDeviceHeartbeatResponse.fromJson(response);
+  }
+
+  Future<void> verifyStudentStudyModeControlPin({
+    required String controlPin,
+    required int localWeekday,
+    required int localMinuteOfDay,
+  }) async {
+    await _post('/api/student/study-mode/verify-control-pin', {
+      'control_pin': controlPin.trim(),
+      'local_weekday': localWeekday,
+      'local_minute_of_day': localMinuteOfDay,
+    });
   }
 
   Future<TeacherCourseSummary> createTeacherCourse({

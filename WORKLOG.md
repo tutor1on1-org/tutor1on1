@@ -1,5 +1,5 @@
 # WORKLOG
-Last updated: 2026-03-19
+Last updated: 2026-03-22
 
 ## Remote host (active)
 - Provider: AliCloud ECS
@@ -56,6 +56,16 @@ Last updated: 2026-03-19
 3. Verify health endpoint and log tail.
 
 Historical setup timeline moved to `LOGBOOK.md`.
+
+## Remote server updates (2026-03-22, teacher-enforced study-mode quit fix)
+- Deployed updated API binary to `/opt/family_teacher_remote/bin/family-teacher-api`.
+- Added live route `POST /api/student/study-mode/verify-control-pin` and verified it returns `401 unauthorized` without auth, confirming the new contract is active on the public host.
+- Restarted `family-teacher-api.service`; current service start time is `2026-03-22 13:10:30 CST`.
+- Verified:
+  - health endpoint `https://api.tutor1on1.org/health` returned `{"status":"ok"}` after restart.
+  - canonical Android APK `https://api.tutor1on1.org/downloads/family_teacher.apk` now serves SHA-256 `518c6fa9aea0f20398f930c6d4b3f8a1df6a0e3d97f7511b0a706611c31b688f`.
+  - canonical Windows ZIP `https://api.tutor1on1.org/downloads/family_teacher.zip` now serves SHA-256 `76c0ebdbfcfbe15f87fd5c7392067ee9a8f1dfa88db94dc04ab208995598a96e`.
+  - website static install pages under `https://www.tutor1on1.org/` and `/zh/` returned HTTP 200 and still referenced the canonical download paths.
 
 ## Remote server updates (2026-03-19, Android + Windows + website release)
 - Published canonical Android APK to `https://api.tutor1on1.org/downloads/family_teacher.apk`.

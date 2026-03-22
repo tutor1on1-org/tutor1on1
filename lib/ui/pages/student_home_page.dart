@@ -10,9 +10,10 @@ import '../../services/app_services.dart';
 import '../../services/marketplace_api_service.dart';
 import '../../services/sync_log_repository.dart';
 import '../../state/auth_controller.dart';
-import '../../state/settings_controller.dart';
+import '../../state/study_mode_controller.dart';
 import '../app_settings_page.dart';
 import '../app_close_button.dart';
+import '../quit_app_flow.dart';
 import '../progress_display.dart';
 import 'marketplace_page.dart';
 import 'skill_tree_page.dart';
@@ -143,6 +144,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
       return;
     }
     final services = context.read<AppServices>();
+    final studyModeController = context.read<StudyModeController>();
     final stats = SyncRunStats();
     final trigger = showOverlay ? 'login' : 'timer';
     Object? syncError;
@@ -160,6 +162,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
       await _syncRemoteStudyMode(
         services: services,
         user: user,
+        studyModeController: studyModeController,
       );
     } catch (error) {
       syncError = error;
@@ -207,13 +210,11 @@ class _StudentHomePageState extends State<StudentHomePage> {
   Future<void> _syncRemoteStudyMode({
     required AppServices services,
     required User user,
+    required StudyModeController studyModeController,
   }) async {
-    if (user.role != 'student' ||
-        (user.remoteUserId ?? 0) <= 0 ||
-        !mounted) {
+    if (user.role != 'student' || (user.remoteUserId ?? 0) <= 0 || !mounted) {
       return;
     }
-    final settingsController = context.read<SettingsController>();
     final snapshot = await services.deviceIdentityService.snapshot();
     final response = await _marketplaceApi.heartbeatStudentDevice(
       deviceKey: snapshot.deviceKey,
@@ -223,20 +224,10 @@ class _StudentHomePageState extends State<StudentHomePage> {
       timezoneOffsetMinutes: snapshot.timezoneOffsetMinutes,
       localWeekday: snapshot.localWeekday,
       localMinuteOfDay: snapshot.localMinuteOfDay,
-      currentStudyModeEnabled:
-          settingsController.settings?.studyModeEnabled ?? false,
+      currentStudyModeEnabled: studyModeController.enabled,
       appVersion: snapshot.appVersion,
     );
-    final pinHash = response.controlPinHash.trim();
-    if (pinHash.isEmpty) {
-      await services.secureStorage.deleteRemoteStudyModePinHash();
-    } else {
-      await services.secureStorage.writeRemoteStudyModePinHash(pinHash);
-    }
-    final localEnabled = settingsController.settings?.studyModeEnabled ?? false;
-    if (localEnabled != response.effectiveEnabled) {
-      await settingsController.updateStudyMode(response.effectiveEnabled);
-    }
+    await studyModeController.applyHeartbeat(user, response);
   }
 
   Future<void> _takeServerCopy() async {
@@ -476,7 +467,14 @@ class _StudentHomePageState extends State<StudentHomePage> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.logout),
-                  onPressed: () => auth.logout(),
+                  onPressed: () async {
+                    final confirmed =
+                        await AppQuitFlow.confirmTeacherPinIfRequired(context);
+                    if (!confirmed) {
+                      return;
+                    }
+                    await auth.logout();
+                  },
                 ),
               ],
             ),

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../state/auth_controller.dart';
 import '../app_close_button.dart';
+import '../quit_app_flow.dart';
 
 class TeacherPendingPage extends StatelessWidget {
   const TeacherPendingPage({
@@ -31,7 +32,14 @@ class TeacherPendingPage extends StatelessWidget {
           actions: [
             IconButton(
               icon: const Icon(Icons.logout),
-              onPressed: () => auth.logout(),
+              onPressed: () async {
+                final confirmed =
+                    await AppQuitFlow.confirmTeacherPinIfRequired(context);
+                if (!confirmed) {
+                  return;
+                }
+                await auth.logout();
+              },
             ),
           ],
         ),

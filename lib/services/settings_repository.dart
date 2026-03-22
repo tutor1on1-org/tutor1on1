@@ -85,6 +85,12 @@ class SettingsRepository {
         );
         needsUpdate = true;
       }
+      if (existing.studyModeEnabled) {
+        companion = companion.copyWith(
+          studyModeEnabled: const Value(false),
+        );
+        needsUpdate = true;
+      }
       if (needsUpdate) {
         await (_db.update(_db.appSettings)
               ..where((tbl) => tbl.id.equals(existing.id)))
@@ -143,7 +149,6 @@ class SettingsRepository {
     required String llmMode,
     required bool sttAutoSend,
     required bool enterToSend,
-    required bool studyModeEnabled,
     String? locale,
   }) async {
     final current = await load();
@@ -168,24 +173,11 @@ class SettingsRepository {
       ttsAudioPath: Value(resolvedPath),
       sttAutoSend: Value(sttAutoSend),
       enterToSend: Value(enterToSend),
-      studyModeEnabled: Value(studyModeEnabled),
       logDirectory: Value(resolvedLogDir),
       llmLogPath: Value(logPaths['llm']!),
       ttsLogPath: Value(logPaths['tts']!),
       llmMode: Value(llmMode),
       locale: Value(locale ?? current.locale),
-      updatedAt: Value(DateTime.now()),
-    );
-    await (_db.update(_db.appSettings)
-          ..where((tbl) => tbl.id.equals(current.id)))
-        .write(companion);
-    return (await _db.select(_db.appSettings).getSingle());
-  }
-
-  Future<AppSetting> updateStudyModeEnabled(bool enabled) async {
-    final current = await load();
-    final companion = AppSettingsCompanion(
-      studyModeEnabled: Value(enabled),
       updatedAt: Value(DateTime.now()),
     );
     await (_db.update(_db.appSettings)

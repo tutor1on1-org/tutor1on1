@@ -79,6 +79,7 @@ func registerRoutes(app *fiber.App, deps handlers.Dependencies) {
 	api.Get("/enrollments/quit-requests", enrollments.ListStudentQuitRequests)
 	api.Get("/enrollments/deletion-events", syncLimiter.Handler(middleware.KeyByIP), enrollments.ListDeletionEvents)
 	api.Post("/student/device/heartbeat", syncLimiter.Handler(middleware.KeyByIP), studyMode.HeartbeatStudentDevice)
+	api.Post("/student/study-mode/verify-control-pin", syncLimiter.Handler(middleware.KeyByIP), studyMode.VerifyStudentStudyModeControlPin)
 	api.Get("/teacher/enrollment-requests", enrollments.ListTeacherRequests)
 	api.Post("/teacher/enrollment-requests/:id/approve", enrollments.ApproveRequest)
 	api.Post("/teacher/enrollment-requests/:id/reject", enrollments.RejectRequest)

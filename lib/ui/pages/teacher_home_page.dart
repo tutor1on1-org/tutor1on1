@@ -16,6 +16,7 @@ import '../../services/teacher_marketplace_upload_service.dart';
 import '../../state/auth_controller.dart';
 import '../app_close_button.dart';
 import '../app_settings_page.dart';
+import '../quit_app_flow.dart';
 import 'course_version_page.dart';
 import 'marketplace_page.dart';
 import 'prompt_settings_page.dart';
@@ -219,7 +220,14 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.logout),
-                  onPressed: () => auth.logout(),
+                  onPressed: () async {
+                    final confirmed =
+                        await AppQuitFlow.confirmTeacherPinIfRequired(context);
+                    if (!confirmed) {
+                      return;
+                    }
+                    await auth.logout();
+                  },
                 ),
               ],
             ),

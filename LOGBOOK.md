@@ -2,6 +2,9 @@
 Historical timeline. Keep active runbook details in `WORKLOG.md`.
 
 ## 2026-03-22
+- Fixed teacher-enforced study mode root cause: the student quit gate now comes from one runtime study-mode controller instead of persistent app settings or tutor-page mode, the global `X` always means app quit, logout/current-device deletion share the same teacher gate, and PIN verification moved back to the server instead of using cached `control_pin_hash` on the student device.
+- Deployed the matching backend route change (`POST /api/student/study-mode/verify-control-pin`) to `family-teacher-api.service`, verified public health returned `{"status":"ok"}`, confirmed the new route returns `401` without auth, and recorded the live restart timestamp `2026-03-22 13:10:30 CST`.
+- Published fresh public artifacts and verified hashes/URLs: Android APK `518c6fa9aea0f20398f930c6d4b3f8a1df6a0e3d97f7511b0a706611c31b688f`, Windows ZIP `76c0ebdbfcfbe15f87fd5c7392067ee9a8f1dfa88db94dc04ab208995598a96e`, plus website static sync for install-page link checks.
 - Refined the structured tutor-message spacing diagnosis: the actual shared bug was dropping whitespace-only fragments during extraction, which showed up most clearly around number-adjacent seams; the earlier alphanumeric seam heuristic was only masking that loss and could also create bogus mid-word spaces.
 - Updated the shared extractor so standalone whitespace fragments survive, and extended regression coverage for standalone-space, number-boundary, mid-word, and duplicated-whitespace seam cases.
 - Fixed the tutor-message spacing regression introduced by the 2026-03-21 JSON spacing hotfix: structured JSON fragment reassembly no longer inserts guessed spaces inside split words and now only dedupes overlapping explicit boundary whitespace.

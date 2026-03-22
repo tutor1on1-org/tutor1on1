@@ -5,6 +5,7 @@ import '../../services/app_services.dart';
 import '../../services/marketplace_api_service.dart';
 import '../../state/auth_controller.dart';
 import '../app_close_button.dart';
+import '../quit_app_flow.dart';
 
 class AdminHomePage extends StatefulWidget {
   const AdminHomePage({super.key});
@@ -87,7 +88,14 @@ class _AdminHomePageState extends State<AdminHomePage> {
               ),
               IconButton(
                 icon: const Icon(Icons.logout),
-                onPressed: () => auth.logout(),
+                onPressed: () async {
+                  final confirmed =
+                      await AppQuitFlow.confirmTeacherPinIfRequired(context);
+                  if (!confirmed) {
+                    return;
+                  }
+                  await auth.logout();
+                },
               ),
             ],
           ),

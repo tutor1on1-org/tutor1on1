@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart';
 
 import '../db/app_database.dart';
-import '../services/screen_lock_service.dart';
 import '../services/settings_repository.dart';
 
 class SettingsController extends ChangeNotifier {
@@ -18,7 +17,6 @@ class SettingsController extends ChangeNotifier {
 
   Future<void> _load() async {
     _settings = await _repository.load();
-    await _applyStudyMode();
     _loading = false;
     notifyListeners();
   }
@@ -45,7 +43,6 @@ class SettingsController extends ChangeNotifier {
     required String llmMode,
     required bool sttAutoSend,
     required bool enterToSend,
-    required bool studyModeEnabled,
     String? locale,
   }) async {
     _settings = await _repository.update(
@@ -64,26 +61,13 @@ class SettingsController extends ChangeNotifier {
       llmMode: llmMode,
       sttAutoSend: sttAutoSend,
       enterToSend: enterToSend,
-      studyModeEnabled: studyModeEnabled,
       locale: locale,
     );
-    await _applyStudyMode();
     notifyListeners();
   }
 
   Future<void> updateLocale(String? locale) async {
     _settings = await _repository.updateLocale(locale);
     notifyListeners();
-  }
-
-  Future<void> updateStudyMode(bool enabled) async {
-    _settings = await _repository.updateStudyModeEnabled(enabled);
-    await _applyStudyMode();
-    notifyListeners();
-  }
-
-  Future<void> _applyStudyMode() async {
-    final enabled = _settings?.studyModeEnabled ?? false;
-    await ScreenLockService.instance.setEnabled(enabled);
   }
 }

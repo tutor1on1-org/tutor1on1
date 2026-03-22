@@ -67,7 +67,6 @@ Future<void> _pointSettingsToTempLogs(
     llmMode: 'LIVE',
     sttAutoSend: current.sttAutoSend,
     enterToSend: current.enterToSend,
-    studyModeEnabled: current.studyModeEnabled,
     locale: current.locale,
   );
 }

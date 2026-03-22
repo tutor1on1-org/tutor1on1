@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../services/app_services.dart';
 import '../../services/marketplace_api_service.dart';
 import '../../state/auth_controller.dart';
+import '../quit_app_flow.dart';
 
 class AccountDevicesPage extends StatefulWidget {
   const AccountDevicesPage({super.key});
@@ -81,6 +82,13 @@ class _AccountDevicesPageState extends State<AccountDevicesPage> {
     );
     if (confirmed != true || !mounted) {
       return;
+    }
+    if (deletingCurrent) {
+      final pinConfirmed =
+          await AppQuitFlow.confirmTeacherPinIfRequired(context);
+      if (!pinConfirmed || !mounted) {
+        return;
+      }
     }
     try {
       final result = await _api.deleteAccountDevice(device.deviceKey);

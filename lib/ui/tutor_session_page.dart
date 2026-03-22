@@ -288,7 +288,6 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                       onPressed: _sending ? null : _renameSession,
                     ),
                 ],
-                requireTeacherPin: _mode == TutorMode.learn,
               ),
             ),
             body: Stack(

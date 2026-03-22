@@ -5,68 +5,49 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 
-import '../db/app_database.dart';
-import '../security/pin_hasher.dart';
 import '../services/app_services.dart';
+import '../services/marketplace_api_service.dart';
 import '../services/screen_lock_service.dart';
 import '../state/auth_controller.dart';
-import '../state/settings_controller.dart';
+import '../state/study_mode_controller.dart';
 import '../l10n/app_localizations.dart';
 
 class AppQuitFlow {
   const AppQuitFlow._();
 
-  static Future<bool> handleQuit(
-    BuildContext context, {
-    required bool requireTeacherPin,
-  }) async {
-    final settingsController = Provider.of<SettingsController?>(
-      context,
-      listen: false,
-    );
-    final requiresStudyModePin =
-        settingsController?.settings?.studyModeEnabled ?? false;
-    if (requireTeacherPin || requiresStudyModePin) {
-      final confirmed = await confirmTeacherPin(context);
-      if (!confirmed) {
-        return false;
-      }
+  static Future<bool> handleQuit(BuildContext context) async {
+    final confirmed = await confirmTeacherPinIfRequired(context);
+    if (!confirmed) {
+      return false;
     }
     await _quitApp();
     return true;
   }
 
+  static Future<bool> confirmTeacherPinIfRequired(BuildContext context) async {
+    final studyMode = Provider.of<StudyModeController?>(
+      context,
+      listen: false,
+    );
+    if (studyMode == null || !studyMode.requiresTeacherPin) {
+      return true;
+    }
+    return confirmTeacherPin(context);
+  }
+
   static Future<bool> confirmTeacherPin(BuildContext context) async {
     final l10n = AppLocalizations.of(context)!;
+    final studyMode = context.read<StudyModeController?>();
+    if (studyMode == null || !studyMode.requiresTeacherPin) {
+      return true;
+    }
     final auth = context.read<AuthController>();
-    final db = context.read<AppDatabase>();
     final user = auth.currentUser;
-    if (user == null) {
+    if (user == null ||
+        user.role != 'student' ||
+        (user.remoteUserId ?? 0) <= 0) {
       if (context.mounted) {
         _showMessage(context, l10n.notLoggedInMessage);
-      }
-      return false;
-    }
-
-    var expectedPinHash = '';
-    User? teacher;
-    if (user.role == 'teacher') {
-      teacher = user;
-    } else if (user.teacherId != null) {
-      teacher = await db.getUserById(user.teacherId!);
-    }
-    if (teacher != null) {
-      expectedPinHash = teacher.pinHash;
-    } else {
-      final services = context.read<AppServices>();
-      expectedPinHash =
-          (await services.secureStorage.readRemoteStudyModePinHash())?.trim() ??
-              '';
-    }
-
-    if (expectedPinHash.isEmpty) {
-      if (context.mounted) {
-        _showMessage(context, l10n.teacherNotFoundMessage);
       }
       return false;
     }
@@ -75,16 +56,11 @@ class AppQuitFlow {
     if (pin == null || pin.isEmpty) {
       return false;
     }
-
-    final hash = PinHasher.hash(pin);
-    if (hash != expectedPinHash) {
-      if (context.mounted) {
-        _showMessage(context, l10n.invalidPinMessage);
-      }
-      return false;
-    }
-
-    return true;
+    return _verifyTeacherPin(
+      context,
+      pin: pin,
+      studyMode: studyMode,
+    );
   }
 
   static Future<String?> _promptForPin(BuildContext context) async {
@@ -134,5 +110,45 @@ class AppQuitFlow {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
     );
+  }
+
+  static Future<bool> _verifyTeacherPin(
+    BuildContext context, {
+    required String pin,
+    required StudyModeController studyMode,
+  }) async {
+    final l10n = AppLocalizations.of(context)!;
+    final services = context.read<AppServices>();
+    final api = MarketplaceApiService(secureStorage: services.secureStorage);
+    try {
+      final snapshot = await services.deviceIdentityService.snapshot();
+      await api.verifyStudentStudyModeControlPin(
+        controlPin: pin,
+        localWeekday: snapshot.localWeekday,
+        localMinuteOfDay: snapshot.localMinuteOfDay,
+      );
+      return true;
+    } on MarketplaceApiException catch (error) {
+      if (error.statusCode == 403) {
+        if (context.mounted) {
+          _showMessage(context, l10n.invalidPinMessage);
+        }
+        return false;
+      }
+      if (error.statusCode == 409) {
+        await studyMode.clear();
+        return true;
+      }
+      if (context.mounted) {
+        _showMessage(
+            context, 'Teacher PIN verification failed: ${error.message}');
+      }
+      return false;
+    } on Object catch (error) {
+      if (context.mounted) {
+        _showMessage(context, 'Teacher PIN verification failed: $error');
+      }
+      return false;
+    }
   }
 }

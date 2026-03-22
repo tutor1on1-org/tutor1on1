@@ -1,6 +1,7 @@
 # DONES
 Last updated: 2026-03-22
 
+- Fixed teacher-enforced study mode end to end: removed the local study-mode toggle, moved student study-mode enforcement into one runtime controller, made the global `X` mean only global quit, routed logout/current-device deletion through the same teacher gate, switched quit PIN checks to server verification instead of cached `control_pin_hash`, deployed the backend route change, and republished Android APK `518c6fa9aea0f20398f930c6d4b3f8a1df6a0e3d97f7511b0a706611c31b688f`, Windows ZIP `76c0ebdbfcfbe15f87fd5c7392067ee9a8f1dfa88db94dc04ab208995598a96e`, plus website static sync.
 - Fixed the shared structured-stream spacing root cause: whitespace-only LLM fragments now survive extraction, number-adjacent seams keep their real spaces, mid-word splits still stay joined, and the regression coverage now includes standalone-space plus number-boundary cases.
 - Fixed structured tutor-message spacing regression: structured JSON stream reassembly now preserves split words like `Gal` + `ilean` and `inert` + `ial` instead of inventing spaces, added overlap-only seam regression coverage, updated `BUGS.md` / `LESSONS.md`, and republished the Android APK plus Windows ZIP.
 - Fixed streamed reasoning/session-output spacing regressions: reasoning fragments now use seam-normalized joins instead of trim-all or raw-append, relay session readers rebuild `output_text` without injecting duplicate spaces, and regression coverage was added for both duplicate-space and missing-space seam cases.

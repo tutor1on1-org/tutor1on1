@@ -7,6 +7,7 @@ import 'package:family_teacher/l10n/app_localizations.dart';
 import 'services/app_services.dart';
 import 'state/auth_controller.dart';
 import 'state/settings_controller.dart';
+import 'state/study_mode_controller.dart';
 import 'ui/quit_app_flow.dart';
 import 'ui/pages/admin_home_page.dart';
 import 'ui/pages/teacher_pending_page.dart';
@@ -26,18 +27,22 @@ class FamilyTeacherApp extends StatelessWidget {
         Provider<AppServices>.value(value: services),
         Provider.value(value: services.db),
         ChangeNotifierProvider(
-          create: (_) => AuthController(
+          create: (_) => StudyModeController(),
+        ),
+        ChangeNotifierProvider(
+          create: (context) => AuthController(
             services.db,
             services.secureStorage,
             deviceIdentityService: services.deviceIdentityService,
+            studyModeController: context.read<StudyModeController>(),
           ),
         ),
         ChangeNotifierProvider(
           create: (_) => SettingsController(services.settingsRepository),
         ),
       ],
-      child: Consumer<SettingsController>(
-        builder: (context, settingsController, _) {
+      child: Consumer2<SettingsController, StudyModeController>(
+        builder: (context, settingsController, studyModeController, _) {
           final settings = settingsController.settings;
           Locale? locale;
           final localeCode = settings?.locale?.trim();
@@ -51,7 +56,7 @@ class FamilyTeacherApp extends StatelessWidget {
             supportedLocales: AppLocalizations.supportedLocales,
             localizationsDelegates: AppLocalizations.localizationsDelegates,
             builder: (context, child) => _StudyModeExitGuard(
-              enabled: settings?.studyModeEnabled ?? false,
+              enabled: studyModeController.enabled,
               child: child ?? const SizedBox.shrink(),
             ),
             theme: ThemeData(
@@ -107,10 +112,7 @@ class _StudyModeExitGuardState extends State<_StudyModeExitGuard> {
 
   Future<void> _handleStudyModeExit(BuildContext context) async {
     try {
-      await AppQuitFlow.handleQuit(
-        context,
-        requireTeacherPin: false,
-      );
+      await AppQuitFlow.handleQuit(context);
     } finally {
       _quitFlowRunning = false;
     }

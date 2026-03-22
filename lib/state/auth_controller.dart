@@ -7,6 +7,7 @@ import '../services/auth_api_service.dart';
 import '../services/device_identity_service.dart';
 import '../services/log_crypto_service.dart';
 import '../services/secure_storage_service.dart';
+import 'study_mode_controller.dart';
 
 class AuthController extends ChangeNotifier {
   AuthController(
@@ -14,6 +15,7 @@ class AuthController extends ChangeNotifier {
     SecureStorageService secureStorage, {
     AuthApiService? authApi,
     DeviceIdentityService? deviceIdentityService,
+    StudyModeController? studyModeController,
   })  : _authApi = authApi ??
             AuthApiService(
               baseUrl: kAuthBaseUrl,
@@ -21,6 +23,7 @@ class AuthController extends ChangeNotifier {
             ),
         _db = db,
         _secureStorage = secureStorage,
+        _studyModeController = studyModeController,
         _deviceIdentityService =
             deviceIdentityService ?? DeviceIdentityService(secureStorage);
 
@@ -28,6 +31,7 @@ class AuthController extends ChangeNotifier {
   final SecureStorageService _secureStorage;
   final AuthApiService _authApi;
   final DeviceIdentityService _deviceIdentityService;
+  final StudyModeController? _studyModeController;
   User? _currentUser;
   String? _lastError;
 
@@ -57,6 +61,7 @@ class AuthController extends ChangeNotifier {
           localAdmin.role == 'admin' &&
           localAdmin.pinHash == PinHasher.hash(password)) {
         _currentUser = localAdmin;
+        await _studyModeController?.syncAuthUser(_currentUser);
         await activateLogAccess(password);
         notifyListeners();
         return true;
@@ -157,6 +162,7 @@ class AuthController extends ChangeNotifier {
       role: response.role,
       remoteUserId: response.userId > 0 ? response.userId : null,
     );
+    await _studyModeController?.syncAuthUser(_currentUser);
     await activateLogAccess(password);
     notifyListeners();
     return _currentUser;
@@ -178,6 +184,7 @@ class AuthController extends ChangeNotifier {
     LogCryptoService.instance.clear();
     _currentUser = null;
     _lastError = null;
+    await _studyModeController?.clear();
     await _secureStorage.deleteAuthTokens();
     await _secureStorage.deleteRemoteStudyModePinHash();
     notifyListeners();
@@ -189,6 +196,7 @@ class AuthController extends ChangeNotifier {
       return;
     }
     _currentUser = await _db.getUserById(current.id);
+    await _studyModeController?.syncAuthUser(_currentUser);
     notifyListeners();
   }
 }

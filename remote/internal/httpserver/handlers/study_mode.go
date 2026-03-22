@@ -58,6 +58,12 @@ type studentDeviceHeartbeatRequest struct {
 	AppVersion              string `json:"app_version"`
 }
 
+type verifyStudentStudyModeControlPinRequest struct {
+	ControlPin       string `json:"control_pin"`
+	LocalWeekday     int    `json:"local_weekday"`
+	LocalMinuteOfDay int    `json:"local_minute_of_day"`
+}
+
 type studyModeScheduleSummary struct {
 	ScheduleID                    int64  `json:"schedule_id"`
 	Mode                          string `json:"mode"`
@@ -672,7 +678,53 @@ func (h *StudyModeHandler) HeartbeatStudentDevice(c *fiber.Ctx) error {
 		"effective_source":           decision.Source,
 		"controller_teacher_user_id": decision.TeacherUserID,
 		"controller_teacher_name":    decision.TeacherName,
-		"control_pin_hash":           decision.ControlPinHash,
+		"active_schedule_id":         decision.ScheduleID,
+		"active_schedule_label":      decision.ScheduleLabel,
+	})
+}
+
+func (h *StudyModeHandler) VerifyStudentStudyModeControlPin(c *fiber.Ctx) error {
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	}
+	var req verifyStudentStudyModeControlPinRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+	}
+	if strings.TrimSpace(req.ControlPin) == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "control_pin required")
+	}
+	if req.LocalWeekday < 1 || req.LocalWeekday > 7 {
+		return fiber.NewError(fiber.StatusBadRequest, "local_weekday invalid")
+	}
+	if req.LocalMinuteOfDay < 0 || req.LocalMinuteOfDay > 1439 {
+		return fiber.NewError(fiber.StatusBadRequest, "local_minute_of_day invalid")
+	}
+	decision, err := h.resolveEffectiveStudyModeForStudent(
+		userID,
+		req.LocalWeekday,
+		req.LocalMinuteOfDay,
+		time.Now().UTC(),
+	)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "study mode resolution failed")
+	}
+	if !decision.Enabled || strings.TrimSpace(strings.ToLower(decision.Source)) == "default" {
+		return fiber.NewError(fiber.StatusConflict, "teacher enforced study mode inactive")
+	}
+	expected := strings.TrimSpace(decision.ControlPinHash)
+	if expected == "" {
+		return fiber.NewError(fiber.StatusInternalServerError, "teacher control pin missing for active study mode")
+	}
+	if hashControlPin(req.ControlPin) != expected {
+		return fiber.NewError(fiber.StatusForbidden, "invalid control pin")
+	}
+	return c.JSON(fiber.Map{
+		"verified":                   true,
+		"effective_source":           decision.Source,
+		"controller_teacher_user_id": decision.TeacherUserID,
+		"controller_teacher_name":    decision.TeacherName,
 		"active_schedule_id":         decision.ScheduleID,
 		"active_schedule_label":      decision.ScheduleLabel,
 	})
