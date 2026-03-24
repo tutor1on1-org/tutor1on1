@@ -88,16 +88,52 @@ class _FailingAuthApiService extends AuthApiService {
       statusCode: 401,
     );
   }
+
+  @override
+  Future<RecoveryRequestResponse> requestRecovery({
+    required String email,
+  }) async {
+    throw AuthApiException(
+      'recovery failed',
+      statusCode: 503,
+    );
+  }
+
+  @override
+  Future<StatusResponse> resetPassword({
+    required String email,
+    required String recoveryToken,
+    required String newPassword,
+  }) async {
+    throw AuthApiException(
+      'reset failed',
+      statusCode: 401,
+    );
+  }
 }
 
 class _FakeAuthApiService extends AuthApiService {
-  _FakeAuthApiService(this._response)
-      : super(
+  _FakeAuthApiService(
+    this._response, {
+    RecoveryRequestResponse? recoveryResponse,
+    StatusResponse? resetResponse,
+  })  : _recoveryResponse = recoveryResponse ??
+            RecoveryRequestResponse(
+              status: 'ok',
+              expiresIn: 1800,
+            ),
+        _resetResponse = resetResponse ??
+            StatusResponse(
+              status: 'ok',
+            ),
+        super(
           baseUrl: 'https://example.com',
           allowInsecureTls: false,
         );
 
   final AuthResponse _response;
+  final RecoveryRequestResponse _recoveryResponse;
+  final StatusResponse _resetResponse;
 
   @override
   Future<AuthResponse> login({
@@ -111,6 +147,22 @@ class _FakeAuthApiService extends AuthApiService {
     String appVersion = '',
   }) async {
     return _response;
+  }
+
+  @override
+  Future<RecoveryRequestResponse> requestRecovery({
+    required String email,
+  }) async {
+    return _recoveryResponse;
+  }
+
+  @override
+  Future<StatusResponse> resetPassword({
+    required String email,
+    required String recoveryToken,
+    required String newPassword,
+  }) async {
+    return _resetResponse;
   }
 }
 
@@ -203,5 +255,59 @@ void main() {
       auth.lastError,
       equals('Login failed: Bad state: device identity unavailable'),
     );
+  });
+
+  test('requestRecovery returns true when API accepts the email', () async {
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(() async {
+      LogCryptoService.instance.clear();
+      await db.close();
+    });
+
+    final auth = AuthController(
+      db,
+      _MemorySecureStorage(),
+      authApi: _FakeAuthApiService(
+        AuthResponse(
+          accessToken: 'token',
+          refreshToken: 'refresh',
+          tokenType: 'bearer',
+          expiresIn: 3600,
+          userId: 3001,
+          role: 'student',
+          teacherId: null,
+        ),
+      ),
+      deviceIdentityService: _FakeDeviceIdentityService(),
+    );
+
+    final ok = await auth.requestRecovery('student@example.com');
+
+    expect(ok, isTrue);
+    expect(auth.lastError, isNull);
+  });
+
+  test('resetPassword surfaces API failures instead of throwing', () async {
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(() async {
+      LogCryptoService.instance.clear();
+      await db.close();
+    });
+
+    final auth = AuthController(
+      db,
+      _MemorySecureStorage(),
+      authApi: _FailingAuthApiService(),
+      deviceIdentityService: _FakeDeviceIdentityService(),
+    );
+
+    final ok = await auth.resetPassword(
+      email: 'student@example.com',
+      recoveryToken: 'bad-token',
+      newPassword: 'new-password',
+    );
+
+    expect(ok, isFalse);
+    expect(auth.lastError, equals('reset failed'));
   });
 }

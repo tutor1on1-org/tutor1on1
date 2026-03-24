@@ -153,6 +153,14 @@ class _WelcomePageState extends State<WelcomePage> {
           onPressed: () => _handleLogin(context),
           child: Text(l10n.loginButton),
         ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton(
+            key: const Key('forgot_password_button'),
+            onPressed: () => _openRequestRecoveryDialog(context),
+            child: Text(l10n.forgotPasswordButton),
+          ),
+        ),
       ],
     );
   }
@@ -506,5 +514,314 @@ class _WelcomePageState extends State<WelcomePage> {
       }
       _showMessage(context, l10n.sessionSyncFailed('$error'));
     }
+  }
+
+  Future<void> _openRequestRecoveryDialog(BuildContext context) async {
+    final l10n = AppLocalizations.of(context)!;
+    final emailController = TextEditingController();
+    String? email;
+    try {
+      email = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) {
+          var sending = false;
+          String? errorText;
+          return StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              title: Text(l10n.requestRecoveryDialogTitle),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    l10n.requestRecoveryDialogBody,
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: emailController,
+                    decoration: InputDecoration(
+                      labelText: l10n.recoveryEmailLabel,
+                      errorText: errorText,
+                    ),
+                    keyboardType: TextInputType.emailAddress,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) async {
+                      if (sending) {
+                        return;
+                      }
+                      final email = emailController.text.trim();
+                      if (email.isEmpty) {
+                        setDialogState(() {
+                          errorText = l10n.emailRequired;
+                        });
+                        return;
+                      }
+                      setDialogState(() {
+                        sending = true;
+                        errorText = null;
+                      });
+                      final auth = context.read<AuthController>();
+                      final ok = await auth.requestRecovery(email);
+                      if (!context.mounted) {
+                        return;
+                      }
+                      if (!ok) {
+                        setDialogState(() {
+                          sending = false;
+                          errorText =
+                              auth.lastError ?? l10n.requestFailedTitle;
+                        });
+                        return;
+                      }
+                      Navigator.of(dialogContext).pop(email);
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: sending
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(),
+                  child: Text(l10n.cancelButton),
+                ),
+                ElevatedButton(
+                  onPressed: sending
+                      ? null
+                      : () async {
+                          final email = emailController.text.trim();
+                          if (email.isEmpty) {
+                            setDialogState(() {
+                              errorText = l10n.emailRequired;
+                            });
+                            return;
+                          }
+                          setDialogState(() {
+                            sending = true;
+                            errorText = null;
+                          });
+                          final auth = context.read<AuthController>();
+                          final ok = await auth.requestRecovery(email);
+                          if (!context.mounted) {
+                            return;
+                          }
+                          if (!ok) {
+                            setDialogState(() {
+                              sending = false;
+                              errorText =
+                                  auth.lastError ?? l10n.requestFailedTitle;
+                            });
+                            return;
+                          }
+                          Navigator.of(dialogContext).pop(email);
+                        },
+                  child: Text(l10n.requestRecoveryButton),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+    } finally {
+      emailController.dispose();
+    }
+    if (!mounted || email == null) {
+      return;
+    }
+    _showMessage(context, l10n.recoveryEmailSentMessage);
+    await _openResetPasswordDialog(context, initialEmail: email);
+  }
+
+  Future<void> _openResetPasswordDialog(
+    BuildContext context, {
+    String initialEmail = '',
+  }) async {
+    final l10n = AppLocalizations.of(context)!;
+    final emailController = TextEditingController(text: initialEmail);
+    final tokenController = TextEditingController();
+    final newPasswordController = TextEditingController();
+    final confirmPasswordController = TextEditingController();
+    bool resetCompleted = false;
+    try {
+      resetCompleted = await showDialog<bool>(
+            context: context,
+            builder: (dialogContext) {
+          var submitting = false;
+          String? errorText;
+          return StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              title: Text(l10n.resetPasswordWithTokenTitle),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: emailController,
+                    decoration: InputDecoration(
+                      labelText: l10n.recoveryEmailLabel,
+                    ),
+                    keyboardType: TextInputType.emailAddress,
+                    textInputAction: TextInputAction.next,
+                  ),
+                  TextField(
+                    controller: tokenController,
+                    decoration: InputDecoration(
+                      labelText: l10n.recoveryTokenLabel,
+                      errorText: errorText,
+                    ),
+                    textInputAction: TextInputAction.next,
+                    autocorrect: false,
+                  ),
+                  TextField(
+                    controller: newPasswordController,
+                    decoration: InputDecoration(
+                      labelText: l10n.newPasswordLabel,
+                    ),
+                    obscureText: true,
+                    textInputAction: TextInputAction.next,
+                  ),
+                  TextField(
+                    controller: confirmPasswordController,
+                    decoration: InputDecoration(
+                      labelText: l10n.confirmPasswordLabel,
+                    ),
+                    obscureText: true,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) async {
+                      if (submitting) {
+                        return;
+                      }
+                      final email = emailController.text.trim();
+                      final token = tokenController.text.trim();
+                      final newPassword = newPasswordController.text;
+                      final confirmPassword = confirmPasswordController.text;
+                      if (email.isEmpty) {
+                        setDialogState(() {
+                          errorText = l10n.emailRequired;
+                        });
+                        return;
+                      }
+                      if (token.isEmpty) {
+                        setDialogState(() {
+                          errorText = l10n.recoveryTokenRequired;
+                        });
+                        return;
+                      }
+                      if (newPassword.trim().isEmpty) {
+                        setDialogState(() {
+                          errorText = l10n.passwordRequired;
+                        });
+                        return;
+                      }
+                      if (newPassword != confirmPassword) {
+                        setDialogState(() {
+                          errorText = l10n.passwordMismatchMessage;
+                        });
+                        return;
+                      }
+                      setDialogState(() {
+                        submitting = true;
+                        errorText = null;
+                      });
+                      final auth = context.read<AuthController>();
+                      final ok = await auth.resetPassword(
+                        email: email,
+                        recoveryToken: token,
+                        newPassword: newPassword,
+                      );
+                      if (!context.mounted) {
+                        return;
+                      }
+                      if (!ok) {
+                        setDialogState(() {
+                          submitting = false;
+                          errorText =
+                              auth.lastError ?? l10n.requestFailedTitle;
+                        });
+                        return;
+                      }
+                      Navigator.of(dialogContext).pop(true);
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: submitting
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(),
+                  child: Text(l10n.cancelButton),
+                ),
+                ElevatedButton(
+                  onPressed: submitting
+                      ? null
+                      : () async {
+                          final email = emailController.text.trim();
+                          final token = tokenController.text.trim();
+                          final newPassword = newPasswordController.text;
+                          final confirmPassword = confirmPasswordController.text;
+                          if (email.isEmpty) {
+                            setDialogState(() {
+                              errorText = l10n.emailRequired;
+                            });
+                            return;
+                          }
+                          if (token.isEmpty) {
+                            setDialogState(() {
+                              errorText = l10n.recoveryTokenRequired;
+                            });
+                            return;
+                          }
+                          if (newPassword.trim().isEmpty) {
+                            setDialogState(() {
+                              errorText = l10n.passwordRequired;
+                            });
+                            return;
+                          }
+                          if (newPassword != confirmPassword) {
+                            setDialogState(() {
+                              errorText = l10n.passwordMismatchMessage;
+                            });
+                            return;
+                          }
+                          setDialogState(() {
+                            submitting = true;
+                            errorText = null;
+                          });
+                          final auth = context.read<AuthController>();
+                          final ok = await auth.resetPassword(
+                            email: email,
+                            recoveryToken: token,
+                            newPassword: newPassword,
+                          );
+                          if (!context.mounted) {
+                            return;
+                          }
+                          if (!ok) {
+                            setDialogState(() {
+                              submitting = false;
+                              errorText =
+                                  auth.lastError ?? l10n.requestFailedTitle;
+                            });
+                            return;
+                          }
+                          Navigator.of(dialogContext).pop(true);
+                        },
+                  child: Text(l10n.resetPasswordWithTokenButton),
+                ),
+              ],
+            ),
+          );
+        },
+      ) ??
+          false;
+    } finally {
+      emailController.dispose();
+      tokenController.dispose();
+      newPasswordController.dispose();
+      confirmPasswordController.dispose();
+    }
+    if (!mounted || !resetCompleted) {
+      return;
+    }
+    _showMessage(context, l10n.resetPasswordSuccessMessage);
   }
 }

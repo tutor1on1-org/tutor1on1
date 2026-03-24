@@ -144,6 +144,52 @@ class AuthController extends ChangeNotifier {
     }
   }
 
+  Future<bool> requestRecovery(String email) async {
+    _lastError = null;
+    try {
+      final response = await _authApi.requestRecovery(
+        email: email,
+      );
+      if (response.status != 'ok') {
+        _lastError = 'Recovery request failed.';
+        return false;
+      }
+      return true;
+    } on AuthApiException catch (error) {
+      _lastError = error.message;
+      return false;
+    } on Object catch (error) {
+      _lastError = 'Recovery request failed: $error';
+      return false;
+    }
+  }
+
+  Future<bool> resetPassword({
+    required String email,
+    required String recoveryToken,
+    required String newPassword,
+  }) async {
+    _lastError = null;
+    try {
+      final response = await _authApi.resetPassword(
+        email: email,
+        recoveryToken: recoveryToken,
+        newPassword: newPassword,
+      );
+      if (response.status != 'ok') {
+        _lastError = 'Password reset failed.';
+        return false;
+      }
+      return true;
+    } on AuthApiException catch (error) {
+      _lastError = error.message;
+      return false;
+    } on Object catch (error) {
+      _lastError = 'Password reset failed: $error';
+      return false;
+    }
+  }
+
   Future<User?> _persistAuth(
     AuthResponse response,
     String username,

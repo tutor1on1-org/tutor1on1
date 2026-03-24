@@ -43,3 +43,4 @@ assets/teachers/*/*
 remote/.env
 remote/.env.*
 !remote/.env.example
+remote/family-teacher-api-linux

@@ -14,6 +14,7 @@
 
   document.addEventListener('DOMContentLoaded', () => {
     const languageSwitcher = document.querySelector('[data-language-switcher]')
+    appendContactEmail()
 
     if (!languageSwitcher) {
       return
@@ -67,5 +68,28 @@
     }
 
     return pathname
+  }
+
+  function appendContactEmail() {
+    const footer = document.querySelector('.footer')
+    if (!footer || footer.querySelector('[data-contact-email]')) {
+      return
+    }
+
+    const line = document.createElement('p')
+    line.setAttribute('data-contact-email', 'true')
+
+    if (currentLanguage === 'zh') {
+      line.append('有任何需求，请发邮件到 ')
+    } else {
+      line.append('Need help or have a request? Email ')
+    }
+
+    const link = document.createElement('a')
+    link.className = 'footer-link'
+    link.href = 'mailto:tutor1on1.org@gmail.com'
+    link.textContent = 'tutor1on1.org@gmail.com'
+    line.append(link)
+    footer.append(line)
   }
 })()

@@ -46,6 +46,37 @@ class AuthResponse {
   }
 }
 
+class RecoveryRequestResponse {
+  RecoveryRequestResponse({
+    required this.status,
+    required this.expiresIn,
+  });
+
+  final String status;
+  final int expiresIn;
+
+  factory RecoveryRequestResponse.fromJson(Map<String, dynamic> json) {
+    return RecoveryRequestResponse(
+      status: (json['status'] as String?) ?? '',
+      expiresIn: (json['expires_in'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+class StatusResponse {
+  StatusResponse({
+    required this.status,
+  });
+
+  final String status;
+
+  factory StatusResponse.fromJson(Map<String, dynamic> json) {
+    return StatusResponse(
+      status: (json['status'] as String?) ?? '',
+    );
+  }
+}
+
 class AuthApiService {
   AuthApiService({
     required String baseUrl,
@@ -67,7 +98,7 @@ class AuthApiService {
     required int timezoneOffsetMinutes,
     String appVersion = '',
   }) async {
-    return _post('/api/auth/login', {
+    return AuthResponse.fromJson(await _postJson('/api/auth/login', {
       'username': username.trim(),
       'password': password,
       ..._devicePayload(
@@ -78,7 +109,7 @@ class AuthApiService {
         timezoneOffsetMinutes: timezoneOffsetMinutes,
         appVersion: appVersion,
       ),
-    });
+    }));
   }
 
   Future<AuthResponse> registerStudent({
@@ -92,7 +123,7 @@ class AuthApiService {
     required int timezoneOffsetMinutes,
     String appVersion = '',
   }) async {
-    return _post('/api/auth/register-student', {
+    return AuthResponse.fromJson(await _postJson('/api/auth/register-student', {
       'username': username.trim(),
       'email': email.trim(),
       'password': password,
@@ -104,7 +135,7 @@ class AuthApiService {
         timezoneOffsetMinutes: timezoneOffsetMinutes,
         appVersion: appVersion,
       ),
-    });
+    }));
   }
 
   Future<AuthResponse> registerTeacher({
@@ -124,7 +155,7 @@ class AuthApiService {
     required int timezoneOffsetMinutes,
     String appVersion = '',
   }) async {
-    return _post('/api/auth/register-teacher', {
+    return AuthResponse.fromJson(await _postJson('/api/auth/register-teacher', {
       'username': username.trim(),
       'email': email.trim(),
       'password': password,
@@ -142,10 +173,37 @@ class AuthApiService {
         timezoneOffsetMinutes: timezoneOffsetMinutes,
         appVersion: appVersion,
       ),
-    });
+    }));
   }
 
-  Future<AuthResponse> _post(String path, Map<String, dynamic> body) async {
+  Future<RecoveryRequestResponse> requestRecovery({
+    required String email,
+  }) async {
+    return RecoveryRequestResponse.fromJson(
+      await _postJson('/api/auth/request-recovery', {
+        'email': email.trim(),
+      }),
+    );
+  }
+
+  Future<StatusResponse> resetPassword({
+    required String email,
+    required String recoveryToken,
+    required String newPassword,
+  }) async {
+    return StatusResponse.fromJson(
+      await _postJson('/api/auth/reset-password', {
+        'email': email.trim(),
+        'recovery_token': recoveryToken.trim(),
+        'new_password': newPassword,
+      }),
+    );
+  }
+
+  Future<Map<String, dynamic>> _postJson(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
     final uri = Uri.parse('$_baseUrl$path');
     http.Response response;
     try {
@@ -167,7 +225,7 @@ class AuthApiService {
     if (decoded is! Map<String, dynamic>) {
       throw AuthApiException('Unexpected response format.');
     }
-    return AuthResponse.fromJson(decoded);
+    return decoded;
   }
 
   Map<String, dynamic> _devicePayload({

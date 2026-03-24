@@ -1,5 +1,5 @@
 # WORKLOG
-Last updated: 2026-03-22
+Last updated: 2026-03-24
 
 ## Remote host (active)
 - Provider: AliCloud ECS
@@ -66,6 +66,26 @@ Historical setup timeline moved to `LOGBOOK.md`.
   - canonical Android APK `https://api.tutor1on1.org/downloads/family_teacher.apk` now serves SHA-256 `518c6fa9aea0f20398f930c6d4b3f8a1df6a0e3d97f7511b0a706611c31b688f`.
   - canonical Windows ZIP `https://api.tutor1on1.org/downloads/family_teacher.zip` now serves SHA-256 `76c0ebdbfcfbe15f87fd5c7392067ee9a8f1dfa88db94dc04ab208995598a96e`.
   - website static install pages under `https://www.tutor1on1.org/` and `/zh/` returned HTTP 200 and still referenced the canonical download paths.
+
+## Remote server updates (2026-03-24, password recovery + public contact email)
+- Updated `/etc/family_teacher_remote/env` to keep `RECOVERY_TOKEN_ECHO=false` while enabling Gmail SMTP delivery:
+  - `SMTP_ENABLED=true`
+  - `SMTP_HOST=smtp.gmail.com`
+  - `SMTP_PORT=587`
+  - `SMTP_USERNAME=tutor1on1.org@gmail.com`
+  - `SMTP_FROM=tutor1on1.org@gmail.com`
+  - `SMTP_FROM_NAME=Tutor1on1`
+  - `SMTP_USE_TLS=false`
+  - `SMTP_STARTTLS=true`
+  - `SMTP_SKIP_VERIFY=false`
+- Deployed updated API binary to `/opt/family_teacher_remote/bin/family-teacher-api`.
+- Restarted `family-teacher-api.service`; current service start time is `Tue 2026-03-24 14:27:07 CST`.
+- Verified:
+  - health endpoint `https://api.tutor1on1.org/health` returned `{"status":"ok"}` after restart.
+  - live password recovery completed end to end against the public API using Gmail delivery plus reset-token submission on a fresh account.
+  - canonical Android APK `https://api.tutor1on1.org/downloads/family_teacher.apk` now serves SHA-256 `56a3ac88720d0180fa916751881a0ef32a8bacf027ebae6e506b24c4e2be9067`.
+  - canonical Windows ZIP `https://api.tutor1on1.org/downloads/family_teacher.zip` now serves SHA-256 `84eefb8c5d93b56523cb37e980c74f1377bbf98720a20871c6ab62816d3dd53e`.
+  - website static pages under `https://www.tutor1on1.org/` and `/zh/` returned HTTP 200 after sync, and deployed `site.js` now appends `tutor1on1.org@gmail.com` in the shared footer as the only public contact channel.
 
 ## Remote server updates (2026-03-19, Android + Windows + website release)
 - Published canonical Android APK to `https://api.tutor1on1.org/downloads/family_teacher.apk`.
