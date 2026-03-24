@@ -2212,34 +2212,6 @@ HAVING COUNT(*) > 1
     });
   }
 
-  Future<void> ensureAdminUser({
-    required String username,
-    required String pinHash,
-  }) async {
-    final existingAdmin = await (select(users)
-          ..where((tbl) => tbl.role.equals('admin')))
-        .getSingleOrNull();
-    if (existingAdmin != null) {
-      return;
-    }
-    final existingUser = await findUserByUsername(username);
-    if (existingUser == null) {
-      await createUser(
-        username: username,
-        pinHash: pinHash,
-        role: 'admin',
-      );
-      return;
-    }
-    await (update(users)..where((tbl) => tbl.id.equals(existingUser.id))).write(
-      UsersCompanion(
-        role: const Value('admin'),
-        pinHash: Value(pinHash),
-        teacherId: const Value(null),
-      ),
-    );
-  }
-
   Future<void> _deleteStudentInternal(int studentId) async {
     final sessions = await (select(chatSessions)
           ..where((tbl) => tbl.studentId.equals(studentId)))

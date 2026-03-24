@@ -23,8 +23,6 @@ import 'sync_state_repository.dart';
 import 'tts_service.dart';
 import 'tts_log_repository.dart';
 import 'user_key_service.dart';
-import '../security/pin_hasher.dart';
-
 class AppServices {
   AppServices._({
     required this.db,
@@ -70,10 +68,6 @@ class AppServices {
 
   static Future<AppServices> create({AppDatabase? databaseOverride}) async {
     final db = databaseOverride ?? AppDatabase.open();
-    await db.ensureAdminUser(
-      username: 'admin',
-      pinHash: PinHasher.hash('dennis_yang_edu'),
-    );
     final settingsRepository = SettingsRepository(db);
     final secureStorage = SecureStorageService();
     await secureStorage.ensureReadableOrReset();

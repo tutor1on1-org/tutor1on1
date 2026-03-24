@@ -56,16 +56,6 @@ class AuthController extends ChangeNotifier {
       await _persistAuth(response, normalizedUsername, password);
       return true;
     } on AuthApiException catch (error) {
-      final localAdmin = await _db.findUserByUsername(normalizedUsername);
-      if (localAdmin != null &&
-          localAdmin.role == 'admin' &&
-          localAdmin.pinHash == PinHasher.hash(password)) {
-        _currentUser = localAdmin;
-        await _studyModeController?.syncAuthUser(_currentUser);
-        await activateLogAccess(password);
-        notifyListeners();
-        return true;
-      }
       _lastError = error.message;
       return false;
     } on Object catch (error) {

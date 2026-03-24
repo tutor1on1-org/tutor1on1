@@ -169,32 +169,6 @@ class _FakeAuthApiService extends AuthApiService {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('login uses local admin account without remote auth', () async {
-    final db = AppDatabase.forTesting(NativeDatabase.memory());
-    addTearDown(() async {
-      LogCryptoService.instance.clear();
-      await db.close();
-    });
-
-    await db.ensureAdminUser(
-      username: 'admin',
-      pinHash: PinHasher.hash('dennis_yang_edu'),
-    );
-
-    final auth = AuthController(
-      db,
-      _MemorySecureStorage(),
-      authApi: _FailingAuthApiService(),
-      deviceIdentityService: _FakeDeviceIdentityService(),
-    );
-    final ok = await auth.login('admin', 'dennis_yang_edu');
-
-    expect(ok, isTrue);
-    expect(auth.currentUser, isNotNull);
-    expect(auth.currentUser!.role, equals('admin'));
-    expect(auth.currentUser!.username, equals('admin'));
-  });
-
   test('login reuses placeholder user by remoteUserId', () async {
     final db = AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(() async {
