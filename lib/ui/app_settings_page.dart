@@ -21,6 +21,7 @@ import 'quit_app_flow.dart';
 import 'pages/account_devices_page.dart';
 import 'pages/llm_logs_page.dart';
 import 'pages/tts_logs_page.dart';
+import 'widgets/language_selector.dart';
 import 'widgets/restart_widget.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -280,6 +281,18 @@ class _SettingsPageState extends State<SettingsPage> {
           l10n.generalTab,
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
+        const SizedBox(height: 8),
+        LanguageSelector(
+          localeCode: settings.locale,
+          onChanged: (value) async {
+            await settingsController.updateLocale(value);
+            if (!context.mounted) {
+              return;
+            }
+            _showMessage(context, l10n.languageSavedMessage);
+          },
+        ),
+        const SizedBox(height: 8),
         TextField(
           decoration: const InputDecoration(labelText: 'Device name'),
           controller: _deviceNameController,
@@ -1280,9 +1293,8 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
               actions: [
                 TextButton(
-                  onPressed: saving
-                      ? null
-                      : () => Navigator.of(dialogContext).pop(),
+                  onPressed:
+                      saving ? null : () => Navigator.of(dialogContext).pop(),
                   child: Text(l10n.cancelButton),
                 ),
                 ElevatedButton(
@@ -1290,7 +1302,8 @@ class _SettingsPageState extends State<SettingsPage> {
                       ? null
                       : () async {
                           final email = emailController.text.trim();
-                          final currentPassword = currentPasswordController.text;
+                          final currentPassword =
+                              currentPasswordController.text;
                           if (email.isEmpty) {
                             setDialogState(() {
                               errorText = l10n.emailRequired;

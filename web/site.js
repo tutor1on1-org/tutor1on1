@@ -1,14 +1,21 @@
 (function () {
   const languageStorageKey = 'tutor1on1-language'
+  const supportedLanguages = [
+    { code: 'en', label: 'English' },
+    { code: 'zh', label: '简体中文' },
+  ]
   const currentPath = window.location.pathname || '/'
-  const currentLanguage = currentPath === '/zh' || currentPath.startsWith('/zh/') ? 'zh' : 'en'
+  const currentLanguage =
+    currentPath === '/zh' || currentPath.startsWith('/zh/') ? 'zh' : 'en'
   const preferredLanguage = normalizeLanguage(
     window.localStorage.getItem(languageStorageKey) || detectDeviceLanguage()
   )
   const targetPath = mapPathToLanguage(currentPath, preferredLanguage)
 
   if (targetPath !== currentPath) {
-    window.location.replace(`${targetPath}${window.location.search}${window.location.hash}`)
+    window.location.replace(
+      `${targetPath}${window.location.search}${window.location.hash}`
+    )
     return
   }
 
@@ -20,29 +27,80 @@
       return
     }
 
+    enhanceLanguageSwitcher(languageSwitcher)
     languageSwitcher.value = currentLanguage
     languageSwitcher.addEventListener('change', (event) => {
       const nextLanguage = normalizeLanguage(event.target.value)
-      const nextPath = mapPathToLanguage(window.location.pathname || '/', nextLanguage)
+      const nextPath = mapPathToLanguage(
+        window.location.pathname || '/',
+        nextLanguage
+      )
 
       window.localStorage.setItem(languageStorageKey, nextLanguage)
 
       if (nextPath !== window.location.pathname) {
-        window.location.assign(`${nextPath}${window.location.search}${window.location.hash}`)
+        window.location.assign(
+          `${nextPath}${window.location.search}${window.location.hash}`
+        )
       }
     })
   })
 
-  function detectDeviceLanguage() {
-    const candidates = Array.isArray(window.navigator.languages) && window.navigator.languages.length > 0
-      ? window.navigator.languages
-      : [window.navigator.language || 'en']
+  function enhanceLanguageSwitcher(languageSwitcher) {
+    populateLanguageOptions(languageSwitcher)
 
-    return candidates.some((candidate) => normalizeLanguage(candidate) === 'zh') ? 'zh' : 'en'
+    if (languageSwitcher.parentElement?.classList.contains('lang-switcher')) {
+      return
+    }
+
+    languageSwitcher.classList.remove('nav-action')
+
+    const wrapper = document.createElement('span')
+    wrapper.className = 'lang-switcher nav-action'
+
+    const icon = document.createElement('span')
+    icon.className = 'lang-icon'
+    icon.setAttribute('aria-hidden', 'true')
+    icon.textContent = String.fromCodePoint(0x1f310)
+
+    languageSwitcher.parentNode.insertBefore(wrapper, languageSwitcher)
+    wrapper.append(icon, languageSwitcher)
+  }
+
+  function populateLanguageOptions(languageSwitcher) {
+    const previousValue = normalizeLanguage(languageSwitcher.value)
+    languageSwitcher.textContent = ''
+
+    for (const language of supportedLanguages) {
+      const option = document.createElement('option')
+      option.value = language.code
+      option.textContent = language.label
+      languageSwitcher.append(option)
+    }
+
+    languageSwitcher.value = previousValue
+  }
+
+  function detectDeviceLanguage() {
+    const candidates =
+      Array.isArray(window.navigator.languages) &&
+      window.navigator.languages.length > 0
+        ? window.navigator.languages
+        : [window.navigator.language || 'en']
+
+    return candidates.some(
+      (candidate) => normalizeLanguage(candidate) === 'zh'
+    )
+      ? 'zh'
+      : 'en'
   }
 
   function normalizeLanguage(language) {
-    return String(language).toLowerCase().startsWith('zh') ? 'zh' : 'en'
+    return String(language || '')
+      .toLowerCase()
+      .startsWith('zh')
+      ? 'zh'
+      : 'en'
   }
 
   function mapPathToLanguage(pathname, language) {

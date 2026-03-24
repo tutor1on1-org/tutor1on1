@@ -1,8 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import 'package:family_teacher/l10n/app_language.dart';
 import 'package:family_teacher/l10n/app_localizations.dart';
+import 'package:provider/provider.dart';
 
 import 'services/app_services.dart';
 import 'state/auth_controller.dart';
@@ -44,15 +45,10 @@ class FamilyTeacherApp extends StatelessWidget {
       child: Consumer2<SettingsController, StudyModeController>(
         builder: (context, settingsController, studyModeController, _) {
           final settings = settingsController.settings;
-          Locale? locale;
-          final localeCode = settings?.locale?.trim();
-          if (localeCode != null && localeCode.isNotEmpty) {
-            locale = Locale(localeCode);
-          }
           return MaterialApp(
             onGenerateTitle: (context) =>
                 AppLocalizations.of(context)!.appTitle,
-            locale: locale,
+            locale: appLocaleFromSetting(settings?.locale),
             supportedLocales: AppLocalizations.supportedLocales,
             localizationsDelegates: AppLocalizations.localizationsDelegates,
             builder: (context, child) => _StudyModeExitGuard(
