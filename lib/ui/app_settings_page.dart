@@ -55,6 +55,11 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _deviceNameLoaded = false;
   bool _apiTesting = false;
   String? _apiTestError;
+  MarketplaceApiService? _accountApi;
+  AccountProfileSummary? _accountProfile;
+  bool _accountProfileLoading = false;
+  String? _accountProfileError;
+  int? _accountProfileLoadedUserId;
   List<String> _textModelOptions = const [];
   List<String> _ttsModelOptions = const [];
   List<String> _sttModelOptions = const [];
@@ -80,6 +85,7 @@ class _SettingsPageState extends State<SettingsPage> {
     final services = context.read<AppServices>();
     final auth = context.read<AuthController>();
     final currentUser = auth.currentUser;
+    _maybeLoadAccountProfile(services, currentUser);
 
     if (settings == null || settingsController.isLoading) {
       return Scaffold(
@@ -211,6 +217,50 @@ class _SettingsPageState extends State<SettingsPage> {
         _deviceNameController.text = deviceName;
       });
     });
+  }
+
+  void _maybeLoadAccountProfile(AppServices services, User? currentUser) {
+    if (currentUser == null) {
+      return;
+    }
+    if (_accountProfileLoadedUserId == currentUser.id &&
+        (_accountProfileLoading ||
+            _accountProfile != null ||
+            _accountProfileError != null)) {
+      return;
+    }
+    _accountProfileLoadedUserId = currentUser.id;
+    _accountApi = MarketplaceApiService(secureStorage: services.secureStorage);
+    Future.microtask(_loadAccountProfile);
+  }
+
+  Future<void> _loadAccountProfile() async {
+    final api = _accountApi;
+    if (api == null || !mounted) {
+      return;
+    }
+    setState(() {
+      _accountProfileLoading = true;
+      _accountProfileError = null;
+    });
+    try {
+      final profile = await api.getAccountProfile();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _accountProfile = profile;
+        _accountProfileLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _accountProfileLoading = false;
+        _accountProfileError = '$error';
+      });
+    }
   }
 
   Widget _buildGeneralTab({
@@ -438,6 +488,52 @@ class _SettingsPageState extends State<SettingsPage> {
             l10n.passwordSectionTitle,
             style: const TextStyle(fontWeight: FontWeight.bold),
           ),
+          const SizedBox(height: 8),
+          Text(
+            l10n.recoveryEmailSectionTitle,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          if (_accountProfileLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: LinearProgressIndicator(),
+            )
+          else if (_accountProfileError != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                _accountProfileError!,
+                style: const TextStyle(color: Colors.redAccent),
+              ),
+            )
+          else
+            InputDecorator(
+              decoration: InputDecoration(
+                labelText: l10n.currentRecoveryEmailLabel,
+              ),
+              child: SelectableText(
+                _maskRecoveryEmail(
+                  _accountProfile?.email ?? '',
+                  l10n.recoveryEmailNotSet,
+                ),
+              ),
+            ),
+          const SizedBox(height: 8),
+          Text(
+            l10n.recoveryEmailSpamHint,
+          ),
+          const SizedBox(height: 8),
+          ElevatedButton(
+            onPressed: _accountApi == null
+                ? null
+                : () => _showChangeRecoveryEmailDialog(
+                      context,
+                      _accountApi!,
+                    ),
+            child: Text(l10n.changeRecoveryEmailButton),
+          ),
+          const SizedBox(height: 12),
           ElevatedButton(
             onPressed: () => _showChangePasswordDialog(
               context,
@@ -1119,6 +1215,136 @@ class _SettingsPageState extends State<SettingsPage> {
       return 0;
     }
     return seconds * 1000;
+  }
+
+  String _maskRecoveryEmail(String email, String emptyLabel) {
+    final trimmed = email.trim();
+    if (trimmed.isEmpty) {
+      return emptyLabel;
+    }
+    final atIndex = trimmed.indexOf('@');
+    if (atIndex <= 0 || atIndex >= trimmed.length - 1) {
+      return trimmed;
+    }
+    final local = trimmed.substring(0, atIndex);
+    final domain = trimmed.substring(atIndex);
+    if (local.length == 1) {
+      return '*$domain';
+    }
+    if (local.length == 2) {
+      return '${local[0]}*$domain';
+    }
+    return '${local[0]}${'*' * (local.length - 2)}${local[local.length - 1]}$domain';
+  }
+
+  Future<void> _showChangeRecoveryEmailDialog(
+    BuildContext pageContext,
+    MarketplaceApiService api,
+  ) async {
+    final l10n = AppLocalizations.of(pageContext)!;
+    final currentPasswordController = TextEditingController();
+    final emailController = TextEditingController(
+      text: _accountProfile?.email ?? '',
+    );
+    try {
+      await showDialog<void>(
+        context: pageContext,
+        builder: (dialogContext) {
+          var saving = false;
+          String? errorText;
+          return StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              title: Text(l10n.changeRecoveryEmailTitle),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: emailController,
+                    decoration: InputDecoration(
+                      labelText: l10n.newRecoveryEmailLabel,
+                      errorText: errorText,
+                    ),
+                    keyboardType: TextInputType.emailAddress,
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: currentPasswordController,
+                    decoration: InputDecoration(
+                      labelText: l10n.currentPasswordLabel,
+                    ),
+                    obscureText: true,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(l10n.recoveryEmailSpamHint),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: saving
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(),
+                  child: Text(l10n.cancelButton),
+                ),
+                ElevatedButton(
+                  onPressed: saving
+                      ? null
+                      : () async {
+                          final email = emailController.text.trim();
+                          final currentPassword = currentPasswordController.text;
+                          if (email.isEmpty) {
+                            setDialogState(() {
+                              errorText = l10n.emailRequired;
+                            });
+                            return;
+                          }
+                          if (currentPassword.trim().isEmpty) {
+                            setDialogState(() {
+                              errorText = l10n.currentPasswordRequired;
+                            });
+                            return;
+                          }
+                          setDialogState(() {
+                            saving = true;
+                            errorText = null;
+                          });
+                          try {
+                            await api.updateRecoveryEmail(
+                              currentPassword: currentPassword,
+                              email: email,
+                            );
+                            if (!mounted) {
+                              return;
+                            }
+                            Navigator.of(dialogContext).pop();
+                            await _loadAccountProfile();
+                            if (!pageContext.mounted) {
+                              return;
+                            }
+                            _showMessage(
+                              pageContext,
+                              l10n.recoveryEmailUpdatedMessage,
+                            );
+                          } catch (error) {
+                            if (!pageContext.mounted) {
+                              return;
+                            }
+                            setDialogState(() {
+                              saving = false;
+                              errorText = '$error';
+                            });
+                          }
+                        },
+                  child: Text(l10n.confirmButton),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+    } finally {
+      currentPasswordController.dispose();
+      emailController.dispose();
+    }
   }
 
   Future<void> _showChangePasswordDialog(

@@ -27,7 +27,7 @@ func (s *Service) SendRecoveryEmail(to string, token string, expiresMinutes int)
 	}
 	subject := "Family Teacher password recovery"
 	body := fmt.Sprintf(
-		"Your recovery token: %s\nThis token expires in %d minutes.\nOpen Tutor1on1, choose Forgot password, then enter your recovery email, this token, and your new password.\nIf you did not request this, ignore this email.",
+		"Your 6-digit recovery code: %s\nThis code expires in %d minutes.\nOpen Tutor1on1, choose Forgot password, then enter your recovery email, this code, and your new password.\nIf you do not see future recovery emails, check Spam.\nIf you did not request this, ignore this email.",
 		token,
 		expiresMinutes,
 	)

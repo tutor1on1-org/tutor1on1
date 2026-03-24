@@ -158,6 +158,67 @@ void main() {
     expect(devices.first.online, isTrue);
   });
 
+  test('getAccountProfile decodes recovery email payload', () async {
+    final api = MarketplaceApiService(
+      secureStorage: _TokenSecureStorageService(accessToken: 'token'),
+      baseUrl: 'https://example.com',
+      client: MockClient((request) async {
+        expect(request.headers['Authorization'], equals('Bearer token'));
+        expect(request.url.path, equals('/api/account/profile'));
+        return http.Response(
+          '''
+{
+  "user_id": 9,
+  "username": "student1",
+  "email": "student@example.com",
+  "role": "student",
+  "has_email": true
+}
+''',
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    final profile = await api.getAccountProfile();
+
+    expect(profile.userId, equals(9));
+    expect(profile.username, equals('student1'));
+    expect(profile.email, equals('student@example.com'));
+    expect(profile.hasEmail, isTrue);
+  });
+
+  test('updateRecoveryEmail posts current password and new email', () async {
+    final api = MarketplaceApiService(
+      secureStorage: _TokenSecureStorageService(accessToken: 'token'),
+      baseUrl: 'https://example.com',
+      client: MockClient((request) async {
+        expect(request.method, equals('POST'));
+        expect(request.url.path, equals('/api/account/recovery-email'));
+        expect(request.headers['Authorization'], equals('Bearer token'));
+        expect(
+          request.body,
+          contains('"current_password":"secret123"'),
+        );
+        expect(
+          request.body,
+          contains('"email":"student@example.com"'),
+        );
+        return http.Response(
+          '{"status":"ok"}',
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    await api.updateRecoveryEmail(
+      currentPassword: 'secret123',
+      email: 'student@example.com',
+    );
+  });
+
   test('deleteAccountDevice returns current-device flag', () async {
     final api = MarketplaceApiService(
       secureStorage: _TokenSecureStorageService(accessToken: 'token'),

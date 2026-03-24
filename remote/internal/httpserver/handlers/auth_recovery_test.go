@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -58,6 +59,9 @@ func TestRequestRecoverySMTPPathWithEchoDisabledDoesNotLeakToken(t *testing.T) {
 	mock.ExpectQuery(`SELECT id FROM users WHERE email = \? LIMIT 1`).
 		WithArgs(email).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(userID))
+	mock.ExpectExec(`DELETE FROM password_resets WHERE user_id = \? AND used_at IS NULL`).
+		WithArgs(userID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO password_resets \(user_id, token_hash, expires_at\) VALUES \(\?, \?, \?\)`).
 		WithArgs(userID, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -100,11 +104,15 @@ func TestRequestRecoverySMTPPathWithEchoDisabledDoesNotLeakToken(t *testing.T) {
 	}
 
 	message := smtpServer.WaitForMessage(t)
-	if !strings.Contains(message, "Your recovery token:") {
-		t.Fatalf("smtp message missing token line: %q", message)
+	if !strings.Contains(message, "Your 6-digit recovery code:") {
+		t.Fatalf("smtp message missing code line: %q", message)
 	}
-	if !strings.Contains(message, "This token expires in 15 minutes.") {
+	if !strings.Contains(message, "This code expires in 15 minutes.") {
 		t.Fatalf("smtp message missing ttl line: %q", message)
+	}
+	matches := regexp.MustCompile(`Your 6-digit recovery code: ([0-9]{6})`).FindStringSubmatch(message)
+	if len(matches) != 2 {
+		t.Fatalf("smtp message missing 6-digit recovery code: %q", message)
 	}
 	assertSQLMockExpectations(t, mock)
 }

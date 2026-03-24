@@ -79,12 +79,12 @@ Historical setup timeline moved to `LOGBOOK.md`.
   - `SMTP_STARTTLS=true`
   - `SMTP_SKIP_VERIFY=false`
 - Deployed updated API binary to `/opt/family_teacher_remote/bin/family-teacher-api`.
-- Restarted `family-teacher-api.service`; current service start time is `Tue 2026-03-24 14:27:07 CST`.
+- Restarted `family-teacher-api.service`; current service start time is `Tue 2026-03-24 15:34:03 CST`.
 - Verified:
   - health endpoint `https://api.tutor1on1.org/health` returned `{"status":"ok"}` after restart.
-  - live password recovery completed end to end against the public API using Gmail delivery plus reset-token submission on a fresh account.
-  - canonical Android APK `https://api.tutor1on1.org/downloads/family_teacher.apk` now serves SHA-256 `56a3ac88720d0180fa916751881a0ef32a8bacf027ebae6e506b24c4e2be9067`.
-  - canonical Windows ZIP `https://api.tutor1on1.org/downloads/family_teacher.zip` now serves SHA-256 `84eefb8c5d93b56523cb37e980c74f1377bbf98720a20871c6ab62816d3dd53e`.
+  - live password recovery completed end to end against the public API by changing a fresh account's recovery email, receiving the 6-digit recovery code over Gmail, resetting the password, and logging back in with the new password.
+  - canonical Android APK `https://api.tutor1on1.org/downloads/family_teacher.apk` now serves SHA-256 `2ef8e1de1116129ea3c9ecac9425190d04cce0e1d858ae14f2f296b602564b55`.
+  - canonical Windows ZIP `https://api.tutor1on1.org/downloads/family_teacher.zip` now serves SHA-256 `17042fd2db8a462e4d1bd0d81d1a6cefcf97293a46474e496b9e5a9ba9113907`.
   - website static pages under `https://www.tutor1on1.org/` and `/zh/` returned HTTP 200 after sync, and deployed `site.js` now appends `tutor1on1.org@gmail.com` in the shared footer as the only public contact channel.
 
 ## Remote server updates (2026-03-19, Android + Windows + website release)

@@ -399,6 +399,32 @@ class AdminUserSummary {
   }
 }
 
+class AccountProfileSummary {
+  AccountProfileSummary({
+    required this.userId,
+    required this.username,
+    required this.email,
+    required this.role,
+    required this.hasEmail,
+  });
+
+  final int userId;
+  final String username;
+  final String email;
+  final String role;
+  final bool hasEmail;
+
+  factory AccountProfileSummary.fromJson(Map<String, dynamic> json) {
+    return AccountProfileSummary(
+      userId: (json['user_id'] as num?)?.toInt() ?? 0,
+      username: (json['username'] as String?) ?? '',
+      email: (json['email'] as String?) ?? '',
+      role: (json['role'] as String?) ?? '',
+      hasEmail: (json['has_email'] as bool?) ?? false,
+    );
+  }
+}
+
 class SubjectAdminAssignmentSummary {
   SubjectAdminAssignmentSummary({
     required this.teacherId,
@@ -1038,6 +1064,24 @@ class MarketplaceApiService {
       throw MarketplaceApiException('Unexpected response format.');
     }
     return TeacherControlPinStatus.fromJson(response);
+  }
+
+  Future<AccountProfileSummary> getAccountProfile() async {
+    final response = await _get('/api/account/profile');
+    if (response is! Map<String, dynamic>) {
+      throw MarketplaceApiException('Unexpected response format.');
+    }
+    return AccountProfileSummary.fromJson(response);
+  }
+
+  Future<void> updateRecoveryEmail({
+    required String currentPassword,
+    required String email,
+  }) async {
+    await _post('/api/account/recovery-email', {
+      'current_password': currentPassword,
+      'email': email.trim(),
+    });
   }
 
   Future<List<AccountDeviceSummary>> listAccountDevices() async {

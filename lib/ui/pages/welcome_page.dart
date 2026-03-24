@@ -653,6 +653,8 @@ class _WelcomePageState extends State<WelcomePage> {
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  Text(l10n.recoveryEmailSpamHint),
+                  const SizedBox(height: 12),
                   TextField(
                     controller: emailController,
                     decoration: InputDecoration(

@@ -54,6 +54,8 @@ func registerRoutes(app *fiber.App, deps handlers.Dependencies) {
 	api.Get("/catalog/courses", catalogLimiter.Handler(middleware.KeyByIP), catalog.ListCourses)
 	api.Get("/subject-labels", catalogLimiter.Handler(middleware.KeyByIP), moderation.ListAvailableSubjectLabels)
 
+	api.Get("/account/profile", auth.GetAccountProfile)
+	api.Post("/account/recovery-email", authLimiterChange.Handler(middleware.KeyByIP), auth.UpdateRecoveryEmail)
 	api.Get("/account/devices", accountDevices.ListAccountDevices)
 	api.Post("/account/devices/:deviceKey/delete", accountDevices.DeleteAccountDevice)
 	api.Get("/teacher/courses", teacherCourses.ListCourses)

@@ -2,9 +2,9 @@
 Historical timeline. Keep active runbook details in `WORKLOG.md`.
 
 ## 2026-03-24
-- Completed the public password-recovery UX: login now exposes `Forgot password?`, users can request a recovery email, paste the emailed token, and reset to a new password without any 2-step-verification flow.
-- Wired production recovery mail to Gmail SMTP (`tutor1on1.org@gmail.com`) with `RECOVERY_TOKEN_ECHO=false`, redeployed the API binary, restarted `family-teacher-api.service`, and re-verified public `/health` plus live password recovery end to end against a fresh account.
-- Added `tutor1on1.org@gmail.com` as the only public website contact path through shared `web/site.js`, then published fresh artifacts and verified canonical URLs/hashes: Android APK `56a3ac88720d0180fa916751881a0ef32a8bacf027ebae6e506b24c4e2be9067`, Windows ZIP `84eefb8c5d93b56523cb37e980c74f1377bbf98720a20871c6ab62816d3dd53e`, plus website static sync with public `www.tutor1on1.org` page checks.
+- Completed the public password-recovery UX: login now exposes `Forgot password?`, recovery mail uses a 6-digit code, reset dialogs explicitly tell users to check Spam, and the logged-in Settings page now shows the masked current recovery email plus a current-password-gated change flow.
+- Wired production recovery mail to Gmail SMTP (`tutor1on1.org@gmail.com`) with `RECOVERY_TOKEN_ECHO=false`, redeployed the API binary, restarted `family-teacher-api.service`, and re-verified public `/health` plus a live end-to-end regression that updated the recovery email on a fresh account, received the 6-digit code, reset the password, and logged back in.
+- Added `tutor1on1.org@gmail.com` as the only public website contact path through shared `web/site.js`, then published fresh artifacts and verified canonical URLs/hashes: Android APK `2ef8e1de1116129ea3c9ecac9425190d04cce0e1d858ae14f2f296b602564b55`, Windows ZIP `17042fd2db8a462e4d1bd0d81d1a6cefcf97293a46474e496b9e5a9ba9113907`, plus website static sync with public `www.tutor1on1.org` page checks.
 
 ## 2026-03-23
 - Fixed the student session footer/quit root causes together: the tutor footer now keeps the `easy/medium/hard/percent` badge visible by making the desktop control strip scroll-safe and the model dropdown expand safely, while study-mode quit gating now clears stale same-student runtime state and refreshes the live heartbeat decision before prompting for a teacher PIN.

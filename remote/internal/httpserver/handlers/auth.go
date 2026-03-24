@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"math/big"
 	"strings"
 	"time"
 
@@ -79,6 +80,11 @@ type resetPasswordRequest struct {
 	Email         string `json:"email"`
 	RecoveryToken string `json:"recovery_token"`
 	NewPassword   string `json:"new_password"`
+}
+
+type updateRecoveryEmailRequest struct {
+	CurrentPassword string `json:"current_password"`
+	Email           string `json:"email"`
 }
 
 type refreshRequest struct {
@@ -306,6 +312,69 @@ func (h *AuthHandler) ChangePassword(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"status": "ok"})
 }
 
+func (h *AuthHandler) GetAccountProfile(c *fiber.Ctx) error {
+	if h.store == nil || h.store.DB == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "database unavailable")
+	}
+	userID, err := requireUserID(c, h.cfg.JWTVerifySecrets)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	}
+	row := h.store.DB.QueryRow(
+		"SELECT username, email FROM users WHERE id = ? LIMIT 1",
+		userID,
+	)
+	var username string
+	var email string
+	if err := row.Scan(&username, &email); err != nil {
+		return fiber.NewError(fiber.StatusNotFound, "account not found")
+	}
+	role, _, err := h.getUserRole(userID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "role lookup failed")
+	}
+	return c.JSON(fiber.Map{
+		"user_id":   userID,
+		"username":  username,
+		"email":     email,
+		"role":      role,
+		"has_email": strings.TrimSpace(email) != "",
+	})
+}
+
+func (h *AuthHandler) UpdateRecoveryEmail(c *fiber.Ctx) error {
+	if h.store == nil || h.store.DB == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "database unavailable")
+	}
+	userID, err := requireUserID(c, h.cfg.JWTVerifySecrets)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	}
+	var req updateRecoveryEmailRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+	}
+	email := normalizeEmail(req.Email)
+	currentPassword := strings.TrimSpace(req.CurrentPassword)
+	if email == "" || currentPassword == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "email and current_password required")
+	}
+	currentHash, err := h.getUserAuthByID(userID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "invalid credentials")
+	}
+	if bcrypt.CompareHashAndPassword([]byte(currentHash), []byte(req.CurrentPassword)) != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "invalid credentials")
+	}
+	if _, err := h.store.DB.Exec(
+		"UPDATE users SET email = ? WHERE id = ?",
+		email, userID,
+	); err != nil {
+		return userEmailUpdateError(err)
+	}
+	return c.JSON(fiber.Map{"status": "ok"})
+}
+
 func (h *AuthHandler) RequestRecovery(c *fiber.Ctx) error {
 	if h.store == nil || h.store.DB == nil {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "database unavailable")
@@ -323,13 +392,19 @@ func (h *AuthHandler) RequestRecovery(c *fiber.Ctx) error {
 	}
 	userID, err := h.getUserIDByEmail(email)
 	userExists := err == nil
-	token, err := randomToken(24)
+	token, err := randomDigitsToken(6)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "token generation failed")
 	}
 	hash := hashToken(token)
 	expiresAt := time.Now().Add(time.Duration(h.cfg.RecoveryTokenTTLMin) * time.Minute)
 	if userExists {
+		if _, err := h.store.DB.Exec(
+			"DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL",
+			userID,
+		); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "recovery cleanup failed")
+		}
 		if _, err := h.store.DB.Exec(
 			"INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES (?, ?, ?)",
 			userID, hash, expiresAt,
@@ -695,12 +770,36 @@ func userInsertError(err error) error {
 	return fiber.NewError(fiber.StatusInternalServerError, "user insert failed")
 }
 
+func userEmailUpdateError(err error) error {
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "duplicate entry") && strings.Contains(message, "users.email") {
+		return fiber.NewError(fiber.StatusBadRequest, "email already exists")
+	}
+	return fiber.NewError(fiber.StatusInternalServerError, "email update failed")
+}
+
 func randomToken(byteLen int) (string, error) {
 	buf := make([]byte, byteLen)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+func randomDigitsToken(length int) (string, error) {
+	if length <= 0 {
+		return "", errors.New("invalid token length")
+	}
+	var builder strings.Builder
+	builder.Grow(length)
+	for i := 0; i < length; i++ {
+		n, err := rand.Int(rand.Reader, big.NewInt(10))
+		if err != nil {
+			return "", err
+		}
+		builder.WriteByte(byte('0') + byte(n.Int64()))
+	}
+	return builder.String(), nil
 }
 
 func hashToken(token string) string {
