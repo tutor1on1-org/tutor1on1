@@ -5,7 +5,7 @@ param(
   [string]$KeyPath = 'C:\Users\kl\.ssh\id_rsa',
   [string]$RemotePublicDir = '/var/lib/family_teacher_remote/public',
   [string]$DownloadBaseUrl = 'https://api.tutor1on1.org/downloads',
-  [string]$ZipName = 'family_teacher.zip',
+  [string]$ZipName = 'Tutor1on1.zip',
   [switch]$SkipBuild,
   [switch]$SkipUpload,
   [switch]$SkipPromptAssetTests,
@@ -139,6 +139,7 @@ $zipBaseName = [System.IO.Path]::GetFileNameWithoutExtension($ZipName)
 $candidateZipName = "${zipBaseName}_candidate.zip"
 $candidateDownloadUrl = "$($DownloadBaseUrl.TrimEnd('/'))/$candidateZipName"
 $cleanupPattern = "$zipBaseName*.zip"
+$legacyCleanupPattern = 'family_teacher*.zip'
 $zipValidatorScript = Join-Path $repoRoot 'skills\windows_release_publish\scripts\validate_windows_release_zip.ps1'
 
 Push-Location $repoRoot
@@ -234,6 +235,7 @@ try {
   $remotePromoteCommand = @(
     "/usr/bin/sudo /usr/bin/install -m 0644 -o root -g root '$RemotePublicDir/$candidateZipName' '$RemotePublicDir/$ZipName'",
     "/usr/bin/sudo /usr/bin/find '$RemotePublicDir' -maxdepth 1 -type f -name '$cleanupPattern' ! -name '$ZipName' ! -name '$candidateZipName' -print -delete",
+    "/usr/bin/sudo /usr/bin/find '$RemotePublicDir' -maxdepth 1 -type f -name '$legacyCleanupPattern' -print -delete",
     "/usr/bin/sudo /usr/bin/rm -f '$RemotePublicDir/$candidateZipName'",
     "/usr/bin/sudo /usr/bin/sha256sum '$RemotePublicDir/$ZipName'",
     "/usr/bin/sudo /usr/bin/ls -la '$RemotePublicDir'"

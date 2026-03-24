@@ -5,7 +5,7 @@ param(
   [string]$KeyPath = 'C:\Users\kl\.ssh\id_rsa',
   [string]$RemotePublicDir = '/var/lib/family_teacher_remote/public',
   [string]$DownloadBaseUrl = 'https://api.tutor1on1.org/downloads',
-  [string]$ApkName = 'family_teacher.apk',
+  [string]$ApkName = 'Tutor1on1.apk',
   [switch]$SkipBuild
 )
 
@@ -74,6 +74,7 @@ $apkBaseName = [System.IO.Path]::GetFileNameWithoutExtension($ApkName)
 $candidateApkName = "${apkBaseName}_candidate.apk"
 $candidateDownloadUrl = "$($DownloadBaseUrl.TrimEnd('/'))/$candidateApkName"
 $cleanupPattern = "$apkBaseName*.apk"
+$legacyCleanupPattern = 'family_teacher*.apk'
 
 Push-Location $repoRoot
 try {
@@ -140,6 +141,7 @@ try {
   $remotePromoteCommand = @(
     "/usr/bin/sudo /usr/bin/install -m 0644 -o root -g root '$RemotePublicDir/$candidateApkName' '$RemotePublicDir/$ApkName'",
     "/usr/bin/sudo /usr/bin/find '$RemotePublicDir' -maxdepth 1 -type f -name '$cleanupPattern' ! -name '$ApkName' ! -name '$candidateApkName' -print -delete",
+    "/usr/bin/sudo /usr/bin/find '$RemotePublicDir' -maxdepth 1 -type f -name '$legacyCleanupPattern' -print -delete",
     "/usr/bin/sudo /usr/bin/rm -f '$RemotePublicDir/$candidateApkName'",
     "/usr/bin/sudo /usr/bin/sha256sum '$RemotePublicDir/$ApkName'",
     "/usr/bin/sudo /usr/bin/ls -la '$RemotePublicDir'"

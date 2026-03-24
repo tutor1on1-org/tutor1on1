@@ -1,11 +1,11 @@
 # Windows Release Publish Skill
 
 ## Purpose
-Build the Windows app, package it as `family_teacher.zip`, upload it to the remote server, remove old versioned ZIP artifacts, and verify the public download link.
+Build the Windows app, package it as `Tutor1on1.zip`, upload it to the remote server, remove old versioned ZIP artifacts, and verify the public download link.
 
 ## Use when
 - A new desktop release needs to be published for download.
-- The canonical download file should remain stable as `family_teacher.zip`.
+- The canonical download file should remain stable as `Tutor1on1.zip`.
 
 ## Script
 - `scripts/publish_windows_release.ps1`
@@ -13,14 +13,14 @@ Build the Windows app, package it as `family_teacher.zip`, upload it to the remo
 ## Default behavior
 1. Run prompt-asset gate: `flutter test test/prompt_assets_integrity_test.dart`.
 2. Run `flutter build windows --release` so the local `build/windows/x64/runner/Release` tree is refreshed before packaging/upload.
-3. Package `build/windows/x64/runner/Release` into `build/family_teacher.zip`.
+3. Package `build/windows/x64/runner/Release` into `build/Tutor1on1.zip`.
 4. Validate ZIP artifact entries and prompt asset decoding using `scripts/validate_windows_release_zip.ps1`.
-5. Upload ZIP to remote `/tmp/family_teacher.zip`.
-6. Install candidate ZIP to `/var/lib/family_teacher_remote/public/family_teacher_candidate.zip`.
-7. Verify candidate SHA-256 and candidate URL (`/downloads/family_teacher_candidate.zip`) before promotion.
-8. Promote candidate to canonical `/var/lib/family_teacher_remote/public/family_teacher.zip`.
-9. Delete old versioned ZIP files that match `family_teacher*.zip` except the canonical file.
-10. Verify canonical SHA-256 and URL (`https://api.tutor1on1.org/downloads/family_teacher.zip`).
+5. Upload ZIP to remote `/tmp/Tutor1on1.zip`.
+6. Install candidate ZIP to `/var/lib/family_teacher_remote/public/Tutor1on1_candidate.zip`.
+7. Verify candidate SHA-256 and candidate URL (`/downloads/Tutor1on1_candidate.zip`) before promotion.
+8. Promote candidate to canonical `/var/lib/family_teacher_remote/public/Tutor1on1.zip`.
+9. Delete old versioned ZIP files that match `Tutor1on1*.zip`, plus legacy `family_teacher*.zip`, except the canonical file.
+10. Verify canonical SHA-256 and URL (`https://api.tutor1on1.org/downloads/Tutor1on1.zip`).
 
 ## Run
 ```powershell

@@ -58,6 +58,39 @@ function Assert-BodyContains {
   }
 }
 
+function Assert-BodyNotContains {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Url,
+    [Parameter(Mandatory = $true)]
+    [string]$LiteralText
+  )
+  $body = & curl.exe -k --fail --silent --show-error $Url
+  if ($LASTEXITCODE -ne 0) {
+    throw "curl body fetch failed for $Url with exit code $LASTEXITCODE."
+  }
+  $bodyText = ($body | Out-String)
+  $escapedText = [regex]::Escape($LiteralText)
+  if ($bodyText | Select-String -Pattern $escapedText -Quiet) {
+    throw "Body verification failed for $Url. Unexpected text: $LiteralText"
+  }
+}
+
+function Assert-NotHttp200 {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Url
+  )
+  $headers = & curl.exe -k -I --max-time 20 $Url
+  if ($LASTEXITCODE -ne 0) {
+    throw "curl header check failed for $Url with exit code $LASTEXITCODE."
+  }
+  $headers | ForEach-Object { Write-Host $_ }
+  if ($headers -match 'HTTP/\d\.\d 200 OK') {
+    throw "URL unexpectedly returned HTTP 200: $Url"
+  }
+}
+
 $repoRoot = (Resolve-Path $ProjectRoot).Path
 if (-not (Test-Path -LiteralPath $repoRoot)) {
   throw "Project root not found: $ProjectRoot"
@@ -80,6 +113,20 @@ if ($sources.Count -eq 0) {
 
 Push-Location $repoRoot
 try {
+  $remoteCleanupCommand = "/usr/bin/sudo /usr/bin/find '$RemoteWebsiteDir' -mindepth 1 -maxdepth 1 -exec /usr/bin/rm -rf {} +"
+  Write-Host '==> Clear remote website root before sync'
+  $remoteCleanupOutput = & ssh `
+    -i $KeyPath `
+    -o 'IdentitiesOnly=yes' `
+    -o 'BatchMode=yes' `
+    -o 'StrictHostKeyChecking=accept-new' `
+    "$RemoteUser@$RemoteHost" `
+    $remoteCleanupCommand
+  if ($LASTEXITCODE -ne 0) {
+    throw "Remote website cleanup failed with exit code $LASTEXITCODE."
+  }
+  $remoteCleanupOutput | ForEach-Object { Write-Host $_ }
+
   Invoke-Checked -Label 'Sync local web directory to remote website root' -Action {
     scp `
       -r `
@@ -115,13 +162,41 @@ try {
     '/install/',
     '/install/android/',
     '/install/windows/',
-    '/install/macos/',
     '/zh/',
     '/zh/help/',
     '/zh/install/',
     '/zh/install/android/',
     '/zh/install/windows/',
-    '/zh/install/macos/'
+    '/zh-tw/',
+    '/zh-tw/help/',
+    '/zh-tw/install/',
+    '/zh-tw/install/android/',
+    '/zh-tw/install/windows/',
+    '/ja/',
+    '/ja/help/',
+    '/ja/install/',
+    '/ja/install/android/',
+    '/ja/install/windows/',
+    '/ko/',
+    '/ko/help/',
+    '/ko/install/',
+    '/ko/install/android/',
+    '/ko/install/windows/',
+    '/es/',
+    '/es/help/',
+    '/es/install/',
+    '/es/install/android/',
+    '/es/install/windows/',
+    '/fr/',
+    '/fr/help/',
+    '/fr/install/',
+    '/fr/install/android/',
+    '/fr/install/windows/',
+    '/de/',
+    '/de/help/',
+    '/de/install/',
+    '/de/install/android/',
+    '/de/install/windows/'
   )
   foreach ($path in $http200Paths) {
     $url = "$($SiteBaseUrl.TrimEnd('/'))$path"
@@ -131,18 +206,53 @@ try {
 
   $bodyChecks = @(
     @{ Path = '/install/'; LiteralText = 'api.tutor1on1.org/downloads/' },
-    @{ Path = '/install/android/'; LiteralText = 'family_teacher.apk' },
-    @{ Path = '/install/windows/'; LiteralText = 'family_teacher.zip' },
-    @{ Path = '/install/macos/'; LiteralText = 'Tutor1on1-macos-universal.zip' },
+    @{ Path = '/install/'; LiteralText = 'Tutor1on1.apk' },
+    @{ Path = '/install/'; LiteralText = 'Tutor1on1.zip' },
+    @{ Path = '/install/android/'; LiteralText = 'Tutor1on1.apk' },
+    @{ Path = '/install/windows/'; LiteralText = 'Tutor1on1.zip' },
     @{ Path = '/zh/install/'; LiteralText = 'api.tutor1on1.org/downloads/' },
-    @{ Path = '/zh/install/android/'; LiteralText = 'family_teacher.apk' },
-    @{ Path = '/zh/install/windows/'; LiteralText = 'family_teacher.zip' },
-    @{ Path = '/zh/install/macos/'; LiteralText = 'Tutor1on1-macos-universal.zip' }
+    @{ Path = '/zh/install/'; LiteralText = 'Tutor1on1.apk' },
+    @{ Path = '/zh/install/'; LiteralText = 'Tutor1on1.zip' },
+    @{ Path = '/zh/install/android/'; LiteralText = 'Tutor1on1.apk' },
+    @{ Path = '/zh/install/windows/'; LiteralText = 'Tutor1on1.zip' }
   )
   foreach ($check in $bodyChecks) {
     $url = "$($SiteBaseUrl.TrimEnd('/'))$($check.Path)"
     Write-Host "==> Verify page content: $url"
     Assert-BodyContains -Url $url -LiteralText $check.LiteralText
+  }
+
+  $bodyAbsenceChecks = @(
+    '/install/',
+    '/zh/install/',
+    '/zh-tw/install/',
+    '/ja/install/',
+    '/ko/install/',
+    '/es/install/',
+    '/fr/install/',
+    '/de/install/'
+  )
+  foreach ($path in $bodyAbsenceChecks) {
+    $url = "$($SiteBaseUrl.TrimEnd('/'))$path"
+    Write-Host "==> Verify page does not mention macOS: $url"
+    Assert-BodyNotContains -Url $url -LiteralText 'macOS'
+    Assert-BodyNotContains -Url $url -LiteralText '/install/macos/'
+  }
+
+  $removedPaths = @(
+    '/install/macos/',
+    '/zh/install/macos/',
+    '/zh-tw/install/macos/',
+    '/ja/install/macos/',
+    '/ko/install/macos/',
+    '/es/install/macos/',
+    '/fr/install/macos/',
+    '/de/install/macos/'
+  )
+  foreach ($path in $removedPaths) {
+    $url = "$($SiteBaseUrl.TrimEnd('/'))$path"
+    Write-Host "==> Verify removed page is not publicly available: $url"
+    Assert-NotHttp200 -Url $url
   }
 
   Write-Host '==> Website publish completed'

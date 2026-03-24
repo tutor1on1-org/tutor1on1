@@ -62,7 +62,7 @@ Validate before returning:
 - `LESSONS.md` - durable cross-session lessons and operating rules.
 
 ## Local skills
-- `skills/windows_release_publish/SKILL.md` - build Windows release, package `family_teacher.zip`, upload to server, remove old versioned ZIP artifacts, and verify public download URL/hash.
+- `skills/windows_release_publish/SKILL.md` - build Windows release, package `Tutor1on1.zip`, upload to server, remove old versioned ZIP artifacts, and verify public download URL/hash.
 
 ## Experience updates
 - Canonical experience log moved to `LESSONS.md` to keep AGENTS concise and always-injected context small.

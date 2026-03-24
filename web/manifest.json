@@ -5,7 +5,7 @@
   "display": "standalone",
   "background_color": "#f4efe6",
   "theme_color": "#f4efe6",
-  "description": "Tutor1on1 is a lightweight static landing page for the Tutor1on1 Windows, Android, and macOS learning app.",
+  "description": "Tutor1on1 is a lightweight static landing page for the Tutor1on1 Windows and Android learning app.",
   "orientation": "portrait-primary",
   "prefer_related_applications": false,
   "icons": [

@@ -2,7 +2,7 @@
 Last updated: 2026-03-21
 
 ## Standard workflow
-For app changes, the default same-turn handoff is: validate, build, git, and publish unless the user explicitly skips a step. For public app releases, the default publish set is Android APK, then Windows ZIP, then website static sync.
+For app changes, the default same-turn handoff is: validate, build, git, and publish unless the user explicitly skips a step. For public app releases, the default entry point is `scripts/release_public.ps1`, which publishes Android APK, then Windows ZIP, then website static sync.
 
 1. Understand scope and locate the true failing/target layer.
 2. For bugs, reproduce with evidence first (logs, repro script, or minimal failing test).
@@ -15,7 +15,7 @@ For app changes, the default same-turn handoff is: validate, build, git, and pub
 9. Run `powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1 -NoPostHook`.
 10. Stage changes with `git add -A` before commit unless a file is clearly temporary/log-only and should stay untracked; in that case add/update `.gitignore` instead of relying on selective staging.
 11. Commit and push in the same turn after validation unless the user explicitly says not to do one of them.
-12. For app changes, publish/upload the remote Android APK, remote Windows release, and website static files in the same turn unless the user explicitly says to skip one.
+12. For app changes, publish/upload the remote Android APK, remote Windows release, and website static files in the same turn unless the user explicitly says to skip one. Prefer `scripts/release_public.ps1` over manual per-step release commands.
 13. Do not hand off app changes as "done" before commit + push + publish complete; if one step is blocked, report the blocker explicitly instead of silently stopping early.
 14. If backend under `remote/` changed, rebuild/deploy/restart per the remote ops workflow before reporting done.
 

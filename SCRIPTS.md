@@ -73,6 +73,27 @@ flutter build macos --release
 Required workflow gate: run release build before updating `DONEs.md` after code changes.
 
 ## Utility scripts
+### Consolidated public release
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/release_public.ps1
+```
+Default behavior:
+- Runs `scripts/validate_project.ps1 -NoPostHook` first.
+- Runs `git add -A`, `git commit`, and `git push` if the worktree is dirty.
+- Publishes Android as `Tutor1on1.apk`.
+- Publishes Windows as `Tutor1on1.zip`.
+- Republishes the static website after artifacts are live.
+Useful flags:
+- `-SkipValidation`
+- `-SkipGit`
+- `-SkipAndroid`
+- `-SkipAndroidBuild`
+- `-SkipWindows`
+- `-SkipWindowsBuild`
+- `-SkipPromptAssetTests`
+- `-SkipZipValidation`
+- `-SkipWebsite`
+
 ### Android release publish (build + upload)
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/publish_android_release.ps1
@@ -81,10 +102,10 @@ Optional flags:
 - `-SkipBuild` (reuse existing `build/app/outputs/flutter-apk/app-release.apk`)
 
 Default safeguards:
-- Publishes candidate first as `family_teacher_candidate.apk`.
+- Publishes candidate first as `Tutor1on1_candidate.apk`.
 - Verifies remote SHA-256 against the local APK before promotion.
 - Verifies both candidate and canonical public download URLs.
-- Cleans old versioned APK artifacts after promotion.
+- Cleans old `Tutor1on1*.apk` and legacy `family_teacher*.apk` artifacts after promotion.
 
 ### Windows release publish (build + zip + upload)
 ```powershell
@@ -100,18 +121,20 @@ Default safeguards:
 - Prompt asset test gate runs before build.
 - ZIP validator checks required runtime files and prompt asset UTF-8 readability.
 - ZIP packaging uses `System.IO.Compression` for Windows Explorer compatibility.
-- Remote publish uses candidate-first promotion before replacing canonical `family_teacher.zip`.
+- Remote publish uses candidate-first promotion before replacing canonical `Tutor1on1.zip`.
 
 ### Website static publish
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/publish_website_static.ps1
 ```
 Default safeguards:
-- Syncs the tracked `web/` directory into `/var/www/tutor1on1_site`.
+- Clears the remote website root before syncing `web/` so deleted public pages are actually removed.
 - Verifies the remote website tree after upload.
-- Verifies home/help/install pages return HTTP 200 and that install pages still reference the canonical download artifacts under `api.tutor1on1.org/downloads/`.
+- Verifies localized home/help/install pages return HTTP 200, install pages reference `Tutor1on1.apk` / `Tutor1on1.zip`, and removed macOS install pages no longer return HTTP 200.
 
-### macOS notarized release package
+### Future macOS notarized release package
+Do not publish or relink macOS on the website until the app is runnable.
+
 Create notary credentials once on the Mac:
 ```bash
 xcrun notarytool store-credentials "tutor1on1-notary" \
