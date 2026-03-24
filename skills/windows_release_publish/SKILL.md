@@ -19,7 +19,7 @@ Build the Windows app, package it as `Tutor1on1.zip`, upload it to the remote se
 6. Install candidate ZIP to `/var/lib/family_teacher_remote/public/Tutor1on1_candidate.zip`.
 7. Verify candidate SHA-256 and candidate URL (`/downloads/Tutor1on1_candidate.zip`) before promotion.
 8. Promote candidate to canonical `/var/lib/family_teacher_remote/public/Tutor1on1.zip`.
-9. Delete old versioned ZIP files that match `Tutor1on1*.zip`, plus legacy `family_teacher*.zip`, except the canonical file.
+9. Delete the stale Windows candidate ZIP and legacy `family_teacher*.zip` files after promotion. Do not broad-delete other `Tutor1on1*.zip` packages.
 10. Verify canonical SHA-256 and URL (`https://api.tutor1on1.org/downloads/Tutor1on1.zip`).
 
 ## Run

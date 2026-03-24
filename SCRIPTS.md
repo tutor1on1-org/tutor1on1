@@ -122,6 +122,7 @@ Default safeguards:
 - ZIP validator checks required runtime files and prompt asset UTF-8 readability.
 - ZIP packaging uses `System.IO.Compression` for Windows Explorer compatibility.
 - Remote publish uses candidate-first promotion before replacing canonical `Tutor1on1.zip`.
+- Cleans the stale Windows candidate ZIP and legacy `family_teacher*.zip` artifacts, without glob-deleting other `Tutor1on1*.zip` packages.
 
 ### Website static publish
 ```powershell

@@ -138,7 +138,6 @@ $tmpRemoteZip = "/tmp/$ZipName"
 $zipBaseName = [System.IO.Path]::GetFileNameWithoutExtension($ZipName)
 $candidateZipName = "${zipBaseName}_candidate.zip"
 $candidateDownloadUrl = "$($DownloadBaseUrl.TrimEnd('/'))/$candidateZipName"
-$cleanupPattern = "$zipBaseName*.zip"
 $legacyCleanupPattern = 'family_teacher*.zip'
 $zipValidatorScript = Join-Path $repoRoot 'skills\windows_release_publish\scripts\validate_windows_release_zip.ps1'
 
@@ -234,7 +233,6 @@ try {
 
   $remotePromoteCommand = @(
     "/usr/bin/sudo /usr/bin/install -m 0644 -o root -g root '$RemotePublicDir/$candidateZipName' '$RemotePublicDir/$ZipName'",
-    "/usr/bin/sudo /usr/bin/find '$RemotePublicDir' -maxdepth 1 -type f -name '$cleanupPattern' ! -name '$ZipName' ! -name '$candidateZipName' -print -delete",
     "/usr/bin/sudo /usr/bin/find '$RemotePublicDir' -maxdepth 1 -type f -name '$legacyCleanupPattern' -print -delete",
     "/usr/bin/sudo /usr/bin/rm -f '$RemotePublicDir/$candidateZipName'",
     "/usr/bin/sudo /usr/bin/sha256sum '$RemotePublicDir/$ZipName'",

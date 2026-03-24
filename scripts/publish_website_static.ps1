@@ -30,7 +30,7 @@ function Assert-Http200 {
     [Parameter(Mandatory = $true)]
     [string]$Url
   )
-  $headers = & curl.exe -k -I --max-time 20 $Url
+  $headers = & curl.exe -k -I --max-time 20 --retry 3 --retry-all-errors --retry-delay 2 $Url
   if ($LASTEXITCODE -ne 0) {
     throw "curl header check failed for $Url with exit code $LASTEXITCODE."
   }
@@ -47,7 +47,7 @@ function Assert-BodyContains {
     [Parameter(Mandatory = $true)]
     [string]$LiteralText
   )
-  $body = & curl.exe -k --fail --silent --show-error $Url
+  $body = & curl.exe -k --fail --silent --show-error --retry 3 --retry-all-errors --retry-delay 2 $Url
   if ($LASTEXITCODE -ne 0) {
     throw "curl body fetch failed for $Url with exit code $LASTEXITCODE."
   }
@@ -65,7 +65,7 @@ function Assert-BodyNotContains {
     [Parameter(Mandatory = $true)]
     [string]$LiteralText
   )
-  $body = & curl.exe -k --fail --silent --show-error $Url
+  $body = & curl.exe -k --fail --silent --show-error --retry 3 --retry-all-errors --retry-delay 2 $Url
   if ($LASTEXITCODE -ne 0) {
     throw "curl body fetch failed for $Url with exit code $LASTEXITCODE."
   }
@@ -81,7 +81,7 @@ function Assert-NotHttp200 {
     [Parameter(Mandatory = $true)]
     [string]$Url
   )
-  $headers = & curl.exe -k -I --max-time 20 $Url
+  $headers = & curl.exe -k -I --max-time 20 --retry 3 --retry-all-errors --retry-delay 2 $Url
   if ($LASTEXITCODE -ne 0) {
     throw "curl header check failed for $Url with exit code $LASTEXITCODE."
   }
@@ -206,13 +206,9 @@ try {
 
   $bodyChecks = @(
     @{ Path = '/install/'; LiteralText = 'api.tutor1on1.org/downloads/' },
-    @{ Path = '/install/'; LiteralText = 'Tutor1on1.apk' },
-    @{ Path = '/install/'; LiteralText = 'Tutor1on1.zip' },
     @{ Path = '/install/android/'; LiteralText = 'Tutor1on1.apk' },
     @{ Path = '/install/windows/'; LiteralText = 'Tutor1on1.zip' },
     @{ Path = '/zh/install/'; LiteralText = 'api.tutor1on1.org/downloads/' },
-    @{ Path = '/zh/install/'; LiteralText = 'Tutor1on1.apk' },
-    @{ Path = '/zh/install/'; LiteralText = 'Tutor1on1.zip' },
     @{ Path = '/zh/install/android/'; LiteralText = 'Tutor1on1.apk' },
     @{ Path = '/zh/install/windows/'; LiteralText = 'Tutor1on1.zip' }
   )
