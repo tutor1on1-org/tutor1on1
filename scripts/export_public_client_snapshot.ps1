@@ -37,17 +37,21 @@ $includePrefixes = @(
   'linux/',
   'macos/',
   'packages/',
+  'public_release/',
   'test/',
   'third_party/',
+  'web/',
   'windows/'
 )
 
 $includeFiles = @(
   '.gitignore',
   '.metadata',
+  'CHANGELOG.md',
   'LICENSE',
   'LICENSE.txt',
   'NOTICE',
+  'VERSIONING.md',
   'analysis_options.yaml',
   'l10n.yaml',
   'pubspec.lock',
@@ -100,4 +104,4 @@ Set-Content -Path $fileListPath -Value $fileList
 
 Write-Host "Exported public client snapshot to $outputPath"
 Write-Host "Copied $($selected.Count + 1) files (including README.md)."
-Write-Host 'Excluded tracked areas: remote/, scripts/, web/, tool/, ops docs, and release/deploy helpers.'
+Write-Host 'Excluded tracked areas: remote/, private scripts/, tool/, ops docs, and private release/deploy helpers.'

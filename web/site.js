@@ -50,6 +50,14 @@
       contact: { prefix: 'Bei Fragen oder Wünschen schreiben Sie an ', suffix: '' },
     },
   ]
+  const releaseConfig = Object.freeze({
+    githubRepo: 'dennis/family_teacher',
+    releaseTag: 'v1.0',
+    assets: Object.freeze({
+      android: 'Tutor1on1.apk',
+      windows: 'Tutor1on1.zip',
+    }),
+  })
   const languagesByCode = new Map(
     supportedLanguages.map((language) => [language.code, language])
   )
@@ -74,6 +82,7 @@
 
   document.addEventListener('DOMContentLoaded', () => {
     const languageSwitcher = document.querySelector('[data-language-switcher]')
+    applyReleaseLinks()
     appendContactEmail()
 
     if (!languageSwitcher) {
@@ -297,5 +306,57 @@
     }
 
     footer.append(line)
+  }
+
+  function applyReleaseLinks() {
+    const releaseBaseUrl = [
+      'https://github.com',
+      releaseConfig.githubRepo,
+      'releases',
+      'download',
+      releaseConfig.releaseTag,
+    ].join('/')
+
+    const assetUrls = new Map([
+      [releaseConfig.assets.android, `${releaseBaseUrl}/${releaseConfig.assets.android}`],
+      [releaseConfig.assets.windows, `${releaseBaseUrl}/${releaseConfig.assets.windows}`],
+    ])
+
+    document.querySelectorAll('a[href]').forEach((link) => {
+      const rawHref = String(link.getAttribute('href') || '')
+
+      for (const [assetName, assetUrl] of assetUrls.entries()) {
+        if (!rawHref.includes(assetName)) {
+          continue
+        }
+        link.setAttribute('href', assetUrl)
+        break
+      }
+    })
+
+    replaceVisibleText('api.tutor1on1.org/downloads/', `${releaseBaseUrl}/`)
+  }
+
+  function replaceVisibleText(searchValue, replaceValue) {
+    if (!document.body) {
+      return
+    }
+
+    const walker = document.createTreeWalker(
+      document.body,
+      window.NodeFilter.SHOW_TEXT
+    )
+    const nodes = []
+
+    while (walker.nextNode()) {
+      nodes.push(walker.currentNode)
+    }
+
+    for (const node of nodes) {
+      if (!node.nodeValue || !node.nodeValue.includes(searchValue)) {
+        continue
+      }
+      node.nodeValue = node.nodeValue.replaceAll(searchValue, replaceValue)
+    }
   }
 })()

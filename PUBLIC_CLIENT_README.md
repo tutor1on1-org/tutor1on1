@@ -10,12 +10,14 @@ Included in this snapshot:
 - Platform launchers for Android, iOS, macOS, Linux, and Windows
 - Client tests under `test/` and `integration_test/`
 - Bundled assets under `assets/`
+- Static download website under `web/`
+- Public GitHub Release packaging helpers under `public_release/`
 - Tracked client-side support packages under `packages/` and `third_party/`
 
 Intentionally excluded from this snapshot:
 
 - Backend/server source under `remote/`
-- Release, deploy, and internal maintenance scripts
+- Private release, deploy, and internal maintenance scripts
 - Local `.env` files, logs, databases, build outputs, and other untracked files
 - Private runbooks and host-specific operational docs
 
@@ -90,6 +92,36 @@ Do not enable insecure TLS outside local debugging:
 flutter run --dart-define=AUTH_ALLOW_INSECURE_TLS=true
 ```
 
+## GitHub Releases
+
+The public release flow is versioned around Git tags and GitHub Release assets.
+
+- Current first public release tag: `v1.0`
+- App version in `pubspec.yaml`: `1.0.0+1`
+- Standard asset names:
+  - `Tutor1on1.apk`
+  - `Tutor1on1.zip`
+  - `SHA256SUMS.txt`
+
+Build release assets from this snapshot with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File public_release/package_github_release.ps1 -ReleaseTag v1.0
+```
+
+That script builds Android and Windows release artifacts and writes them to:
+
+```text
+public_release/dist/v1.0/
+```
+
+The static website under `web/` is prepared to point download buttons at the versioned GitHub Release assets for the configured tag.
+
+The default website config currently targets:
+
+- GitHub repo slug: `dennis/family_teacher`
+- GitHub Release tag: `v1.0`
+
 ## Trust And Verification
 
 Open source alone does not prove that a published binary matches this source tree. A trustworthy release should publish:
@@ -97,6 +129,11 @@ Open source alone does not prove that a published binary matches this source tre
 - The exact source tag or commit
 - A `SHA-256` hash for each artifact
 - A build command or CI workflow that reproduces the artifact from that tag
+
+See also:
+
+- `VERSIONING.md`
+- `CHANGELOG.md`
 
 ## Status Of The Server
 
