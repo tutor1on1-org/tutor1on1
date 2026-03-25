@@ -119,7 +119,7 @@ The static website under `web/` is prepared to point download buttons at the ver
 
 The default website config currently targets:
 
-- GitHub repo slug: `dennis/tutor1on1`
+- GitHub repo slug: `tutor1on1-org/tutor1on1`
 - GitHub Release tag: `v1.0`
 
 ## Trust And Verification
