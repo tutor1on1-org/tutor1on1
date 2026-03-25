@@ -28,6 +28,24 @@ Last updated: 2026-03-25
 ## Operational requirements
 - `STORAGE_ROOT` must be writable by `ftapp` (API user).
 - Nginx worker (`nginx`) must be able to read/traverse storage paths (current fix: `nginx` in `ftapp` group).
+
+## Public client release (2026-03-25, v1.0.1)
+- Published Android APK:
+  - URL: `https://api.tutor1on1.org/downloads/Tutor1on1.apk`
+  - SHA-256: `80fd36ad8534dcf7431b1982ed00cd4f27e53b20985aaf1a4156da71122f12ab`
+- Published Windows ZIP:
+  - URL: `https://api.tutor1on1.org/downloads/Tutor1on1.zip`
+  - SHA-256: `766352fbe1ff6e959741c42b94918dc144722e1a1fe7cd5c422e64688cf3d445`
+  - Local ZIP validation passed with required entry `tutor1on1.exe`.
+- Published GitHub Release:
+  - URL: `https://github.com/tutor1on1-org/tutor1on1/releases/tag/v1.0.1`
+  - Assets: `Tutor1on1.apk`, `Tutor1on1.zip`, `SHA256SUMS.txt`
+- Website sync completed:
+  - Root: `https://www.tutor1on1.org`
+  - Shared `web/site.js` now targets GitHub tag `v1.0.1`, and localized Windows install pages now instruct users to run `tutor1on1.exe`.
+- Release-tool lessons applied:
+  - `scripts/validate_project.ps1` now fails fast on non-zero step exit codes.
+  - Windows packaging skips case-insensitive self-deletion when legacy `Tutor1on1.exe` and expected `tutor1on1.exe` refer to the same NTFS path.
 - API upload max size and Nginx `client_max_body_size` must match.
 
 ## Common checks

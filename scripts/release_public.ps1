@@ -7,6 +7,7 @@ param(
   [switch]$SkipAndroidBuild,
   [switch]$SkipWindows,
   [switch]$SkipWindowsBuild,
+  [switch]$SkipGitHubRelease,
   [switch]$SkipPromptAssetTests,
   [switch]$SkipZipValidation,
   [switch]$SkipWebsite
@@ -49,6 +50,7 @@ if (-not (Test-Path -LiteralPath $repoRoot)) {
 $validateScript = Join-Path $repoRoot 'scripts\validate_project.ps1'
 $androidPublishScript = Join-Path $repoRoot 'scripts\publish_android_release.ps1'
 $windowsPublishScript = Join-Path $repoRoot 'skills\windows_release_publish\scripts\publish_windows_release.ps1'
+$githubReleaseScript = Join-Path $repoRoot 'public_release\publish_github_release.ps1'
 $websitePublishScript = Join-Path $repoRoot 'scripts\publish_website_static.ps1'
 
 Push-Location $repoRoot
@@ -117,6 +119,27 @@ try {
     }
   } else {
     Write-Host '==> Skip Windows publish requested'
+  }
+
+  if (-not $SkipGitHubRelease.IsPresent) {
+    $githubArgs = @(
+      '-ExecutionPolicy', 'Bypass',
+      '-File', $githubReleaseScript,
+      '-SkipPubGet',
+      '-SkipAnalyze',
+      '-SkipTest'
+    )
+    if (-not $SkipAndroid.IsPresent -or $SkipAndroidBuild.IsPresent) {
+      $githubArgs += '-SkipAndroidBuild'
+    }
+    if (-not $SkipWindows.IsPresent -or $SkipWindowsBuild.IsPresent) {
+      $githubArgs += '-SkipWindowsBuild'
+    }
+    Invoke-Checked -Label 'Publish GitHub release assets' -Action {
+      powershell @githubArgs
+    }
+  } else {
+    Write-Host '==> Skip GitHub release publish requested'
   }
 
   if (-not $SkipWebsite.IsPresent) {

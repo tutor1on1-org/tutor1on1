@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:family_teacher/services/log_crypto_service.dart';
+import 'package:tutor1on1/services/log_crypto_service.dart';
 
 Future<void> main() async {
   final path = Platform.environment['LLM_LOG_PATH']?.trim().isNotEmpty == true

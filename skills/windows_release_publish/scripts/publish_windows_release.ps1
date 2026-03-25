@@ -140,6 +140,9 @@ $candidateZipName = "${zipBaseName}_candidate.zip"
 $candidateDownloadUrl = "$($DownloadBaseUrl.TrimEnd('/'))/$candidateZipName"
 $legacyCleanupPattern = 'family_teacher*.zip'
 $zipValidatorScript = Join-Path $repoRoot 'skills\windows_release_publish\scripts\validate_windows_release_zip.ps1'
+$windowsBuildRoot = Join-Path $repoRoot 'build\windows'
+$expectedExeName = 'tutor1on1.exe'
+$legacyExeNames = @('family_teacher.exe', 'Tutor1on1.exe')
 
 Push-Location $repoRoot
 try {
@@ -152,6 +155,10 @@ try {
   }
 
   if (-not $SkipBuild.IsPresent) {
+    if (Test-Path -LiteralPath $windowsBuildRoot) {
+      Write-Host "==> Remove stale Windows build tree: $windowsBuildRoot"
+      Remove-Item -LiteralPath $windowsBuildRoot -Recurse -Force
+    }
     Invoke-Checked -Label 'flutter build windows --release' -Action {
       flutter build windows --release
     }
@@ -161,6 +168,21 @@ try {
 
   if (-not (Test-Path -LiteralPath $releaseDir)) {
     throw "Release directory not found: $releaseDir"
+  }
+
+  $expectedExePath = Join-Path $releaseDir $expectedExeName
+  if (-not (Test-Path -LiteralPath $expectedExePath)) {
+    throw "Expected Windows executable not found: $expectedExePath"
+  }
+  foreach ($legacyExeName in $legacyExeNames) {
+    $legacyExePath = Join-Path $releaseDir $legacyExeName
+    if ([string]::Equals($legacyExePath, $expectedExePath, [System.StringComparison]::OrdinalIgnoreCase)) {
+      continue
+    }
+    if (Test-Path -LiteralPath $legacyExePath) {
+      Write-Host "==> Remove stale legacy executable: $legacyExePath"
+      Remove-Item -LiteralPath $legacyExePath -Force
+    }
   }
 
   if (Test-Path -LiteralPath $zipPath) {

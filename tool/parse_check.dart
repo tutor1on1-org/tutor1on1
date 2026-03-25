@@ -1,5 +1,5 @@
 ﻿import 'dart:io';
-import 'package:family_teacher/models/skill_tree.dart';
+import 'package:tutor1on1/models/skill_tree.dart';
 
 void main() {
   final file = File('assets/teachers/dennis/MATH/contents.txt');

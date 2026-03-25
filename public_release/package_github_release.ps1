@@ -1,6 +1,6 @@
 param(
   [string]$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path,
-  [string]$ReleaseTag = 'v1.0',
+  [string]$ReleaseTag,
   [switch]$SkipPubGet,
   [switch]$SkipAnalyze,
   [switch]$SkipTest,
@@ -26,13 +26,112 @@ function Invoke-Checked {
   }
 }
 
+function Get-PublicReleaseTag {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$RepoRoot
+  )
+
+  $pubspecPath = Join-Path $RepoRoot 'pubspec.yaml'
+  if (-not (Test-Path -LiteralPath $pubspecPath)) {
+    throw "pubspec.yaml not found: $pubspecPath"
+  }
+
+  $versionLine = @(
+    Get-Content -LiteralPath $pubspecPath | Where-Object { $_ -match '^\s*version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+\d+\s*$' } | Select-Object -First 1
+  )
+  if ($versionLine.Count -eq 0) {
+    throw "Could not parse semantic version from $pubspecPath"
+  }
+  $match = [regex]::Match($versionLine[0], '^\s*version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+\d+\s*$')
+  if (-not $match.Success) {
+    throw "Could not parse semantic version from line: $($versionLine[0])"
+  }
+
+  return 'v' + $match.Groups[1].Value
+}
+
+function New-ExplorerCompatibleZip {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$SourceDir,
+    [Parameter(Mandatory = $true)]
+    [string]$DestinationZip
+  )
+
+  if (-not (Test-Path -LiteralPath $SourceDir)) {
+    throw "ZIP source directory not found: $SourceDir"
+  }
+  if (Test-Path -LiteralPath $DestinationZip) {
+    Remove-Item -LiteralPath $DestinationZip -Force
+  }
+
+  Add-Type -AssemblyName System.IO.Compression
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+  $sourceRoot = (Resolve-Path -LiteralPath $SourceDir).Path.TrimEnd('\', '/')
+  $files = Get-ChildItem -LiteralPath $sourceRoot -Recurse -File
+  $zipStream = [System.IO.File]::Open(
+    $DestinationZip,
+    [System.IO.FileMode]::CreateNew,
+    [System.IO.FileAccess]::ReadWrite,
+    [System.IO.FileShare]::None
+  )
+  $archive = [System.IO.Compression.ZipArchive]::new(
+    $zipStream,
+    [System.IO.Compression.ZipArchiveMode]::Create,
+    $false
+  )
+  try {
+    foreach ($file in $files) {
+      $relativePath = $file.FullName.Substring($sourceRoot.Length).TrimStart('\', '/')
+      $entryName = $relativePath.Replace('\', '/')
+      if ([string]::IsNullOrWhiteSpace($entryName)) {
+        throw "Computed empty ZIP entry name for $($file.FullName)"
+      }
+      $entry = $archive.CreateEntry(
+        $entryName,
+        [System.IO.Compression.CompressionLevel]::Optimal
+      )
+      $entry.LastWriteTime = [DateTimeOffset]::new($file.LastWriteTimeUtc)
+      $entryStream = $null
+      $inputStream = $null
+      try {
+        $entryStream = $entry.Open()
+        $inputStream = [System.IO.File]::OpenRead($file.FullName)
+        $inputStream.CopyTo($entryStream)
+      } finally {
+        if ($inputStream -ne $null) {
+          $inputStream.Dispose()
+        }
+        if ($entryStream -ne $null) {
+          $entryStream.Dispose()
+        }
+      }
+    }
+  } finally {
+    $archive.Dispose()
+    $zipStream.Dispose()
+  }
+}
+
 $repoRoot = (Resolve-Path $ProjectRoot).Path
+if ([string]::IsNullOrWhiteSpace($ReleaseTag)) {
+  $ReleaseTag = Get-PublicReleaseTag -RepoRoot $repoRoot
+}
 $distRoot = Join-Path $repoRoot "public_release\dist\$ReleaseTag"
 $apkSource = Join-Path $repoRoot 'build\app\outputs\flutter-apk\app-release.apk'
 $windowsReleaseDir = Join-Path $repoRoot 'build\windows\x64\runner\Release'
+$windowsBuildRoot = Join-Path $repoRoot 'build\windows'
 $apkTarget = Join-Path $distRoot 'Tutor1on1.apk'
 $zipTarget = Join-Path $distRoot 'Tutor1on1.zip'
 $checksumsPath = Join-Path $distRoot 'SHA256SUMS.txt'
+$expectedExePath = Join-Path $windowsReleaseDir 'tutor1on1.exe'
+$legacyExePaths = @(
+  (Join-Path $windowsReleaseDir 'family_teacher.exe'),
+  (Join-Path $windowsReleaseDir 'Tutor1on1.exe')
+)
+$zipValidatorScript = Join-Path $repoRoot 'skills\windows_release_publish\scripts\validate_windows_release_zip.ps1'
 
 Push-Location $repoRoot
 try {
@@ -61,6 +160,10 @@ try {
   }
 
   if (-not $SkipWindowsBuild.IsPresent) {
+    if (Test-Path -LiteralPath $windowsBuildRoot) {
+      Write-Host "==> Remove stale Windows build tree: $windowsBuildRoot"
+      Remove-Item -LiteralPath $windowsBuildRoot -Recurse -Force
+    }
     Invoke-Checked -Label 'flutter build windows --release' -Action {
       flutter build windows --release
     }
@@ -72,8 +175,17 @@ try {
   if (-not (Test-Path $windowsReleaseDir)) {
     throw "Missing Windows release directory: $windowsReleaseDir"
   }
-  if (-not (Test-Path (Join-Path $windowsReleaseDir 'Tutor1on1.exe'))) {
-    throw "Missing Windows executable under: $windowsReleaseDir"
+  if (-not (Test-Path $expectedExePath)) {
+    throw "Missing Windows executable under: $expectedExePath"
+  }
+  foreach ($legacyExePath in $legacyExePaths) {
+    if ([string]::Equals($legacyExePath, $expectedExePath, [System.StringComparison]::OrdinalIgnoreCase)) {
+      continue
+    }
+    if (Test-Path $legacyExePath) {
+      Write-Host "==> Remove stale legacy executable: $legacyExePath"
+      Remove-Item -LiteralPath $legacyExePath -Force
+    }
   }
 
   if (Test-Path $distRoot) {
@@ -83,16 +195,10 @@ try {
 
   Copy-Item -Path $apkSource -Destination $apkTarget -Force
 
-  Add-Type -AssemblyName System.IO.Compression.FileSystem
-  if (Test-Path $zipTarget) {
-    Remove-Item -Force $zipTarget
+  New-ExplorerCompatibleZip -SourceDir $windowsReleaseDir -DestinationZip $zipTarget
+  Invoke-Checked -Label 'Validate packaged Windows ZIP for GitHub release' -Action {
+    powershell -ExecutionPolicy Bypass -File $zipValidatorScript -ZipPath $zipTarget
   }
-  [System.IO.Compression.ZipFile]::CreateFromDirectory(
-    $windowsReleaseDir,
-    $zipTarget,
-    [System.IO.Compression.CompressionLevel]::Optimal,
-    $false
-  )
 
   $hashLines = @(
     Get-FileHash -Algorithm SHA256 $apkTarget

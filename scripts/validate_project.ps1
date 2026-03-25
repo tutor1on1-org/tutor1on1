@@ -18,6 +18,9 @@ function Invoke-Step {
 
   Write-Output "==> $Name"
   & $Action
+  if ($LASTEXITCODE -ne 0) {
+    throw "$Name failed with exit code $LASTEXITCODE."
+  }
 }
 
 function Resolve-GoExe {

@@ -1,5 +1,5 @@
 import 'dart:io';
-import 'package:family_teacher/services/course_bundle_service.dart';
+import 'package:tutor1on1/services/course_bundle_service.dart';
 
 Future<void> main() async {
   final service = CourseBundleService();

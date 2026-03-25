@@ -1,5 +1,5 @@
 # SCRIPTS
-Last updated: 2026-03-19
+Last updated: 2026-03-25
 
 All commands are expected from repository root (`C:\family_teacher\app`) unless stated otherwise.
 
@@ -82,6 +82,7 @@ Default behavior:
 - Runs `git add -A`, `git commit`, and `git push` if the worktree is dirty.
 - Publishes Android as `Tutor1on1.apk`.
 - Publishes Windows as `Tutor1on1.zip`.
+- Publishes GitHub Release assets for the configured public tag.
 - Republishes the static website after artifacts are live.
 Useful flags:
 - `-SkipValidation`
@@ -90,6 +91,7 @@ Useful flags:
 - `-SkipAndroidBuild`
 - `-SkipWindows`
 - `-SkipWindowsBuild`
+- `-SkipGitHubRelease`
 - `-SkipPromptAssetTests`
 - `-SkipZipValidation`
 - `-SkipWebsite`
@@ -119,10 +121,31 @@ Optional flags:
 
 Default safeguards:
 - Prompt asset test gate runs before build.
+- Clears stale `build/windows` output before rebuild so renamed executables do not inherit the old CMake target name.
 - ZIP validator checks required runtime files and prompt asset UTF-8 readability.
 - ZIP packaging uses `System.IO.Compression` for Windows Explorer compatibility.
 - Remote publish uses candidate-first promotion before replacing canonical `Tutor1on1.zip`.
 - Cleans the stale Windows candidate ZIP and legacy `family_teacher*.zip` artifacts, without glob-deleting other `Tutor1on1*.zip` packages.
+
+### GitHub Release publish
+```powershell
+powershell -ExecutionPolicy Bypass -File public_release/publish_github_release.ps1
+```
+Optional flags:
+- `-ReleaseTag v1.0.1`
+- `-SkipPackage` (reuse existing `public_release/dist/<tag>` contents)
+- `-SkipPubGet`
+- `-SkipAnalyze`
+- `-SkipTest`
+- `-SkipAndroidBuild`
+- `-SkipWindowsBuild`
+
+Default safeguards:
+- Builds or reuses `Tutor1on1.apk`, `Tutor1on1.zip`, and `SHA256SUMS.txt` under `public_release/dist/<tag>/`.
+- Defaults the release tag/name from `pubspec.yaml` when not explicitly provided.
+- Validates the packaged Windows ZIP with the same ZIP checker used by the server publish flow.
+- Resolves a GitHub token from `GITHUB_TOKEN`/`GH_TOKEN` or `git credential fill`.
+- Creates the GitHub Release if it does not exist, replaces same-name assets if it does, and uploads the canonical asset names only.
 
 ### Website static publish
 ```powershell

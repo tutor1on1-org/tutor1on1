@@ -11,7 +11,7 @@ if (-not (Test-Path -LiteralPath $ZipPath)) {
 }
 
 $requiredEntries = @(
-  'family_teacher.exe',
+  'tutor1on1.exe',
   'data/flutter_assets/AssetManifest.bin',
   'data/flutter_assets/assets/prompts/learn.prompt.txt',
   'data/flutter_assets/assets/prompts/review.prompt.txt'
