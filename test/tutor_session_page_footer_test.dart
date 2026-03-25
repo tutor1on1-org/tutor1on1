@@ -4,17 +4,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
-import 'package:family_teacher/db/app_database.dart';
-import 'package:family_teacher/l10n/app_localizations.dart';
-import 'package:family_teacher/models/tutor_action.dart';
-import 'package:family_teacher/models/tutor_contract.dart';
-import 'package:family_teacher/services/app_services.dart';
-import 'package:family_teacher/services/settings_repository.dart';
-import 'package:family_teacher/services/stt_service.dart';
-import 'package:family_teacher/services/tts_service.dart';
-import 'package:family_teacher/state/auth_controller.dart';
-import 'package:family_teacher/state/settings_controller.dart';
-import 'package:family_teacher/ui/tutor_session_page.dart';
+import 'package:tutor1on1/db/app_database.dart';
+import 'package:tutor1on1/l10n/app_localizations.dart';
+import 'package:tutor1on1/models/tutor_action.dart';
+import 'package:tutor1on1/models/tutor_contract.dart';
+import 'package:tutor1on1/services/app_services.dart';
+import 'package:tutor1on1/services/settings_repository.dart';
+import 'package:tutor1on1/services/stt_service.dart';
+import 'package:tutor1on1/services/tts_service.dart';
+import 'package:tutor1on1/state/auth_controller.dart';
+import 'package:tutor1on1/state/settings_controller.dart';
+import 'package:tutor1on1/ui/tutor_session_page.dart';
 
 class _FixedAuthController extends ChangeNotifier implements AuthController {
   _FixedAuthController(this._currentUser);
@@ -127,7 +127,7 @@ Future<_TutorPageFixture> _createFixture(AppDatabase db) async {
     subject: 'Math',
     granularity: 1,
     textbookText: 'Numbers',
-    sourcePath: r'C:\family_teacher\test_course',
+    sourcePath: r'C:\tutor1on1\test_course',
   );
   await db.into(db.courseNodes).insert(
         CourseNodesCompanion.insert(
@@ -214,13 +214,13 @@ AppSetting _testSettings() {
     maxTokens: 4000,
     ttsInitialDelayMs: 60000,
     ttsTextLeadMs: 1000,
-    ttsAudioPath: r'C:\family_teacher\logs',
+    ttsAudioPath: r'C:\tutor1on1\logs',
     sttAutoSend: false,
     enterToSend: true,
     studyModeEnabled: false,
-    logDirectory: r'C:\family_teacher\logs',
-    llmLogPath: r'C:\family_teacher\logs\llm_logs.jsonl',
-    ttsLogPath: r'C:\family_teacher\logs\tts_logs.jsonl',
+    logDirectory: r'C:\tutor1on1\logs',
+    llmLogPath: r'C:\tutor1on1\logs\llm_logs.jsonl',
+    ttsLogPath: r'C:\tutor1on1\logs\tts_logs.jsonl',
     llmMode: 'LIVE',
     locale: 'en',
     updatedAt: DateTime.utc(2026, 3, 23),

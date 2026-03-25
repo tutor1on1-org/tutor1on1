@@ -1,7 +1,7 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:family_teacher/ui/tutor_turn_logic.dart';
+import 'package:tutor1on1/ui/tutor_turn_logic.dart';
 
 void main() {
   test('review turn stays active while finished is false', () {

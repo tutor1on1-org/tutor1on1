@@ -1,9 +1,9 @@
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:family_teacher/db/app_database.dart';
-import 'package:family_teacher/services/llm_call_repository.dart';
-import 'package:family_teacher/services/log_crypto_service.dart';
+import 'package:tutor1on1/db/app_database.dart';
+import 'package:tutor1on1/services/llm_call_repository.dart';
+import 'package:tutor1on1/services/log_crypto_service.dart';
 
 void main() {
   late AppDatabase db;

@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:record/record.dart';
 
-import 'package:family_teacher/services/stt_service.dart';
+import 'package:tutor1on1/services/stt_service.dart';
 
 void main() {
   test('Windows recording uses wav encoder', () {

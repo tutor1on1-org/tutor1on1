@@ -8,7 +8,7 @@ import 'services/single_instance_service.dart';
 import 'ui/widgets/restart_widget.dart';
 
 final SingleInstanceService _singleInstanceService =
-    SingleInstanceService('family_teacher');
+    SingleInstanceService('tutor1on1');
 
 bool get _supportsDesktopWindowing =>
     Platform.isWindows || Platform.isMacOS || Platform.isLinux;

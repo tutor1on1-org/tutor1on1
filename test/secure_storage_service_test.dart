@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
-import 'package:family_teacher/services/secure_storage_service.dart';
+import 'package:tutor1on1/services/secure_storage_service.dart';
 
 void main() {
   group('SecureStorageService.migrateWindowsRenamedProductStorage', () {
@@ -21,7 +21,7 @@ void main() {
         p.join(
           tempDir.path,
           SecureStorageService.windowsStorageCompanyName,
-          SecureStorageService.windowsAccidentalProductName,
+          SecureStorageService.windowsMigratedProductName,
         ),
       );
       final targetDir = Directory(

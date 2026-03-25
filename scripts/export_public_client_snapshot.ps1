@@ -23,7 +23,7 @@ if (Test-Path $outputPath) {
 
 New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
 
-$tracked = git -C $repoRoot ls-files
+$tracked = git -C $repoRoot ls-files --cached --modified --others --exclude-standard
 if ($LASTEXITCODE -ne 0) {
   throw 'git ls-files failed'
 }
@@ -44,6 +44,16 @@ $includePrefixes = @(
   'windows/'
 )
 
+$excludePrefixes = @(
+  'web/de/',
+  'web/es/',
+  'web/fr/',
+  'web/ja/',
+  'web/ko/',
+  'web/zh/',
+  'web/zh-tw/'
+)
+
 $includeFiles = @(
   '.gitignore',
   '.metadata',
@@ -59,9 +69,14 @@ $includeFiles = @(
 )
 
 $selected = New-Object System.Collections.Generic.List[string]
+$seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
 
 foreach ($relPath in $tracked) {
   if ([string]::IsNullOrWhiteSpace($relPath)) {
+    continue
+  }
+
+  if (-not $seen.Add($relPath)) {
     continue
   }
 
@@ -79,9 +94,19 @@ foreach ($relPath in $tracked) {
     continue
   }
 
+  foreach ($excludePrefix in $excludePrefixes) {
+    if ($relPath.StartsWith($excludePrefix, [System.StringComparison]::Ordinal)) {
+      $include = $false
+      break
+    }
+  }
+  if (-not $include) {
+    continue
+  }
+
   $sourcePath = Join-Path $repoRoot $relPath
   if (-not (Test-Path $sourcePath)) {
-    throw "Tracked file missing on disk: $relPath"
+    continue
   }
 
   $destinationPath = Join-Path $outputPath $relPath

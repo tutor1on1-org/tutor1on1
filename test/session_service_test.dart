@@ -5,14 +5,14 @@ import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:family_teacher/db/app_database.dart';
-import 'package:family_teacher/llm/llm_models.dart';
-import 'package:family_teacher/llm/llm_service.dart';
-import 'package:family_teacher/llm/prompt_repository.dart';
-import 'package:family_teacher/models/tutor_contract.dart';
-import 'package:family_teacher/services/llm_log_repository.dart' as llm_logs;
-import 'package:family_teacher/services/session_service.dart';
-import 'package:family_teacher/services/settings_repository.dart';
+import 'package:tutor1on1/db/app_database.dart';
+import 'package:tutor1on1/llm/llm_models.dart';
+import 'package:tutor1on1/llm/llm_service.dart';
+import 'package:tutor1on1/llm/prompt_repository.dart';
+import 'package:tutor1on1/models/tutor_contract.dart';
+import 'package:tutor1on1/services/llm_log_repository.dart' as llm_logs;
+import 'package:tutor1on1/services/session_service.dart';
+import 'package:tutor1on1/services/settings_repository.dart';
 
 class _TutorFixture {
   _TutorFixture({
@@ -232,13 +232,13 @@ Future<void> _seedSettings(AppDatabase db) async {
           maxTokens: 4000,
           ttsInitialDelayMs: const Value(1000),
           ttsTextLeadMs: const Value(1000),
-          ttsAudioPath: const Value(r'C:\family_teacher\logs'),
+          ttsAudioPath: const Value(r'C:\tutor1on1\logs'),
           sttAutoSend: const Value(false),
           enterToSend: const Value(true),
           studyModeEnabled: const Value(false),
-          logDirectory: const Value(r'C:\family_teacher\logs'),
-          llmLogPath: const Value(r'C:\family_teacher\logs\llm_logs.jsonl'),
-          ttsLogPath: const Value(r'C:\family_teacher\logs\tts_logs.jsonl'),
+          logDirectory: const Value(r'C:\tutor1on1\logs'),
+          llmLogPath: const Value(r'C:\tutor1on1\logs\llm_logs.jsonl'),
+          ttsLogPath: const Value(r'C:\tutor1on1\logs\tts_logs.jsonl'),
           llmMode: 'LIVE',
           locale: const Value('en'),
         ),

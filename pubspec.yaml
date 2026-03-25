@@ -1,5 +1,5 @@
-name: family_teacher
-description: Family teacher MVP with LLM-backed tutoring and skill trees.
+name: tutor1on1
+description: Tutor1on1 client with LLM-backed tutoring and skill trees.
 publish_to: "none"
 version: 1.0.0+1
 

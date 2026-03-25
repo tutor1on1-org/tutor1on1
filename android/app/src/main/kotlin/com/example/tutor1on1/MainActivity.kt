@@ -1,9 +1,9 @@
-package com.example.family_teacher
+package com.example.tutor1on1
 
 import android.app.Activity
 import android.content.Intent
-import android.os.Bundle
 import android.net.Uri
+import android.os.Bundle
 import androidx.documentfile.provider.DocumentFile
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -25,7 +25,7 @@ class MainActivity : FlutterActivity() {
     GeneratedPluginRegistrant.registerWith(flutterEngine)
     MethodChannel(
       flutterEngine.dartExecutor.binaryMessenger,
-      "family_teacher/course_import",
+      "tutor1on1/course_import",
     ).setMethodCallHandler { call, result ->
       when (call.method) {
         "pickAndImportCourseFolder" -> {

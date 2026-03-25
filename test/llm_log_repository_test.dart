@@ -4,10 +4,10 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
-import 'package:family_teacher/db/app_database.dart';
-import 'package:family_teacher/services/llm_log_repository.dart';
-import 'package:family_teacher/services/log_crypto_service.dart';
-import 'package:family_teacher/services/settings_repository.dart';
+import 'package:tutor1on1/db/app_database.dart';
+import 'package:tutor1on1/services/llm_log_repository.dart';
+import 'package:tutor1on1/services/log_crypto_service.dart';
+import 'package:tutor1on1/services/settings_repository.dart';
 
 class _FakeSettingsRepository extends SettingsRepository {
   _FakeSettingsRepository(super.db, this._settings);

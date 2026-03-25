@@ -9,14 +9,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:family_teacher/db/app_database.dart' hide SyncItemState;
-import 'package:family_teacher/services/secure_storage_service.dart';
-import 'package:family_teacher/services/session_crypto_service.dart';
-import 'package:family_teacher/services/session_sync_api_service.dart';
-import 'package:family_teacher/services/session_sync_service.dart';
-import 'package:family_teacher/services/session_upload_cache_service.dart';
-import 'package:family_teacher/services/sync_state_repository.dart';
-import 'package:family_teacher/services/user_key_service.dart';
+import 'package:tutor1on1/db/app_database.dart' hide SyncItemState;
+import 'package:tutor1on1/services/secure_storage_service.dart';
+import 'package:tutor1on1/services/session_crypto_service.dart';
+import 'package:tutor1on1/services/session_sync_api_service.dart';
+import 'package:tutor1on1/services/session_sync_service.dart';
+import 'package:tutor1on1/services/session_upload_cache_service.dart';
+import 'package:tutor1on1/services/sync_state_repository.dart';
+import 'package:tutor1on1/services/user_key_service.dart';
 
 class _MemorySecureStorage extends SecureStorageService
     implements SyncStateRepository {

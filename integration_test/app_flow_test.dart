@@ -1,15 +1,15 @@
 import 'dart:io';
 
 import 'package:drift/native.dart';
-import 'package:family_teacher/app.dart';
-import 'package:family_teacher/db/app_database.dart';
-import 'package:family_teacher/l10n/app_localizations.dart';
-import 'package:family_teacher/security/pin_hasher.dart';
-import 'package:family_teacher/services/app_services.dart';
-import 'package:family_teacher/services/log_crypto_service.dart';
-import 'package:family_teacher/services/secure_storage_service.dart';
-import 'package:family_teacher/state/auth_controller.dart';
-import 'package:family_teacher/state/settings_controller.dart';
+import 'package:tutor1on1/app.dart';
+import 'package:tutor1on1/db/app_database.dart';
+import 'package:tutor1on1/l10n/app_localizations.dart';
+import 'package:tutor1on1/security/pin_hasher.dart';
+import 'package:tutor1on1/services/app_services.dart';
+import 'package:tutor1on1/services/log_crypto_service.dart';
+import 'package:tutor1on1/services/secure_storage_service.dart';
+import 'package:tutor1on1/state/auth_controller.dart';
+import 'package:tutor1on1/state/settings_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';

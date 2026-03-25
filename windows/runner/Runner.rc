@@ -92,10 +92,10 @@ BEGIN
             VALUE "CompanyName", "com.example" "\0"
             VALUE "FileDescription", "Tutor1on1" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "family_teacher" "\0"
+            VALUE "InternalName", "Tutor1on1" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 com.example. All rights reserved." "\0"
-            VALUE "OriginalFilename", "family_teacher.exe" "\0"
-            VALUE "ProductName", "family_teacher" "\0"
+            VALUE "OriginalFilename", "Tutor1on1.exe" "\0"
+            VALUE "ProductName", "Tutor1on1" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

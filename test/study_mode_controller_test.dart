@@ -1,9 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:family_teacher/db/app_database.dart';
-import 'package:family_teacher/services/marketplace_api_service.dart';
-import 'package:family_teacher/services/screen_lock_service.dart';
-import 'package:family_teacher/state/study_mode_controller.dart';
+import 'package:tutor1on1/db/app_database.dart';
+import 'package:tutor1on1/services/marketplace_api_service.dart';
+import 'package:tutor1on1/services/screen_lock_service.dart';
+import 'package:tutor1on1/state/study_mode_controller.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

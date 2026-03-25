@@ -72,7 +72,7 @@ try {
   if (-not (Test-Path $windowsReleaseDir)) {
     throw "Missing Windows release directory: $windowsReleaseDir"
   }
-  if (-not (Test-Path (Join-Path $windowsReleaseDir 'family_teacher.exe'))) {
+  if (-not (Test-Path (Join-Path $windowsReleaseDir 'Tutor1on1.exe'))) {
     throw "Missing Windows executable under: $windowsReleaseDir"
   }
 

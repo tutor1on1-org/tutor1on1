@@ -2,9 +2,9 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:family_teacher/llm/llm_models.dart';
-import 'package:family_teacher/llm/llm_providers.dart';
-import 'package:family_teacher/llm/llm_reasoning_support.dart';
+import 'package:tutor1on1/llm/llm_models.dart';
+import 'package:tutor1on1/llm/llm_providers.dart';
+import 'package:tutor1on1/llm/llm_reasoning_support.dart';
 
 void main() {
   group('LlmReasoningSupport', () {
@@ -216,7 +216,8 @@ void main() {
                 },
                 <String, dynamic>{
                   'type': 'text',
-                  'text': 'ivity says the laws of mechanics are the same in every inert',
+                  'text':
+                      'ivity says the laws of mechanics are the same in every inert',
                 },
                 <String, dynamic>{
                   'type': 'text',
@@ -242,8 +243,7 @@ void main() {
       );
     });
 
-    test('streaming delta preserves split words inside JSON string values',
-        () {
+    test('streaming delta preserves split words inside JSON string values', () {
       final buffer = StringBuffer('{"teacher_message":"Gal');
 
       final delta = LlmReasoningSupport.appendJsonAwareFragmentAndReturnDelta(
@@ -260,19 +260,19 @@ void main() {
 
       final firstDelta =
           LlmReasoningSupport.appendJsonAwareFragmentAndReturnDelta(
-            buffer,
-            ' ',
-          );
+        buffer,
+        ' ',
+      );
       final secondDelta =
           LlmReasoningSupport.appendJsonAwareFragmentAndReturnDelta(
-            buffer,
-            '2',
-          );
+        buffer,
+        '2',
+      );
       final thirdDelta =
           LlmReasoningSupport.appendJsonAwareFragmentAndReturnDelta(
-            buffer,
-            ' examples."}',
-          );
+        buffer,
+        ' examples."}',
+      );
 
       expect(firstDelta, equals(' '));
       expect(secondDelta, equals('2'));

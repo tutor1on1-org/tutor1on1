@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:family_teacher/l10n/app_localizations.dart';
+import 'package:tutor1on1/l10n/app_localizations.dart';
 
 import '../../services/app_services.dart';
 import '../../services/tts_log_repository.dart';
@@ -221,7 +221,7 @@ class _TtsLogGroup {
         parts.add(entry.event);
       }
     }
-    return parts.join(' → ');
+    return parts.join(' -> ');
   }
 
   List<TtsLogEntry> get orderedEntries {

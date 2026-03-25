@@ -1,8 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:family_teacher/l10n/app_language.dart';
-import 'package:family_teacher/l10n/app_localizations.dart';
+import 'package:tutor1on1/l10n/app_language.dart';
+import 'package:tutor1on1/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
 import 'services/app_services.dart';
@@ -16,8 +16,8 @@ import 'ui/pages/student_home_page.dart';
 import 'ui/pages/teacher_home_page.dart';
 import 'ui/pages/welcome_page.dart';
 
-class FamilyTeacherApp extends StatelessWidget {
-  const FamilyTeacherApp({super.key, required this.services});
+class Tutor1on1App extends StatelessWidget {
+  const Tutor1on1App({super.key, required this.services});
 
   final AppServices services;
 

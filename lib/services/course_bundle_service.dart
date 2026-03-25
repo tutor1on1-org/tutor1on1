@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../models/skill_tree.dart';
+import 'prompt_bundle_compat.dart';
 
 class CourseKpDiffSummary {
   const CourseKpDiffSummary({
@@ -24,8 +25,7 @@ class CourseKpDiffSummary {
 }
 
 class CourseBundleService {
-  static const String promptMetadataEntryPath =
-      '_family_teacher/prompt_bundle.json';
+  static const String promptMetadataEntryPath = kCurrentPromptMetadataEntryPath;
   static final RegExp _idPattern = RegExp(r'^(\d+(?:\.\d+)*)\s*(.+)$');
 
   Future<File> createBundleFromFolder(
@@ -123,7 +123,7 @@ class CourseBundleService {
           continue;
         }
         final normalizedName = p.normalize(file.name).replaceAll('\\', '/');
-        if (normalizedName != promptMetadataEntryPath) {
+        if (!isSupportedPromptMetadataEntryPath(normalizedName)) {
           continue;
         }
         final content = utf8.decode(file.content as List<int>);
@@ -177,7 +177,7 @@ class CourseBundleService {
         if (normalized.isEmpty) {
           return false;
         }
-        if (normalized == promptMetadataEntryPath) {
+        if (isSupportedPromptMetadataEntryPath(normalized)) {
           return false;
         }
         if (normalized.startsWith('__MACOSX/')) {
@@ -303,7 +303,7 @@ class CourseBundleService {
           continue;
         }
         var data = _entryBytes(entry);
-        if (name == promptMetadataEntryPath) {
+        if (isSupportedPromptMetadataEntryPath(name)) {
           if (promptMetadataOverride != null) {
             continue;
           }
@@ -362,7 +362,7 @@ class CourseBundleService {
         if (normalizedName.isEmpty) {
           continue;
         }
-        if (normalizedName == promptMetadataEntryPath) {
+        if (isSupportedPromptMetadataEntryPath(normalizedName)) {
           if (promptMetadata == null) {
             archive.addFile(
               ArchiveFile(
@@ -759,7 +759,7 @@ class CourseBundleService {
         if (name.isEmpty) {
           continue;
         }
-        if (name == promptMetadataEntryPath) {
+        if (isSupportedPromptMetadataEntryPath(name)) {
           continue;
         }
         if (name.startsWith('__MACOSX/')) {

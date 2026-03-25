@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path/path.dart' as p;
 
 import '../security/hash_utils.dart';
+import 'legacy_brand_compat.dart';
 
 class SyncItemState {
   SyncItemState({
@@ -23,8 +24,9 @@ class SecureStorageService {
   SecureStorageService() : _storage = const FlutterSecureStorage();
 
   static const String windowsStorageCompanyName = 'com.example';
-  static const String windowsStableProductName = 'family_teacher';
-  static const String windowsAccidentalProductName = 'Tutor1on1';
+  static const String windowsStableProductName = 'Tutor1on1';
+  static final String windowsMigratedProductName =
+      buildLegacyWindowsProductName();
 
   static const _apiKeyKey = 'openai_api_key';
   static const _apiKeyPrefix = 'openai_api_key:';
@@ -91,7 +93,7 @@ class SecureStorageService {
       p.join(
         root.path,
         windowsStorageCompanyName,
-        windowsAccidentalProductName,
+        windowsMigratedProductName,
       ),
     );
     if (!await source.exists()) {

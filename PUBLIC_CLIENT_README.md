@@ -10,7 +10,7 @@ Included in this snapshot:
 - Platform launchers for Android, iOS, macOS, Linux, and Windows
 - Client tests under `test/` and `integration_test/`
 - Bundled assets under `assets/`
-- Static download website under `web/`
+- Static English download website under `web/`
 - Public GitHub Release packaging helpers under `public_release/`
 - Tracked client-side support packages under `packages/` and `third_party/`
 
@@ -119,7 +119,7 @@ The static website under `web/` is prepared to point download buttons at the ver
 
 The default website config currently targets:
 
-- GitHub repo slug: `dennis/family_teacher`
+- GitHub repo slug: `dennis/tutor1on1`
 - GitHub Release tag: `v1.0`
 
 ## Trust And Verification

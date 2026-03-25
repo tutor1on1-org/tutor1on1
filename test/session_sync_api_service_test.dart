@@ -4,8 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-import 'package:family_teacher/services/secure_storage_service.dart';
-import 'package:family_teacher/services/session_sync_api_service.dart';
+import 'package:tutor1on1/services/secure_storage_service.dart';
+import 'package:tutor1on1/services/session_sync_api_service.dart';
 
 class _TokenSecureStorage extends SecureStorageService {
   _TokenSecureStorage({

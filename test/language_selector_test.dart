@@ -1,8 +1,8 @@
-import 'package:family_teacher/l10n/app_language.dart';
-import 'package:family_teacher/l10n/app_localizations.dart';
-import 'package:family_teacher/ui/widgets/language_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tutor1on1/l10n/app_language.dart';
+import 'package:tutor1on1/l10n/app_localizations.dart';
+import 'package:tutor1on1/ui/widgets/language_selector.dart';
 
 void main() {
   test('maps visible language choices onto supported app locales', () {
@@ -18,41 +18,42 @@ void main() {
     expect(appLocaleFromSetting('de-DE'), const Locale('en'));
   });
 
-  testWidgets('shows globe icon and all supported language names',
-      (tester) async {
-    String? selectedLanguage;
+  testWidgets(
+    'shows globe icon and all supported language names',
+    (tester) async {
+      String? selectedLanguage;
 
-    await tester.pumpWidget(
-      MaterialApp(
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: Scaffold(
-          body: LanguageSelector(
-            localeCode: 'zh-TW',
-            onChanged: (value) => selectedLanguage = value,
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: LanguageSelector(
+              localeCode: 'zh-TW',
+              onChanged: (value) => selectedLanguage = value,
+            ),
           ),
         ),
-      ),
-    );
+      );
 
-    expect(find.byIcon(Icons.language), findsOneWidget);
+      expect(find.byIcon(Icons.language), findsOneWidget);
 
-    await tester.tap(find.byType(DropdownButtonFormField<String>));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byType(DropdownButtonFormField<String>));
+      await tester.pumpAndSettle();
 
-    expect(find.text('System default'), findsOneWidget);
-    expect(find.text('English'), findsWidgets);
-    expect(find.text('简体中文'), findsWidgets);
-    expect(find.text('繁體中文'), findsWidgets);
-    expect(find.text('日本語'), findsWidgets);
-    expect(find.text('한국어'), findsWidgets);
-    expect(find.text('Español'), findsWidgets);
-    expect(find.text('Français'), findsWidgets);
-    expect(find.text('Deutsch'), findsWidgets);
+      expect(find.text('System default'), findsOneWidget);
+      expect(find.text('English'), findsWidgets);
+      for (final language in supportedAppLanguages) {
+        expect(find.text(language.label), findsWidgets);
+      }
 
-    await tester.tap(find.text('日本語').last);
-    await tester.pumpAndSettle();
+      final japanese = supportedAppLanguages.firstWhere(
+        (language) => language.code == 'ja',
+      );
+      await tester.tap(find.text(japanese.label).last);
+      await tester.pumpAndSettle();
 
-    expect(selectedLanguage, 'ja');
-  });
+      expect(selectedLanguage, 'ja');
+    },
+  );
 }

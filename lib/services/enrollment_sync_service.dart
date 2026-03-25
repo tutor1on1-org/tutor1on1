@@ -9,6 +9,7 @@ import 'course_artifact_service.dart';
 import 'course_bundle_service.dart';
 import 'course_service.dart';
 import 'marketplace_api_service.dart';
+import 'prompt_bundle_compat.dart';
 import 'remote_student_identity_service.dart';
 import 'remote_teacher_identity_service.dart';
 import 'secure_storage_service.dart';
@@ -368,9 +369,8 @@ class EnrollmentSyncService {
           remoteCourseId: enrollment.courseId,
         ),
         onHashesMatch: (_, __) async {},
-        shouldTrustLinkedCourse:
-            (_, installedVersion, syncState) =>
-                _hasTrustedStudentBundleIdentity(
+        shouldTrustLinkedCourse: (_, installedVersion, syncState) =>
+            _hasTrustedStudentBundleIdentity(
           installedVersion: installedVersion,
           syncState: syncState,
         ),
@@ -1454,7 +1454,7 @@ class EnrollmentSyncService {
     final courseKey = (course.sourcePath ?? '').trim();
     if (courseKey.isEmpty) {
       return <String, dynamic>{
-        'schema': 'family_teacher_prompt_bundle_v1',
+        'schema': kCurrentPromptBundleSchema,
         'remote_course_id': remoteCourseId,
         'teacher_username': teacher.username,
         'prompt_templates': const <Map<String, dynamic>>[],
@@ -1606,7 +1606,7 @@ class EnrollmentSyncService {
     }
 
     return {
-      'schema': 'family_teacher_prompt_bundle_v1',
+      'schema': kCurrentPromptBundleSchema,
       'remote_course_id': remoteCourseId,
       'teacher_username': teacher.username,
       'prompt_templates': promptTemplatesPayload,
@@ -1644,7 +1644,7 @@ class EnrollmentSyncService {
     required CourseVersion course,
   }) async {
     final schema = (metadata['schema'] as String?)?.trim() ?? '';
-    if (schema != 'family_teacher_prompt_bundle_v1') {
+    if (!isSupportedPromptBundleSchema(schema)) {
       return;
     }
     final courseKey = course.sourcePath?.trim();

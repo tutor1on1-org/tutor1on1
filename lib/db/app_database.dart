@@ -1,12 +1,10 @@
-import 'dart:io';
-
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 import '../constants.dart';
 import '../security/pin_hasher.dart';
+import '../services/db_path_provider.dart';
 
 part 'app_database.g.dart';
 
@@ -3225,8 +3223,7 @@ class CourseStudentTreeInfo {
 
 LazyDatabase _openConnection() {
   return LazyDatabase(() async {
-    final dir = await getApplicationDocumentsDirectory();
-    final file = File(p.join(dir.path, 'family_teacher.db'));
+    final file = await DbPathProvider.getDatabaseFile();
     return NativeDatabase(file);
   });
 }

@@ -52,7 +52,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
             ),
           );
         }
-        return FamilyTeacherApp(services: snapshot.data!);
+        return Tutor1on1App(services: snapshot.data!);
       },
     );
   }

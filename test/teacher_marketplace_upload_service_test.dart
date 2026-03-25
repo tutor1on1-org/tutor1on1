@@ -3,12 +3,12 @@ import 'dart:io';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:family_teacher/db/app_database.dart';
-import 'package:family_teacher/services/marketplace_api_service.dart';
-import 'package:family_teacher/services/secure_storage_service.dart';
-import 'package:family_teacher/services/settings_repository.dart';
-import 'package:family_teacher/services/sync_log_repository.dart';
-import 'package:family_teacher/services/teacher_marketplace_upload_service.dart';
+import 'package:tutor1on1/db/app_database.dart';
+import 'package:tutor1on1/services/marketplace_api_service.dart';
+import 'package:tutor1on1/services/secure_storage_service.dart';
+import 'package:tutor1on1/services/settings_repository.dart';
+import 'package:tutor1on1/services/sync_log_repository.dart';
+import 'package:tutor1on1/services/teacher_marketplace_upload_service.dart';
 
 class _TestSecureStorageService extends SecureStorageService {
   @override

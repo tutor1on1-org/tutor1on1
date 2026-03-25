@@ -5,12 +5,13 @@ import 'package:drift/drift.dart' hide Column;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:family_teacher/l10n/app_localizations.dart';
+import 'package:tutor1on1/l10n/app_localizations.dart';
 
 import '../../db/app_database.dart';
 import '../../services/app_services.dart';
 import '../../services/course_bundle_service.dart';
 import '../../services/marketplace_api_service.dart';
+import '../../services/prompt_bundle_compat.dart';
 import '../../services/sync_log_repository.dart';
 import '../../services/teacher_marketplace_upload_service.dart';
 import '../../state/auth_controller.dart';
@@ -1055,7 +1056,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     }
 
     return {
-      'schema': 'family_teacher_prompt_bundle_v1',
+      'schema': kCurrentPromptBundleSchema,
       'remote_course_id': remoteCourseId,
       'teacher_username': teacher.username,
       'prompt_templates': promptTemplatesPayload,

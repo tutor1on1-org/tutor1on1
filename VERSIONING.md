@@ -18,7 +18,7 @@ This public client snapshot uses a simple release scheme:
 ## Release Checklist
 
 1. Update `pubspec.yaml` app version if the release content changed.
-2. Update the release tag in `web/site.js`, and update the GitHub repo slug there too if the public repository path is not `dennis/family_teacher`.
+2. Update the release tag in `web/site.js`, and update the GitHub repo slug there too if the public repository path is not `dennis/tutor1on1`.
 3. Build release assets with `public_release/package_github_release.ps1`.
 4. Create the GitHub Release for the same tag and upload `Tutor1on1.apk`, `Tutor1on1.zip`, and `SHA256SUMS.txt`.
 5. Publish the static `web/` directory after the GitHub Release assets are live.

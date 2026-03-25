@@ -4,6 +4,8 @@ import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 
+import 'legacy_brand_compat.dart';
+
 class LogCryptoService {
   LogCryptoService._()
       : _aead = AesGcm.with256bits(),
@@ -46,7 +48,7 @@ class LogCryptoService {
       );
     }
     final saltBytes = Uint8List.fromList(
-      utf8.encode('family_teacher_log_v1:$userId:$normalizedRole'),
+      utf8.encode('${buildLegacyLogSaltPrefix()}:$userId:$normalizedRole'),
     );
     final key = await _kdf.deriveKey(
       secretKey: SecretKey(utf8.encode(password)),

@@ -1,4 +1,4 @@
-import 'package:family_teacher/l10n/app_localizations.dart';
+import 'package:tutor1on1/l10n/app_localizations.dart';
 
 enum TutorMode {
   learn,

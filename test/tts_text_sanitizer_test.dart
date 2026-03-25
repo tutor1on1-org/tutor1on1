@@ -1,6 +1,6 @@
-﻿import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_test/flutter_test.dart';
 
-import 'package:family_teacher/services/tts_text_sanitizer.dart';
+import 'package:tutor1on1/services/tts_text_sanitizer.dart';
 
 void main() {
   group('TtsTextSanitizer', () {

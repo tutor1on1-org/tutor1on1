@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 
 class CourseImportService {
   static const MethodChannel _channel =
-      MethodChannel('family_teacher/course_import');
+      MethodChannel('tutor1on1/course_import');
 
   static Future<String?> pickAndImportCourseFolder() async {
     if (!Platform.isAndroid) {

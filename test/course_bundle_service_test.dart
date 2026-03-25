@@ -7,7 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
-import 'package:family_teacher/services/course_bundle_service.dart';
+import 'package:tutor1on1/services/course_bundle_service.dart';
+import 'package:tutor1on1/services/prompt_bundle_compat.dart';
 
 const _pathProviderChannel = MethodChannel('plugins.flutter.io/path_provider');
 
@@ -204,7 +205,7 @@ void main() {
         );
 
         final metadata = {
-          'schema': 'family_teacher_prompt_bundle_v1',
+          'schema': kCurrentPromptBundleSchema,
           'teacher_username': 'alice',
           'prompt_templates': [
             {'prompt_name': 'learn', 'content': 'Use examples'}
@@ -227,7 +228,7 @@ void main() {
         final service = CourseBundleService();
         final actual = await service.readPromptMetadataFromBundleFile(zipFile);
         expect(actual, isNotNull);
-        expect(actual!['schema'], equals('family_teacher_prompt_bundle_v1'));
+        expect(actual!['schema'], equals(kCurrentPromptBundleSchema));
         expect(actual['teacher_username'], equals('alice'));
         final templates = (actual['prompt_templates'] as List?) ?? const [];
         expect(templates.length, equals(1));
@@ -281,7 +282,7 @@ void main() {
         final bundleA = await writeBundle(
           fileName: 'bundle_a.zip',
           metadataJson: jsonEncode({
-            'schema': 'family_teacher_prompt_bundle_v1',
+            'schema': kCurrentPromptBundleSchema,
             'generated_at': '2026-02-27T10:00:00Z',
             'teacher_username': 'alice',
             'prompt_templates': [
@@ -297,7 +298,7 @@ void main() {
               {'content': 'A', 'prompt_name': 'learn'}
             ],
             'generated_at': '2026-02-27T10:05:00Z',
-            'schema': 'family_teacher_prompt_bundle_v1',
+            'schema': kCurrentPromptBundleSchema,
           }),
         );
 
@@ -428,7 +429,7 @@ void main() {
           final bundle = await service.createBundleFromFolder(
             courseDir.path,
             promptMetadata: {
-              'schema': 'family_teacher_prompt_bundle_v1',
+              'schema': kCurrentPromptBundleSchema,
               'teacher_username': 'alice',
             },
           );

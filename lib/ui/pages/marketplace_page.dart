@@ -9,6 +9,7 @@ import '../../l10n/app_localizations.dart';
 import '../../services/app_services.dart';
 import '../../services/course_bundle_service.dart';
 import '../../services/marketplace_api_service.dart';
+import '../../services/prompt_bundle_compat.dart';
 import '../../services/remote_teacher_identity_service.dart';
 import '../../state/auth_controller.dart';
 import '../app_close_button.dart';
@@ -918,7 +919,7 @@ class _MarketplacePageState extends State<MarketplacePage> {
     required int bundleVersionId,
   }) async {
     final schema = (metadata['schema'] as String?)?.trim() ?? '';
-    if (schema != 'family_teacher_prompt_bundle_v1') {
+    if (!isSupportedPromptBundleSchema(schema)) {
       return const _PromptMetadataApplyResult.noop();
     }
     final remoteUserId = user.remoteUserId;

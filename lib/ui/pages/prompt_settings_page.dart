@@ -5,7 +5,7 @@ import '../../db/app_database.dart';
 import '../../llm/prompt_repository.dart';
 import '../../services/app_services.dart';
 import '../../services/prompt_template_validator.dart';
-import 'package:family_teacher/l10n/app_localizations.dart';
+import 'package:tutor1on1/l10n/app_localizations.dart';
 import '../app_close_button.dart';
 
 class PromptSettingsPage extends StatefulWidget {

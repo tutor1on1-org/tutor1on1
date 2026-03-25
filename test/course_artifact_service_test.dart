@@ -4,8 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
-import 'package:family_teacher/services/course_artifact_service.dart';
-import 'package:family_teacher/services/course_bundle_service.dart';
+import 'package:tutor1on1/services/course_artifact_service.dart';
+import 'package:tutor1on1/services/course_bundle_service.dart';
+import 'package:tutor1on1/services/prompt_bundle_compat.dart';
 
 class _TestPathProviderPlatform extends PathProviderPlatform {
   _TestPathProviderPlatform(this.rootPath);
@@ -74,7 +75,7 @@ void main() {
     await courseDir.delete(recursive: true);
 
     final promptMetadata = <String, dynamic>{
-      'schema': 'family_teacher_prompt_bundle_v1',
+      'schema': kCurrentPromptBundleSchema,
       'teacher_username': 'dennis',
       'prompt_templates': const <Map<String, dynamic>>[],
       'student_prompt_profiles': const <Map<String, dynamic>>[],

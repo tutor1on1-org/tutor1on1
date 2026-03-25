@@ -205,7 +205,7 @@ class SettingsRepository {
 
   Future<String> _defaultLogDirectory() async {
     if (Platform.isWindows) {
-      return r'C:\family_teacher\logs';
+      return r'C:\Tutor1on1\logs';
     }
     final dir = await getApplicationDocumentsDirectory();
     return p.join(dir.path, 'logs');

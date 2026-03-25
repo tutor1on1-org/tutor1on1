@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:family_teacher/ui/pages/llm_log_view_data.dart';
+import 'package:tutor1on1/ui/pages/llm_log_view_data.dart';
 
 void main() {
   test(

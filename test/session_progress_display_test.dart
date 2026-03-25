@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:family_teacher/db/app_database.dart';
-import 'package:family_teacher/ui/session_progress_display.dart';
+import 'package:tutor1on1/db/app_database.dart';
+import 'package:tutor1on1/ui/session_progress_display.dart';
 
 void main() {
   test('uses teacher-configured weights and threshold for percent', () {

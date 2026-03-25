@@ -1,7 +1,7 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:family_teacher/llm/prompt_repository.dart';
+import 'package:tutor1on1/llm/prompt_repository.dart';
 
 class _AlwaysFailAssetBundle extends CachingAssetBundle {
   @override

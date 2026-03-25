@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:family_teacher/services/screen_lock_service.dart';
+import 'package:tutor1on1/services/screen_lock_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

@@ -1,8 +1,8 @@
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:family_teacher/db/app_database.dart';
-import 'package:family_teacher/llm/prompt_repository.dart';
+import 'package:tutor1on1/db/app_database.dart';
+import 'package:tutor1on1/llm/prompt_repository.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

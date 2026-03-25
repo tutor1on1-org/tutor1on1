@@ -2,8 +2,8 @@ import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:family_teacher/db/app_database.dart';
-import 'package:family_teacher/security/pin_hasher.dart';
+import 'package:tutor1on1/db/app_database.dart';
+import 'package:tutor1on1/security/pin_hasher.dart';
 
 void main() {
   test('ensureRemoteUserUniqueness merges duplicate remote users', () async {

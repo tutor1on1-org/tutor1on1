@@ -1,13 +1,13 @@
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:family_teacher/db/app_database.dart';
-import 'package:family_teacher/security/pin_hasher.dart';
-import 'package:family_teacher/state/auth_controller.dart';
-import 'package:family_teacher/services/auth_api_service.dart';
-import 'package:family_teacher/services/device_identity_service.dart';
-import 'package:family_teacher/services/log_crypto_service.dart';
-import 'package:family_teacher/services/secure_storage_service.dart';
+import 'package:tutor1on1/db/app_database.dart';
+import 'package:tutor1on1/security/pin_hasher.dart';
+import 'package:tutor1on1/state/auth_controller.dart';
+import 'package:tutor1on1/services/auth_api_service.dart';
+import 'package:tutor1on1/services/device_identity_service.dart';
+import 'package:tutor1on1/services/log_crypto_service.dart';
+import 'package:tutor1on1/services/secure_storage_service.dart';
 
 class _MemorySecureStorage extends SecureStorageService {
   String? _accessToken;

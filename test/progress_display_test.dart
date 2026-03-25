@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:family_teacher/ui/progress_display.dart';
+import 'package:tutor1on1/ui/progress_display.dart';
 
 void main() {
   test('easy passed count renders one-third progress', () {

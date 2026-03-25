@@ -5,11 +5,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart' as sqlite3;
 
-import 'package:family_teacher/db/app_database.dart';
+import 'package:tutor1on1/db/app_database.dart';
 
 void main() {
   test('migrates from v1 to current schema', () async {
-    final tempDir = await Directory.systemTemp.createTemp('family_teacher');
+    final tempDir = await Directory.systemTemp.createTemp('tutor1on1');
     final dbFile = File(p.join(tempDir.path, 'test.db'));
 
     final rawDb = sqlite3.sqlite3.open(dbFile.path);

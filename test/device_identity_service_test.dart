@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:family_teacher/services/device_identity_service.dart';
-import 'package:family_teacher/services/secure_storage_service.dart';
+import 'package:tutor1on1/services/device_identity_service.dart';
+import 'package:tutor1on1/services/secure_storage_service.dart';
 
 class _MemoryDeviceStorage extends SecureStorageService {
   String? _deviceKey;

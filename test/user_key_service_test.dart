@@ -3,10 +3,10 @@ import 'dart:convert';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:family_teacher/services/secure_storage_service.dart';
-import 'package:family_teacher/services/session_crypto_service.dart';
-import 'package:family_teacher/services/session_sync_api_service.dart';
-import 'package:family_teacher/services/user_key_service.dart';
+import 'package:tutor1on1/services/secure_storage_service.dart';
+import 'package:tutor1on1/services/session_crypto_service.dart';
+import 'package:tutor1on1/services/session_sync_api_service.dart';
+import 'package:tutor1on1/services/user_key_service.dart';
 
 class _NoopSecureStorageService extends SecureStorageService {
   @override

@@ -3,11 +3,12 @@ import 'dart:io';
 
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
-import 'package:family_teacher/db/app_database.dart';
-import 'package:family_teacher/llm/llm_models.dart';
-import 'package:family_teacher/models/tutor_contract.dart';
-import 'package:family_teacher/services/app_services.dart';
-import 'package:family_teacher/services/log_crypto_service.dart';
+import 'package:tutor1on1/db/app_database.dart';
+import 'package:tutor1on1/llm/llm_models.dart';
+import 'package:tutor1on1/models/tutor_contract.dart';
+import 'package:tutor1on1/services/app_services.dart';
+import 'package:tutor1on1/services/db_path_provider.dart';
+import 'package:tutor1on1/services/log_crypto_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:path/path.dart' as p;
@@ -29,11 +30,22 @@ const Map<String, dynamic> _studentReplySchema = <String, dynamic>{
 };
 
 Future<File> _copyLiveDatabase(Directory tempDir) async {
-  final source = File(r'C:\Mac\Home\Documents\family_teacher.db');
-  if (!await source.exists()) {
-    throw StateError('Live database not found at ${source.path}');
+  final documentsDir = Directory(r'C:\Mac\Home\Documents');
+  File? source;
+  for (final fileName in <String>[
+    DbPathProvider.currentDatabaseFileName,
+    DbPathProvider.legacyDatabaseFileName,
+  ]) {
+    final candidate = File(p.join(documentsDir.path, fileName));
+    if (await candidate.exists()) {
+      source = candidate;
+      break;
+    }
   }
-  final target = File(p.join(tempDir.path, 'family_teacher_live_copy.db'));
+  if (source == null) {
+    throw StateError('Live database not found in ${documentsDir.path}.');
+  }
+  final target = File(p.join(tempDir.path, 'tutor1on1_live_copy.db'));
   await source.copy(target.path);
   for (final suffix in const <String>['-wal', '-shm']) {
     final sidecar = File('${source.path}$suffix');

@@ -8,14 +8,15 @@ import 'package:http/testing.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
-import 'package:family_teacher/db/app_database.dart';
-import 'package:family_teacher/llm/prompt_repository.dart';
-import 'package:family_teacher/services/course_artifact_service.dart';
-import 'package:family_teacher/services/course_bundle_service.dart';
-import 'package:family_teacher/services/course_service.dart';
-import 'package:family_teacher/services/enrollment_sync_service.dart';
-import 'package:family_teacher/services/marketplace_api_service.dart';
-import 'package:family_teacher/services/secure_storage_service.dart' as storage;
+import 'package:tutor1on1/db/app_database.dart';
+import 'package:tutor1on1/llm/prompt_repository.dart';
+import 'package:tutor1on1/services/course_artifact_service.dart';
+import 'package:tutor1on1/services/course_bundle_service.dart';
+import 'package:tutor1on1/services/course_service.dart';
+import 'package:tutor1on1/services/enrollment_sync_service.dart';
+import 'package:tutor1on1/services/marketplace_api_service.dart';
+import 'package:tutor1on1/services/prompt_bundle_compat.dart';
+import 'package:tutor1on1/services/secure_storage_service.dart' as storage;
 
 class _TestSecureStorageService extends storage.SecureStorageService {
   _TestSecureStorageService({
@@ -608,7 +609,7 @@ void main() {
       final remoteBundle = await bundleService.createBundleFromFolder(
         remoteDir.path,
         promptMetadata: <String, dynamic>{
-          'schema': 'family_teacher_prompt_bundle_v1',
+          'schema': kCurrentPromptBundleSchema,
           'remote_course_id': 9101,
           'teacher_username': 'teacher_pull_remote',
           'prompt_templates': <Map<String, dynamic>>[

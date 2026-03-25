@@ -1,5 +1,5 @@
-import 'package:family_teacher/models/tutor_contract.dart';
-import 'package:family_teacher/models/tutor_action.dart';
+import 'package:tutor1on1/models/tutor_contract.dart';
+import 'package:tutor1on1/models/tutor_action.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
