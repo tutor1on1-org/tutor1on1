@@ -1,5 +1,5 @@
 # WORKLOG
-Last updated: 2026-03-24
+Last updated: 2026-03-25
 
 ## Remote host (active)
 - Provider: AliCloud ECS
@@ -55,7 +55,22 @@ Last updated: 2026-03-24
 2. `sudo systemctl restart family-teacher-api.service`
 3. Verify health endpoint and log tail.
 
+## Deployment caveat
+- The live Go module root on the host is `/opt/family_teacher_remote` with `go.mod` there, not `/opt/family_teacher_remote/remote`.
+- If the remote source tree is stale or missing files and `go build` on the host fails with undefined symbols that do exist locally, prefer local `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build` and upload the binary instead of trying to repair the host tree ad hoc.
+
 Historical setup timeline moved to `LOGBOOK.md`.
+
+## Remote server updates (2026-03-25, moderation reject fix + production cleanup)
+- Added backend reject-state fixes for subject-admin moderation and deployed a freshly cross-compiled Linux API binary to `/opt/family_teacher_remote/bin/family-teacher-api`.
+- Restarted `family-teacher-api.service`; current service start time is `Wed 2026-03-25 11:19:49 CST`.
+- Verified:
+  - health endpoint `https://api.tutor1on1.org/health` returned `{"status":"ok"}` after restart.
+  - authenticated live probe `POST /api/subject-admin/teacher-registration-requests/999999/reject` returned `404 teacher request not found`, confirming the deployed handler path is active on production.
+  - production cleanup kept only users `admin`/`dennis`/`albert`/`charles`, kept only Dennis's teacher account/courses/bundles, and post-cleanup SQL checks returned zero rows still referencing deleted users/teachers/courses across the audited moderation/enrollment/sync/device tables.
+  - bundle storage now contains only `/var/lib/family_teacher_remote/storage/bundles/{11,12,13}` with live files `11/6.zip`, `12/5.zip`, and `13/5.zip`.
+- Backup:
+  - MySQL pre-cleanup dump: `/home/ecs-user/db_backups/family_teacher_20260325_111227_pre_cleanup_notablespaces.sql.gz`
 
 ## Remote server updates (2026-03-22, teacher-enforced study-mode quit fix)
 - Deployed updated API binary to `/opt/family_teacher_remote/bin/family-teacher-api`.

@@ -492,37 +492,75 @@ func (h *ModerationHandler) RejectTeacherRegistration(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	if admin {
-		result, execErr := h.cfg.Store.DB.Exec(
-			`UPDATE teacher_registration_requests tr
-			 JOIN teacher_accounts ta ON ta.id = tr.teacher_id
-			 SET tr.status = 'rejected',
-			     tr.resolved_at = NOW(),
-			     tr.resolved_by_user_id = ?,
-			     ta.status = 'rejected'
-			 WHERE tr.id = ? AND tr.status = 'pending'`,
-			userID,
-			requestID,
-		)
-		if execErr != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "teacher reject failed")
+	tx, err := h.cfg.Store.DB.Begin()
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
 		}
-		affected, err := result.RowsAffected()
-		if err != nil || affected == 0 {
+	}()
+	var teacherID int64
+	var status string
+	row := tx.QueryRow(
+		`SELECT teacher_id, status
+		 FROM teacher_registration_requests
+		 WHERE id = ?
+		 LIMIT 1`,
+		requestID,
+	)
+	if scanErr := row.Scan(&teacherID, &status); scanErr != nil {
+		if errors.Is(scanErr, sql.ErrNoRows) {
 			return fiber.NewError(fiber.StatusNotFound, "teacher request not found")
 		}
+		return fiber.NewError(fiber.StatusInternalServerError, "teacher request lookup failed")
+	}
+	if status == "approved" {
+		return fiber.NewError(fiber.StatusConflict, "teacher request already approved")
+	}
+	if status == "rejected" {
 		return c.JSON(fiber.Map{"status": "rejected"})
 	}
-	if _, err := h.cfg.Store.DB.Exec(
-		`INSERT INTO teacher_registration_votes (request_id, subject_admin_user_id, decision)
-		 VALUES (?, ?, 'rejected')
-		 ON DUPLICATE KEY UPDATE decision = VALUES(decision), created_at = CURRENT_TIMESTAMP`,
-		requestID,
-		userID,
-	); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "teacher vote save failed")
+	if !admin {
+		ok, accessErr := isSubjectAdminForTeacherRequest(h.cfg.Store.DB, requestID, userID)
+		if accessErr != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "subject admin lookup failed")
+		}
+		if !ok {
+			return fiber.NewError(fiber.StatusForbidden, "subject admin required")
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO teacher_registration_votes (request_id, subject_admin_user_id, decision)
+			 VALUES (?, ?, 'rejected')
+			 ON DUPLICATE KEY UPDATE decision = VALUES(decision), created_at = CURRENT_TIMESTAMP`,
+			requestID,
+			userID,
+		); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "teacher vote save failed")
+		}
 	}
-	return c.JSON(fiber.Map{"status": "rejected_vote_recorded"})
+	if _, err := tx.Exec(
+		"UPDATE teacher_accounts SET status = 'rejected' WHERE id = ?",
+		teacherID,
+	); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "teacher reject failed")
+	}
+	if _, err := tx.Exec(
+		`UPDATE teacher_registration_requests
+		 SET status = 'rejected', resolved_at = NOW(), resolved_by_user_id = ?
+		 WHERE id = ?`,
+		userID,
+		requestID,
+	); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "teacher request update failed")
+	}
+	if err := tx.Commit(); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
+	}
+	committed = true
+	return c.JSON(fiber.Map{"status": "rejected"})
 }
 
 func (h *ModerationHandler) ListAdminCourseUploadRequests(c *fiber.Ctx) error {
@@ -650,33 +688,68 @@ func (h *ModerationHandler) RejectCourseUpload(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	if admin {
-		result, execErr := h.cfg.Store.DB.Exec(
-			`UPDATE course_upload_requests
-			 SET status = 'rejected', resolved_at = NOW(), resolved_by_user_id = ?
-			 WHERE id = ? AND status = 'pending'`,
-			userID,
-			requestID,
-		)
-		if execErr != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "course reject failed")
+	tx, err := h.cfg.Store.DB.Begin()
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
 		}
-		affected, err := result.RowsAffected()
-		if err != nil || affected == 0 {
+	}()
+	var status string
+	row := tx.QueryRow(
+		`SELECT status
+		 FROM course_upload_requests
+		 WHERE id = ?
+		 LIMIT 1`,
+		requestID,
+	)
+	if scanErr := row.Scan(&status); scanErr != nil {
+		if errors.Is(scanErr, sql.ErrNoRows) {
 			return fiber.NewError(fiber.StatusNotFound, "course upload request not found")
 		}
+		return fiber.NewError(fiber.StatusInternalServerError, "course upload lookup failed")
+	}
+	if status == "approved" {
+		return fiber.NewError(fiber.StatusConflict, "course upload request already approved")
+	}
+	if status == "rejected" {
 		return c.JSON(fiber.Map{"status": "rejected"})
 	}
-	if _, err := h.cfg.Store.DB.Exec(
-		`INSERT INTO course_upload_votes (request_id, subject_admin_user_id, decision)
-		 VALUES (?, ?, 'rejected')
-		 ON DUPLICATE KEY UPDATE decision = VALUES(decision), created_at = CURRENT_TIMESTAMP`,
-		requestID,
-		userID,
-	); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "course vote save failed")
+	if !admin {
+		ok, accessErr := isSubjectAdminForCourseRequest(h.cfg.Store.DB, requestID, userID)
+		if accessErr != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "subject admin lookup failed")
+		}
+		if !ok {
+			return fiber.NewError(fiber.StatusForbidden, "subject admin required")
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO course_upload_votes (request_id, subject_admin_user_id, decision)
+			 VALUES (?, ?, 'rejected')
+			 ON DUPLICATE KEY UPDATE decision = VALUES(decision), created_at = CURRENT_TIMESTAMP`,
+			requestID,
+			userID,
+		); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "course vote save failed")
+		}
 	}
-	return c.JSON(fiber.Map{"status": "rejected_vote_recorded"})
+	if _, err := tx.Exec(
+		`UPDATE course_upload_requests
+		 SET status = 'rejected', resolved_at = NOW(), resolved_by_user_id = ?
+		 WHERE id = ?`,
+		userID,
+		requestID,
+	); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "course reject failed")
+	}
+	if err := tx.Commit(); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
+	}
+	committed = true
+	return c.JSON(fiber.Map{"status": "rejected"})
 }
 
 func (h *ModerationHandler) resolveTeacherRegistrationDecisionActor(c *fiber.Ctx) (int64, int64, int64, bool, error) {

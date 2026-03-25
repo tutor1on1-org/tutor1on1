@@ -1,6 +1,12 @@
 # LOGBOOK
 Historical timeline. Keep active runbook details in `WORKLOG.md`.
 
+## 2026-03-25
+- Fixed the backend subject-admin reject bug: non-admin teacher-registration/course-upload rejects now enforce subject-label access checks and resolve the underlying request rows to `rejected` instead of only recording a vote.
+- Added targeted backend regression coverage in `remote/internal/httpserver/handlers/moderation_reject_test.go` for subject-admin teacher-registration reject success, subject-label authorization failure, and subject-admin course-upload reject success.
+- Validated the backend with `go test ./...`, cross-compiled the Linux API binary locally because the remote source tree under `/opt/family_teacher_remote` was stale/incomplete for an in-place rebuild, uploaded the new binary, restarted `family-teacher-api.service`, and verified both public health and an authenticated live reject-route probe.
+- Took a production MySQL backup at `/home/ecs-user/db_backups/family_teacher_20260325_111227_pre_cleanup_notablespaces.sql.gz`, then removed all production users except `admin`, `dennis`, `albert`, and `charles`, deleted stray teacher-registration test requests/votes and other dependent rows, and cleaned orphan bundle storage so only live bundle directories `11/12/13` remain under `/var/lib/family_teacher_remote/storage/bundles`.
+
 ## 2026-03-24
 - Completed the public password-recovery UX: login now exposes `Forgot password?`, recovery mail uses a 6-digit code, reset dialogs explicitly tell users to check Spam, and the logged-in Settings page now shows the masked current recovery email plus a current-password-gated change flow.
 - Wired production recovery mail to Gmail SMTP (`tutor1on1.org@gmail.com`) with `RECOVERY_TOKEN_ECHO=false`, redeployed the API binary, restarted `family-teacher-api.service`, and re-verified public `/health` plus a live end-to-end regression that updated the recovery email on a fresh account, received the 6-digit code, reset the password, and logged back in.
