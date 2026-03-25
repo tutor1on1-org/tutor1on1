@@ -1,0 +1,5 @@
+analyzer:
+  exclude:
+    - "**/*.g.dart"
+    - "third_party/**"
+    - "packages/**"

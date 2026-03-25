@@ -1,0 +1,59 @@
+import 'package:flutter/material.dart';
+
+import 'app.dart';
+import 'services/app_services.dart';
+import 'ui/app_close_button.dart';
+
+class AppBootstrap extends StatefulWidget {
+  const AppBootstrap({super.key});
+
+  @override
+  State<AppBootstrap> createState() => _AppBootstrapState();
+}
+
+class _AppBootstrapState extends State<AppBootstrap> {
+  late Future<AppServices> _servicesFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _servicesFuture = AppServices.create();
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<AppServices>(
+      future: _servicesFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return MaterialApp(
+            home: Scaffold(
+              appBar: AppBar(
+                actions: buildAppBarActionsWithClose(context),
+              ),
+              body: const Center(child: CircularProgressIndicator()),
+            ),
+          );
+        }
+        if (snapshot.hasError) {
+          return MaterialApp(
+            home: Scaffold(
+              appBar: AppBar(
+                actions: buildAppBarActionsWithClose(context),
+              ),
+              body: Center(
+                child: Text('Failed to start app: ${snapshot.error}'),
+              ),
+            ),
+          );
+        }
+        return Tutor1on1App(services: snapshot.data!);
+      },
+    );
+  }
+}

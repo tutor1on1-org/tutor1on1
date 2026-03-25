@@ -1,0 +1,852 @@
+﻿{
+  "@@locale": "zh",
+  "appTitle": "家庭老师",
+  "loginTab": "登录",
+  "registerTeacherTab": "注册老师",
+  "registerStudentTab": "注册学生",
+  "usernameLabel": "用户名",
+  "pinLabel": "密码",
+  "loginButton": "登录",
+  "createTeacherButton": "创建老师",
+  "registerTeacherButton": "注册老师",
+  "registerStudentButton": "注册学生",
+  "email2faHint": "恢复邮箱仅用于密码找回，不会公开显示。",
+  "recoveryEmailLabel": "恢复邮箱",
+  "emailRequired": "需要填写恢复邮箱。",
+  "forgotPasswordButton": "忘记密码？",
+  "requestRecoveryDialogTitle": "发送找回邮件",
+  "requestRecoveryDialogBody": "输入这个账号的恢复邮箱。如果该邮箱存在，系统会发送一个 6 位恢复码。",
+  "requestRecoveryButton": "发送找回邮件",
+  "recoveryEmailSentMessage": "如果该恢复邮箱存在，系统已经发送了 6 位恢复码。如果没看到邮件，请去 Spam 查一下。",
+  "resetPasswordWithTokenTitle": "重置密码",
+  "recoveryTokenLabel": "恢复码",
+  "recoveryTokenRequired": "需要填写恢复码。",
+  "resetPasswordWithTokenButton": "重置密码",
+  "resetPasswordSuccessMessage": "密码已重置。请用用户名和新密码登录。",
+  "recoveryEmailSpamHint": "如果没看到找回邮件，请去 Spam 查一下。",
+  "usernameRequired": "需要填写用户名。",
+  "passwordRequired": "需要填写密码。",
+  "currentPasswordRequired": "需要填写当前密码。",
+  "displayNameRequired": "需要填写显示名称。",
+  "registrationFailed": "注册失败。",
+  "displayNameLabel": "显示名称",
+  "bioLabel": "简介",
+  "avatarUrlLabel": "头像链接",
+  "contactLabel": "联系方式",
+  "contactPublishedLabel": "公开联系方式",
+  "usernameExists": "用户名已存在。",
+  "invalidLogin": "用户名或密码无效。",
+  "teacherTitle": "老师：{name}",
+  "@teacherTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "studentTitle": "学生：{name}",
+  "@studentTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "createStudentButton": "创建学生",
+  "createCourseButton": "加载课程",
+  "loadCourseButton": "加载课程",
+  "reloadCourseButton": "重新加载课程",
+  "studentsSection": "学生",
+  "coursesSection": "课程版本",
+  "noStudents": "暂无学生。",
+  "noCourses": "暂无课程。",
+  "studentRoleLabel": "学生",
+  "courseGranularityStatus": "粒度 {granularity} • 树 {status}",
+  "@courseGranularityStatus": {
+    "placeholders": {
+      "granularity": {},
+      "status": {}
+    }
+  },
+  "courseProgressStatus": "进度 {completed}%",
+  "@courseProgressStatus": {
+    "placeholders": {
+      "completed": {},
+      "total": {}
+    }
+  },
+  "editButton": "编辑",
+  "treeButton": "树",
+  "assignButton": "分配",
+  "progressButton": "进度",
+  "assignDialogTitle": "分配学生",
+  "assignDialogNoStudents": "没有可用学生。",
+  "assignConfirmButton": "分配",
+  "cancelButton": "取消",
+  "createStudentDialogTitle": "创建学生",
+  "createTeacherDialogTitle": "创建老师",
+  "createDialogCreate": "创建",
+  "createFailedMessage": "创建失败：{error}",
+  "@createFailedMessage": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "teacherCreatedMessage": "老师已创建。",
+  "noAssignedCourses": "暂无分配课程。",
+  "marketplaceTitle": "课程市场",
+  "marketplaceButton": "课程市场",
+  "marketplaceNoCourses": "暂无课程。",
+  "marketplaceLoadFailed": "加载市场失败：{error}",
+  "@marketplaceLoadFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "marketplaceTeacherLine": "老师：{name}",
+  "@marketplaceTeacherLine": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "marketplaceGradeLine": "年级：{grade}",
+  "@marketplaceGradeLine": {
+    "placeholders": {
+      "grade": {}
+    }
+  },
+  "marketplaceVisibilityLine": "可见性：{visibility}",
+  "@marketplaceVisibilityLine": {
+    "placeholders": {
+      "visibility": {}
+    }
+  },
+  "marketplaceBundleMissing": "课程包：尚未上传。",
+  "marketplaceBundleUploaded": "课程包：已上传。",
+  "marketplaceUploadButton": "上传课程包",
+  "marketplaceUploadingLabel": "上传中...",
+  "marketplaceUploadSuccess": "课程包已上传。",
+  "marketplaceUploadFailed": "上传失败：{error}",
+  "@marketplaceUploadFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "marketplaceDownloadButton": "下载课程",
+  "marketplaceDownloadingLabel": "下载中...",
+  "marketplaceNoBundleButton": "暂无课程包",
+  "marketplaceDownloadSuccess": "课程已下载。",
+  "marketplaceDownloadFailed": "下载失败：{error}",
+  "@marketplaceDownloadFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "marketplaceRequestButton": "申请加入",
+  "marketplaceRequestTitle": "申请加入 {course}",
+  "@marketplaceRequestTitle": {
+    "placeholders": {
+      "course": {}
+    }
+  },
+  "marketplaceRequestMessage": "留言（可选）",
+  "marketplaceRequestSent": "申请已发送。",
+  "marketplaceRequestFailed": "申请失败：{error}",
+  "@marketplaceRequestFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "marketplacePending": "申请处理中。",
+  "marketplaceApproved": "申请已通过。",
+  "marketplaceRejected": "申请被拒绝。",
+  "marketplaceEnrolled": "已加入。",
+  "enrollmentRequestsTitle": "报名申请",
+  "enrollmentRequestsButton": "报名申请",
+  "enrollmentRequestsEmpty": "暂无待处理申请。",
+  "enrollmentRequestTitle": "{student} → {course}",
+  "@enrollmentRequestTitle": {
+    "placeholders": {
+      "student": {},
+      "course": {}
+    }
+  },
+  "enrollmentRequestNoMessage": "无留言。",
+  "enrollmentApproveButton": "通过",
+  "enrollmentRejectButton": "拒绝",
+  "enrollmentRequestUpdated": "申请已更新。",
+  "teacherMarketplaceTitle": "市场课程",
+  "teacherMarketplaceButton": "市场课程",
+  "teacherMarketplaceEmpty": "暂无市场课程。",
+  "teacherMarketplaceCreateTitle": "创建市场课程",
+  "teacherMarketplaceCreated": "课程已创建。",
+  "marketplaceVisibilityPublic": "公开",
+  "marketplaceVisibilityUnlisted": "不公开",
+  "marketplaceVisibilityPrivate": "私有",
+  "marketplaceVisibilityUpdated": "可见性已更新。",
+  "gradeLabel": "年级",
+  "descriptionLabel": "简介",
+  "createButton": "创建",
+  "granularityLabel": "粒度 {value}",
+  "@granularityLabel": {
+    "placeholders": {
+      "value": {}
+    }
+  },
+  "createCourseTitle": "加载课程",
+  "editCourseTitle": "编辑课程",
+  "courseLoadFailedTitle": "加载课程失败",
+  "subjectLabel": "科目",
+  "subjectRequired": "需要填写科目。",
+  "courseFolderLabel": "课程文件夹",
+  "courseFolderHint": "选择课程文件夹",
+  "courseFolderRequired": "需要选择课程文件夹。",
+  "courseFolderPickerTitle": "选择课程文件夹",
+  "browseButton": "浏览",
+  "courseNameLabel": "课程：{name}",
+  "@courseNameLabel": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "granularityFieldLabel": "粒度",
+  "textbookOutlineLabel": "教材大纲",
+  "saveButton": "保存",
+  "savingLabel": "保存中...",
+  "loadingLabel": "加载中...",
+  "generateTreeButton": "生成树",
+  "generatingLabel": "生成中...",
+  "viewTreeButton": "查看树",
+  "courseLoadedMessage": "课程已加载。",
+  "courseReloadTitle": "重新加载课程？",
+  "courseReloadBody": "这将替换现有课程数据。覆盖会按文本映射学生进度；删除会清除所有学生进度。",
+  "courseReloadOverride": "覆盖",
+  "courseReloadDeletedTitle": "删除的节点",
+  "courseReloadDeletedMessage": "以下节点在新内容中不存在，将删除其进度：",
+  "courseReloadDeleteConfirmTitle": "删除课程数据？",
+  "courseReloadDeleteConfirmMessage": "这将删除该课程的所有学生进度，继续？",
+  "treeGenerationFailedMessage": "生成树失败，请重试。",
+  "detailsButton": "详情",
+  "retryButton": "重试",
+  "subjectGranularityRequired": "需要填写科目和粒度。",
+  "treeGenerationErrorMessage": "生成树错误：{error}",
+  "@treeGenerationErrorMessage": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "treeGenerationFailedTitle": "生成树失败",
+  "messageLabel": "消息：",
+  "parseErrorLabel": "解析错误：",
+  "rawResponseLabel": "原始响应：",
+  "closeButton": "关闭",
+  "skillTreeTitle": "技能树",
+  "noNodesYet": "暂无节点。",
+  "nodeNotFound": "未找到节点。",
+  "statusLit": "状态：已点亮",
+  "statusNotLit": "状态：未点亮",
+  "startContinueSession": "开始/继续会话",
+  "startNewSession": "开始新会话",
+  "newSessionConfirmTitle": "再新建一个会话？",
+  "newSessionConfirmBody": "此知识点已有 {count} 个会话，仍要新建一个吗？",
+  "@newSessionConfirmBody": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "sessionHistoryTitle": "会话历史",
+  "noSessionsYet": "暂无会话。",
+  "noAssignedStudentMessage": "此课程尚未分配学生。",
+  "sessionLabel": "会话 {id}",
+  "@sessionLabel": {
+    "placeholders": {
+      "id": {}
+    }
+  },
+  "noSummaryYet": "暂无总结。",
+  "continueButton": "继续",
+  "sessionTitle": "会话 {id}",
+  "@sessionTitle": {
+    "placeholders": {
+      "id": {}
+    }
+  },
+  "noMessagesYet": "暂无消息。",
+  "chatLabelStudent": "学生",
+  "chatLabelSummary": "总结",
+  "chatLabelTutor": "导师（{mode}）",
+  "@chatLabelTutor": {
+    "placeholders": {
+      "mode": {}
+    }
+  },
+  "summaryFailedRetry": "总结失败，重试？",
+  "chatInputLabel": "你的消息",
+  "chatInputHint": "在此输入（Ctrl+Enter 发送）",
+  "chatInputHintEnterToSend": "在此输入（回车发送，Shift+回车换行）",
+  "chatInputHintCtrlEnterToSend": "在此输入（Ctrl/Cmd+回车发送）",
+  "sendTooltip": "发送",
+  "stopTooltip": "停止",
+  "sttRecordTooltip": "录音输入",
+  "sttStopTooltip": "停止录音",
+  "sttTranscribingLabel": "转写中...",
+  "sttRequiresOpenAi": "语音转文字需要 OpenAI 或 SiliconFlow API。",
+  "sttPermissionDenied": "麦克风权限被拒绝。",
+  "sttFailedMessage": "转写失败，请查看 TTS 日志。",
+  "sttAudioConvertFailedMessage": "音频转换失败，请查看 TTS 日志。",
+  "summaryButton": "总结",
+  "exitButton": "退出",
+  "messageRequiredTitle": "需要消息",
+  "messageRequiredBody": "发送前请输入消息。",
+  "requestFailedTitle": "请求失败",
+  "refreshFailedTitle": "刷新失败",
+  "editFailedTitle": "编辑失败",
+  "summaryUpdatedLit": "总结已更新。进度：{lit}%",
+  "@summaryUpdatedLit": {
+    "placeholders": {
+      "lit": {}
+    }
+  },
+  "summaryUpdatedStatus": "总结已更新。进度：{lit}%。掌握等级：{level}",
+  "@summaryUpdatedStatus": {
+    "placeholders": {
+      "lit": {},
+      "level": {}
+    }
+  },
+  "summarySavedUnparsed": "总结已保存（未解析）。",
+  "summaryFailedTitle": "总结失败",
+  "summaryFailedMessage": "Schema 验证失败或响应无效。",
+  "detailsLabel": "详情：",
+  "copyTooltip": "复制",
+  "editTooltip": "编辑",
+  "refreshTooltip": "刷新",
+  "copySuccess": "已复制到剪贴板。",
+  "settingsTitle": "设置",
+  "generalTab": "常规",
+  "apisTab": "API",
+  "llmSettingsTitle": "LLM 设置",
+  "providerLabel": "提供方",
+  "baseUrlLabel": "Base URL",
+  "modelLabel": "模型",
+  "textModelLabel": "文本模型",
+  "ttsModelSelectLabel": "TTS 模型",
+  "sttModelSelectLabel": "STT 模型",
+  "timeoutSecondsLabel": "超时（秒）",
+  "maxTokensLabel": "最大 tokens",
+  "ttsInitialDelayLabel": "TTS 启动延迟（秒）",
+  "ttsTextLeadLabel": "TTS 文本提前（秒）",
+  "ttsAudioPathLabel": "TTS 音频保存目录",
+  "logDirectoryLabel": "日志目录",
+  "llmLogPathLabel": "LLM 日志文件",
+  "ttsLogPathLabel": "TTS 日志文件",
+  "sttAutoSendLabel": "语音转写后自动发送",
+  "enterToSendLabel": "回车发送",
+  "ttsPlayTooltip": "播放语音",
+  "ttsPauseTooltip": "暂停语音",
+  "ttsResumeTooltip": "继续语音",
+  "ttsStopTooltip": "停止播放",
+  "passwordSectionTitle": "密码",
+  "changePasswordButton": "修改密码",
+  "recoveryEmailSectionTitle": "恢复邮箱",
+  "currentRecoveryEmailLabel": "当前恢复邮箱",
+  "recoveryEmailNotSet": "未设置",
+  "changeRecoveryEmailButton": "修改恢复邮箱",
+  "changeRecoveryEmailTitle": "修改恢复邮箱",
+  "newRecoveryEmailLabel": "新的恢复邮箱",
+  "recoveryEmailUpdatedMessage": "恢复邮箱已更新。",
+  "changeStudentPasswordButton": "修改学生密码",
+  "changePasswordTitle": "修改密码",
+  "currentPasswordLabel": "当前密码",
+  "newPasswordLabel": "新密码",
+  "confirmPasswordLabel": "确认新密码",
+  "passwordMismatchMessage": "两次密码不一致。",
+  "passwordInvalidMessage": "当前密码不正确。",
+  "passwordUpdatedMessage": "密码已更新。",
+  "changeStudentPasswordTitle": "修改学生密码",
+  "selectStudentLabel": "学生",
+  "studentPasswordLabel": "学生新密码",
+  "teacherPasswordLabel": "教师密码",
+  "llmModeLabel": "LLM 模式",
+  "llmModeLiveRecord": "实时（记录）",
+  "llmModeReplay": "回放",
+  "llmModeLive": "实时",
+  "noModelsAvailable": "暂无可用模型。",
+  "modelMissingMessage": "需要选择模型。",
+  "useSiliconflowDefaults": "使用 SiliconFlow 默认",
+  "useEnvDefaults": "使用环境变量默认",
+  "saveLlmConfigButton": "保存",
+  "saveSettingsButton": "保存常规设置",
+  "saveApiConfigButton": "保存 API 配置",
+  "settingsSavedMessage": "设置已保存。",
+  "viewLlmLogsButton": "查看 LLM 日志",
+  "viewTtsLogsButton": "查看 TTS 日志",
+  "ttsTestButton": "播放最近一次 TTS 音频",
+  "ttsTestStartedMessage": "正在播放最近一次 TTS 音频：{path}",
+  "@ttsTestStartedMessage": {
+    "placeholders": {
+      "path": {}
+    }
+  },
+  "ttsTestMissingMessage": "还没有保存的 TTS 音频。",
+  "ttsTestFailedMessage": "TTS 测试失败，请查看 TTS 日志。",
+  "apiKeyLabel": "API Key",
+  "testApiKeyButton": "测试 API key",
+  "clearKeyButton": "清除 Key",
+  "loadKeyFromEnvButton": "从环境变量加载 Key",
+  "apiKeyMissingMessage": "需要 API Key。",
+  "apiKeyTestFailed": "API key 测试失败：{error}",
+  "@apiKeyTestFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "apiKeyTestFailedGeneric": "API key 测试失败。",
+  "modelsNotLoadedMessage": "点击“测试 API key”加载模型。",
+  "noTtsModelsMessage": "暂无 TTS 模型。",
+  "noSttModelsMessage": "暂无 STT 模型。",
+  "apiKeyClearedMessage": "API Key 已清除。",
+  "apiKeyNotFoundMessage": "未找到 OPENAI_API_KEY。",
+  "apiKeyLoadedMessage": "已从环境变量加载 API Key。",
+  "configSavedMessage": "配置已保存。",
+  "configAlreadySavedMessage": "配置已存在。",
+  "savedApiConfigsTitle": "已保存的 API 配置",
+  "noSavedConfigs": "暂无已保存配置。",
+  "keyHashLabel": "Key 哈希：{hash}",
+  "@keyHashLabel": {
+    "placeholders": {
+      "hash": {}
+    }
+  },
+  "configDeletedMessage": "配置已删除。",
+  "loadButton": "加载",
+  "deleteButton": "删除",
+  "deleteCourseButton": "删除课程",
+  "deleteCourseTitle": "删除课程 {name}？",
+  "@deleteCourseTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "deleteCourseMessage": "这将删除课程、节点以及所有学生进度和会话。",
+  "deleteCourseSuccess": "课程已删除。",
+  "backupRestoreTitle": "备份与恢复",
+  "exportDbDialogTitle": "导出数据库",
+  "restoreDbDialogTitle": "恢复数据库",
+  "exportDbButton": "导出 DB",
+  "restoreDbButton": "恢复 DB",
+  "backupExportedMessage": "备份已导出。",
+  "restoreConfirmTitle": "恢复数据库",
+  "restoreConfirmMessage": "恢复将覆盖本地数据，继续？",
+  "restoreConfirmButton": "恢复",
+  "restoreCompletedMessage": "数据库已恢复，正在重启...",
+  "appSectionTitle": "应用",
+  "studyModeLabel": "学习模式",
+  "studyModeDescription": "保持常亮，进入全屏或沉浸模式，退出时需要教师 PIN。",
+  "quitButton": "退出（教师密码）",
+  "notLoggedInMessage": "未登录。",
+  "teacherNotFoundMessage": "未找到教师账号。",
+  "invalidPinMessage": "密码无效。",
+  "teacherPinTitle": "教师密码",
+  "confirmButton": "确认",
+  "okButton": "确定",
+  "languageTitle": "语言",
+  "languageSystem": "系统默认",
+  "languageEnglish": "英语",
+  "languageChinese": "中文",
+  "languageSavedMessage": "语言已更新。",
+  "promptTemplatesTitle": "提示词模板",
+  "studentPromptSectionTitle": "学生提示",
+  "studentPromptSectionHint": "用于此范围的结构化学生信息与偏好。",
+  "studentPromptPreviewTitle": "生效资料预览",
+  "studentPromptPreviewProfileLabel": "资料",
+  "studentPromptPreviewPreferencesLabel": "偏好",
+  "studentPromptPreviewEmpty": "暂无资料。",
+  "studentPromptPreviewError": "预览加载失败：{error}",
+  "@studentPromptPreviewError": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "studentPromptGradeLabel": "年级",
+  "studentPromptReadingLabel": "阅读水平",
+  "studentPromptLanguageLabel": "偏好语言",
+  "studentPromptInterestsLabel": "兴趣",
+  "studentPromptToneLabel": "偏好语气",
+  "studentPromptPaceLabel": "偏好节奏",
+  "studentPromptFormatLabel": "偏好形式",
+  "studentPromptSupportLabel": "支持备注",
+  "studentPromptSaved": "学生提示已保存。",
+  "studentPromptCleared": "学生提示已清除。",
+  "studentPromptNotSaved": "尚未保存。",
+  "studentPromptLastSaved": "上次保存：{time}",
+  "@studentPromptLastSaved": {
+    "placeholders": {
+      "time": {}
+    }
+  },
+  "clearButton": "清除",
+  "promptTemplatesButton": "提示词",
+  "promptScopeLabel": "提示词范围",
+  "promptScopeDefault": "老师默认",
+  "promptLearn": "学习",
+  "promptPractice": "练习",
+  "promptReview": "复习",
+  "promptSummarize": "总结",
+  "promptStatusDefault": "当前：默认",
+  "promptStatusCustom": "当前：自定义（{time}）",
+  "@promptStatusCustom": {
+    "placeholders": {
+      "time": {}
+    }
+  },
+  "promptHistoryTitle": "历史",
+  "promptHistoryEmpty": "暂无历史。",
+  "useDefaultButton": "使用默认",
+  "previewButton": "预览",
+  "useButton": "使用",
+  "promptEditTitle": "编辑提示词（{name}）",
+  "@promptEditTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "promptTemplateLabel": "模板",
+  "promptRequiredVars": "必需变量：{vars}",
+  "@promptRequiredVars": {
+    "placeholders": {
+      "vars": {}
+    }
+  },
+  "promptAllowedVars": "允许变量：{vars}",
+  "@promptAllowedVars": {
+    "placeholders": {
+      "vars": {}
+    }
+  },
+  "promptSaved": "提示词已保存。",
+  "promptReverted": "已恢复默认。",
+  "promptActivated": "已设为当前。",
+  "promptPreviewTitle": "提示词预览",
+  "promptValidationFailedTitle": "提示词验证失败",
+  "promptMissingVars": "缺少变量：{vars}",
+  "@promptMissingVars": {
+    "placeholders": {
+      "vars": {}
+    }
+  },
+  "promptUnknownVars": "未知变量：{vars}",
+  "@promptUnknownVars": {
+    "placeholders": {
+      "vars": {}
+    }
+  },
+  "progressTitle": "进度：{subject}",
+  "@progressTitle": {
+    "placeholders": {
+      "subject": {}
+    }
+  },
+  "noAssignedStudents": "暂无分配的学生。",
+  "litCountLabel": "进度 {litCount}%",
+  "@litCountLabel": {
+    "placeholders": {
+      "litCount": {},
+      "total": {}
+    }
+  },
+  "llmLogsTitle": "LLM 日志",
+  "loadLogsFailed": "加载日志失败：{error}",
+  "@loadLogsFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "noLlmLogs": "暂无 LLM 日志。",
+  "ttsLogsTitle": "TTS 日志",
+  "noTtsLogs": "暂无 TTS 日志。",
+  "ttsLogEntryTitle": "TTS {event} - {time}",
+  "@ttsLogEntryTitle": {
+    "placeholders": {
+      "event": {},
+      "time": {}
+    }
+  },
+  "ttsLogEntrySubtitle": "状态：{status}",
+  "@ttsLogEntrySubtitle": {
+    "placeholders": {
+      "status": {}
+    }
+  },
+  "ttsLogDetailsTitle": "TTS 日志详情",
+  "ttsTimeLabel": "时间：{time}",
+  "@ttsTimeLabel": {
+    "placeholders": {
+      "time": {}
+    }
+  },
+  "ttsStatusLabel": "状态：{status}",
+  "@ttsStatusLabel": {
+    "placeholders": {
+      "status": {}
+    }
+  },
+  "ttsEventLabel": "事件：{event}",
+  "@ttsEventLabel": {
+    "placeholders": {
+      "event": {}
+    }
+  },
+  "ttsStatusUnknown": "未知",
+  "ttsModelLabel": "模型：{model}",
+  "@ttsModelLabel": {
+    "placeholders": {
+      "model": {}
+    }
+  },
+  "ttsVoiceLabel": "声音：{voice}",
+  "@ttsVoiceLabel": {
+    "placeholders": {
+      "voice": {}
+    }
+  },
+  "ttsBaseUrlLabel": "Base URL：{baseUrl}",
+  "@ttsBaseUrlLabel": {
+    "placeholders": {
+      "baseUrl": {}
+    }
+  },
+  "ttsSessionIdLabel": "会话 ID：{sessionId}",
+  "@ttsSessionIdLabel": {
+    "placeholders": {
+      "sessionId": {}
+    }
+  },
+  "ttsMessageLabel": "信息",
+  "ttsSnippetLabel": "文本片段",
+  "ttsRequiresOpenAi": "TTS 需要使用 OpenAI 或 SiliconFlow API。",
+  "ttsPreparingLabel": "正在准备 TTS...",
+  "maxTokensTooSmallWarning": "Max tokens 太小，已截断会话历史。",
+  "llmCallDetailsTitle": "LLM 调用详情",
+  "llmTimeLabel": "时间：{time}",
+  "@llmTimeLabel": {
+    "placeholders": {
+      "time": {}
+    }
+  },
+  "llmPromptLabel": "提示：{prompt}",
+  "@llmPromptLabel": {
+    "placeholders": {
+      "prompt": {}
+    }
+  },
+  "llmModeValueLabel": "模式：{mode}",
+  "@llmModeValueLabel": {
+    "placeholders": {
+      "mode": {}
+    }
+  },
+  "llmModelLabel": "模型：{model}",
+  "@llmModelLabel": {
+    "placeholders": {
+      "model": {}
+    }
+  },
+  "llmBaseUrlLabel": "Base URL：{url}",
+  "@llmBaseUrlLabel": {
+    "placeholders": {
+      "url": {}
+    }
+  },
+  "llmLatencyLabel": "耗时：{ms} 毫秒",
+  "@llmLatencyLabel": {
+    "placeholders": {
+      "ms": {}
+    }
+  },
+  "llmCallHashLabel": "调用哈希：{hash}",
+  "@llmCallHashLabel": {
+    "placeholders": {
+      "hash": {}
+    }
+  },
+  "llmTeacherLabel": "教师：{teacher}",
+  "@llmTeacherLabel": {
+    "placeholders": {
+      "teacher": {}
+    }
+  },
+  "llmStudentLabel": "学生：{student}",
+  "@llmStudentLabel": {
+    "placeholders": {
+      "student": {}
+    }
+  },
+  "llmTeacherUnknown": "教师：未知",
+  "llmStudentNone": "学生：无",
+  "llmTeacherIdLabel": "教师：#{id}",
+  "@llmTeacherIdLabel": {
+    "placeholders": {
+      "id": {}
+    }
+  },
+  "llmStudentIdLabel": "学生：#{id}",
+  "@llmStudentIdLabel": {
+    "placeholders": {
+      "id": {}
+    }
+  },
+  "llmKpLabel": "知识点：{kp}",
+  "@llmKpLabel": {
+    "placeholders": {
+      "kp": {}
+    }
+  },
+  "llmActionLabel": "动作：{action}",
+  "@llmActionLabel": {
+    "placeholders": {
+      "action": {}
+    }
+  },
+  "llmRenderedPromptLabel": "渲染提示：",
+  "llmResponseLabel": "响应：",
+  "llmParseErrorLabel": "解析错误：",
+  "llmStatusUnknown": "未知",
+  "llmStatusOk": "正常",
+  "llmStatusError": "错误",
+  "llmLogEntryTitle": "{time} • {prompt}",
+  "@llmLogEntryTitle": {
+    "placeholders": {
+      "time": {},
+      "prompt": {}
+    }
+  },
+  "llmLogEntrySubtitle": "{model} • {mode} • {status}",
+  "@llmLogEntrySubtitle": {
+    "placeholders": {
+      "model": {},
+      "mode": {},
+      "status": {}
+    }
+  },
+  "apiKeyMissingForConfig": "此配置未找到 API Key。",
+  "tutorReplyLabel": "回复",
+  "renameSessionButton": "重命名",
+  "renameSessionTitle": "重命名会话",
+  "sessionNameLabel": "会话名称",
+  "studentSessionsTitle": "会话：{name}",
+  "@studentSessionsTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "noStudentSessions": "该学生暂无会话。",
+  "sessionCourseLabel": "课程：{name}",
+  "@sessionCourseLabel": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "sessionNodeLabel": "节点：{name}",
+  "@sessionNodeLabel": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "sessionStartedLabel": "开始：{time}",
+  "@sessionStartedLabel": {
+    "placeholders": {
+      "time": {}
+    }
+  },
+  "sessionSyncFailed": "会话同步失败：{error}",
+  "@sessionSyncFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "deleteSessionButton": "删除会话",
+  "deleteSessionTitle": "删除会话“{name}”？",
+  "@deleteSessionTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "deleteSessionMessage": "这将删除该会话及其消息。",
+  "deleteSessionSuccess": "会话已删除。",
+  "resetPinButton": "重置密码",
+  "resetPinDialogTitle": "为 {name} 重置密码",
+  "@resetPinDialogTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "pinUpdatedMessage": "密码已更新。",
+  "studentSessionsButton": "学生会话",
+  "deleteStudentButton": "删除学生",
+  "deleteStudentTitle": "删除学生 {name}？",
+  "@deleteStudentTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "deleteStudentMessage": "这将删除学生及其会话和进度。",
+  "deleteStudentSuccess": "学生已删除。",
+  "adminTitle": "管理员：{name}",
+  "@adminTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "teachersSection": "老师",
+  "noTeachers": "暂无老师。",
+  "deleteTeacherButton": "删除老师",
+  "deleteTeacherTitle": "删除老师 {name}？",
+  "@deleteTeacherTitle": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "deleteTeacherMessage": "这将删除老师及其学生、课程和会话。",
+  "deleteTeacherSuccess": "老师已删除。",
+  "searchNodeLabel": "搜索节点",
+  "searchNodeHint": "输入编号或标题",
+  "noSearchResults": "无匹配结果。",
+  "unparsedLinesLabel": "未解析行数：{count}",
+  "@unparsedLinesLabel": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "showRawButton": "显示原文",
+  "hideRawButton": "隐藏原文",
+  "nodeDetailsTitle": "节点详情",
+  "nodeIdLabel": "编号：{id}",
+  "@nodeIdLabel": {
+    "placeholders": {
+      "id": {}
+    }
+  },
+  "nodeTitleLabel": "标题：{title}",
+  "@nodeTitleLabel": {
+    "placeholders": {
+      "title": {}
+    }
+  },
+  "nodeGradeLabel": "年级：{grade}",
+  "@nodeGradeLabel": {
+    "placeholders": {
+      "grade": {}
+    }
+  },
+  "levelFilterLabel": "层级",
+  "yearFilterLabel": "年份",
+  "yearFilterAll": "全部年份",
+  "zoomInLabel": "放大",
+  "zoomOutLabel": "缩小",
+  "kpPassedDialogTitle": "知识点已通过",
+  "kpPassedDialogMessage": "恭喜，你已通过这个知识点。\n\n简单题答对：{easy}\n中等题答对：{medium}\n困难题答对：{hard}",
+  "@kpPassedDialogMessage": {
+    "placeholders": {
+      "easy": {},
+      "medium": {},
+      "hard": {}
+    }
+  }
+}
