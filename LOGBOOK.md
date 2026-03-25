@@ -2,6 +2,7 @@
 Historical timeline. Keep active runbook details in `WORKLOG.md`.
 
 ## 2026-03-25
+- Replaced the remaining obvious `Family Teacher` user-facing branding with `Tutor1on1` in recovery email subjects, root/client README titles, remote README title, and local skills/index docs. Deliberately preserved internal `family_teacher*` identifiers where they still represent real DB names, filesystem paths, legacy cleanup patterns, or Go module/package names.
 - Renamed the public Windows desktop executable inside the published ZIP to `tutor1on1.exe`, updated all public install pages/localized Windows instructions to reference the new executable name, and bumped the public client version to `1.0.1+2` with GitHub Release tag `v1.0.1`.
 - Added public GitHub Release publishing to the release toolchain with new `public_release/publish_github_release.ps1`, wired it into `scripts/release_public.ps1`, and fixed the Windows packaging edge case where NTFS case-insensitive cleanup would delete the rebuilt lowercase executable when comparing against legacy `Tutor1on1.exe`.
 - Published the refreshed public client artifacts and verified their live endpoints/hashes: Android APK `80fd36ad8534dcf7431b1982ed00cd4f27e53b20985aaf1a4156da71122f12ab`, Windows ZIP `766352fbe1ff6e959741c42b94918dc144722e1a1fe7cd5c422e64688cf3d445`, GitHub Release `https://github.com/tutor1on1-org/tutor1on1/releases/tag/v1.0.1`, and website sync at `https://www.tutor1on1.org`.

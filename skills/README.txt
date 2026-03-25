@@ -1,10 +1,10 @@
-FAMILY TEACHER - PROJECT README
+TUTOR1ON1 - PROJECT README
 
 OVERVIEW
-Family Teacher is a Flutter desktop app (Windows-first) for teacher-managed tutoring with a skill tree, sessions, and LLM-backed chat.
+Tutor1on1 is a Flutter desktop app (Windows-first) for teacher-managed tutoring with a skill tree, sessions, and LLM-backed chat.
 
 REPO ROOT
-This project lives in: C:amily_teacherpp
+This project lives in: C:\family_teacher\app
 
 REQUIREMENTS
 - Flutter SDK >= 3.4
@@ -18,7 +18,7 @@ RUN (WINDOWS)
 
 BUILD (WINDOWS)
 - flutter build windows
-- The executable is in build\windowsdunner\Releaseamily_teacher.exe
+- The executable is in build\windows\x64\runner\Release\tutor1on1.exe
 
 ENVIRONMENT VARIABLES (OPTIONAL)
 - OPENAI_API_KEY
@@ -26,7 +26,7 @@ ENVIRONMENT VARIABLES (OPTIONAL)
 - OPENAI_MODEL
 
 DATA LOCATIONS
-- SQLite DB: %USERPROFILE%\Documentsamily_teacher.db
+- SQLite DB: %USERPROFILE%\Documents\family_teacher.db
 - API keys: OS secure storage (not in SQLite)
 - Course materials: teacher-selected folder on disk
 

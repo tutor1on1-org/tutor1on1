@@ -1,4 +1,4 @@
-# Family Teacher Remote (API)
+# Tutor1on1 Remote (API)
 
 MVP server for teacher hosting + student marketplace.
 

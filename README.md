@@ -1,10 +1,10 @@
-# family_teacher
+# Tutor1on1
 
 ## Final aim
 Build a production-ready family teaching platform where teachers publish structured courses and students learn through guided LLM tutoring, with reliable enrollment, bundle delivery, and multi-device progress sync.
 
 ## Project description
-`family_teacher` is a Flutter desktop app with a Go remote API.
+Tutor1on1 is a Flutter desktop app with a Go remote API.
 
 - Teacher side: manage local course versions, upload bundles to marketplace, approve enrollments, review student progress.
 - Student side: browse public catalog, request enrollment, download approved bundles, and study/review with tutor sessions.

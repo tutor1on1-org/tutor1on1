@@ -1,4 +1,4 @@
-# family_teacher Docs Index
+# Tutor1on1 Docs Index
 
 `AGENTS.md` is the entry point only. Only keep it as a reference to the other documents:
 
