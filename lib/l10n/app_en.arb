@@ -437,6 +437,14 @@
   "restoreConfirmButton": "Restore",
   "restoreCompletedMessage": "Database restored. Restarting...",
   "appSectionTitle": "App",
+  "appVersionLabel": "App version",
+  "publicReleaseTagLabel": "Public release tag",
+  "appVersionLoadFailed": "Failed to load app version: {error}",
+  "@appVersionLoadFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
   "studyModeLabel": "Study mode",
   "studyModeDescription": "Keep screen awake, use fullscreen or immersive mode, and require teacher PIN to exit.",
   "quitButton": "Quit (Teacher Password)",

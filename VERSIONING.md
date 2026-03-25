@@ -18,7 +18,7 @@ This public client snapshot uses a simple release scheme:
 ## Release Checklist
 
 1. Update `pubspec.yaml` app version if the release content changed.
-2. Update the release tag in `web/site.js`, and update the GitHub repo slug there too if the public repository path is not `tutor1on1-org/tutor1on1`.
+2. Treat `pubspec.yaml` as the only version source. `scripts/release_public.ps1` and `scripts/publish_website_static.ps1` auto-sync `web/site.js` from it before publishing.
 3. Build release assets with `public_release/package_github_release.ps1`, or publish them directly with `public_release/publish_github_release.ps1`. If no tag is passed, those scripts derive `vMAJOR.MINOR.PATCH` from `pubspec.yaml`.
 4. Ensure the GitHub Release for the same tag contains `Tutor1on1.apk`, `Tutor1on1.zip`, and `SHA256SUMS.txt`.
 5. Publish the static `web/` directory after the GitHub Release assets are live.

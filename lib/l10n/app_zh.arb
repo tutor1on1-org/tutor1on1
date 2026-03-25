@@ -437,6 +437,14 @@
   "restoreConfirmButton": "恢复",
   "restoreCompletedMessage": "数据库已恢复，正在重启...",
   "appSectionTitle": "应用",
+  "appVersionLabel": "应用版本",
+  "publicReleaseTagLabel": "公开发布标签",
+  "appVersionLoadFailed": "加载应用版本失败：{error}",
+  "@appVersionLoadFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
   "studyModeLabel": "学习模式",
   "studyModeDescription": "保持常亮，进入全屏或沉浸模式，退出时需要教师 PIN。",
   "quitButton": "退出（教师密码）",

@@ -2,7 +2,7 @@
 Last updated: 2026-03-25
 
 ## Standard workflow
-For app changes, the default same-turn handoff is: validate, build, git, and publish unless the user explicitly skips a step. For public app releases, the default entry point is `scripts/release_public.ps1`, which publishes Android APK, then Windows ZIP, then GitHub Release assets, then website static sync.
+For app changes, the default same-turn handoff is: validate, build, git, and publish unless the user explicitly skips a step. For public app releases, the default entry point is `scripts/release_public.ps1`, which first syncs the website release tag from `pubspec.yaml`, then publishes Android APK, Windows ZIP, GitHub Release assets, and website static files.
 
 1. Understand scope and locate the true failing/target layer.
 2. For bugs, reproduce with evidence first (logs, repro script, or minimal failing test).

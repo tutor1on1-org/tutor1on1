@@ -48,6 +48,7 @@ if (-not (Test-Path -LiteralPath $repoRoot)) {
 }
 
 $validateScript = Join-Path $repoRoot 'scripts\validate_project.ps1'
+$versionUtilsScript = Join-Path $repoRoot 'scripts\public_release_version_utils.ps1'
 $androidPublishScript = Join-Path $repoRoot 'scripts\publish_android_release.ps1'
 $windowsPublishScript = Join-Path $repoRoot 'skills\windows_release_publish\scripts\publish_windows_release.ps1'
 $githubReleaseScript = Join-Path $repoRoot 'public_release\publish_github_release.ps1'
@@ -55,6 +56,18 @@ $websitePublishScript = Join-Path $repoRoot 'scripts\publish_website_static.ps1'
 
 Push-Location $repoRoot
 try {
+  if (-not (Test-Path -LiteralPath $versionUtilsScript)) {
+    throw "Public release version utils not found: $versionUtilsScript"
+  }
+  . $versionUtilsScript
+
+  $syncResult = Sync-WebsiteReleaseConfig -RepoRoot $repoRoot
+  if ($syncResult.Changed) {
+    Write-Host "==> Synced website release config to $($syncResult.VersionInfo.ReleaseTag) ($($syncResult.VersionInfo.AppVersion))"
+  } else {
+    Write-Host "==> Website release config already matches $($syncResult.VersionInfo.ReleaseTag) ($($syncResult.VersionInfo.AppVersion))"
+  }
+
   if (-not $SkipValidation.IsPresent) {
     Invoke-Checked -Label 'Validate project' -Action {
       powershell -ExecutionPolicy Bypass -File $validateScript -NoPostHook

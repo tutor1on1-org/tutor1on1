@@ -78,6 +78,7 @@ Required workflow gate: run release build before updating `DONEs.md` after code 
 powershell -ExecutionPolicy Bypass -File scripts/release_public.ps1
 ```
 Default behavior:
+- Syncs `web/site.js` release metadata from `pubspec.yaml` before validation/git/publish so website download links stay aligned with the GitHub Release tag.
 - Runs `scripts/validate_project.ps1 -NoPostHook` first.
 - Runs `git add -A`, `git commit`, and `git push` if the worktree is dirty.
 - Publishes Android as `Tutor1on1.apk`.
@@ -152,6 +153,7 @@ Default safeguards:
 powershell -ExecutionPolicy Bypass -File scripts/publish_website_static.ps1
 ```
 Default safeguards:
+- Re-syncs `web/site.js` release metadata from `pubspec.yaml` before upload so standalone website publishes cannot drift from the public release tag.
 - Clears the remote website root before syncing `web/` so deleted public pages are actually removed.
 - Verifies the remote website tree after upload.
 - Verifies localized home/help/install pages return HTTP 200, install pages reference `Tutor1on1.apk` / `Tutor1on1.zip`, and removed macOS install pages no longer return HTTP 200.

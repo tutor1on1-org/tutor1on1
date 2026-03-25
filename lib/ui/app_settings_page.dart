@@ -12,6 +12,7 @@ import '../llm/llm_reasoning_support.dart';
 import '../security/hash_utils.dart';
 import '../security/pin_hasher.dart';
 import '../services/app_services.dart';
+import '../services/app_version_service.dart';
 import '../services/marketplace_api_service.dart';
 import '../services/model_list_service.dart';
 import '../state/auth_controller.dart';
@@ -56,6 +57,8 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _deviceNameLoaded = false;
   bool _apiTesting = false;
   String? _apiTestError;
+  late final Future<AppVersionInfo> _appVersionFuture =
+      AppVersionService.load();
   MarketplaceApiService? _accountApi;
   AccountProfileSummary? _accountProfile;
   bool _accountProfileLoading = false;
@@ -618,6 +621,12 @@ class _SettingsPageState extends State<SettingsPage> {
           l10n.appSectionTitle,
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
+        const SizedBox(height: 8),
+        _buildAppVersionInfo(
+          l10n: l10n,
+          future: _appVersionFuture,
+        ),
+        const SizedBox(height: 12),
         ElevatedButton(
           onPressed: _handleQuit,
           child: Text(l10n.quitButton),
@@ -1228,6 +1237,53 @@ class _SettingsPageState extends State<SettingsPage> {
       return 0;
     }
     return seconds * 1000;
+  }
+
+  Widget _buildAppVersionInfo({
+    required AppLocalizations l10n,
+    required Future<AppVersionInfo> future,
+  }) {
+    return FutureBuilder<AppVersionInfo>(
+      future: future,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: LinearProgressIndicator(),
+          );
+        }
+        if (snapshot.hasError) {
+          return Text(
+            l10n.appVersionLoadFailed('${snapshot.error}'),
+            style: const TextStyle(color: Colors.redAccent),
+          );
+        }
+        final versionInfo = snapshot.data;
+        if (versionInfo == null) {
+          return Text(
+            l10n.appVersionLoadFailed('Version payload missing.'),
+            style: const TextStyle(color: Colors.redAccent),
+          );
+        }
+        return Column(
+          children: [
+            InputDecorator(
+              decoration: InputDecoration(
+                labelText: l10n.appVersionLabel,
+              ),
+              child: SelectableText(versionInfo.appVersion),
+            ),
+            const SizedBox(height: 8),
+            InputDecorator(
+              decoration: InputDecoration(
+                labelText: l10n.publicReleaseTagLabel,
+              ),
+              child: SelectableText(versionInfo.releaseTag),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   String _maskRecoveryEmail(String email, String emptyLabel) {

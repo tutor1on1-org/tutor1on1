@@ -104,6 +104,18 @@ if (-not (Test-Path -LiteralPath $resolvedWebDir)) {
   throw "Local web directory not found: $resolvedWebDir"
 }
 
+$versionUtilsScript = Join-Path $repoRoot 'scripts\public_release_version_utils.ps1'
+if (-not (Test-Path -LiteralPath $versionUtilsScript)) {
+  throw "Public release version utils not found: $versionUtilsScript"
+}
+. $versionUtilsScript
+$syncResult = Sync-WebsiteReleaseConfig -RepoRoot $repoRoot
+if ($syncResult.Changed) {
+  Write-Host "==> Synced website release config to $($syncResult.VersionInfo.ReleaseTag) ($($syncResult.VersionInfo.AppVersion))"
+} else {
+  Write-Host "==> Website release config already matches $($syncResult.VersionInfo.ReleaseTag) ($($syncResult.VersionInfo.AppVersion))"
+}
+
 $sources = Get-ChildItem -LiteralPath $resolvedWebDir -Force | ForEach-Object {
   $_.FullName
 }

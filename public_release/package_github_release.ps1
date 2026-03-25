@@ -26,31 +26,6 @@ function Invoke-Checked {
   }
 }
 
-function Get-PublicReleaseTag {
-  param(
-    [Parameter(Mandatory = $true)]
-    [string]$RepoRoot
-  )
-
-  $pubspecPath = Join-Path $RepoRoot 'pubspec.yaml'
-  if (-not (Test-Path -LiteralPath $pubspecPath)) {
-    throw "pubspec.yaml not found: $pubspecPath"
-  }
-
-  $versionLine = @(
-    Get-Content -LiteralPath $pubspecPath | Where-Object { $_ -match '^\s*version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+\d+\s*$' } | Select-Object -First 1
-  )
-  if ($versionLine.Count -eq 0) {
-    throw "Could not parse semantic version from $pubspecPath"
-  }
-  $match = [regex]::Match($versionLine[0], '^\s*version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+\d+\s*$')
-  if (-not $match.Success) {
-    throw "Could not parse semantic version from line: $($versionLine[0])"
-  }
-
-  return 'v' + $match.Groups[1].Value
-}
-
 function New-ExplorerCompatibleZip {
   param(
     [Parameter(Mandatory = $true)]
@@ -116,8 +91,13 @@ function New-ExplorerCompatibleZip {
 }
 
 $repoRoot = (Resolve-Path $ProjectRoot).Path
+$versionUtilsScript = Join-Path $repoRoot 'scripts\public_release_version_utils.ps1'
+if (-not (Test-Path -LiteralPath $versionUtilsScript)) {
+  throw "Public release version utils not found: $versionUtilsScript"
+}
+. $versionUtilsScript
 if ([string]::IsNullOrWhiteSpace($ReleaseTag)) {
-  $ReleaseTag = Get-PublicReleaseTag -RepoRoot $repoRoot
+  $ReleaseTag = (Get-PublicReleaseVersionInfo -RepoRoot $repoRoot).ReleaseTag
 }
 $distRoot = Join-Path $repoRoot "public_release\dist\$ReleaseTag"
 $apkSource = Join-Path $repoRoot 'build\app\outputs\flutter-apk\app-release.apk'

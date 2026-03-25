@@ -3,6 +3,7 @@ import 'package:tutor1on1/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
 import '../../services/app_services.dart';
+import '../../services/app_version_service.dart';
 import '../../services/marketplace_api_service.dart';
 import '../../state/auth_controller.dart';
 import '../../state/settings_controller.dart';
@@ -33,6 +34,8 @@ class _WelcomePageState extends State<WelcomePage> {
   bool _teacherContactPublished = false;
   List<SubjectLabelSummary> _subjectLabels = const <SubjectLabelSummary>[];
   final Set<int> _selectedTeacherSubjectLabelIds = <int>{};
+  late final Future<AppVersionInfo> _appVersionFuture =
+      AppVersionService.load();
 
   @override
   void initState() {
@@ -162,6 +165,8 @@ class _WelcomePageState extends State<WelcomePage> {
             child: Text(l10n.forgotPasswordButton),
           ),
         ),
+        const SizedBox(height: 12),
+        _buildAppVersionInfo(context),
       ],
     );
   }
@@ -274,6 +279,8 @@ class _WelcomePageState extends State<WelcomePage> {
           onPressed: () => _handleRegisterTeacher(context),
           child: Text(l10n.registerTeacherButton),
         ),
+        const SizedBox(height: 12),
+        _buildAppVersionInfo(context),
       ],
     );
   }
@@ -322,6 +329,8 @@ class _WelcomePageState extends State<WelcomePage> {
           onPressed: () => _handleRegisterStudent(context),
           child: Text(l10n.registerStudentButton),
         ),
+        const SizedBox(height: 12),
+        _buildAppVersionInfo(context),
       ],
     );
   }
@@ -349,6 +358,47 @@ class _WelcomePageState extends State<WelcomePage> {
           _showMessage(context, l10n.languageSavedMessage);
         },
       ),
+    );
+  }
+
+  Widget _buildAppVersionInfo(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final style = Theme.of(context).textTheme.bodySmall;
+    return FutureBuilder<AppVersionInfo>(
+      future: _appVersionFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return Text(l10n.loadingLabel, style: style);
+        }
+        if (snapshot.hasError) {
+          return Text(
+            l10n.appVersionLoadFailed('${snapshot.error}'),
+            style: style?.copyWith(color: Colors.redAccent) ??
+                const TextStyle(color: Colors.redAccent),
+          );
+        }
+        final versionInfo = snapshot.data;
+        if (versionInfo == null) {
+          return Text(
+            l10n.appVersionLoadFailed('Version payload missing.'),
+            style: style?.copyWith(color: Colors.redAccent) ??
+                const TextStyle(color: Colors.redAccent),
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${l10n.appVersionLabel}: ${versionInfo.appVersion}',
+              style: style,
+            ),
+            Text(
+              '${l10n.publicReleaseTagLabel}: ${versionInfo.releaseTag}',
+              style: style,
+            ),
+          ],
+        );
+      },
     );
   }
 

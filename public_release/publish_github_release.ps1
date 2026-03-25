@@ -29,36 +29,6 @@ function Invoke-Checked {
   }
 }
 
-function Get-PublicVersionInfo {
-  param(
-    [Parameter(Mandatory = $true)]
-    [string]$RepoRoot
-  )
-
-  $pubspecPath = Join-Path $RepoRoot 'pubspec.yaml'
-  if (-not (Test-Path -LiteralPath $pubspecPath)) {
-    throw "pubspec.yaml not found: $pubspecPath"
-  }
-
-  $versionLine = @(
-    Get-Content -LiteralPath $pubspecPath | Where-Object { $_ -match '^\s*version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+\d+\s*$' } | Select-Object -First 1
-  )
-  if ($versionLine.Count -eq 0) {
-    throw "Could not parse semantic version from $pubspecPath"
-  }
-
-  $match = [regex]::Match($versionLine[0], '^\s*version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+\d+\s*$')
-  if (-not $match.Success) {
-    throw "Could not parse semantic version from line: $($versionLine[0])"
-  }
-
-  $semver = $match.Groups[1].Value
-  return [pscustomobject]@{
-    ReleaseTag = "v$semver"
-    ReleaseName = "Tutor1on1 v$semver"
-  }
-}
-
 function Get-GitHubToken {
   if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
     return $env:GITHUB_TOKEN.Trim()
@@ -212,8 +182,13 @@ function Ensure-Release {
 }
 
 $repoRoot = (Resolve-Path $ProjectRoot).Path
+$versionUtilsScript = Join-Path $repoRoot 'scripts\public_release_version_utils.ps1'
+if (-not (Test-Path -LiteralPath $versionUtilsScript)) {
+  throw "Public release version utils not found: $versionUtilsScript"
+}
+. $versionUtilsScript
 if ([string]::IsNullOrWhiteSpace($ReleaseTag) -or [string]::IsNullOrWhiteSpace($ReleaseName)) {
-  $versionInfo = Get-PublicVersionInfo -RepoRoot $repoRoot
+  $versionInfo = Get-PublicReleaseVersionInfo -RepoRoot $repoRoot
   if ([string]::IsNullOrWhiteSpace($ReleaseTag)) {
     $ReleaseTag = $versionInfo.ReleaseTag
   }

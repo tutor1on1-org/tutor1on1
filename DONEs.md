@@ -60,3 +60,5 @@ Last updated: 2026-03-25
 - Extended teacher course sync with bundle-hash startup checks, course/student prompt metadata sync, reduced teacher upload chatter by reusing the loaded manifest, and republished the Windows ZIP with Explorer-compatible packaging (current SHA-256: `8e344223866c82c37d742b192f1e5f94c86dff3de4b035acc780a664504807d2`).
 
 Historical completions were moved to `LOGBOOK.md`.
+# 2026-03-25
+- Unified public version sourcing around `pubspec.yaml`: release/publish scripts now sync `web/site.js` automatically, GitHub release scripts share one version parser, and the GUI shows app version plus public release tag on the welcome page and in Settings.
