@@ -70,7 +70,11 @@ Historical setup timeline moved to `LOGBOOK.md`.
   - production cleanup kept only users `admin`/`dennis`/`albert`/`charles`, kept only Dennis's teacher account/courses/bundles, and post-cleanup SQL checks returned zero rows still referencing deleted users/teachers/courses across the audited moderation/enrollment/sync/device tables.
   - bundle storage now contains only `/var/lib/family_teacher_remote/storage/bundles/{11,12,13}` with live files `11/6.zip`, `12/5.zip`, and `13/5.zip`.
 - Backup:
-  - MySQL pre-cleanup dump: `/home/ecs-user/db_backups/family_teacher_20260325_111227_pre_cleanup_notablespaces.sql.gz`
+  - MySQL clean-state dump: `/home/ecs-user/db_backups/family_teacher_20260325_113025_post_cleanup.sql.gz`
+- Follow-up cleanup:
+  - `admin` (`user_id=20`) recovery email now points to `tutor1on1.org@gmail.com`.
+  - Re-validated `dennis_student` (`user_id=13`) absence across live DB user/device/token/enrollment/progress/session tables; all queried counts returned `0`.
+  - Removed the earlier pre-cleanup dumps so the current server keeps only the clean-state post-cleanup backup.
 
 ## Remote server updates (2026-03-22, teacher-enforced study-mode quit fix)
 - Deployed updated API binary to `/opt/family_teacher_remote/bin/family-teacher-api`.
