@@ -53,10 +53,8 @@ class ModelListService {
     final headers = <String, String>{
       'Content-Type': 'application/json',
       provider.authHeader: '${provider.authPrefix}${apiKey.trim()}',
+      ...provider.extraHeaders,
     };
-    if (provider.id == 'anthropic') {
-      headers['anthropic-version'] = '2023-06-01';
-    }
     try {
       final response = await http
           .get(url, headers: headers)

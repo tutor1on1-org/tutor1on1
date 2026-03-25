@@ -2,6 +2,7 @@
 Historical timeline. Keep active runbook details in `WORKLOG.md`.
 
 ## 2026-03-25
+- Added OpenRouter as a built-in text-model provider, updated the bundled Claude / Gemini / Grok defaults to current official model families, and corrected the OpenAI-compatible compatibility layer so OpenRouter reasoning uses its own request shape and reasoning-token fields instead of being treated as raw OpenAI.
 - Replaced the remaining obvious `Family Teacher` user-facing branding with `Tutor1on1` in recovery email subjects, root/client README titles, remote README title, and local skills/index docs. Deliberately preserved internal `family_teacher*` identifiers where they still represent real DB names, filesystem paths, legacy cleanup patterns, or Go module/package names.
 - Renamed the public Windows desktop executable inside the published ZIP to `tutor1on1.exe`, updated all public install pages/localized Windows instructions to reference the new executable name, and bumped the public client version to `1.0.1+2` with GitHub Release tag `v1.0.1`.
 - Added public GitHub Release publishing to the release toolchain with new `public_release/publish_github_release.ps1`, wired it into `scripts/release_public.ps1`, and fixed the Windows packaging edge case where NTFS case-insensitive cleanup would delete the rebuilt lowercase executable when comparing against legacy `Tutor1on1.exe`.

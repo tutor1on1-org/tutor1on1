@@ -12,6 +12,7 @@ enum LlmApiFormat {
 enum ReasoningControlStyle {
   unsupported,
   openAiEffort,
+  openRouterReasoning,
   anthropicThinking,
   deepSeekThinking,
   siliconFlowThinkingBudget,
@@ -30,6 +31,7 @@ class LlmProvider {
     this.chatPath = '/chat/completions',
     this.apiFormat = LlmApiFormat.openAiChatCompletions,
     this.reasoningControlStyle = ReasoningControlStyle.unsupported,
+    this.supportsStructuredOutputs = false,
     this.extraHeaders = const <String, String>{},
   });
 
@@ -44,6 +46,7 @@ class LlmProvider {
   final String chatPath;
   final LlmApiFormat apiFormat;
   final ReasoningControlStyle reasoningControlStyle;
+  final bool supportsStructuredOutputs;
   final Map<String, String> extraHeaders;
 
   String maxTokensField(String model) {
@@ -96,14 +99,33 @@ class LlmProviders {
         maxTokensParam: MaxTokensParam.auto,
         noTemperatureModelPrefixes: ['gpt-'],
         reasoningControlStyle: ReasoningControlStyle.openAiEffort,
+        supportsStructuredOutputs: true,
+      ),
+      const LlmProvider(
+        id: 'openrouter',
+        label: 'OpenRouter',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        models: [
+          'openai/gpt-5.2',
+          'anthropic/claude-sonnet-4',
+          'google/gemini-2.5-flash',
+        ],
+        maxTokensParam: MaxTokensParam.maxTokens,
+        reasoningControlStyle: ReasoningControlStyle.openRouterReasoning,
+        supportsStructuredOutputs: true,
+        extraHeaders: <String, String>{
+          'HTTP-Referer': 'https://www.tutor1on1.org',
+          'X-OpenRouter-Title': 'Tutor1on1',
+        },
       ),
       const LlmProvider(
         id: 'anthropic',
         label: 'Anthropic',
         baseUrl: 'https://api.anthropic.com/v1',
         models: [
-          'claude-3-5-sonnet-20240620',
-          'claude-3-5-haiku-20241022',
+          'claude-sonnet-4-6',
+          'claude-haiku-4-5',
+          'claude-opus-4-6',
         ],
         maxTokensParam: MaxTokensParam.maxTokens,
         authHeader: 'x-api-key',
@@ -120,23 +142,27 @@ class LlmProviders {
         label: 'Google Gemini',
         baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
         models: [
-          'gemini-3-pro-preview',
-          'gemini-3-flash-preview',
+          'gemini-2.5-pro',
+          'gemini-2.5-flash',
+          'gemini-2.5-flash-lite',
         ],
         maxTokensParam: MaxTokensParam.maxTokens,
         authHeader: 'Authorization',
         authPrefix: 'Bearer ',
         reasoningControlStyle: ReasoningControlStyle.openAiEffort,
+        supportsStructuredOutputs: true,
       ),
       const LlmProvider(
         id: 'grok',
         label: 'Grok',
         baseUrl: 'https://api.x.ai/v1',
         models: [
-          'grok-2',
-          'grok-2-mini',
+          'grok-4',
+          'grok-4-fast-reasoning',
+          'grok-4-fast-non-reasoning',
         ],
         maxTokensParam: MaxTokensParam.maxTokens,
+        supportsStructuredOutputs: true,
       ),
       const LlmProvider(
         id: 'siliconflow',

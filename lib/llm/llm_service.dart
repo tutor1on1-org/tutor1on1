@@ -976,10 +976,13 @@ class LlmService {
     if (schemaMap == null) {
       return false;
     }
-    if (provider.id != 'openai') {
+    if (provider.apiFormat != LlmApiFormat.openAiChatCompletions) {
       return false;
     }
-    return _normalizeBaseUrl(baseUrl) == 'https://api.openai.com/v1';
+    if (!provider.supportsStructuredOutputs) {
+      return false;
+    }
+    return _normalizeBaseUrl(baseUrl).isNotEmpty;
   }
 
   String _buildStructuredOutputName(String promptName) {

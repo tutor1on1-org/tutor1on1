@@ -41,6 +41,11 @@ class LlmReasoningSupport {
       case ReasoningControlStyle.openAiEffort:
         bodyMap['reasoning_effort'] = normalizedEffort;
         return;
+      case ReasoningControlStyle.openRouterReasoning:
+        bodyMap['reasoning'] = <String, dynamic>{
+          'effort': normalizedEffort,
+        };
+        return;
       case ReasoningControlStyle.deepSeekThinking:
         bodyMap['thinking'] = <String, dynamic>{
           'type':
@@ -259,13 +264,15 @@ class LlmReasoningSupport {
         if (message is! Map<String, dynamic>) {
           continue;
         }
+        if (_appendPreferredOpenAiReasoning(buffer, message)) {
+          continue;
+        }
+        if (_appendPreferredOpenAiReasoning(buffer, choice)) {
+          continue;
+        }
         final reasoningContent = message['reasoning_content'];
         if (reasoningContent is String) {
           appendReasoningFragment(buffer, reasoningContent);
-        }
-        final reasoning = message['reasoning'];
-        if (reasoning != null) {
-          appendReasoningFragment(buffer, _extractReasoningValue(reasoning));
         }
       }
     }
@@ -330,7 +337,8 @@ class LlmReasoningSupport {
     }
     if (value is Map<String, dynamic>) {
       final type = (value['type'] as String?)?.trim().toLowerCase();
-      if (type == 'reasoning' || type == 'thinking') {
+      if ((type?.startsWith('reasoning') ?? false) ||
+          (type?.startsWith('thinking') ?? false)) {
         return '';
       }
       if (value['output_text'] is String) {
@@ -359,11 +367,15 @@ class LlmReasoningSupport {
     }
     if (value is Map<String, dynamic>) {
       final type = (value['type'] as String?)?.trim().toLowerCase();
-      if (type == 'reasoning' || type == 'thinking') {
+      if ((type?.startsWith('reasoning') ?? false) ||
+          (type?.startsWith('thinking') ?? false)) {
         final reasoningText = value['thinking'] ?? value['summary'];
         if (reasoningText != null) {
           return _extractReasoningValue(reasoningText);
         }
+      }
+      if (value['text'] != null) {
+        return _extractReasoningValue(value['text']);
       }
       if (value['summary'] != null) {
         return _extractReasoningValue(value['summary']);
@@ -394,7 +406,37 @@ class LlmReasoningSupport {
         return reasoningTokens.toInt();
       }
     }
+    final completionTokensDetails = usage['completion_tokens_details'];
+    if (completionTokensDetails is Map<String, dynamic>) {
+      final reasoningTokens = completionTokensDetails['reasoning_tokens'];
+      if (reasoningTokens is num) {
+        return reasoningTokens.toInt();
+      }
+    }
     return null;
+  }
+
+  static bool _appendPreferredOpenAiReasoning(
+    StringBuffer buffer,
+    Map<String, dynamic> source,
+  ) {
+    final reasoningDetails = source['reasoning_details'];
+    if (reasoningDetails != null) {
+      final extracted = _extractReasoningValue(reasoningDetails);
+      if (extracted.isNotEmpty) {
+        appendReasoningFragment(buffer, extracted);
+        return true;
+      }
+    }
+    final reasoning = source['reasoning'];
+    if (reasoning != null) {
+      final extracted = _extractReasoningValue(reasoning);
+      if (extracted.isNotEmpty) {
+        appendReasoningFragment(buffer, extracted);
+        return true;
+      }
+    }
+    return false;
   }
 
   static String? _normalizeJoinedText(String? value) {

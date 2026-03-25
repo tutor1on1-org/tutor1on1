@@ -51,6 +51,7 @@ Official app backend:
 Optional user-configured model providers:
 
 - `https://api.openai.com/v1`
+- `https://openrouter.ai/api/v1`
 - `https://api.anthropic.com/v1`
 - `https://generativelanguage.googleapis.com/v1beta/openai`
 - `https://api.x.ai/v1`
