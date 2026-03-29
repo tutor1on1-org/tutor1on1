@@ -10,6 +10,7 @@ import 'course_bundle_service.dart';
 import 'course_service.dart';
 import 'marketplace_api_service.dart';
 import 'prompt_bundle_compat.dart';
+import 'prompt_template_validator.dart';
 import 'remote_student_identity_service.dart';
 import 'remote_teacher_identity_service.dart';
 import 'secure_storage_service.dart';
@@ -36,6 +37,7 @@ class EnrollmentSyncService {
   final MarketplaceApiService _api;
   final PromptRepository _promptRepository;
   final CourseArtifactService? _courseArtifactService;
+  final PromptTemplateValidator _promptValidator = PromptTemplateValidator();
   final RemoteTeacherIdentityService _remoteTeacherIdentity =
       const RemoteTeacherIdentityService();
   final RemoteStudentIdentityService _remoteStudentIdentity =
@@ -376,6 +378,7 @@ class EnrollmentSyncService {
         ),
         importRemoteCourse: (resolvedCourseVersionId) =>
             _downloadAndImportCourse(
+          currentUser: currentUser,
           enrollment: enrollment,
           bundleVersionId: remoteBundle.bundleVersionId,
           existingCourseVersionId: resolvedCourseVersionId,
@@ -384,6 +387,7 @@ class EnrollmentSyncService {
           summary: summary,
         ),
         onHashesDiffer: (localCourse, __, ___) => _downloadAndImportCourse(
+          currentUser: currentUser,
           enrollment: enrollment,
           bundleVersionId: remoteBundle.bundleVersionId,
           existingCourseVersionId: localCourse.id,
@@ -446,6 +450,7 @@ class EnrollmentSyncService {
   }
 
   Future<CourseVersion> _downloadAndImportCourse({
+    required User currentUser,
     required EnrollmentSummary enrollment,
     required int bundleVersionId,
     required int? existingCourseVersionId,
@@ -476,6 +481,8 @@ class EnrollmentSyncService {
         ),
       );
       await bundleService.validateBundleForImport(bundleFile);
+      final promptMetadata =
+          await bundleService.readPromptMetadataFromBundleFile(bundleFile);
       final folderPath = await bundleService.extractBundleFromFile(
         bundleFile: bundleFile,
         courseName: enrollment.courseSubject,
@@ -498,6 +505,13 @@ class EnrollmentSyncService {
       );
       if (!result.success || result.course == null) {
         throw StateError(result.message);
+      }
+      if (promptMetadata != null) {
+        await _applyPromptMetadataForStudent(
+          currentUser: currentUser,
+          metadata: promptMetadata,
+          course: result.course!,
+        );
       }
       return result.course!;
     } finally {
@@ -1464,6 +1478,40 @@ class EnrollmentSyncService {
     }
 
     final scopeTemplates = <PromptTemplate>[];
+    final assignments = await _db.getAssignmentsForCourse(course.id);
+    final assignedStudentIds =
+        assignments.map((assignment) => assignment.studentId).toSet();
+
+    final systemTemplates = await (_db.select(_db.promptTemplates)
+          ..where((tbl) =>
+              tbl.teacherId.equals(teacher.id) &
+              tbl.isActive.equals(true) &
+              tbl.courseKey.isNull() &
+              tbl.studentId.isNull())
+          ..orderBy([
+            (tbl) =>
+                OrderingTerm(expression: tbl.createdAt, mode: OrderingMode.desc)
+          ]))
+        .get();
+    scopeTemplates.addAll(systemTemplates);
+
+    if (assignedStudentIds.isNotEmpty) {
+      final studentGlobalTemplates = await (_db.select(_db.promptTemplates)
+            ..where((tbl) =>
+                tbl.teacherId.equals(teacher.id) &
+                tbl.isActive.equals(true) &
+                tbl.courseKey.isNull() &
+                tbl.studentId.isIn(assignedStudentIds))
+            ..orderBy([
+              (tbl) => OrderingTerm(
+                    expression: tbl.createdAt,
+                    mode: OrderingMode.desc,
+                  )
+            ]))
+          .get();
+      scopeTemplates.addAll(studentGlobalTemplates);
+    }
+
     final courseTemplates = await (_db.select(_db.promptTemplates)
           ..where((tbl) =>
               tbl.teacherId.equals(teacher.id) &
@@ -1498,10 +1546,12 @@ class EnrollmentSyncService {
       }
 
       var scope = 'teacher';
-      if (template.courseKey != null && template.studentId == null) {
+      if (template.courseKey == null && template.studentId != null) {
+        scope = 'student_global';
+      } else if (template.courseKey != null && template.studentId == null) {
         scope = 'course';
       } else if (template.courseKey != null && template.studentId != null) {
-        scope = 'student';
+        scope = 'student_course';
       }
 
       promptTemplatesPayload.add({
@@ -1515,6 +1565,39 @@ class EnrollmentSyncService {
     }
 
     final profilesPayload = <Map<String, dynamic>>[];
+    final systemProfile = await _db.getStudentPromptProfile(
+      teacherId: teacher.id,
+      courseKey: null,
+      studentId: null,
+    );
+    if (systemProfile != null) {
+      profilesPayload.add(
+        _profileToJson(systemProfile, scope: 'teacher'),
+      );
+    }
+
+    for (final studentId in assignedStudentIds) {
+      final profile = await _db.getStudentPromptProfile(
+        teacherId: teacher.id,
+        courseKey: null,
+        studentId: studentId,
+      );
+      if (profile == null) {
+        continue;
+      }
+      var student = studentCache[studentId];
+      student ??= await _db.getUserById(studentId);
+      studentCache[studentId] = student;
+      profilesPayload.add(
+        _profileToJson(
+          profile,
+          scope: 'student_global',
+          studentRemoteUserId: student?.remoteUserId,
+          studentUsername: student?.username,
+        ),
+      );
+    }
+
     final courseProfile = await _db.getStudentPromptProfile(
       teacherId: teacher.id,
       courseKey: courseKey,
@@ -1566,7 +1649,7 @@ class EnrollmentSyncService {
       profilesPayload.add(
         _profileToJson(
           profile,
-          scope: 'student',
+          scope: 'student_course',
           studentRemoteUserId: student?.remoteUserId,
           studentUsername: student?.username,
         ),
@@ -1651,17 +1734,30 @@ class EnrollmentSyncService {
     if (courseKey == null || courseKey.isEmpty) {
       return;
     }
+    final assignments = await _db.getAssignmentsForCourse(course.id);
+    final assignedStudentIds =
+        assignments.map((assignment) => assignment.studentId).toSet();
 
     await _db.transaction(() async {
       await (_db.update(_db.promptTemplates)
             ..where((tbl) =>
                 tbl.teacherId.equals(currentUser.id) &
-                tbl.courseKey.equals(courseKey)))
+                (tbl.courseKey.equals(courseKey) |
+                    (tbl.courseKey.isNull() &
+                        (tbl.studentId.isNull() |
+                            (assignedStudentIds.isEmpty
+                                ? const Constant(false)
+                                : tbl.studentId.isIn(assignedStudentIds)))))))
           .write(PromptTemplatesCompanion(isActive: Value(false)));
       await (_db.delete(_db.studentPromptProfiles)
             ..where((tbl) =>
                 tbl.teacherId.equals(currentUser.id) &
-                tbl.courseKey.equals(courseKey)))
+                ((tbl.courseKey.equals(courseKey)) |
+                    (tbl.courseKey.isNull() &
+                        (tbl.studentId.isNull() |
+                            (assignedStudentIds.isEmpty
+                                ? const Constant(false)
+                                : tbl.studentId.isIn(assignedStudentIds)))))))
           .go();
       await _db.deleteStudentPassConfigsForCourse(course.id);
     });
@@ -1678,13 +1774,44 @@ class EnrollmentSyncService {
         if (promptName.isEmpty || content.isEmpty) {
           continue;
         }
+        final validation = _promptValidator.validate(
+          promptName: promptName,
+          content: content,
+        );
+        if (!validation.isValid) {
+          throw StateError(
+            'Synced prompt metadata is invalid for "$promptName" scope '
+            '"$scope". missing=${validation.missingVariables.join(',')} '
+            'unknown=${validation.unknownVariables.join(',')} '
+            'invalid=${validation.invalidVariables.join(',')}',
+          );
+        }
 
         String? scopeCourseKey;
         int? scopeStudentId;
-        if (scope == 'course') {
+        if (scope == 'teacher') {
+          scopeCourseKey = null;
+          scopeStudentId = null;
+        } else if (scope == 'student_global') {
+          final targetRemoteUserId =
+              (item['student_remote_user_id'] as num?)?.toInt() ?? 0;
+          if (targetRemoteUserId <= 0) {
+            continue;
+          }
+          final targetUsername =
+              (item['student_username'] as String?)?.trim() ?? '';
+          scopeCourseKey = null;
+          scopeStudentId =
+              await _remoteStudentIdentity.resolveOrCreateLocalStudentId(
+            db: _db,
+            remoteStudentId: targetRemoteUserId,
+            usernameHint: targetUsername,
+            teacherId: currentUser.id,
+          );
+        } else if (scope == 'course') {
           scopeCourseKey = courseKey;
           scopeStudentId = null;
-        } else if (scope == 'student') {
+        } else if (scope == 'student_course' || scope == 'student') {
           final targetRemoteUserId =
               (item['student_remote_user_id'] as num?)?.toInt() ?? 0;
           if (targetRemoteUserId <= 0) {
@@ -1724,10 +1851,29 @@ class EnrollmentSyncService {
         String? scopeCourseKey;
         int? scopeStudentId;
 
-        if (scope == 'course') {
+        if (scope == 'teacher') {
+          scopeCourseKey = null;
+          scopeStudentId = null;
+        } else if (scope == 'student_global') {
+          final targetRemoteUserId =
+              (item['student_remote_user_id'] as num?)?.toInt() ?? 0;
+          if (targetRemoteUserId <= 0) {
+            continue;
+          }
+          final targetUsername =
+              (item['student_username'] as String?)?.trim() ?? '';
+          scopeCourseKey = null;
+          scopeStudentId =
+              await _remoteStudentIdentity.resolveOrCreateLocalStudentId(
+            db: _db,
+            remoteStudentId: targetRemoteUserId,
+            usernameHint: targetUsername,
+            teacherId: currentUser.id,
+          );
+        } else if (scope == 'course') {
           scopeCourseKey = courseKey;
           scopeStudentId = null;
-        } else if (scope == 'student') {
+        } else if (scope == 'student_course' || scope == 'student') {
           final targetRemoteUserId =
               (item['student_remote_user_id'] as num?)?.toInt() ?? 0;
           if (targetRemoteUserId <= 0) {
@@ -1786,6 +1932,261 @@ class EnrollmentSyncService {
         await _db.upsertStudentPassConfig(
           courseVersionId: course.id,
           studentId: targetStudentId,
+          easyWeight: ((item['easy_weight'] as num?)?.toDouble()) ??
+              ResolvedStudentPassRule.defaultEasyWeight,
+          mediumWeight: ((item['medium_weight'] as num?)?.toDouble()) ??
+              ResolvedStudentPassRule.defaultMediumWeight,
+          hardWeight: ((item['hard_weight'] as num?)?.toDouble()) ??
+              ResolvedStudentPassRule.defaultHardWeight,
+          passThreshold: ((item['pass_threshold'] as num?)?.toDouble()) ??
+              ResolvedStudentPassRule.defaultPassThreshold,
+        );
+      }
+    }
+
+    _promptRepository.invalidatePromptCache();
+  }
+
+  Future<void> _applyPromptMetadataForStudent({
+    required User currentUser,
+    required Map<String, dynamic> metadata,
+    required CourseVersion course,
+  }) async {
+    final schema = (metadata['schema'] as String?)?.trim() ?? '';
+    if (!isSupportedPromptBundleSchema(schema)) {
+      return;
+    }
+    final courseKey = course.sourcePath?.trim();
+    if (courseKey == null || courseKey.isEmpty) {
+      return;
+    }
+
+    await _db.transaction(() async {
+      for (final promptName in const <String>['learn', 'review']) {
+        await _db.clearActivePromptTemplates(
+          teacherId: course.teacherId,
+          promptName: promptName,
+          courseKey: null,
+          studentId: null,
+        );
+        await _db.clearActivePromptTemplates(
+          teacherId: course.teacherId,
+          promptName: promptName,
+          courseKey: null,
+          studentId: currentUser.id,
+        );
+        await _db.clearActivePromptTemplates(
+          teacherId: course.teacherId,
+          promptName: promptName,
+          courseKey: courseKey,
+          studentId: null,
+        );
+        await _db.clearActivePromptTemplates(
+          teacherId: course.teacherId,
+          promptName: promptName,
+          courseKey: courseKey,
+          studentId: currentUser.id,
+        );
+      }
+      await _db.deleteStudentPromptProfile(
+        teacherId: course.teacherId,
+        courseKey: null,
+        studentId: null,
+      );
+      await _db.deleteStudentPromptProfile(
+        teacherId: course.teacherId,
+        courseKey: null,
+        studentId: currentUser.id,
+      );
+      await _db.deleteStudentPromptProfile(
+        teacherId: course.teacherId,
+        courseKey: courseKey,
+        studentId: null,
+      );
+      await _db.deleteStudentPromptProfile(
+        teacherId: course.teacherId,
+        courseKey: courseKey,
+        studentId: currentUser.id,
+      );
+      await _db.deleteStudentPassConfig(
+        courseVersionId: course.id,
+        studentId: currentUser.id,
+      );
+    });
+
+    final promptTemplates = metadata['prompt_templates'];
+    if (promptTemplates is List) {
+      for (final item in promptTemplates) {
+        if (item is! Map<String, dynamic>) {
+          continue;
+        }
+        final promptName = (item['prompt_name'] as String?)?.trim() ?? '';
+        final content = (item['content'] as String?)?.trim() ?? '';
+        final scope = (item['scope'] as String?)?.trim() ?? '';
+        if (promptName.isEmpty || content.isEmpty) {
+          continue;
+        }
+        final validation = _promptValidator.validate(
+          promptName: promptName,
+          content: content,
+        );
+        if (!validation.isValid) {
+          throw StateError(
+            'Synced prompt metadata is invalid for "$promptName" scope '
+            '"$scope". missing=${validation.missingVariables.join(',')} '
+            'unknown=${validation.unknownVariables.join(',')} '
+            'invalid=${validation.invalidVariables.join(',')}',
+          );
+        }
+
+        String? scopeCourseKey;
+        int? scopeStudentId;
+        if (scope == 'teacher') {
+          scopeCourseKey = null;
+          scopeStudentId = null;
+        } else if (scope == 'student_global') {
+          final targetRemoteUserId =
+              (item['student_remote_user_id'] as num?)?.toInt();
+          final targetUsername =
+              (item['student_username'] as String?)?.trim() ?? '';
+          final remoteMatched =
+              currentUser.remoteUserId != null &&
+                  targetRemoteUserId != null &&
+                  targetRemoteUserId > 0 &&
+                  currentUser.remoteUserId == targetRemoteUserId;
+          final usernameMatched = targetUsername.isNotEmpty &&
+              targetUsername.toLowerCase() == currentUser.username.toLowerCase();
+          if (!remoteMatched && !usernameMatched) {
+            continue;
+          }
+          scopeCourseKey = null;
+          scopeStudentId = currentUser.id;
+        } else if (scope == 'course') {
+          scopeCourseKey = courseKey;
+          scopeStudentId = null;
+        } else if (scope == 'student_course' || scope == 'student') {
+          final targetRemoteUserId =
+              (item['student_remote_user_id'] as num?)?.toInt();
+          final targetUsername =
+              (item['student_username'] as String?)?.trim() ?? '';
+          final remoteMatched =
+              currentUser.remoteUserId != null &&
+                  targetRemoteUserId != null &&
+                  targetRemoteUserId > 0 &&
+                  currentUser.remoteUserId == targetRemoteUserId;
+          final usernameMatched = targetUsername.isNotEmpty &&
+              targetUsername.toLowerCase() == currentUser.username.toLowerCase();
+          if (!remoteMatched && !usernameMatched) {
+            continue;
+          }
+          scopeCourseKey = courseKey;
+          scopeStudentId = currentUser.id;
+        } else {
+          continue;
+        }
+
+        await _db.insertPromptTemplate(
+          teacherId: course.teacherId,
+          promptName: promptName,
+          content: content,
+          courseKey: scopeCourseKey,
+          studentId: scopeStudentId,
+        );
+      }
+    }
+
+    final profiles = metadata['student_prompt_profiles'];
+    if (profiles is List) {
+      for (final item in profiles) {
+        if (item is! Map<String, dynamic>) {
+          continue;
+        }
+        final scope = (item['scope'] as String?)?.trim() ?? '';
+        String? scopeCourseKey;
+        int? scopeStudentId;
+        if (scope == 'teacher') {
+          scopeCourseKey = null;
+          scopeStudentId = null;
+        } else if (scope == 'student_global') {
+          final targetRemoteUserId =
+              (item['student_remote_user_id'] as num?)?.toInt();
+          final targetUsername =
+              (item['student_username'] as String?)?.trim() ?? '';
+          final remoteMatched =
+              currentUser.remoteUserId != null &&
+                  targetRemoteUserId != null &&
+                  targetRemoteUserId > 0 &&
+                  currentUser.remoteUserId == targetRemoteUserId;
+          final usernameMatched = targetUsername.isNotEmpty &&
+              targetUsername.toLowerCase() == currentUser.username.toLowerCase();
+          if (!remoteMatched && !usernameMatched) {
+            continue;
+          }
+          scopeCourseKey = null;
+          scopeStudentId = currentUser.id;
+        } else if (scope == 'course') {
+          scopeCourseKey = courseKey;
+          scopeStudentId = null;
+        } else if (scope == 'student_course' || scope == 'student') {
+          final targetRemoteUserId =
+              (item['student_remote_user_id'] as num?)?.toInt();
+          final targetUsername =
+              (item['student_username'] as String?)?.trim() ?? '';
+          final remoteMatched =
+              currentUser.remoteUserId != null &&
+                  targetRemoteUserId != null &&
+                  targetRemoteUserId > 0 &&
+                  currentUser.remoteUserId == targetRemoteUserId;
+          final usernameMatched = targetUsername.isNotEmpty &&
+              targetUsername.toLowerCase() == currentUser.username.toLowerCase();
+          if (!remoteMatched && !usernameMatched) {
+            continue;
+          }
+          scopeCourseKey = courseKey;
+          scopeStudentId = currentUser.id;
+        } else {
+          continue;
+        }
+
+        await _db.upsertStudentPromptProfile(
+          teacherId: course.teacherId,
+          courseKey: scopeCourseKey,
+          studentId: scopeStudentId,
+          gradeLevel: item['grade_level'] as String?,
+          readingLevel: item['reading_level'] as String?,
+          preferredLanguage: item['preferred_language'] as String?,
+          interests: item['interests'] as String?,
+          preferredTone: item['preferred_tone'] as String?,
+          preferredPace: item['preferred_pace'] as String?,
+          preferredFormat: item['preferred_format'] as String?,
+          supportNotes: item['support_notes'] as String?,
+        );
+      }
+    }
+
+    final passConfigs = metadata['student_pass_configs'];
+    if (passConfigs is List) {
+      for (final item in passConfigs) {
+        if (item is! Map<String, dynamic>) {
+          continue;
+        }
+        final targetRemoteUserId =
+            (item['student_remote_user_id'] as num?)?.toInt();
+        final targetUsername =
+            (item['student_username'] as String?)?.trim() ?? '';
+        final remoteMatched =
+            currentUser.remoteUserId != null &&
+                targetRemoteUserId != null &&
+                targetRemoteUserId > 0 &&
+                currentUser.remoteUserId == targetRemoteUserId;
+        final usernameMatched = targetUsername.isNotEmpty &&
+            targetUsername.toLowerCase() == currentUser.username.toLowerCase();
+        if (!remoteMatched && !usernameMatched) {
+          continue;
+        }
+        await _db.upsertStudentPassConfig(
+          courseVersionId: course.id,
+          studentId: currentUser.id,
           easyWeight: ((item['easy_weight'] as num?)?.toDouble()) ??
               ResolvedStudentPassRule.defaultEasyWeight,
           mediumWeight: ((item['medium_weight'] as num?)?.toDouble()) ??

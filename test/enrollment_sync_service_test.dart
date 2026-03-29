@@ -616,19 +616,19 @@ void main() {
             <String, dynamic>{
               'prompt_name': 'learn',
               'scope': 'course',
-              'content': 'REMOTE COURSE PROMPT',
+              'content': '{{kp_description}}\n{{student_input}}\n{{lesson_content}}',
             },
             <String, dynamic>{
               'prompt_name': 'review',
-              'scope': 'student',
-              'content': 'REMOTE STUDENT PROMPT',
+              'scope': 'student_course',
+              'content': '{{kp_description}}\n{{student_input}}\n{{active_review_question_json}}\n{{target_difficulty}}\n{{presented_questions}}\n{{error_book_summary}}',
               'student_remote_user_id': 1702,
               'student_username': 'student_pull_remote',
             },
           ],
           'student_prompt_profiles': <Map<String, dynamic>>[
             <String, dynamic>{
-              'scope': 'student',
+              'scope': 'student_course',
               'student_remote_user_id': 1702,
               'student_username': 'student_pull_remote',
               'preferred_tone': 'calm',
@@ -695,7 +695,10 @@ void main() {
         studentId: null,
       );
       expect(activeCoursePrompt, isNotNull);
-      expect(activeCoursePrompt!.content, equals('REMOTE COURSE PROMPT'));
+      expect(
+        activeCoursePrompt!.content,
+        equals('{{kp_description}}\n{{student_input}}\n{{lesson_content}}'),
+      );
 
       final activeStudentPrompt = await db.getActivePromptTemplate(
         teacherId: teacherId,
@@ -704,7 +707,12 @@ void main() {
         studentId: studentId,
       );
       expect(activeStudentPrompt, isNotNull);
-      expect(activeStudentPrompt!.content, equals('REMOTE STUDENT PROMPT'));
+      expect(
+        activeStudentPrompt!.content,
+        equals(
+          '{{kp_description}}\n{{student_input}}\n{{active_review_question_json}}\n{{target_difficulty}}\n{{presented_questions}}\n{{error_book_summary}}',
+        ),
+      );
 
       final studentProfile = await db.getStudentPromptProfile(
         teacherId: teacherId,
@@ -869,10 +877,20 @@ void main() {
         courseVersionId: courseBId,
         remoteCourseId: 9202,
       );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: courseAId,
+      );
       await db.insertPromptTemplate(
         teacherId: teacherId,
         promptName: 'learn',
         content: 'GLOBAL PROMPT',
+      );
+      await db.insertPromptTemplate(
+        teacherId: teacherId,
+        promptName: 'learn',
+        content: 'STUDENT GLOBAL PROMPT',
+        studentId: studentId,
       );
       await db.insertPromptTemplate(
         teacherId: teacherId,
@@ -886,6 +904,18 @@ void main() {
         content: 'STUDENT PROMPT',
         courseKey: courseADir.path,
         studentId: studentId,
+      );
+      await db.upsertStudentPromptProfile(
+        teacherId: teacherId,
+        courseKey: null,
+        studentId: null,
+        preferredFormat: 'steps',
+      );
+      await db.upsertStudentPromptProfile(
+        teacherId: teacherId,
+        courseKey: null,
+        studentId: studentId,
+        preferredTone: 'patient',
       );
       await db.upsertStudentPromptProfile(
         teacherId: teacherId,
@@ -953,14 +983,18 @@ void main() {
           .cast<Map<String, dynamic>>();
       expect(
         promptTemplates.any((item) => item['scope'] == 'teacher'),
-        isFalse,
+        isTrue,
       );
       expect(
         promptTemplates.any((item) => item['scope'] == 'course'),
         isTrue,
       );
       expect(
-        promptTemplates.any((item) => item['scope'] == 'student'),
+        promptTemplates.any((item) => item['scope'] == 'student_course'),
+        isTrue,
+      );
+      expect(
+        promptTemplates.any((item) => item['scope'] == 'student_global'),
         isTrue,
       );
       final studentProfiles =
@@ -968,10 +1002,14 @@ void main() {
               .cast<Map<String, dynamic>>();
       expect(
         studentProfiles.any((item) => item['scope'] == 'teacher'),
-        isFalse,
+        isTrue,
       );
       expect(
-        studentProfiles.any((item) => item['scope'] == 'student'),
+        studentProfiles.any((item) => item['scope'] == 'student_course'),
+        isTrue,
+      );
+      expect(
+        studentProfiles.any((item) => item['scope'] == 'student_global'),
         isTrue,
       );
       expect(stats.uploadedCount, equals(2));

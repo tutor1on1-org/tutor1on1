@@ -2421,6 +2421,13 @@ HAVING COUNT(*) > 1
             courseKey: normalizedCourseKey,
             studentId: null,
           );
+    final studentGlobalProfile = studentId == null
+        ? null
+        : await getStudentPromptProfile(
+            teacherId: teacherId,
+            courseKey: null,
+            studentId: studentId,
+          );
     final studentProfile = (normalizedCourseKey == null || studentId == null)
         ? null
         : await getStudentPromptProfile(
@@ -2430,41 +2437,49 @@ HAVING COUNT(*) > 1
           );
     final gradeLevel = _resolveStudentPromptField(
       studentProfile?.gradeLevel,
+      studentGlobalProfile?.gradeLevel,
       courseProfile?.gradeLevel,
       systemProfile?.gradeLevel,
     );
     final readingLevel = _resolveStudentPromptField(
       studentProfile?.readingLevel,
+      studentGlobalProfile?.readingLevel,
       courseProfile?.readingLevel,
       systemProfile?.readingLevel,
     );
     final preferredLanguage = _resolveStudentPromptField(
       studentProfile?.preferredLanguage,
+      studentGlobalProfile?.preferredLanguage,
       courseProfile?.preferredLanguage,
       systemProfile?.preferredLanguage,
     );
     final interests = _resolveStudentPromptField(
       studentProfile?.interests,
+      studentGlobalProfile?.interests,
       courseProfile?.interests,
       systemProfile?.interests,
     );
     final preferredTone = _resolveStudentPromptField(
       studentProfile?.preferredTone,
+      studentGlobalProfile?.preferredTone,
       courseProfile?.preferredTone,
       systemProfile?.preferredTone,
     );
     final preferredPace = _resolveStudentPromptField(
       studentProfile?.preferredPace,
+      studentGlobalProfile?.preferredPace,
       courseProfile?.preferredPace,
       systemProfile?.preferredPace,
     );
     final preferredFormat = _resolveStudentPromptField(
       studentProfile?.preferredFormat,
+      studentGlobalProfile?.preferredFormat,
       courseProfile?.preferredFormat,
       systemProfile?.preferredFormat,
     );
     final supportNotes = _resolveStudentPromptField(
       studentProfile?.supportNotes,
+      studentGlobalProfile?.supportNotes,
       courseProfile?.supportNotes,
       systemProfile?.supportNotes,
     );
@@ -2789,12 +2804,17 @@ HAVING COUNT(*) > 1
 
   String? _resolveStudentPromptField(
     String? studentValue,
+    String? studentGlobalValue,
     String? courseValue,
     String? systemValue,
   ) {
     final resolvedStudent = _normalizePromptField(studentValue);
     if (resolvedStudent != null) {
       return resolvedStudent;
+    }
+    final resolvedStudentGlobal = _normalizePromptField(studentGlobalValue);
+    if (resolvedStudentGlobal != null) {
+      return resolvedStudentGlobal;
     }
     final resolvedCourse = _normalizePromptField(courseValue);
     if (resolvedCourse != null) {

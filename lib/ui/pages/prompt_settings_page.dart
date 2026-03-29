@@ -43,9 +43,18 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
     final l10n = AppLocalizations.of(context)!;
     final db = context.read<AppDatabase>();
     final courses = await db.watchCourseVersions(widget.teacherId).first;
+    final students = await db.watchStudents(widget.teacherId).first;
     final scopes = <_PromptScope>[
       _PromptScope.systemScope(label: l10n.promptScopeDefault),
     ];
+    for (final student in students) {
+      scopes.add(
+        _PromptScope.studentGlobalScope(
+          label: 'Student - ${student.username}',
+          studentId: student.id,
+        ),
+      );
+    }
     for (final course in courses) {
       final courseKey = (course.sourcePath ?? '').trim();
       if (courseKey.isEmpty) {
@@ -409,7 +418,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
     final validation = _validator.validate(
       promptName: item.name,
       content: result,
-      allowMissingRequired: true,
+      allowMissingRequired: false,
     );
     if (!validation.isValid) {
       await _showValidationErrors(context, validation);
@@ -449,7 +458,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
             teacherId: widget.teacherId,
             courseKey: courseKey,
             studentId: studentId,
-            includeSystem: false,
+            includeSystem: true,
           );
     await showDialog<void>(
       context: context,
@@ -491,7 +500,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
             teacherId: widget.teacherId,
             courseKey: courseKey,
             studentId: studentId,
-            includeSystem: false,
+            includeSystem: true,
           );
     final historical = isSystemScope
         ? entry.content
@@ -502,7 +511,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
             studentId: studentId,
             courseAppendOverride: studentId == null ? entry.content : null,
             studentAppendOverride: studentId == null ? null : entry.content,
-            includeSystem: false,
+            includeSystem: true,
           );
     final diff = _buildUnifiedDiff(
       current,
@@ -593,12 +602,18 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
     final l10n = AppLocalizations.of(context)!;
     final missing = validation.missingVariables.join(', ');
     final unknown = validation.unknownVariables.join(', ');
+    final invalid = validation.invalidVariables.join(', ');
     final messages = <String>[];
     if (validation.missingVariables.isNotEmpty) {
       messages.add(l10n.promptMissingVars(missing));
     }
     if (validation.unknownVariables.isNotEmpty) {
       messages.add(l10n.promptUnknownVars(unknown));
+    }
+    if (validation.invalidVariables.isNotEmpty) {
+      messages.add(
+        'Invalid variables: $invalid. Prompt variables must stay English-only, for example {{student_input}}.',
+      );
     }
     await showDialog<void>(
       context: context,
@@ -1323,6 +1338,15 @@ class _PromptScope {
         courseVersionId = courseVersionId,
         courseKey = courseKey,
         studentId = null;
+
+  _PromptScope.studentGlobalScope({
+    required String label,
+    required int studentId,
+  })  : label = label,
+        isSystem = false,
+        courseVersionId = null,
+        courseKey = null,
+        studentId = studentId;
 
   final String label;
   final bool isSystem;

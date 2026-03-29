@@ -17,10 +17,6 @@ class PromptRepository {
   final Map<String, String> _systemPromptCache = {};
   final Map<String, Map<String, dynamic>> _schemaCache = {};
   final Map<String, String> _textbookCache = {};
-  static const Set<String> _bundledOnlyPromptNames = <String>{
-    'learn',
-    'review',
-  };
   static const Map<String, String> _emergencyPromptFallbacks = <String, String>{
     'learn': '''
 You are a one-on-one teacher. Task: LEARN.
@@ -55,9 +51,6 @@ Return a valid response following the REVIEW output schema.
     String? courseKey,
     int? studentId,
   }) async {
-    if (_usesBundledOnlyPrompt(name)) {
-      return _loadBundledSystemPrompt(name);
-    }
     final normalizedCourseKey = _normalizeCourseKey(courseKey);
     final cacheKey = [
       teacherId?.toString() ?? 'default',
@@ -73,23 +66,35 @@ Return a valid response following the REVIEW output schema.
       name,
       teacherId: teacherId,
     );
-    final courseAppend = await _loadAppendPrompt(
-      name,
-      teacherId: teacherId,
-      courseKey: normalizedCourseKey,
-    );
-    final studentAppend = studentId == null
+    final courseAppend = normalizedCourseKey == null
         ? ''
         : await _loadAppendPrompt(
             name,
             teacherId: teacherId,
             courseKey: normalizedCourseKey,
+          );
+    final studentGlobalAppend = studentId == null
+        ? ''
+        : await _loadAppendPrompt(
+            name,
+            teacherId: teacherId,
+            courseKey: null,
             studentId: studentId,
           );
+    final studentCourseAppend =
+        studentId == null || normalizedCourseKey == null
+            ? ''
+            : await _loadAppendPrompt(
+                name,
+                teacherId: teacherId,
+                courseKey: normalizedCourseKey,
+                studentId: studentId,
+              );
     final combined = _combinePrompts([
       systemPrompt,
       courseAppend,
-      studentAppend,
+      studentGlobalAppend,
+      studentCourseAppend,
     ]);
     _promptCache[cacheKey] = combined;
     return combined;
@@ -101,9 +106,6 @@ Return a valid response following the REVIEW output schema.
     String? courseKey,
     int? studentId,
   }) async {
-    if (_usesBundledOnlyPrompt(name)) {
-      return '';
-    }
     final normalizedCourseKey = _normalizeCourseKey(courseKey);
     return _loadAppendPrompt(
       name,
@@ -122,30 +124,51 @@ Return a valid response following the REVIEW output schema.
     String? studentAppendOverride,
     bool includeSystem = true,
   }) async {
-    if (_usesBundledOnlyPrompt(name)) {
-      return includeSystem ? _loadBundledSystemPrompt(name) : '';
-    }
     final normalizedCourseKey = _normalizeCourseKey(courseKey);
     final systemPrompt = includeSystem
         ? await loadResolvedSystemPrompt(name, teacherId: teacherId)
         : '';
-    final courseAppend = courseAppendOverride ??
-        await _loadAppendPrompt(
+    final courseAppend = normalizedCourseKey == null
+        ? ''
+        : courseAppendOverride ??
+            await _loadAppendPrompt(
+              name,
+              teacherId: teacherId,
+              courseKey: normalizedCourseKey,
+            );
+    var studentGlobalAppend = '';
+    var studentCourseAppend = '';
+    if (studentId != null) {
+      if (normalizedCourseKey == null) {
+        studentGlobalAppend = studentAppendOverride ??
+            await _loadAppendPrompt(
+              name,
+              teacherId: teacherId,
+              courseKey: null,
+              studentId: studentId,
+            );
+      } else {
+        studentGlobalAppend = await _loadAppendPrompt(
           name,
           teacherId: teacherId,
-          courseKey: normalizedCourseKey,
+          courseKey: null,
+          studentId: studentId,
         );
-    String studentAppend = '';
-    if (studentId != null) {
-      studentAppend = studentAppendOverride ??
-          await _loadAppendPrompt(
-            name,
-            teacherId: teacherId,
-            courseKey: normalizedCourseKey,
-            studentId: studentId,
-          );
+        studentCourseAppend = studentAppendOverride ??
+            await _loadAppendPrompt(
+              name,
+              teacherId: teacherId,
+              courseKey: normalizedCourseKey,
+              studentId: studentId,
+            );
+      }
     }
-    return _combinePrompts([systemPrompt, courseAppend, studentAppend]);
+    return _combinePrompts([
+      systemPrompt,
+      courseAppend,
+      studentGlobalAppend,
+      studentCourseAppend,
+    ]);
   }
 
   Future<void> ensureAssignmentPrompts({
@@ -170,9 +193,6 @@ Return a valid response following the REVIEW output schema.
     String name, {
     required int? teacherId,
   }) async {
-    if (_usesBundledOnlyPrompt(name)) {
-      return _loadBundledSystemPrompt(name);
-    }
     final override = await _loadSystemPromptOverride(
       name,
       teacherId: teacherId,
@@ -254,11 +274,8 @@ Return a valid response following the REVIEW output schema.
     required String? courseKey,
     int? studentId,
   }) async {
-    if (_usesBundledOnlyPrompt(name)) {
-      return '';
-    }
     final db = _db;
-    if (db == null || teacherId == null || courseKey == null) {
+    if (db == null || teacherId == null) {
       return '';
     }
     final append = await db.getActivePromptTemplate(
@@ -300,9 +317,5 @@ Return a valid response following the REVIEW output schema.
     final content = await _assetBundle.loadString('assets/textbooks/$filename');
     _textbookCache[filename] = content;
     return content;
-  }
-
-  bool _usesBundledOnlyPrompt(String name) {
-    return _bundledOnlyPromptNames.contains(name.trim());
   }
 }

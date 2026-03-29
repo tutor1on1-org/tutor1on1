@@ -25,6 +25,11 @@ import (
 
 var contentsLinePattern = regexp.MustCompile(`^(\d+(?:\.\d+)*)\s*(.+)$`)
 
+func isPromptMetadataEntry(name string) bool {
+	return name == "_family_teacher/prompt_bundle.json" ||
+		name == "_tutor1on1/prompt_bundle.json"
+}
+
 type BundlesHandler struct {
 	cfg     Dependencies
 	storage *storage.Service
@@ -781,7 +786,7 @@ func extractNodeIDsFromBundle(zipPath string) (map[string]struct{}, error) {
 		if name == "" {
 			continue
 		}
-		if name == "_family_teacher/prompt_bundle.json" {
+		if isPromptMetadataEntry(name) {
 			continue
 		}
 		if strings.HasPrefix(name, "__MACOSX/") {
@@ -938,7 +943,7 @@ func computeBundleSemanticHash(zipPath string) (string, error) {
 		if err != nil {
 			return "", errors.New("zip entry read failed")
 		}
-		if name == "_family_teacher/prompt_bundle.json" {
+		if isPromptMetadataEntry(name) {
 			normalized, normErr := normalizePromptMetadata(data)
 			if normErr != nil {
 				return "", normErr

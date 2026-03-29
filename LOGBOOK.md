@@ -1,6 +1,9 @@
 # LOGBOOK
 Historical timeline. Keep active runbook details in `WORKLOG.md`.
 
+## 2026-03-29
+- Reworked teacher-configurable tutor prompts end to end: `learn` / `review` now resolve through teacher default, course, student-global, and student-course scopes with bundled assets only as fallback; Prompt Settings gained student-global scope plus full resolved preview/diff; teacher save and sync-import now block malformed, unknown, missing, or non-English placeholder variables; prompt metadata sync now carries teacher-global and student-global data through bundle metadata for no-rebuild updates; backend prompt-metadata path compatibility now covers both `_family_teacher` and `_tutor1on1` bundle entries.
+
 ## 2026-03-25
 - Added OpenRouter as a built-in text-model provider, updated the bundled Claude / Gemini / Grok defaults to current official model families, and corrected the OpenAI-compatible compatibility layer so OpenRouter reasoning uses its own request shape and reasoning-token fields instead of being treated as raw OpenAI.
 - Replaced the remaining obvious `Family Teacher` user-facing branding with `Tutor1on1` in recovery email subjects, root/client README titles, remote README title, and local skills/index docs. Deliberately preserved internal `family_teacher*` identifiers where they still represent real DB names, filesystem paths, legacy cleanup patterns, or Go module/package names.

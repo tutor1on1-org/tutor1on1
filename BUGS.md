@@ -174,3 +174,8 @@ Last updated: 2026-03-23
 - Symptom: closing the app, logging out, or deleting the current device can still ask for the teacher PIN even though study mode is no longer active.
 - Root cause: `StudyModeController` kept stale enforced state when the same student account re-synced, and quit gating trusted that cached runtime state without first refreshing or clearing it.
 - Prevention: same-student auth sync must clear stale enforced state, and the shared quit flow must refresh current study-mode state before deciding whether a teacher PIN is required.
+
+35. Teacher prompt settings diverged from live tutor prompt resolution
+- Symptom: teacher/student prompt scopes for `learn` and `review` could appear blank in Preview, teacher edits did not affect runtime, and synced prompt metadata could silently carry malformed placeholders that later broke variable injection expectations.
+- Root cause: runtime still treated `learn`/`review` as bundled-only prompts, Prompt Settings preview/diff rendered append-only fragments instead of the resolved prompt, student-global scope was missing from the resolution chain, and prompt validation did not block malformed or non-English placeholder identifiers.
+- Prevention: keep one shared resolved-prompt path for runtime and Preview/Diff (`bundled fallback -> teacher default -> course -> student-global -> student-course`), expose the same scopes in UI and sync, and reject invalid prompt templates on teacher save and sync apply.

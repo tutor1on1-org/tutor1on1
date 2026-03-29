@@ -922,6 +922,9 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     }
 
     final scopeTemplates = <PromptTemplate>[];
+    final assignments = await db.getAssignmentsForCourse(course.id);
+    final assignedStudentIds =
+        assignments.map((assignment) => assignment.studentId).toSet();
     final systemTemplates = await (db.select(db.promptTemplates)
           ..where((tbl) =>
               tbl.teacherId.equals(teacher.id) &
@@ -934,6 +937,23 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
           ]))
         .get();
     scopeTemplates.addAll(systemTemplates);
+
+    if (assignedStudentIds.isNotEmpty) {
+      final studentGlobalTemplates = await (db.select(db.promptTemplates)
+            ..where((tbl) =>
+                tbl.teacherId.equals(teacher.id) &
+                tbl.isActive.equals(true) &
+                tbl.courseKey.isNull() &
+                tbl.studentId.isIn(assignedStudentIds))
+            ..orderBy([
+              (tbl) => OrderingTerm(
+                    expression: tbl.createdAt,
+                    mode: OrderingMode.desc,
+                  )
+            ]))
+          .get();
+      scopeTemplates.addAll(studentGlobalTemplates);
+    }
 
     final courseTemplates = await (db.select(db.promptTemplates)
           ..where((tbl) =>
@@ -969,10 +989,12 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       }
 
       String scope = 'teacher';
-      if (template.courseKey != null && template.studentId == null) {
+      if (template.courseKey == null && template.studentId != null) {
+        scope = 'student_global';
+      } else if (template.courseKey != null && template.studentId == null) {
         scope = 'course';
       } else if (template.courseKey != null && template.studentId != null) {
-        scope = 'student';
+        scope = 'student_course';
       }
 
       promptTemplatesPayload.add({
@@ -994,6 +1016,28 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     if (systemProfile != null) {
       profilesPayload.add(
         _profileToJson(systemProfile, scope: 'teacher'),
+      );
+    }
+
+    for (final studentId in assignedStudentIds) {
+      final profile = await db.getStudentPromptProfile(
+        teacherId: teacher.id,
+        courseKey: null,
+        studentId: studentId,
+      );
+      if (profile == null) {
+        continue;
+      }
+      var student = studentCache[studentId];
+      student ??= await db.getUserById(studentId);
+      studentCache[studentId] = student;
+      profilesPayload.add(
+        _profileToJson(
+          profile,
+          scope: 'student_global',
+          studentRemoteUserId: student?.remoteUserId,
+          studentUsername: student?.username,
+        ),
       );
     }
 
@@ -1048,7 +1092,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       profilesPayload.add(
         _profileToJson(
           profile,
-          scope: 'student',
+          scope: 'student_course',
           studentRemoteUserId: student?.remoteUserId,
           studentUsername: student?.username,
         ),
