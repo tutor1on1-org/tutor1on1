@@ -828,6 +828,92 @@ void main() {
     },
   );
 
+  test('teacher can pull latest server bundle explicitly', () async {
+    final teacherId = await db.createUser(
+      username: 'teacher_pull_latest',
+      pinHash: 'hash',
+      role: 'teacher',
+      remoteUserId: 1951,
+    );
+    final localDir = await _createCourseFolder(
+      label: 'teacher_pull_latest_local',
+      rootTitle: 'Local Topic',
+    );
+    final remoteDir = await _createCourseFolder(
+      label: 'teacher_pull_latest_remote',
+      rootTitle: 'Remote Topic',
+    );
+    tempPaths.add(localDir.path);
+    tempPaths.add(remoteDir.path);
+    final courseVersionId = await db.createCourseVersion(
+      teacherId: teacherId,
+      subject: 'MATH',
+      granularity: 1,
+      textbookText: '1 Local Topic',
+      sourcePath: localDir.path,
+    );
+    await db.upsertCourseRemoteLink(
+      courseVersionId: courseVersionId,
+      remoteCourseId: 9105,
+    );
+    final remoteBundle = await CourseBundleService().createBundleFromFolder(
+      remoteDir.path,
+    );
+    tempFiles.add(remoteBundle.path);
+    final remoteHash =
+        await CourseBundleService().computeBundleSemanticHash(remoteBundle);
+
+    final teacher = await db.getUserById(teacherId);
+    expect(teacher, isNotNull);
+
+    final secureStorage = _TestSecureStorageService();
+    final api = _TestMarketplaceApiService(
+      secureStorage: secureStorage,
+      teacherCourses: <TeacherCourseSummary>[
+        TeacherCourseSummary(
+          courseId: 9105,
+          subject: 'MATH',
+          grade: '',
+          description: '',
+          visibility: 'private',
+          publishedAt: '',
+          latestBundleVersionId: 61,
+          latestBundleHash: remoteHash,
+          status: 'active',
+        ),
+      ],
+      bundleFilesByVersionId: <int, File>{61: remoteBundle},
+    );
+    final service = EnrollmentSyncService(
+      db: db,
+      secureStorage: secureStorage,
+      courseService: CourseService(db),
+      marketplaceApi: api,
+      promptRepository: PromptRepository(db: db),
+      courseArtifactService: CourseArtifactService(),
+    );
+
+    final localCourse = await db.getCourseVersionById(courseVersionId);
+    expect(localCourse, isNotNull);
+    final pulled = await service.pullLatestTeacherCourse(
+      currentUser: teacher!,
+      course: localCourse!,
+    );
+
+    expect(pulled.id, equals(courseVersionId));
+    final updatedCourse = await db.getCourseVersionById(courseVersionId);
+    expect(updatedCourse, isNotNull);
+    expect(updatedCourse!.textbookText, contains('Remote Topic'));
+    expect(api.downloadBundleCalls, equals(1));
+    expect(
+      await secureStorage.readInstalledCourseBundleVersion(
+        remoteUserId: 1951,
+        remoteCourseId: 9105,
+      ),
+      equals(61),
+    );
+  });
+
   test(
     'teacher upload reuses loaded course manifest and excludes teacher-global prompts',
     () async {

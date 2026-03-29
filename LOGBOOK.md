@@ -3,6 +3,7 @@ Historical timeline. Keep active runbook details in `WORKLOG.md`.
 
 ## 2026-03-29
 - Reworked teacher-configurable tutor prompts end to end: `learn` / `review` now resolve through teacher default, course, student-global, and student-course scopes with bundled assets only as fallback; Prompt Settings gained student-global scope plus full resolved preview/diff; teacher save and sync-import now block malformed, unknown, missing, or non-English placeholder variables; prompt metadata sync now carries teacher-global and student-global data through bundle metadata for no-rebuild updates; backend prompt-metadata path compatibility now covers both `_family_teacher` and `_tutor1on1` bundle entries.
+- Added an explicit teacher-side `Pull Latest Server` action on course rows and corrected the sync conflict wording to say `bundle` instead of `course`, because newer server bundle versions can now come from prompt/profile metadata changes even when the course tree itself was untouched.
 
 ## 2026-03-25
 - Added OpenRouter as a built-in text-model provider, updated the bundled Claude / Gemini / Grok defaults to current official model families, and corrected the OpenAI-compatible compatibility layer so OpenRouter reasoning uses its own request shape and reasoning-token fields instead of being treated as raw OpenAI.

@@ -43,6 +43,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
   String _syncProgressMessage = '';
   Timer? _autoSyncTimer;
   final Set<int> _uploadingCourseIds = {};
+  final Set<int> _pullingCourseIds = {};
   String? _persistentMessage;
   bool _persistentMessageIsError = false;
   late MarketplaceApiService _marketplaceApi;
@@ -367,6 +368,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                             isLoaded: isLoaded,
                             isUploading:
                                 _uploadingCourseIds.contains(course.id),
+                            isPulling: _pullingCourseIds.contains(course.id),
                             onReload: () {
                               Navigator.of(context).push(
                                 MaterialPageRoute(
@@ -382,6 +384,8 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                             onVersions: () => _openBundleVersionsPage(course),
                             onEditLabels: () =>
                                 _editCourseSubjectLabels(course),
+                            onPullLatest: () =>
+                                _pullLatestServerBundle(teacher, course),
                             onUpload: isLoaded
                                 ? () =>
                                     _uploadCourseToMarketplace(teacher, course)
@@ -621,6 +625,42 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       if (mounted) {
         setState(() {
           _uploadingCourseIds.remove(course.id);
+        });
+      }
+    }
+  }
+
+  Future<void> _pullLatestServerBundle(
+    User teacher,
+    CourseVersion course,
+  ) async {
+    if (_pullingCourseIds.contains(course.id)) {
+      return;
+    }
+    setState(() {
+      _pullingCourseIds.add(course.id);
+    });
+    try {
+      final services = context.read<AppServices>();
+      final pulledCourse =
+          await services.enrollmentSyncService.pullLatestTeacherCourse(
+        currentUser: teacher,
+        course: course,
+      );
+      await _refreshMarketplaceState();
+      _setPersistentMessage(
+        'Pulled latest server bundle for "${pulledCourse.subject}". '
+        'Local course content and synced prompt metadata now match the server.',
+        isError: false,
+      );
+    } catch (error) {
+      _setPersistentMessage(
+        'Failed to pull latest server bundle for "${course.subject}": $error',
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _pullingCourseIds.remove(course.id);
         });
       }
     }
@@ -1223,10 +1263,12 @@ class _CourseTile extends StatelessWidget {
     required this.remoteCourse,
     required this.isLoaded,
     required this.isUploading,
+    required this.isPulling,
     required this.onReload,
     required this.onDelete,
     required this.onVersions,
     required this.onEditLabels,
+    required this.onPullLatest,
     required this.onUpload,
   });
 
@@ -1234,10 +1276,12 @@ class _CourseTile extends StatelessWidget {
   final TeacherCourseSummary? remoteCourse;
   final bool isLoaded;
   final bool isUploading;
+  final bool isPulling;
   final VoidCallback onReload;
   final VoidCallback onDelete;
   final VoidCallback onVersions;
   final VoidCallback onEditLabels;
+  final VoidCallback onPullLatest;
   final VoidCallback? onUpload;
 
   @override
@@ -1253,6 +1297,8 @@ class _CourseTile extends StatelessWidget {
         remoteCourse == null || remoteCourse!.approvalStatus.isEmpty
             ? ''
             : 'Approval: ${remoteCourse!.approvalStatus}';
+    final canPullLatest =
+        remoteCourse != null && (remoteCourse!.latestBundleVersionId ?? 0) > 0;
     return Card(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -1278,6 +1324,12 @@ class _CourseTile extends StatelessWidget {
                 TextButton(
                   onPressed: onEditLabels,
                   child: const Text('Subject Labels'),
+                ),
+                TextButton(
+                  onPressed: isPulling || !canPullLatest ? null : onPullLatest,
+                  child: Text(
+                    isPulling ? 'Pulling...' : 'Pull Latest Server',
+                  ),
                 ),
                 TextButton(
                   onPressed: onVersions,

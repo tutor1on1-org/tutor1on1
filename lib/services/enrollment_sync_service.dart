@@ -200,6 +200,72 @@ class EnrollmentSyncService {
     }
   }
 
+  Future<CourseVersion> pullLatestTeacherCourse({
+    required User currentUser,
+    required CourseVersion course,
+  }) async {
+    if (currentUser.role != 'teacher') {
+      throw StateError('Only teachers can pull latest server course bundles.');
+    }
+    final remoteUserId = currentUser.remoteUserId;
+    if (remoteUserId == null || remoteUserId <= 0) {
+      throw StateError('Teacher remote user id is missing.');
+    }
+
+    final teacherCourses = await _api.listTeacherCourses();
+    final normalizedCourseName = _normalizeCourseName(course.subject);
+    var remoteCourseId = await _db.getRemoteCourseId(course.id);
+    TeacherCourseSummary? remoteCourse;
+    if (remoteCourseId != null && remoteCourseId > 0) {
+      for (final candidate in teacherCourses) {
+        if (candidate.courseId == remoteCourseId) {
+          remoteCourse = candidate;
+          break;
+        }
+      }
+    }
+    if (remoteCourse == null) {
+      for (final candidate in teacherCourses) {
+        if (_normalizeCourseName(candidate.subject) == normalizedCourseName) {
+          remoteCourse = candidate;
+          remoteCourseId = candidate.courseId;
+          break;
+        }
+      }
+    }
+    if (remoteCourse == null || remoteCourseId == null || remoteCourseId <= 0) {
+      throw StateError(
+        'No remote server course found for "${course.subject}".',
+      );
+    }
+    await _db.upsertCourseRemoteLink(
+      courseVersionId: course.id,
+      remoteCourseId: remoteCourseId,
+    );
+
+    final latestBundleVersionId = remoteCourse.latestBundleVersionId ?? 0;
+    if (latestBundleVersionId <= 0) {
+      throw StateError(
+        'Remote server course "${remoteCourse.subject}" has no bundle to pull.',
+      );
+    }
+    final remoteBundle = await _resolveRemoteBundleInfo(
+      remoteCourseId: remoteCourseId,
+      courseSubject: remoteCourse.subject,
+      latestBundleVersionId: latestBundleVersionId,
+      latestBundleHash: remoteCourse.latestBundleHash,
+    );
+    return _downloadAndImportTeacherCourse(
+      currentUser: currentUser,
+      remoteUserId: remoteUserId,
+      remoteCourseId: remoteCourseId,
+      courseSubject: remoteCourse.subject,
+      bundleVersionId: remoteBundle.bundleVersionId,
+      existingCourseVersionId: course.id,
+      summary: _SyncTransferSummary(),
+    );
+  }
+
   Future<void> _runCategoryIfDue({
     required int remoteUserId,
     required String domain,
@@ -755,8 +821,10 @@ class EnrollmentSyncService {
           );
           if (syncState != null && syncState.contentHash != localHash) {
             throw StateError(
-              'Teacher course sync conflict for "${remoteCourse.subject}". '
-              'Pull latest server course before uploading local changes.',
+              'Teacher bundle sync conflict for "${remoteCourse.subject}". '
+              'Server has a newer course bundle, which may include prompt '
+              'or profile changes. Pull latest server bundle before '
+              'uploading local changes.',
             );
           }
           return _downloadAndImportTeacherCourse(
@@ -1095,8 +1163,10 @@ class EnrollmentSyncService {
             installedVersion != null &&
             remoteLatestVersion > installedVersion) {
           throw StateError(
-            'Teacher course sync conflict for "${course.subject}". '
-            'Pull latest server course before uploading local changes.',
+            'Teacher bundle sync conflict for "${course.subject}". '
+            'Server has a newer course bundle, which may include prompt '
+            'or profile changes. Pull latest server bundle before '
+            'uploading local changes.',
           );
         }
         final uploadResponse = await _api.uploadBundle(
