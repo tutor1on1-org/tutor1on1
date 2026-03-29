@@ -1,5 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:archive/archive_io.dart';
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -724,6 +727,131 @@ void main() {
       expect(api.listTeacherBundleVersionsCalls, equals(0));
       expect(stats.downloadedCount, equals(1));
       expect(stats.downloadedBytes, greaterThan(0));
+    },
+  );
+
+  test(
+    'teacher second sync does not raise false conflict after pulling legacy prompt bundle',
+    () async {
+      final teacherId = await db.createUser(
+        username: 'teacher_legacy_pull',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 1751,
+      );
+      final localDir = await _createCourseFolder(
+        label: 'local_legacy_pull',
+        rootTitle: 'Local Topic',
+      );
+      tempPaths.add(localDir.path);
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Math',
+        granularity: 1,
+        textbookText: '1 Local Topic',
+        sourcePath: localDir.path,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 9201,
+      );
+      final teacher = await db.getUserById(teacherId);
+      expect(teacher, isNotNull);
+
+      final remoteTempDir = await Directory.systemTemp.createTemp(
+        'legacy_teacher_sync_bundle_',
+      );
+      tempPaths.add(remoteTempDir.path);
+      final archive = Archive();
+      final contentsBytes = Uint8List.fromList(
+        utf8.encode('1 Remote Topic\n1.1 Remote Subtopic\n'),
+      );
+      archive.addFile(
+        ArchiveFile('contents.txt', contentsBytes.length, contentsBytes),
+      );
+      final lecture1 = Uint8List.fromList(utf8.encode('Remote lecture 1'));
+      final lecture2 = Uint8List.fromList(utf8.encode('Remote lecture 1.1'));
+      archive.addFile(
+        ArchiveFile('1_lecture.txt', lecture1.length, lecture1),
+      );
+      archive.addFile(
+        ArchiveFile('1.1_lecture.txt', lecture2.length, lecture2),
+      );
+      final metadataBytes = Uint8List.fromList(
+        utf8.encode(
+          jsonEncode(<String, dynamic>{
+            'schema': kLegacyPromptBundleSchema,
+            'remote_course_id': 9201,
+            'teacher_username': 'teacher_legacy_pull',
+            'prompt_templates': <Map<String, dynamic>>[
+              <String, dynamic>{
+                'prompt_name': 'learn',
+                'scope': 'course',
+                'content': '{{kp_description}}\n{{student_input}}\n{{lesson_content}}',
+              },
+            ],
+            'student_prompt_profiles': const <Map<String, dynamic>>[],
+            'student_pass_configs': const <Map<String, dynamic>>[],
+          }),
+        ),
+      );
+      archive.addFile(
+        ArchiveFile(
+          kLegacyPromptMetadataEntryPath,
+          metadataBytes.length,
+          metadataBytes,
+        ),
+      );
+      final zipBytes = ZipEncoder().encode(archive);
+      expect(zipBytes, isNotNull);
+      final remoteBundle = File(p.join(remoteTempDir.path, 'legacy_remote.zip'));
+      await remoteBundle.writeAsBytes(zipBytes!, flush: true);
+      tempFiles.add(remoteBundle.path);
+
+      final bundleService = CourseBundleService();
+      final remoteHash =
+          await bundleService.computeBundleSemanticHash(remoteBundle);
+
+      final secureStorage = _TestSecureStorageService();
+      final api = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+        teacherCourses: <TeacherCourseSummary>[
+          TeacherCourseSummary(
+            courseId: 9201,
+            subject: 'Math',
+            grade: '',
+            description: '',
+            visibility: 'private',
+            publishedAt: '',
+            latestBundleVersionId: 401,
+            latestBundleHash: remoteHash,
+            status: 'active',
+          ),
+        ],
+        bundleFilesByVersionId: <int, File>{401: remoteBundle},
+      );
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService: CourseService(db),
+        marketplaceApi: api,
+        promptRepository: PromptRepository(db: db),
+        courseArtifactService: CourseArtifactService(),
+      );
+
+      final firstStats = await service.syncIfReady(currentUser: teacher!);
+      final secondStats = await service.syncIfReady(currentUser: teacher);
+
+      expect(firstStats.downloadedCount, equals(1));
+      expect(secondStats.downloadedCount, equals(0));
+      expect(api.uploadedBundles, isEmpty);
+      expect(
+        await secureStorage.readInstalledCourseBundleVersion(
+          remoteUserId: 1751,
+          remoteCourseId: 9201,
+        ),
+        equals(401),
+      );
     },
   );
 

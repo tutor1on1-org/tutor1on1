@@ -302,14 +302,16 @@ class CourseBundleService {
         if (_hasAppleDoubleSegment(name)) {
           continue;
         }
+        var semanticName = name;
         var data = _entryBytes(entry);
         if (isSupportedPromptMetadataEntryPath(name)) {
+          semanticName = promptMetadataEntryPath;
           if (promptMetadataOverride != null) {
             continue;
           }
           data = _normalizePromptMetadataBytes(data);
         }
-        files.add(_BundleSemanticFile(name: name, data: data));
+        files.add(_BundleSemanticFile(name: semanticName, data: data));
       }
       if (promptMetadataOverride != null) {
         files.add(
@@ -627,15 +629,30 @@ class CourseBundleService {
 
   List<int> _normalizePromptMetadataBytes(List<int> rawData) {
     final decoded = jsonDecode(utf8.decode(rawData));
-    final cleaned = _removeGeneratedFields(decoded);
+    final cleaned = _normalizePromptMetadataValue(_removeGeneratedFields(decoded));
     final canonical = _canonicalJsonEncode(cleaned);
     return utf8.encode(canonical);
   }
 
   List<int> normalizePromptMetadataJson(Map<String, dynamic> value) {
-    final cleaned = _removeGeneratedFields(value);
+    final cleaned = _normalizePromptMetadataValue(_removeGeneratedFields(value));
     final canonical = _canonicalJsonEncode(cleaned);
     return utf8.encode(canonical);
+  }
+
+  Object? _normalizePromptMetadataValue(Object? value) {
+    if (value is! Map) {
+      return value;
+    }
+    final normalized = <String, Object?>{};
+    for (final entry in value.entries) {
+      normalized[entry.key.toString()] = entry.value;
+    }
+    final schema = normalized['schema'];
+    if (schema is String && isSupportedPromptBundleSchema(schema)) {
+      normalized['schema'] = kCurrentPromptBundleSchema;
+    }
+    return normalized;
   }
 
   Object? _removeGeneratedFields(Object? value) {

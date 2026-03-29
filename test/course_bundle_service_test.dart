@@ -314,6 +314,85 @@ void main() {
   );
 
   test(
+    'computeBundleSemanticHash treats legacy and current prompt metadata forms as equivalent',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'course_bundle_hash_prompt_compat_test_',
+      );
+      try {
+        Future<File> writeBundle({
+          required String fileName,
+          required String metadataEntryPath,
+          required Map<String, dynamic> metadata,
+        }) async {
+          final archive = Archive();
+          final contentsBytes = Uint8List.fromList(
+            utf8.encode('1 Root branch\n1.1 Intro lesson\n'),
+          );
+          archive.addFile(
+            ArchiveFile('contents.txt', contentsBytes.length, contentsBytes),
+          );
+          final lecture1 = Uint8List.fromList(utf8.encode('Lecture 1'));
+          final lecture2 = Uint8List.fromList(utf8.encode('Lecture 1.1'));
+          archive.addFile(
+            ArchiveFile('1_lecture.txt', lecture1.length, lecture1),
+          );
+          archive.addFile(
+            ArchiveFile('1.1_lecture.txt', lecture2.length, lecture2),
+          );
+          final metadataBytes =
+              Uint8List.fromList(utf8.encode(jsonEncode(metadata)));
+          archive.addFile(
+            ArchiveFile(
+              metadataEntryPath,
+              metadataBytes.length,
+              metadataBytes,
+            ),
+          );
+          final zipBytes = ZipEncoder().encode(archive);
+          expect(zipBytes, isNotNull);
+          final file = File(p.join(tempDir.path, fileName));
+          await file.writeAsBytes(zipBytes!, flush: true);
+          return file;
+        }
+
+        final legacyBundle = await writeBundle(
+          fileName: 'bundle_legacy.zip',
+          metadataEntryPath: kLegacyPromptMetadataEntryPath,
+          metadata: {
+            'schema': kLegacyPromptBundleSchema,
+            'teacher_username': 'alice',
+            'prompt_templates': [
+              {'prompt_name': 'learn', 'content': 'A'}
+            ],
+          },
+        );
+        final currentBundle = await writeBundle(
+          fileName: 'bundle_current.zip',
+          metadataEntryPath: kCurrentPromptMetadataEntryPath,
+          metadata: {
+            'schema': kCurrentPromptBundleSchema,
+            'teacher_username': 'alice',
+            'prompt_templates': [
+              {'prompt_name': 'learn', 'content': 'A'}
+            ],
+          },
+        );
+
+        final service = CourseBundleService();
+        final legacyHash = await service.computeBundleSemanticHash(legacyBundle);
+        final currentHash =
+            await service.computeBundleSemanticHash(currentBundle);
+
+        expect(legacyHash, isNotEmpty);
+        expect(legacyHash, equals(currentHash));
+      } finally {
+        await tempDir.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
     'compareCourseFolderWithBundle reports added removed and updated KP counts',
     () async {
       final tempDir = await Directory.systemTemp.createTemp(
