@@ -332,6 +332,66 @@ class _UploadedBundleRecord {
   final File bundleFile;
 }
 
+class _CountingCourseArtifactService extends CourseArtifactService {
+  _CountingCourseArtifactService();
+
+  int rebuildCourseArtifactsCalls = 0;
+  int readCourseArtifactsCalls = 0;
+  int prepareUploadBundleCalls = 0;
+  int computeUploadHashCalls = 0;
+
+  void resetCounters() {
+    rebuildCourseArtifactsCalls = 0;
+    readCourseArtifactsCalls = 0;
+    prepareUploadBundleCalls = 0;
+    computeUploadHashCalls = 0;
+  }
+
+  @override
+  Future<CourseArtifactManifest> rebuildCourseArtifacts({
+    required int courseVersionId,
+    required String folderPath,
+  }) {
+    rebuildCourseArtifactsCalls++;
+    return super.rebuildCourseArtifacts(
+      courseVersionId: courseVersionId,
+      folderPath: folderPath,
+    );
+  }
+
+  @override
+  Future<CourseArtifactManifest?> readCourseArtifacts(int courseVersionId) {
+    readCourseArtifactsCalls++;
+    return super.readCourseArtifacts(courseVersionId);
+  }
+
+  @override
+  Future<PreparedCourseUploadBundle> prepareUploadBundle({
+    required int courseVersionId,
+    required Map<String, dynamic>? promptMetadata,
+    required String bundleLabel,
+  }) {
+    prepareUploadBundleCalls++;
+    return super.prepareUploadBundle(
+      courseVersionId: courseVersionId,
+      promptMetadata: promptMetadata,
+      bundleLabel: bundleLabel,
+    );
+  }
+
+  @override
+  Future<String> computeUploadHash({
+    required int courseVersionId,
+    required Map<String, dynamic>? promptMetadata,
+  }) {
+    computeUploadHashCalls++;
+    return super.computeUploadHash(
+      courseVersionId: courseVersionId,
+      promptMetadata: promptMetadata,
+    );
+  }
+}
+
 class _TestPathProviderPlatform extends PathProviderPlatform {
   _TestPathProviderPlatform(this.rootPath);
 
@@ -619,12 +679,14 @@ void main() {
             <String, dynamic>{
               'prompt_name': 'learn',
               'scope': 'course',
-              'content': '{{kp_description}}\n{{student_input}}\n{{lesson_content}}',
+              'content':
+                  '{{kp_description}}\n{{student_input}}\n{{lesson_content}}',
             },
             <String, dynamic>{
               'prompt_name': 'review',
               'scope': 'student_course',
-              'content': '{{kp_description}}\n{{student_input}}\n{{active_review_question_json}}\n{{target_difficulty}}\n{{presented_questions}}\n{{error_book_summary}}',
+              'content':
+                  '{{kp_description}}\n{{student_input}}\n{{active_review_question_json}}\n{{target_difficulty}}\n{{presented_questions}}\n{{error_book_summary}}',
               'student_remote_user_id': 1702,
               'student_username': 'student_pull_remote',
             },
@@ -787,7 +849,8 @@ void main() {
               <String, dynamic>{
                 'prompt_name': 'learn',
                 'scope': 'course',
-                'content': '{{kp_description}}\n{{student_input}}\n{{lesson_content}}',
+                'content':
+                    '{{kp_description}}\n{{student_input}}\n{{lesson_content}}',
               },
             ],
             'student_prompt_profiles': const <Map<String, dynamic>>[],
@@ -804,7 +867,8 @@ void main() {
       );
       final zipBytes = ZipEncoder().encode(archive);
       expect(zipBytes, isNotNull);
-      final remoteBundle = File(p.join(remoteTempDir.path, 'legacy_remote.zip'));
+      final remoteBundle =
+          File(p.join(remoteTempDir.path, 'legacy_remote.zip'));
       await remoteBundle.writeAsBytes(zipBytes!, flush: true);
       tempFiles.add(remoteBundle.path);
 
@@ -852,6 +916,273 @@ void main() {
         ),
         equals(401),
       );
+    },
+  );
+
+  test(
+    'teacher unchanged sync skips local bundle hash and bundle preparation work',
+    () async {
+      final teacherId = await db.createUser(
+        username: 'teacher_skip_hash',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 1761,
+      );
+      final localDir = await _createCourseFolder(
+        label: 'teacher_skip_hash_local',
+        rootTitle: 'Stable Topic',
+      );
+      tempPaths.add(localDir.path);
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Stable Course',
+        granularity: 1,
+        textbookText: '1 Stable Topic',
+        sourcePath: localDir.path,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 9301,
+      );
+      final teacher = await db.getUserById(teacherId);
+      expect(teacher, isNotNull);
+
+      final bundleService = CourseBundleService();
+      final remoteBundle = await bundleService.createBundleFromFolder(
+        localDir.path,
+      );
+      tempFiles.add(remoteBundle.path);
+      final remoteHash =
+          await bundleService.computeBundleSemanticHash(remoteBundle);
+
+      final artifactService = _CountingCourseArtifactService();
+      await artifactService.rebuildCourseArtifacts(
+        courseVersionId: courseVersionId,
+        folderPath: localDir.path,
+      );
+      artifactService.resetCounters();
+
+      final secureStorage = _TestSecureStorageService();
+      final syncedAt = DateTime.now().toUtc();
+      await secureStorage.writeInstalledCourseBundleVersion(
+        remoteUserId: 1761,
+        remoteCourseId: 9301,
+        versionId: 501,
+      );
+      await secureStorage.writeSyncItemState(
+        remoteUserId: 1761,
+        domain: 'enrollment_sync_teacher_upload',
+        scopeKey: 'course:9301',
+        contentHash: remoteHash,
+        lastChangedAt: syncedAt,
+        lastSyncedAt: syncedAt,
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: 1761,
+        domain: 'enrollment_sync_teacher',
+        runAt: syncedAt.subtract(const Duration(minutes: 5)),
+      );
+      final api = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+        teacherCourses: <TeacherCourseSummary>[
+          TeacherCourseSummary(
+            courseId: 9301,
+            subject: 'Stable Course',
+            grade: '',
+            description: '',
+            visibility: 'private',
+            publishedAt: '',
+            latestBundleVersionId: 501,
+            latestBundleHash: remoteHash,
+            status: 'active',
+          ),
+        ],
+      );
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService: CourseService(
+          db,
+          courseArtifactService: artifactService,
+        ),
+        marketplaceApi: api,
+        promptRepository: PromptRepository(db: db),
+        courseArtifactService: artifactService,
+      );
+
+      final stats = await service.syncIfReady(currentUser: teacher!);
+
+      expect(stats.downloadedCount, equals(0));
+      expect(stats.uploadedCount, equals(0));
+      expect(api.downloadBundleCalls, equals(0));
+      expect(api.uploadedBundles, isEmpty);
+      expect(artifactService.computeUploadHashCalls, equals(0));
+      expect(artifactService.prepareUploadBundleCalls, equals(0));
+    },
+  );
+
+  test(
+    'teacher pulled bundle survives forced local hash recompute on fresh machine',
+    () async {
+      final teacherId = await db.createUser(
+        username: 'teacher_round_trip',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 1762,
+      );
+      final teacher = await db.getUserById(teacherId);
+      expect(teacher, isNotNull);
+
+      final remoteDir = await _createCourseFolder(
+        label: 'teacher_round_trip_remote',
+        rootTitle: 'Round Trip Topic',
+      );
+      tempPaths.add(remoteDir.path);
+      final remoteBundle = await CourseBundleService().createBundleFromFolder(
+        remoteDir.path,
+        promptMetadata: <String, dynamic>{
+          'schema': kCurrentPromptBundleSchema,
+          'remote_course_id': 9302,
+          'teacher_username': 'teacher_round_trip',
+          'prompt_templates': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'prompt_name': 'learn',
+              'scope': 'teacher',
+              'content':
+                  '{{kp_description}}\n{{student_input}}\n{{lesson_content}}',
+              'student_remote_user_id': null,
+              'student_username': null,
+              'created_at': '2026-03-01T00:00:00Z',
+            },
+            <String, dynamic>{
+              'prompt_name': 'review',
+              'scope': 'student_global',
+              'content':
+                  '{{kp_description}}\n{{student_input}}\n{{active_review_question_json}}\n{{target_difficulty}}\n{{presented_questions}}\n{{error_book_summary}}',
+              'student_remote_user_id': 2762,
+              'student_username': 'albert_round_trip',
+              'created_at': '2026-03-03T00:00:00Z',
+            },
+            <String, dynamic>{
+              'prompt_name': 'learn',
+              'scope': 'student_global',
+              'content':
+                  '{{kp_description}}\n{{student_input}}\n{{lesson_content}}',
+              'student_remote_user_id': 2762,
+              'student_username': 'albert_round_trip',
+              'created_at': '2026-03-02T00:00:00Z',
+            },
+            <String, dynamic>{
+              'prompt_name': 'review',
+              'scope': 'course',
+              'content':
+                  '{{kp_description}}\n{{student_input}}\n{{active_review_question_json}}\n{{target_difficulty}}\n{{presented_questions}}\n{{error_book_summary}}',
+              'student_remote_user_id': null,
+              'student_username': null,
+              'created_at': '2026-03-04T00:00:00Z',
+            },
+          ],
+          'student_prompt_profiles': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'scope': 'student_global',
+              'student_remote_user_id': 2762,
+              'student_username': 'albert_round_trip',
+              'grade_level': null,
+              'reading_level': null,
+              'preferred_language': null,
+              'interests': null,
+              'preferred_tone': 'steady',
+              'preferred_pace': null,
+              'preferred_format': null,
+              'support_notes': null,
+              'created_at': '2026-03-05T00:00:00Z',
+              'updated_at': '2026-03-06T00:00:00Z',
+            },
+          ],
+          'student_pass_configs': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'student_remote_user_id': 2762,
+              'student_username': 'albert_round_trip',
+              'easy_weight': 0.4,
+              'medium_weight': 0.7,
+              'hard_weight': 1.1,
+              'pass_threshold': 1.3,
+              'created_at': '2026-03-07T00:00:00Z',
+              'updated_at': '2026-03-08T00:00:00Z',
+            },
+          ],
+        },
+      );
+      tempFiles.add(remoteBundle.path);
+      final remoteHash =
+          await CourseBundleService().computeBundleSemanticHash(remoteBundle);
+
+      final secureStorage = _TestSecureStorageService();
+      final api = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+        teacherCourses: <TeacherCourseSummary>[
+          TeacherCourseSummary(
+            courseId: 9302,
+            subject: 'MATH',
+            grade: '',
+            description: '',
+            visibility: 'private',
+            publishedAt: '',
+            latestBundleVersionId: 502,
+            latestBundleHash: remoteHash,
+            status: 'active',
+          ),
+        ],
+        bundleFilesByVersionId: <int, File>{502: remoteBundle},
+      );
+      final artifactService = _CountingCourseArtifactService();
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService: CourseService(
+          db,
+          courseArtifactService: artifactService,
+        ),
+        marketplaceApi: api,
+        promptRepository: PromptRepository(db: db),
+        courseArtifactService: artifactService,
+      );
+
+      final firstStats = await service.syncIfReady(currentUser: teacher!);
+
+      expect(firstStats.downloadedCount, equals(1));
+      final localStudent = await db.findUserByRemoteId(2762);
+      expect(localStudent, isNotNull);
+      expect(localStudent!.role, equals('student'));
+      final assignedCourses = await db.getAssignedCoursesForStudent(
+        localStudent.id,
+      );
+      expect(assignedCourses.map((course) => course.subject), contains('MATH'));
+
+      final staleAt = DateTime.utc(2026, 1, 1);
+      await secureStorage.writeSyncItemState(
+        remoteUserId: 1762,
+        domain: 'enrollment_sync_teacher_upload',
+        scopeKey: 'course:9302',
+        contentHash: remoteHash,
+        lastChangedAt: staleAt,
+        lastSyncedAt: staleAt,
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: 1762,
+        domain: 'enrollment_sync_teacher',
+        runAt: DateTime.now().toUtc().subtract(const Duration(minutes: 5)),
+      );
+      artifactService.resetCounters();
+
+      final secondStats = await service.syncIfReady(currentUser: teacher);
+
+      expect(secondStats.downloadedCount, equals(0));
+      expect(secondStats.uploadedCount, equals(0));
+      expect(api.downloadBundleCalls, equals(1));
+      expect(api.uploadedBundles, isEmpty);
+      expect(artifactService.computeUploadHashCalls, greaterThan(0));
+      expect(artifactService.prepareUploadBundleCalls, equals(0));
     },
   );
 

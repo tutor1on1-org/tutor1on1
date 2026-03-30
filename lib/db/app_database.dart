@@ -2320,6 +2320,42 @@ HAVING COUNT(*) > 1
     });
   }
 
+  Future<int> importPromptTemplate({
+    required int teacherId,
+    required String promptName,
+    required String content,
+    required DateTime createdAt,
+    String? courseKey,
+    int? studentId,
+  }) async {
+    final normalizedCourseKey = _normalizeCourseKey(courseKey);
+    final normalizedCreatedAt = createdAt.toUtc();
+    return transaction(() async {
+      await (update(promptTemplates)
+            ..where((tbl) =>
+                tbl.teacherId.equals(teacherId) &
+                tbl.promptName.equals(promptName) &
+                _promptScopeMatch(
+                  courseKey: normalizedCourseKey,
+                  studentId: studentId,
+                )(tbl)))
+          .write(
+        const PromptTemplatesCompanion(isActive: Value(false)),
+      );
+      return into(promptTemplates).insert(
+        PromptTemplatesCompanion.insert(
+          teacherId: teacherId,
+          courseKey: Value(normalizedCourseKey),
+          studentId: Value(studentId),
+          promptName: promptName,
+          content: content,
+          isActive: const Value(true),
+          createdAt: Value(normalizedCreatedAt),
+        ),
+      );
+    });
+  }
+
   Future<void> setActivePromptTemplate({
     required int teacherId,
     required String promptName,
@@ -2595,6 +2631,93 @@ HAVING COUNT(*) > 1
     );
   }
 
+  Future<void> importStudentPromptProfile({
+    required int teacherId,
+    String? courseKey,
+    int? studentId,
+    String? gradeLevel,
+    String? readingLevel,
+    String? preferredLanguage,
+    String? interests,
+    String? preferredTone,
+    String? preferredPace,
+    String? preferredFormat,
+    String? supportNotes,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) async {
+    final normalizedCourseKey = _normalizeCourseKey(courseKey);
+    final normalizedGradeLevel = _normalizePromptField(gradeLevel);
+    final normalizedReadingLevel = _normalizePromptField(readingLevel);
+    final normalizedPreferredLanguage =
+        _normalizePromptField(preferredLanguage);
+    final normalizedInterests = _normalizePromptField(interests);
+    final normalizedPreferredTone = _normalizePromptField(preferredTone);
+    final normalizedPreferredPace = _normalizePromptField(preferredPace);
+    final normalizedPreferredFormat = _normalizePromptField(preferredFormat);
+    final normalizedSupportNotes = _normalizePromptField(supportNotes);
+    final normalizedCreatedAt =
+        (createdAt ?? updatedAt ?? DateTime.now()).toUtc();
+    final normalizedUpdatedAt =
+        (updatedAt ?? createdAt ?? DateTime.now()).toUtc();
+    final existing = await (select(studentPromptProfiles)
+          ..where((tbl) =>
+              tbl.teacherId.equals(teacherId) &
+              _profileScopeMatch(
+                tbl,
+                courseKey: normalizedCourseKey,
+                studentId: studentId,
+              ))
+          ..orderBy([
+            (tbl) => OrderingTerm(
+                  expression: tbl.updatedAt,
+                  mode: OrderingMode.desc,
+                ),
+            (tbl) => OrderingTerm(
+                  expression: tbl.createdAt,
+                  mode: OrderingMode.desc,
+                ),
+          ])
+          ..limit(1))
+        .getSingleOrNull();
+    if (existing == null) {
+      await into(studentPromptProfiles).insert(
+        StudentPromptProfilesCompanion.insert(
+          teacherId: teacherId,
+          courseKey: Value(normalizedCourseKey),
+          studentId: Value(studentId),
+          gradeLevel: Value(normalizedGradeLevel),
+          readingLevel: Value(normalizedReadingLevel),
+          preferredLanguage: Value(normalizedPreferredLanguage),
+          interests: Value(normalizedInterests),
+          preferredTone: Value(normalizedPreferredTone),
+          preferredPace: Value(normalizedPreferredPace),
+          preferredFormat: Value(normalizedPreferredFormat),
+          supportNotes: Value(normalizedSupportNotes),
+          createdAt: Value(normalizedCreatedAt),
+          updatedAt: Value(normalizedUpdatedAt),
+        ),
+      );
+      return;
+    }
+    await (update(studentPromptProfiles)
+          ..where((tbl) => tbl.id.equals(existing.id)))
+        .write(
+      StudentPromptProfilesCompanion(
+        gradeLevel: Value(normalizedGradeLevel),
+        readingLevel: Value(normalizedReadingLevel),
+        preferredLanguage: Value(normalizedPreferredLanguage),
+        interests: Value(normalizedInterests),
+        preferredTone: Value(normalizedPreferredTone),
+        preferredPace: Value(normalizedPreferredPace),
+        preferredFormat: Value(normalizedPreferredFormat),
+        supportNotes: Value(normalizedSupportNotes),
+        createdAt: Value(normalizedCreatedAt),
+        updatedAt: Value(normalizedUpdatedAt),
+      ),
+    );
+  }
+
   Future<void> deleteStudentPromptProfile({
     required int teacherId,
     String? courseKey,
@@ -2713,6 +2836,53 @@ HAVING COUNT(*) > 1
         hardWeight: Value(hardWeight),
         passThreshold: Value(passThreshold),
         updatedAt: Value(now),
+      ),
+    );
+  }
+
+  Future<void> importStudentPassConfig({
+    required int courseVersionId,
+    required int studentId,
+    required double easyWeight,
+    required double mediumWeight,
+    required double hardWeight,
+    required double passThreshold,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) async {
+    final normalizedCreatedAt =
+        (createdAt ?? updatedAt ?? DateTime.now()).toUtc();
+    final normalizedUpdatedAt =
+        (updatedAt ?? createdAt ?? DateTime.now()).toUtc();
+    final existing = await getStudentPassConfig(
+      courseVersionId: courseVersionId,
+      studentId: studentId,
+    );
+    if (existing == null) {
+      await into(studentPassConfigs).insert(
+        StudentPassConfigsCompanion.insert(
+          courseVersionId: courseVersionId,
+          studentId: studentId,
+          easyWeight: Value(easyWeight),
+          mediumWeight: Value(mediumWeight),
+          hardWeight: Value(hardWeight),
+          passThreshold: Value(passThreshold),
+          createdAt: Value(normalizedCreatedAt),
+          updatedAt: Value(normalizedUpdatedAt),
+        ),
+      );
+      return;
+    }
+    await (update(studentPassConfigs)
+          ..where((tbl) => tbl.id.equals(existing.id)))
+        .write(
+      StudentPassConfigsCompanion(
+        easyWeight: Value(easyWeight),
+        mediumWeight: Value(mediumWeight),
+        hardWeight: Value(hardWeight),
+        passThreshold: Value(passThreshold),
+        createdAt: Value(normalizedCreatedAt),
+        updatedAt: Value(normalizedUpdatedAt),
       ),
     );
   }
