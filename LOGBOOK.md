@@ -2,6 +2,9 @@
 Historical timeline. Keep active runbook details in `WORKLOG.md`.
 
 ## 2026-03-30
+- Fixed the fresh-device progress replay bug: downloading/importing server progress now also stamps the local progress-upload sync ledger, so the next normal sync does not re-upload that server data from scratch on a new install.
+- Extended blocking sync overlay progress details to include transferred MB alongside counts for large session/progress download/import and upload stages, and added extra yield points in heavy session/progress loops so the overlay keeps repainting during long sync work.
+- Added focused client regression coverage for `force pull -> next normal sync -> no progress upload` and for MB-bearing progress callbacks during large progress upload/import runs.
 - Fixed login-time sync responsiveness on client home screens: teacher/student now route startup sync through one shared core coordinator, login overlays can show staged progress with optional determinate counts, and the UI gets an initial paint before heavy sync work starts.
 - Reduced sync main-isolate pressure in the session path: large session/progress loops now yield between batches, large cache/envelope JSON decodes move to a background isolate, chapter-cache upload reads only requested pending chapter snapshots instead of scanning all cached chapters, and session import writes chat messages in one Drift batch.
 - Published refreshed public client artifacts for the sync-responsiveness fix and verified the live endpoints/hashes: Android APK `e3f47f804934c0be87c993ac81231542529a9bf724e2f10302def696aea57244`, Windows ZIP `6c421196e594ce299b373bf2871707c9025a319f9810fab08d507337d98ef9ce`, GitHub Release `https://github.com/tutor1on1-org/tutor1on1/releases/tag/v1.0.1`, and website install/home pages at `https://www.tutor1on1.org`.

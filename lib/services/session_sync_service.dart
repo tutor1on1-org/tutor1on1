@@ -6,11 +6,12 @@ import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
 import '../constants.dart';
-import '../db/app_database.dart';
+import '../db/app_database.dart' hide SyncItemState;
 import '../models/tutor_contract.dart';
 import '../security/pin_hasher.dart';
 import 'background_json_service.dart';
 import 'remote_teacher_identity_service.dart';
+import 'secure_storage_service.dart' show SyncItemState;
 import 'session_crypto_service.dart';
 import 'session_sync_api_service.dart';
 import 'session_upload_cache_service.dart';
@@ -434,8 +435,24 @@ class SessionSyncService {
         domain: _syncDomainProgressDownload,
         scopeKey: scopeKey,
       );
-      if (downloadedState != null &&
-          downloadedState.lastChangedAt.toUtc().isAfter(entryUpdatedAt)) {
+      final remoteAlreadyCurrent = downloadedState != null &&
+          _isDownloadedProgressStateCurrent(
+            downloadedState: downloadedState,
+            localUpdatedAt: entryUpdatedAt,
+            localHash: payloadHash,
+          );
+      if (remoteAlreadyCurrent) {
+        if (downloadedState.contentHash == payloadHash &&
+            !entryUpdatedAt.isAfter(downloadedState.lastChangedAt.toUtc())) {
+          await _secureStorage.writeSyncItemState(
+            remoteUserId: remoteUserId,
+            domain: _syncDomainProgressUpload,
+            scopeKey: scopeKey,
+            contentHash: payloadHash,
+            lastChangedAt: entryUpdatedAt,
+            lastSyncedAt: entryUpdatedAt,
+          );
+        }
         group.blockedByRemoteNewer = true;
         continue;
       }
@@ -616,7 +633,20 @@ class SessionSyncService {
     if (preparedUploads.isEmpty) {
       return;
     }
+    final totalUploadBytes = preparedUploads.fold<int>(
+      0,
+      (total, item) => total + _progressChunkUploadSize(item.upload),
+    );
     var uploadedCount = 0;
+    var uploadedBytes = 0;
+    await progressReporter.report(
+      'Uploading progress to server...',
+      completed: 0,
+      total: preparedUploads.length,
+      completedBytes: 0,
+      totalBytes: totalUploadBytes,
+      forcePaint: true,
+    );
     for (var index = 0;
         index < preparedUploads.length;
         index += _progressChunkUploadBatchSize) {
@@ -630,18 +660,22 @@ class SessionSyncService {
       await _api.uploadProgressChunkBatch(
         chunk.map((item) => item.upload).toList(growable: false),
       );
+      final chunkBytes = chunk.fold<int>(
+        0,
+        (total, item) => total + _progressChunkUploadSize(item.upload),
+      );
       stats.addUploaded(
         count: chunk.length,
-        bytes: chunk.fold<int>(
-          0,
-          (total, item) => total + _progressChunkUploadSize(item.upload),
-        ),
+        bytes: chunkBytes,
       );
       uploadedCount += chunk.length;
+      uploadedBytes += chunkBytes;
       await progressReporter.report(
         'Uploading progress to server...',
         completed: uploadedCount,
         total: preparedUploads.length,
+        completedBytes: uploadedBytes,
+        totalBytes: totalUploadBytes,
       );
       for (final prepared in chunk) {
         await _mirrorProgressChunkUploadToDownloadState(
@@ -691,6 +725,11 @@ class SessionSyncService {
       }
       final entryUpdatedAt = entry.updatedAt.toUtc();
       final scopeKey = '$remoteCourseId:${entry.kpKey}';
+      final payloadHash = _hashProgressPayloadCore(
+        entry: entry,
+        remoteCourseId: remoteCourseId,
+        remoteUserId: remoteUserId,
+      );
       final syncState = await _secureStorage.readSyncItemState(
         remoteUserId: remoteUserId,
         domain: _syncDomainProgressUpload,
@@ -702,17 +741,27 @@ class SessionSyncService {
         scopeKey: scopeKey,
       );
       if (downloadedState != null &&
-          downloadedState.lastChangedAt.toUtc().isAfter(entryUpdatedAt)) {
+          _isDownloadedProgressStateCurrent(
+            downloadedState: downloadedState,
+            localUpdatedAt: entryUpdatedAt,
+            localHash: payloadHash,
+          )) {
+        if (downloadedState.contentHash == payloadHash &&
+            !entryUpdatedAt.isAfter(downloadedState.lastChangedAt.toUtc())) {
+          await _secureStorage.writeSyncItemState(
+            remoteUserId: remoteUserId,
+            domain: _syncDomainProgressUpload,
+            scopeKey: scopeKey,
+            contentHash: payloadHash,
+            lastChangedAt: entryUpdatedAt,
+            lastSyncedAt: entryUpdatedAt,
+          );
+        }
         continue;
       }
       if (!_isTimestampNewer(entryUpdatedAt, syncState?.lastSyncedAt)) {
         continue;
       }
-      final payloadHash = _hashProgressPayloadCore(
-        entry: entry,
-        remoteCourseId: remoteCourseId,
-        remoteUserId: remoteUserId,
-      );
       if (syncState != null && syncState.contentHash == payloadHash) {
         await _secureStorage.writeSyncItemState(
           remoteUserId: remoteUserId,
@@ -783,12 +832,25 @@ class SessionSyncService {
       'Uploading progress to server...',
       completed: 0,
       total: pendingUploads.length,
+      completedBytes: 0,
+      totalBytes: pendingUploads.fold<int>(
+        0,
+        (total, pending) => total + _progressUploadSize(pending.upload),
+      ),
+      forcePaint: true,
     );
+    final uploadAccumulator = _TransferAccumulator();
     await _uploadProgressInChunksWithIsolation(
       remoteUserId: remoteUserId,
       pendingUploads: pendingUploads,
       stats: stats,
       progressReporter: progressReporter,
+      uploadAccumulator: uploadAccumulator,
+      uploadTotal: pendingUploads.length,
+      uploadTotalBytes: pendingUploads.fold<int>(
+        0,
+        (total, pending) => total + _progressUploadSize(pending.upload),
+      ),
     );
   }
 
@@ -797,6 +859,9 @@ class SessionSyncService {
     required List<_PendingProgressUpload> pendingUploads,
     required SyncRunStats stats,
     required _SyncProgressReporter progressReporter,
+    required _TransferAccumulator uploadAccumulator,
+    required int uploadTotal,
+    required int uploadTotalBytes,
   }) async {
     final failures = <_FailedProgressUpload>[];
     final splitBudget = _ProgressIsolationBudget(
@@ -819,8 +884,9 @@ class SessionSyncService {
         failures: failures,
         stats: stats,
         progressReporter: progressReporter,
-        uploadedSoFar: index,
-        uploadTotal: pendingUploads.length,
+        uploadAccumulator: uploadAccumulator,
+        uploadTotal: uploadTotal,
+        uploadTotalBytes: uploadTotalBytes,
       );
     }
     if (failures.isEmpty) {
@@ -845,27 +911,35 @@ class SessionSyncService {
     required List<_FailedProgressUpload> failures,
     required SyncRunStats stats,
     required _SyncProgressReporter progressReporter,
-    required int uploadedSoFar,
+    required _TransferAccumulator uploadAccumulator,
     required int uploadTotal,
+    required int uploadTotalBytes,
   }) async {
     if (chunk.isEmpty) {
       return;
     }
     try {
+      final chunkBytes = chunk.fold<int>(
+        0,
+        (total, pending) => total + _progressUploadSize(pending.upload),
+      );
       await _api.uploadProgressBatch(
         chunk.map((pending) => pending.upload).toList(growable: false),
       );
       stats.addUploaded(
         count: chunk.length,
-        bytes: chunk.fold<int>(
-          0,
-          (total, pending) => total + _progressUploadSize(pending.upload),
-        ),
+        bytes: chunkBytes,
+      );
+      uploadAccumulator.add(
+        count: chunk.length,
+        bytes: chunkBytes,
       );
       await progressReporter.report(
         'Uploading progress to server...',
-        completed: uploadedSoFar + chunk.length,
+        completed: uploadAccumulator.count,
         total: uploadTotal,
+        completedBytes: uploadAccumulator.bytes,
+        totalBytes: uploadTotalBytes,
       );
       for (final pending in chunk) {
         await _mirrorProgressUploadToDownloadState(
@@ -913,8 +987,9 @@ class SessionSyncService {
         failures: failures,
         stats: stats,
         progressReporter: progressReporter,
-        uploadedSoFar: uploadedSoFar,
+        uploadAccumulator: uploadAccumulator,
         uploadTotal: uploadTotal,
+        uploadTotalBytes: uploadTotalBytes,
       );
       await _uploadProgressChunkWithIsolation(
         remoteUserId: remoteUserId,
@@ -923,8 +998,9 @@ class SessionSyncService {
         failures: failures,
         stats: stats,
         progressReporter: progressReporter,
-        uploadedSoFar: uploadedSoFar + mid,
+        uploadAccumulator: uploadAccumulator,
         uploadTotal: uploadTotal,
+        uploadTotalBytes: uploadTotalBytes,
       );
     }
   }
@@ -1010,6 +1086,14 @@ class SessionSyncService {
     }
     final keysByCourse = <int, CourseKeyBundle>{};
     var processedGroups = 0;
+    var uploadedBytes = 0;
+    await progressReporter.report(
+      'Uploading sessions to server...',
+      completed: 0,
+      total: chapterSnapshots.length,
+      completedBytes: 0,
+      forcePaint: true,
+    );
     for (final chapterSnapshot in chapterSnapshots) {
       if (!pendingChapterLocalKeys.contains(
           '${chapterSnapshot.courseVersionId}:${chapterSnapshot.chapterKey}')) {
@@ -1065,7 +1149,7 @@ class SessionSyncService {
         );
         continue;
       }
-      await _uploadSessionChapterSnapshotGroup(
+      final uploadDelta = await _uploadSessionChapterSnapshotGroup(
         currentUser: currentUser,
         remoteUserId: remoteUserId,
         keysByCourse: keysByCourse,
@@ -1084,10 +1168,12 @@ class SessionSyncService {
         lastSyncedAt: chapterSnapshot.updatedAt,
       );
       processedGroups++;
+      uploadedBytes += uploadDelta.bytes;
       await progressReporter.report(
         'Uploading sessions to server...',
         completed: processedGroups,
         total: chapterSnapshots.length,
+        completedBytes: uploadedBytes,
       );
       await progressReporter.maybeYield();
     }
@@ -1144,6 +1230,14 @@ class SessionSyncService {
     }
     final keysByCourse = <int, CourseKeyBundle>{};
     var processedGroups = 0;
+    var uploadedBytes = 0;
+    await progressReporter.report(
+      'Uploading sessions to server...',
+      completed: 0,
+      total: groupedSessions.length,
+      completedBytes: 0,
+      forcePaint: true,
+    );
     for (final groupEntry in groupedSessions.entries) {
       final groupScopeKey = groupEntry.key;
       final groupItems = groupEntry.value;
@@ -1185,7 +1279,7 @@ class SessionSyncService {
         );
         continue;
       }
-      await _uploadSessionGroupLegacy(
+      final uploadDelta = await _uploadSessionGroupLegacy(
         currentUser: currentUser,
         remoteUserId: remoteUserId,
         keysByCourse: keysByCourse,
@@ -1202,16 +1296,18 @@ class SessionSyncService {
         lastSyncedAt: groupUpdatedAt,
       );
       processedGroups++;
+      uploadedBytes += uploadDelta.bytes;
       await progressReporter.report(
         'Uploading sessions to server...',
         completed: processedGroups,
         total: groupedSessions.length,
+        completedBytes: uploadedBytes,
       );
       await progressReporter.maybeYield();
     }
   }
 
-  Future<void> _uploadSessionChapterSnapshotGroup({
+  Future<_TransferProgressDelta> _uploadSessionChapterSnapshotGroup({
     required User currentUser,
     required int remoteUserId,
     required Map<int, CourseKeyBundle> keysByCourse,
@@ -1342,9 +1438,10 @@ class SessionSyncService {
           ),
         ),
       );
+      await progressReporter.maybeYield();
     }
     if (batchEntries.isEmpty) {
-      return;
+      return const _TransferProgressDelta.zero();
     }
     try {
       await _api.uploadSessionBatch(batchEntries);
@@ -1364,12 +1461,13 @@ class SessionSyncService {
         );
       }
     }
+    final uploadedBytes = batchEntries.fold<int>(
+      0,
+      (total, entry) => total + _sessionUploadSize(entry),
+    );
     stats.addUploaded(
       count: batchEntries.length,
-      bytes: batchEntries.fold<int>(
-        0,
-        (total, entry) => total + _sessionUploadSize(entry),
-      ),
+      bytes: uploadedBytes,
     );
     for (final entry in batchEntries) {
       await _mirrorSessionUploadToDownloadState(
@@ -1392,9 +1490,14 @@ class SessionSyncService {
         lastSyncedAt: syncStateWrite.lastSyncedAt,
       );
     }
+    await progressReporter.maybeYield();
+    return _TransferProgressDelta(
+      count: batchEntries.length,
+      bytes: uploadedBytes,
+    );
   }
 
-  Future<void> _uploadSessionGroupLegacy({
+  Future<_TransferProgressDelta> _uploadSessionGroupLegacy({
     required User currentUser,
     required int remoteUserId,
     required Map<int, CourseKeyBundle> keysByCourse,
@@ -1500,9 +1603,10 @@ class SessionSyncService {
           ),
         ),
       );
+      await progressReporter.maybeYield();
     }
     if (batchEntries.isEmpty) {
-      return;
+      return const _TransferProgressDelta.zero();
     }
     try {
       await _api.uploadSessionBatch(batchEntries);
@@ -1522,12 +1626,13 @@ class SessionSyncService {
         );
       }
     }
+    final uploadedBytes = batchEntries.fold<int>(
+      0,
+      (total, entry) => total + _sessionUploadSize(entry),
+    );
     stats.addUploaded(
       count: batchEntries.length,
-      bytes: batchEntries.fold<int>(
-        0,
-        (total, entry) => total + _sessionUploadSize(entry),
-      ),
+      bytes: uploadedBytes,
     );
     for (final entry in batchEntries) {
       await _mirrorSessionUploadToDownloadState(
@@ -1550,6 +1655,11 @@ class SessionSyncService {
         lastSyncedAt: syncStateWrite.lastSyncedAt,
       );
     }
+    await progressReporter.maybeYield();
+    return _TransferProgressDelta(
+      count: batchEntries.length,
+      bytes: uploadedBytes,
+    );
   }
 
   Future<void> _downloadRemoteData(
@@ -1674,8 +1784,29 @@ class SessionSyncService {
             (total, item) => total + _progressDownloadSize(item),
           ),
     );
+    final totalDownloadedBytes = payload.sessions.fold<int>(
+          0,
+          (total, item) => total + _sessionDownloadSize(item),
+        ) +
+        payload.progressChunks.fold<int>(
+          0,
+          (total, item) => total + _progressChunkDownloadSize(item),
+        ) +
+        payload.progressRows.fold<int>(
+          0,
+          (total, item) => total + _progressDownloadSize(item),
+        );
+    await progressReporter.report(
+      'Importing synced sessions/progress...',
+      completed: 0,
+      total: totalItemsToApply,
+      completedBytes: 0,
+      totalBytes: totalDownloadedBytes,
+      forcePaint: true,
+    );
 
     var appliedItems = 0;
+    var appliedBytes = 0;
     for (final item in payload.sessions) {
       await _applyDownloadedSessionItem(
         currentUser: currentUser,
@@ -1684,10 +1815,13 @@ class SessionSyncService {
         item: item,
       );
       appliedItems++;
+      appliedBytes += _sessionDownloadSize(item);
       await progressReporter.report(
         'Importing synced sessions/progress...',
         completed: appliedItems,
         total: totalItemsToApply,
+        completedBytes: appliedBytes,
+        totalBytes: totalDownloadedBytes,
       );
     }
     for (final chunkItem in payload.progressChunks) {
@@ -1726,10 +1860,13 @@ class SessionSyncService {
         lastSyncedAt: itemUpdatedAt,
       );
       appliedItems++;
+      appliedBytes += _progressChunkDownloadSize(chunkItem);
       await progressReporter.report(
         'Importing synced sessions/progress...',
         completed: appliedItems,
         total: totalItemsToApply,
+        completedBytes: appliedBytes,
+        totalBytes: totalDownloadedBytes,
       );
     }
     for (final item in payload.progressRows) {
@@ -1742,10 +1879,13 @@ class SessionSyncService {
             localProgressUpdatedAtByRemoteScope,
       );
       appliedItems++;
+      appliedBytes += _progressDownloadSize(item);
       await progressReporter.report(
         'Importing synced sessions/progress...',
         completed: appliedItems,
         total: totalItemsToApply,
+        completedBytes: appliedBytes,
+        totalBytes: totalDownloadedBytes,
       );
     }
   }
@@ -2054,6 +2194,10 @@ class SessionSyncService {
       updatedAt: updatedAt,
     );
     final updatedAtUtc = updatedAt.toUtc();
+    final uploadComparableHash = _hashResolvedProgressUploadState(
+      payload: resolved,
+      studentRemoteUserId: item.studentUserId,
+    );
     final resolvedHash =
         remoteHash.isNotEmpty ? remoteHash : _hashResolvedProgress(resolved);
     await _secureStorage.writeSyncItemState(
@@ -2061,6 +2205,14 @@ class SessionSyncService {
       domain: _syncDomainProgressDownload,
       scopeKey: scopeKey,
       contentHash: resolvedHash,
+      lastChangedAt: updatedAtUtc,
+      lastSyncedAt: updatedAtUtc,
+    );
+    await _secureStorage.writeSyncItemState(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainProgressUpload,
+      scopeKey: '${resolved.courseId}:${resolved.kpKey}',
+      contentHash: uploadComparableHash,
       lastChangedAt: updatedAtUtc,
       lastSyncedAt: updatedAtUtc,
     );
@@ -2815,6 +2967,29 @@ class SessionSyncService {
     );
   }
 
+  String _hashResolvedProgressUploadState({
+    required _ResolvedProgressPayload payload,
+    required int studentRemoteUserId,
+  }) {
+    return _hashCanonicalJson(
+      <String, Object?>{
+        'course_id': payload.courseId,
+        'student_remote_user_id': studentRemoteUserId,
+        'kp_key': payload.kpKey,
+        'lit': payload.lit,
+        'lit_percent': payload.litPercent,
+        'question_level': payload.questionLevel,
+        'easy_passed_count': payload.easyPassedCount,
+        'medium_passed_count': payload.mediumPassedCount,
+        'hard_passed_count': payload.hardPassedCount,
+        'summary_text': payload.summaryText,
+        'summary_raw_response': payload.summaryRawResponse,
+        'summary_valid': payload.summaryValid,
+        'updated_at': payload.updatedAt,
+      },
+    );
+  }
+
   String _hashProgressSyncItem(ProgressSyncItem item) {
     return _hashCanonicalJson(
       <String, Object?>{
@@ -3075,6 +3250,20 @@ class SessionSyncService {
       return true;
     }
     return candidate.isAfter(baseline.toUtc());
+  }
+
+  bool _isDownloadedProgressStateCurrent({
+    required SyncItemState downloadedState,
+    required DateTime localUpdatedAt,
+    required String localHash,
+  }) {
+    final downloadedAt = downloadedState.lastChangedAt.toUtc();
+    if (downloadedAt.isAfter(localUpdatedAt)) {
+      return true;
+    }
+    return !localUpdatedAt.isAfter(downloadedAt) &&
+        downloadedState.contentHash == localHash &&
+        localHash.trim().isNotEmpty;
   }
 
   DateTime _latestTimestamp(DateTime? current, DateTime candidate) {
@@ -3457,6 +3646,8 @@ class _SyncProgressReporter {
     String message, {
     int? completed,
     int? total,
+    int? completedBytes,
+    int? totalBytes,
     bool forcePaint = false,
   }) async {
     final now = DateTime.now();
@@ -3469,6 +3660,8 @@ class _SyncProgressReporter {
           message: message,
           completed: completed,
           total: total,
+          completedBytes: completedBytes,
+          totalBytes: totalBytes,
           forcePaint: forcePaint,
         ),
       );
@@ -3486,6 +3679,33 @@ class _SyncProgressReporter {
       ..reset()
       ..start();
   }
+}
+
+class _TransferAccumulator {
+  int count = 0;
+  int bytes = 0;
+
+  void add({
+    required int count,
+    required int bytes,
+  }) {
+    this.count += count;
+    this.bytes += bytes;
+  }
+}
+
+class _TransferProgressDelta {
+  const _TransferProgressDelta({
+    required this.count,
+    required this.bytes,
+  });
+
+  const _TransferProgressDelta.zero()
+      : count = 0,
+        bytes = 0;
+
+  final int count;
+  final int bytes;
 }
 
 class _ResolvedProgressPayload {

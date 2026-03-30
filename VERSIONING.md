@@ -13,7 +13,7 @@ This public client snapshot uses a simple release scheme:
 ## Current Public Release
 
 - Git tag: `v1.0.1`
-- App version: `1.0.1+2`
+- App version: `1.0.1+4`
 
 ## Release Checklist
 

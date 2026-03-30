@@ -15,6 +15,7 @@ import 'package:tutor1on1/services/session_crypto_service.dart';
 import 'package:tutor1on1/services/session_sync_api_service.dart';
 import 'package:tutor1on1/services/session_sync_service.dart';
 import 'package:tutor1on1/services/session_upload_cache_service.dart';
+import 'package:tutor1on1/services/sync_progress.dart';
 import 'package:tutor1on1/services/sync_state_repository.dart';
 import 'package:tutor1on1/services/user_key_service.dart';
 
@@ -1725,10 +1726,22 @@ void main() {
         crypto: crypto,
       );
 
-      await syncService.syncIfReady(currentUser: student);
+      final progressEvents = <SyncProgress>[];
+      await syncService.syncIfReady(
+        currentUser: student,
+        onProgress: progressEvents.add,
+      );
 
       expect(api.uploadedProgressEntries, isEmpty);
       expect(api.uploadedProgressChunkEntries, hasLength(2));
+      expect(
+        progressEvents.any(
+          (progress) =>
+              progress.message == 'Uploading progress to server...' &&
+              (progress.detail ?? '').contains('MB'),
+        ),
+        isTrue,
+      );
       final itemCountByChapter = <String, int>{
         for (final entry in api.uploadedProgressChunkEntries)
           entry.chapterKey: entry.itemCount,
@@ -2886,6 +2899,151 @@ void main() {
       expect(secondStats.downloadedBytes, equals(0));
       expect(fetchCalls, equals(0));
       expect(api.uploadedSessions, hasLength(1));
+    },
+  );
+
+  test(
+    'fresh-device force pull stamps progress upload state and next sync does not re-upload',
+    () async {
+      final crypto = SessionCryptoService();
+      final secureStorage = _MemorySecureStorage(accessToken: 'token');
+
+      final teacherId = await db.createUser(
+        username: 'teacher_force_pull_progress',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 914,
+      );
+      final studentId = await db.createUser(
+        username: 'student_force_pull_progress',
+        pinHash: 'hash',
+        role: 'student',
+        remoteUserId: 3014,
+      );
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Chemistry',
+        granularity: 1,
+        textbookText: '',
+        sourcePath: r'C:\courses\chemistry',
+      );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 230,
+      );
+
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+      final remoteStudentId = student!.remoteUserId!;
+
+      final studentKeyPair = await crypto.generateKeyPair();
+      final studentPublicKey = await crypto.extractPublicKey(studentKeyPair);
+      await secureStorage.writeUserPrivateKey(
+        remoteStudentId,
+        await crypto.encodePrivateKey(studentKeyPair),
+      );
+      await secureStorage.writeUserPublicKey(
+        remoteStudentId,
+        crypto.encodePublicKey(studentPublicKey),
+      );
+
+      final remoteProgressPayload = <String, dynamic>{
+        'version': 1,
+        'course_id': 230,
+        'course_subject': 'Chemistry',
+        'kp_key': '1.1',
+        'lit': true,
+        'lit_percent': 72,
+        'question_level': 'medium',
+        'summary_text': 'server progress',
+        'summary_raw_response': '',
+        'summary_valid': true,
+        'teacher_remote_user_id': 914,
+        'student_remote_user_id': remoteStudentId,
+        'updated_at': '2026-03-01T08:06:00Z',
+      };
+      final remoteProgressEnvelope = await _encryptForUser(
+        crypto: crypto,
+        payload: remoteProgressPayload,
+        recipientUserId: remoteStudentId,
+        recipientPublicKey: studentPublicKey,
+      );
+      final remoteProgressItem = ProgressSyncItem(
+        cursorId: 71,
+        courseId: 230,
+        courseSubject: 'Chemistry',
+        teacherUserId: 914,
+        studentUserId: remoteStudentId,
+        kpKey: '1.1',
+        lit: true,
+        litPercent: 72,
+        questionLevel: 'medium',
+        summaryText: 'server progress',
+        summaryRawResponse: '',
+        summaryValid: true,
+        updatedAt: '2026-03-01T08:06:00Z',
+        envelope: remoteProgressEnvelope.base64Envelope,
+        envelopeHash: remoteProgressEnvelope.hash,
+      );
+
+      final api = _TestSessionSyncApiService(
+        secureStorage: secureStorage,
+        sessionItems: const <SessionSyncItem>[],
+        progressItems: <ProgressSyncItem>[remoteProgressItem],
+      );
+      final userKeyService = UserKeyService(
+        secureStorage: secureStorage,
+        api: api,
+        crypto: crypto,
+      );
+      final syncService = SessionSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        api: api,
+        userKeyService: userKeyService,
+        crypto: crypto,
+      );
+
+      final progressEvents = <SyncProgress>[];
+      await syncService.forcePullFromServer(
+        currentUser: student,
+        wipeLocalStudentData: true,
+        onProgress: progressEvents.add,
+      );
+
+      expect(
+        progressEvents.any(
+          (progress) =>
+              progress.message == 'Importing synced sessions/progress...' &&
+              (progress.detail ?? '').contains('MB'),
+        ),
+        isTrue,
+      );
+
+      final uploadState = await secureStorage.readSyncItemState(
+        remoteUserId: remoteStudentId,
+        domain: 'progress_upload',
+        scopeKey: '230:1.1',
+      );
+      expect(uploadState, isNotNull);
+      expect(
+        uploadState!.lastSyncedAt,
+        equals(DateTime.parse('2026-03-01T08:06:00Z')),
+      );
+
+      api.uploadedProgressEntries.clear();
+      api.uploadedProgressChunkEntries.clear();
+      api.uploadedSessions.clear();
+
+      await syncService.syncIfReady(currentUser: student);
+
+      expect(api.uploadedProgressEntries, isEmpty);
+      expect(api.uploadedProgressChunkEntries, isEmpty);
+      expect(api.uploadedSessions, isEmpty);
     },
   );
 

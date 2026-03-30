@@ -1,5 +1,5 @@
 # BUGS
-Last updated: 2026-03-23
+Last updated: 2026-03-30
 
 ## Active watch
 - Student import race after bundle download (monitoring): fixed by awaiting archive extraction in client bundle service (`f77e7e0`); keep watching for recurrence in production-like flow.
@@ -184,3 +184,13 @@ Last updated: 2026-03-23
 - Symptom: teacher sync could still fail with `Teacher bundle sync conflict ... Pull latest server bundle` immediately after a successful pull from server.
 - Root cause: semantic bundle hashing treated legacy prompt metadata representation (`_family_teacher/prompt_bundle.json`, `family_teacher_prompt_bundle_v1`) and current representation (`_tutor1on1/prompt_bundle.json`, `tutor1on1_prompt_bundle_v1`) as different, even when the prompt payload itself was semantically identical. Pulling a legacy server bundle therefore wrote one hash to sync state, while the client recomputed a different local hash on the next sync and raised a false conflict.
 - Prevention: canonicalize supported prompt metadata entry paths and schema names before semantic hashing, and keep a regression test for `legacy server bundle -> pull -> second sync` so this mismatch cannot silently return.
+
+37. Fresh-device progress sync can re-upload server data on the next normal sync
+- Symptom: after a new device downloads progress from server, the next ordinary sync can upload the same progress back from scratch instead of staying download-only.
+- Root cause: client progress import wrote only `progress_download` sync state. `progress_upload` state is device-local, so a fresh install kept an empty upload ledger and later treated equal-timestamp imported rows as unsynced local changes.
+- Prevention: after importing server progress, stamp both `progress_download` and `progress_upload` state with the imported `updated_at`, and keep a regression test for `force pull -> next normal sync -> no progress upload`.
+
+38. Large sync progress can look frozen even when work is still running
+- Symptom: login-time or force-pull sync can appear stuck on one stage, and the blocking overlay may look unresponsive during large session/progress transfers.
+- Root cause: the UI only showed coarse stage text or item counts, while some heavy build/import loops could still spend too long in one isolate slice before yielding back to the event loop.
+- Prevention: report sync progress as counts plus transferred MB, force-paint stage-start updates once totals are known, and keep heavy session/progress build/import loops yielding so the overlay continues repainting during large sync runs.
