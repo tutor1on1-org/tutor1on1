@@ -13,6 +13,7 @@ import '../security/hash_utils.dart';
 import '../security/pin_hasher.dart';
 import '../services/app_services.dart';
 import '../services/app_version_service.dart';
+import '../services/audio_model_selection.dart';
 import '../services/marketplace_api_service.dart';
 import '../services/model_list_service.dart';
 import '../state/auth_controller.dart';
@@ -452,8 +453,16 @@ class _SettingsPageState extends State<SettingsPage> {
               baseUrl: provider.baseUrl,
               model: model,
               reasoningEffort: _reasoningEffortSelection,
-              ttsModel: _resolveTtsModel(settings),
-              sttModel: _resolveSttModel(settings),
+              ttsModel: _resolveTtsModel(
+                provider: provider,
+                settings: settings,
+                options: _modelsLoaded ? _ttsModelOptions : const [],
+              ),
+              sttModel: _resolveSttModel(
+                provider: provider,
+                settings: settings,
+                options: _modelsLoaded ? _sttModelOptions : const [],
+              ),
               timeoutSeconds:
                   int.tryParse(_timeoutController.text.trim()) ?? 60,
               maxTokens: int.tryParse(_maxTokensController.text.trim()) ?? 8000,
@@ -655,18 +664,31 @@ class _SettingsPageState extends State<SettingsPage> {
         );
         final reasoningOptions =
             LlmReasoningSupport.effortOptionsForProvider(provider);
+        final savedSettingsMatchProvider =
+            _normalizeBaseUrl(settings.baseUrl) ==
+            _normalizeBaseUrl(provider.baseUrl);
+        final savedTtsFallback = savedSettingsMatchProvider
+            ? (settings.ttsModel ?? '').trim()
+            : '';
+        final savedSttFallback = savedSettingsMatchProvider
+            ? (settings.sttModel ?? '').trim()
+            : '';
         final ttsOptions = _buildAudioModelOptions(
+          providerSupported: provider.supportsTts,
+          modelsLoaded: _modelsLoaded,
           configs: configs,
           baseUrl: provider.baseUrl,
           fromLoaded: _modelsLoaded ? _ttsModelOptions : const [],
-          fallback: (settings.ttsModel ?? '').trim(),
+          fallback: savedTtsFallback,
           selector: (config) => (config.ttsModel ?? '').trim(),
         );
         final sttOptions = _buildAudioModelOptions(
+          providerSupported: provider.supportsStt,
+          modelsLoaded: _modelsLoaded,
           configs: configs,
           baseUrl: provider.baseUrl,
           fromLoaded: _modelsLoaded ? _sttModelOptions : const [],
-          fallback: (settings.sttModel ?? '').trim(),
+          fallback: savedSttFallback,
           selector: (config) => (config.sttModel ?? '').trim(),
         );
 
@@ -726,6 +748,10 @@ class _SettingsPageState extends State<SettingsPage> {
                   _textModelSelection = next.models.isNotEmpty
                       ? next.models.first
                       : _textModelSelection;
+                  _ttsModelSelection = '';
+                  _sttModelSelection = '';
+                  _ttsModelOverride = false;
+                  _sttModelOverride = false;
                 });
                 _maybeLoadApiKey(services, next.baseUrl);
               },
@@ -860,8 +886,16 @@ class _SettingsPageState extends State<SettingsPage> {
                   baseUrl: provider.baseUrl,
                   model: model,
                   reasoningEffort: _reasoningEffortSelection,
-                  ttsModel: _resolveTtsModel(settings),
-                  sttModel: _resolveSttModel(settings),
+                  ttsModel: _resolveTtsModel(
+                    provider: provider,
+                    settings: settings,
+                    options: ttsOptions,
+                  ),
+                  sttModel: _resolveSttModel(
+                    provider: provider,
+                    settings: settings,
+                    options: sttOptions,
+                  ),
                   timeoutSeconds:
                       int.tryParse(_timeoutController.text.trim()) ?? 60,
                   maxTokens:
@@ -887,8 +921,16 @@ class _SettingsPageState extends State<SettingsPage> {
                   baseUrl: provider.baseUrl,
                   model: model,
                   reasoningEffort: _reasoningEffortSelection,
-                  ttsModel: _resolveTtsModel(settings),
-                  sttModel: _resolveSttModel(settings),
+                  ttsModel: _resolveTtsModel(
+                    provider: provider,
+                    settings: settings,
+                    options: ttsOptions,
+                  ),
+                  sttModel: _resolveSttModel(
+                    provider: provider,
+                    settings: settings,
+                    options: sttOptions,
+                  ),
                   apiKeyHash: hash,
                 );
                 if (context.mounted) {
@@ -949,10 +991,12 @@ class _SettingsPageState extends State<SettingsPage> {
                               _providerId = provider.id;
                               _textModelSelection = config.model;
                               _reasoningEffortSelection = reasoningEffort;
-                              _ttsModelSelection = ttsModel;
-                              _sttModelSelection = sttModel;
-                              _ttsModelOverride = true;
-                              _sttModelOverride = true;
+                              _ttsModelSelection =
+                                  provider.supportsTts ? ttsModel : '';
+                              _sttModelSelection =
+                                  provider.supportsStt ? sttModel : '';
+                              _ttsModelOverride = provider.supportsTts;
+                              _sttModelOverride = provider.supportsStt;
                               _modelsLoaded = false;
                               _apiTestError = null;
                             });
@@ -1021,25 +1065,26 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   List<String> _buildAudioModelOptions({
+    required bool providerSupported,
+    required bool modelsLoaded,
     required List<ApiConfig> configs,
     required String baseUrl,
     required List<String> fromLoaded,
     required String fallback,
     required String Function(ApiConfig) selector,
   }) {
-    final options = <String>{
-      ...fromLoaded.where((model) => model.trim().isNotEmpty),
-      ...configs
+    return AudioModelSelection.buildOptions(
+      providerSupported: providerSupported,
+      modelsLoaded: modelsLoaded,
+      loadedModels: fromLoaded,
+      savedModels: configs
           .where(
             (config) =>
                 _normalizeBaseUrl(config.baseUrl) == _normalizeBaseUrl(baseUrl),
           )
-          .map(selector)
-          .where((model) => model.trim().isNotEmpty),
-      if (fallback.trim().isNotEmpty) fallback.trim(),
-    }.toList()
-      ..sort();
-    return options;
+          .map(selector),
+      fallback: fallback,
+    );
   }
 
   String _resolveTextModel(LlmProvider provider, AppSetting settings) {
@@ -1050,26 +1095,42 @@ class _SettingsPageState extends State<SettingsPage> {
             : (provider.models.isNotEmpty ? provider.models.first : ''));
   }
 
-  String _resolveTtsModel(AppSetting settings) {
-    final selection = (_ttsModelSelection ?? '').trim();
-    if (_ttsModelOverride) {
-      return selection;
-    }
-    if (selection.isNotEmpty) {
-      return selection;
-    }
-    return (settings.ttsModel ?? '').trim();
+  String _resolveTtsModel({
+    required LlmProvider provider,
+    required AppSetting settings,
+    required List<String> options,
+  }) {
+    final fallback = _normalizeBaseUrl(settings.baseUrl) ==
+            _normalizeBaseUrl(provider.baseUrl)
+        ? (settings.ttsModel ?? '').trim()
+        : '';
+    return AudioModelSelection.resolveModel(
+      providerSupported: provider.supportsTts,
+      modelsLoaded: _modelsLoaded,
+      availableOptions: options,
+      selection: _ttsModelSelection,
+      selectionOverride: _ttsModelOverride,
+      fallback: fallback,
+    );
   }
 
-  String _resolveSttModel(AppSetting settings) {
-    final selection = (_sttModelSelection ?? '').trim();
-    if (_sttModelOverride) {
-      return selection;
-    }
-    if (selection.isNotEmpty) {
-      return selection;
-    }
-    return (settings.sttModel ?? '').trim();
+  String _resolveSttModel({
+    required LlmProvider provider,
+    required AppSetting settings,
+    required List<String> options,
+  }) {
+    final fallback = _normalizeBaseUrl(settings.baseUrl) ==
+            _normalizeBaseUrl(provider.baseUrl)
+        ? (settings.sttModel ?? '').trim()
+        : '';
+    return AudioModelSelection.resolveModel(
+      providerSupported: provider.supportsStt,
+      modelsLoaded: _modelsLoaded,
+      availableOptions: options,
+      selection: _sttModelSelection,
+      selectionOverride: _sttModelOverride,
+      fallback: fallback,
+    );
   }
 
   String _coerceSelection({
@@ -1175,8 +1236,7 @@ class _SettingsPageState extends State<SettingsPage> {
     }
     final lists = ModelListService.splitModels(
       models: result.models,
-      baseUrl: baseUrl,
-      providerId: provider.id,
+      provider: provider,
     );
     setState(() {
       _apiTesting = false;

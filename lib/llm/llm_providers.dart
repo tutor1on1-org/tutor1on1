@@ -25,6 +25,8 @@ class LlmProvider {
     required this.baseUrl,
     required this.models,
     required this.maxTokensParam,
+    this.supportsTts = false,
+    this.supportsStt = false,
     this.noTemperatureModelPrefixes = const [],
     this.authHeader = 'Authorization',
     this.authPrefix = 'Bearer ',
@@ -40,6 +42,8 @@ class LlmProvider {
   final String baseUrl;
   final List<String> models;
   final MaxTokensParam maxTokensParam;
+  final bool supportsTts;
+  final bool supportsStt;
   final List<String> noTemperatureModelPrefixes;
   final String authHeader;
   final String authPrefix;
@@ -97,6 +101,8 @@ class LlmProviders {
           'gpt-4o-mini',
         ],
         maxTokensParam: MaxTokensParam.auto,
+        supportsTts: true,
+        supportsStt: true,
         noTemperatureModelPrefixes: ['gpt-'],
         reasoningControlStyle: ReasoningControlStyle.openAiEffort,
         supportsStructuredOutputs: true,
@@ -172,6 +178,8 @@ class LlmProviders {
           'deepseek-ai/DeepSeek-V3.2',
         ],
         maxTokensParam: MaxTokensParam.maxTokens,
+        supportsTts: true,
+        supportsStt: true,
         reasoningControlStyle: ReasoningControlStyle.siliconFlowThinkingBudget,
       ),
       const LlmProvider(

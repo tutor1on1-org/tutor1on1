@@ -51,6 +51,16 @@ void main() {
         ]),
       );
       expect(gemini.supportsStructuredOutputs, isTrue);
+      expect(gemini.supportsTts, isFalse);
+      expect(gemini.supportsStt, isFalse);
+
+      final openAi = LlmProviders.findById(providers, 'openai');
+      expect(openAi!.supportsTts, isTrue);
+      expect(openAi.supportsStt, isTrue);
+
+      final siliconflow = LlmProviders.findById(providers, 'siliconflow');
+      expect(siliconflow!.supportsTts, isTrue);
+      expect(siliconflow.supportsStt, isTrue);
 
       final grok = LlmProviders.findById(providers, 'grok');
       expect(
