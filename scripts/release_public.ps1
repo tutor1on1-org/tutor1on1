@@ -39,7 +39,7 @@ function Get-GitStatusLines {
   if ($LASTEXITCODE -ne 0) {
     throw "git status failed with exit code $LASTEXITCODE."
   }
-  return @($statusLines | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+  return ,@($statusLines | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 }
 
 $repoRoot = (Resolve-Path $ProjectRoot).Path
