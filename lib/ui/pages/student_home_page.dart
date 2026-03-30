@@ -9,6 +9,7 @@ import '../../models/skill_tree.dart';
 import '../../services/app_services.dart';
 import '../../services/home_sync_coordinator.dart';
 import '../../services/marketplace_api_service.dart';
+import '../../services/student_server_copy_service.dart';
 import '../../services/sync_progress.dart';
 import '../../state/auth_controller.dart';
 import '../../state/study_mode_controller.dart';
@@ -38,6 +39,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
   Timer? _autoSyncTimer;
   late final MarketplaceApiService _marketplaceApi;
   late final HomeSyncCoordinator _syncCoordinator;
+  late final StudentServerCopyService _serverCopyService;
   final Map<int, int> _remoteCourseIdByLocalCourseId = {};
   final Map<int, EnrollmentSummary> _enrollmentsByRemoteCourseId = {};
   final Set<int> _pendingQuitRemoteCourseIds = {};
@@ -56,6 +58,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
       sessionSyncService: services.sessionSyncService,
       syncLogRepository: services.syncLogRepository,
     );
+    _serverCopyService = StudentServerCopyService.fromAppServices(services);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _startSync();
       _startAutoSync();
@@ -233,8 +236,9 @@ class _StudentHomePageState extends State<StudentHomePage> {
       builder: (context) => AlertDialog(
         title: const Text('Take server copy'),
         content: const Text(
-          'This will replace this device\'s local session/progress data '
-          'with a forced server download. Continue?',
+          'This will clear this device\'s local course/session/progress '
+          'cache and replace it with a forced server copy. Unsynced local '
+          'session/progress data on this device will be discarded. Continue?',
         ),
         actions: [
           TextButton(
@@ -252,27 +256,17 @@ class _StudentHomePageState extends State<StudentHomePage> {
       return;
     }
 
-    final services = context.read<AppServices>();
     _syncInProgress = true;
-    _setSyncState(
-      syncing: true,
-      message: 'Taking server copy: syncing enrollments...',
-    );
+    _setSyncState(syncing: true, message: '');
     try {
-      await services.enrollmentSyncService.forcePullFromServer(
+      await _serverCopyService.takeServerCopy(
         currentUser: user,
-      );
-      _setSyncState(
-        syncing: true,
-        message: 'Taking server copy: downloading sessions/progress...',
-      );
-      await services.sessionSyncService.forcePullFromServer(
-        currentUser: user,
-        wipeLocalStudentData: true,
+        onProgress: _applySyncProgress,
       );
       await _refreshRemoteEnrollmentState();
       _setPersistentMessage(
-        'Server copy completed. Local session/progress now matches server data.',
+        'Server copy completed. Local course/session/progress cache now '
+        'matches server data.',
         isError: false,
       );
     } catch (error) {

@@ -16,6 +16,8 @@ import '../services/app_version_service.dart';
 import '../services/audio_model_selection.dart';
 import '../services/marketplace_api_service.dart';
 import '../services/model_list_service.dart';
+import '../services/student_server_copy_service.dart';
+import '../services/sync_progress.dart';
 import '../state/auth_controller.dart';
 import '../state/settings_controller.dart';
 import 'app_close_button.dart';
@@ -58,6 +60,11 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _deviceNameLoaded = false;
   bool _apiTesting = false;
   String? _apiTestError;
+  bool _serverCopyInProgress = false;
+  String? _serverCopyMessage;
+  String? _serverCopyDetail;
+  double? _serverCopyProgressValue;
+  bool _serverCopyMessageIsError = false;
   late final Future<AppVersionInfo> _appVersionFuture =
       AppVersionService.load();
   MarketplaceApiService? _accountApi;
@@ -625,6 +632,52 @@ class _SettingsPageState extends State<SettingsPage> {
           },
           child: Text(l10n.restoreDbButton),
         ),
+        if (currentUser?.role == 'student') ...[
+          const SizedBox(height: 12),
+          Text(
+            'If this device shows duplicate courses or sessions after an '
+            'upgrade, replace the local course/session/progress cache with '
+            'a fresh server copy.',
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: _serverCopyInProgress
+                ? null
+                : () => _takeServerCopy(
+                      context: context,
+                      services: services,
+                      currentUser: currentUser!,
+                    ),
+            icon: const Icon(Icons.cloud_download_outlined),
+            label: Text(
+              _serverCopyInProgress
+                  ? 'Taking Server Copy...'
+                  : 'Reset Local Cache From Server',
+            ),
+          ),
+          if (_serverCopyMessage != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _serverCopyMessage!,
+              style: TextStyle(
+                color: _serverCopyMessageIsError ? Colors.redAccent : null,
+              ),
+            ),
+            if (_serverCopyDetail != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  _serverCopyDetail!,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            if (_serverCopyInProgress)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: LinearProgressIndicator(value: _serverCopyProgressValue),
+              ),
+          ],
+        ],
         const Divider(height: 32),
         Text(
           l10n.appSectionTitle,
@@ -666,13 +719,11 @@ class _SettingsPageState extends State<SettingsPage> {
             LlmReasoningSupport.effortOptionsForProvider(provider);
         final savedSettingsMatchProvider =
             _normalizeBaseUrl(settings.baseUrl) ==
-            _normalizeBaseUrl(provider.baseUrl);
-        final savedTtsFallback = savedSettingsMatchProvider
-            ? (settings.ttsModel ?? '').trim()
-            : '';
-        final savedSttFallback = savedSettingsMatchProvider
-            ? (settings.sttModel ?? '').trim()
-            : '';
+                _normalizeBaseUrl(provider.baseUrl);
+        final savedTtsFallback =
+            savedSettingsMatchProvider ? (settings.ttsModel ?? '').trim() : '';
+        final savedSttFallback =
+            savedSettingsMatchProvider ? (settings.sttModel ?? '').trim() : '';
         final ttsOptions = _buildAudioModelOptions(
           providerSupported: provider.supportsTts,
           modelsLoaded: _modelsLoaded,
@@ -1276,6 +1327,107 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
     return result ?? false;
+  }
+
+  Future<bool> _confirmTakeServerCopy(BuildContext context) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Take server copy'),
+        content: const Text(
+          'This will clear this device\'s local course/session/progress '
+          'cache and replace it with a forced server copy. Unsynced local '
+          'session/progress data on this device will be discarded. Continue?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Take server copy'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
+  Future<void> _takeServerCopy({
+    required BuildContext context,
+    required AppServices services,
+    required User currentUser,
+  }) async {
+    if (_serverCopyInProgress) {
+      return;
+    }
+    final confirmed = await _confirmTakeServerCopy(context);
+    if (!confirmed || !mounted) {
+      return;
+    }
+    final serverCopyService = StudentServerCopyService.fromAppServices(
+      services,
+    );
+    setState(() {
+      _serverCopyInProgress = true;
+      _serverCopyMessage = 'Taking server copy: syncing enrollments...';
+      _serverCopyDetail = null;
+      _serverCopyProgressValue = null;
+      _serverCopyMessageIsError = false;
+    });
+    try {
+      await serverCopyService.takeServerCopy(
+        currentUser: currentUser,
+        onProgress: _applyServerCopyProgress,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _serverCopyMessage =
+            'Server copy completed. Local course/session/progress cache now '
+            'matches server data.';
+        _serverCopyDetail = null;
+        _serverCopyProgressValue = null;
+        _serverCopyMessageIsError = false;
+      });
+      _showMessage(
+        context,
+        'Server copy completed. Local course/session/progress cache now '
+        'matches server data.',
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _serverCopyMessage = 'Take server copy failed: $error';
+        _serverCopyDetail = null;
+        _serverCopyProgressValue = null;
+        _serverCopyMessageIsError = true;
+      });
+      _showMessage(context, 'Take server copy failed: $error');
+    } finally {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _serverCopyInProgress = false;
+      });
+    }
+  }
+
+  void _applyServerCopyProgress(SyncProgress progress) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _serverCopyMessage = progress.message;
+      _serverCopyDetail = progress.detail;
+      _serverCopyProgressValue = progress.value;
+      _serverCopyMessageIsError = false;
+    });
   }
 
   void _showMessage(BuildContext context, String message) {
