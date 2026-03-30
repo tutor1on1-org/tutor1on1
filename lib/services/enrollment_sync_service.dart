@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 
 import '../db/app_database.dart' hide SyncItemState;
 import '../llm/prompt_repository.dart';
+import '../security/hash_utils.dart';
 import 'course_artifact_service.dart';
 import 'course_bundle_service.dart';
 import 'course_service.dart';
@@ -57,8 +58,6 @@ class EnrollmentSyncService {
       'teacher_prompt_timestamps';
   static const String _syncMetadataDomainTeacherPromptTimestamps =
       'enrollment_sync_teacher_prompt_timestamps';
-  static const String _syncScopeEnrollments = 'enrollments';
-  static const String _syncScopeTeacherCourses = 'teacher_courses';
 
   Future<SyncRunStats> forcePullFromServer({required User currentUser}) async {
     final stats = SyncRunStats();
@@ -106,23 +105,13 @@ class EnrollmentSyncService {
           nowUtc: nowUtc,
           force: true,
           action: () async {
-            final enrollmentsResult = await _loadMarketplaceList(
+            final enrollments = await _api.listEnrollments();
+            await _syncStudentEnrollments(
+              currentUser: currentUser,
               remoteUserId: remoteUserId,
-              domain: _syncDomainStudentEnrollments,
-              scopeKey: _syncScopeEnrollments,
-              preferDelta: false,
-              loadDelta: ({
-                required String? ifNoneMatch,
-              }) => _api.listEnrollmentsDelta(ifNoneMatch: ifNoneMatch),
+              enrollments: enrollments,
+              summary: summary,
             );
-            if (!enrollmentsResult.notModified) {
-              await _syncStudentEnrollments(
-                currentUser: currentUser,
-                remoteUserId: remoteUserId,
-                enrollments: enrollmentsResult.items,
-                summary: summary,
-              );
-            }
           },
         );
       }
@@ -161,11 +150,22 @@ class EnrollmentSyncService {
           domain: _syncDomainTeacherCourses,
           nowUtc: nowUtc,
           force: false,
-          action: () => _syncTeacherCourses(
-            currentUser: currentUser,
-            remoteUserId: remoteUserId,
-            summary: summary,
-          ),
+          action: () async {
+            final remoteState2 = await _api.getTeacherCoursesSyncState2();
+            final localState2 = await _computeTeacherCourseState2(
+              currentUser: currentUser,
+              remoteUserId: remoteUserId,
+            );
+            if (remoteState2 == localState2) {
+              await _cleanupTeacherLocalDuplicates(currentUser.id);
+              return;
+            }
+            await _syncTeacherCourses(
+              currentUser: currentUser,
+              remoteUserId: remoteUserId,
+              summary: summary,
+            );
+          },
         );
       } else {
         await _runCategoryIfDue(
@@ -174,20 +174,17 @@ class EnrollmentSyncService {
           nowUtc: nowUtc,
           force: false,
           action: () async {
-            final enrollmentsResult = await _loadMarketplaceList(
+            final remoteState2 = await _api.getEnrollmentsSyncState2();
+            final localState2 = await _computeStudentEnrollmentState2(
+              currentUser: currentUser,
               remoteUserId: remoteUserId,
-              domain: _syncDomainStudentEnrollments,
-              scopeKey: _syncScopeEnrollments,
-              preferDelta: true,
-              loadDelta: ({
-                required String? ifNoneMatch,
-              }) => _api.listEnrollmentsDelta(ifNoneMatch: ifNoneMatch),
             );
-            if (!enrollmentsResult.notModified) {
+            if (remoteState2 != localState2) {
+              final enrollments = await _api.listEnrollments();
               await _syncStudentEnrollments(
                 currentUser: currentUser,
                 remoteUserId: remoteUserId,
-                enrollments: enrollmentsResult.items,
+                enrollments: enrollments,
                 summary: summary,
               );
             }
@@ -621,36 +618,7 @@ class EnrollmentSyncService {
           domain: _syncDomainTeacherCourses,
         ) ==
         null;
-    var remoteCoursesResult = await _loadMarketplaceList(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainTeacherCourses,
-      scopeKey: _syncScopeTeacherCourses,
-      preferDelta: true,
-      loadDelta: ({
-        required String? ifNoneMatch,
-      }) => _api.listTeacherCoursesDelta(ifNoneMatch: ifNoneMatch),
-    );
-    var remoteCourses = remoteCoursesResult.items;
-    if (remoteCoursesResult.notModified &&
-        !await _hasPendingTeacherCourseSyncWork(
-          currentUser: currentUser,
-          remoteUserId: remoteUserId,
-        )) {
-      await _cleanupTeacherLocalDuplicates(currentUser.id);
-      return;
-    }
-    if (remoteCoursesResult.notModified) {
-      remoteCoursesResult = await _loadMarketplaceList(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainTeacherCourses,
-        scopeKey: _syncScopeTeacherCourses,
-        preferDelta: false,
-        loadDelta: ({
-          required String? ifNoneMatch,
-        }) => _api.listTeacherCoursesDelta(ifNoneMatch: ifNoneMatch),
-      );
-      remoteCourses = remoteCoursesResult.items;
-    }
+    var remoteCourses = await _api.listTeacherCourses();
     await _reconcileTeacherCourseMetadata(
       currentUser: currentUser,
       remoteCourses: remoteCourses,
@@ -678,16 +646,7 @@ class EnrollmentSyncService {
       remoteCourses: remoteCourses,
       summary: summary,
     );
-    remoteCourses = (await _loadMarketplaceList(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainTeacherCourses,
-      scopeKey: _syncScopeTeacherCourses,
-      preferDelta: false,
-      loadDelta: ({
-        required String? ifNoneMatch,
-      }) => _api.listTeacherCoursesDelta(ifNoneMatch: ifNoneMatch),
-    ))
-        .items;
+    remoteCourses = await _api.listTeacherCourses();
     await _reconcileTeacherCourseMetadata(
       currentUser: currentUser,
       remoteCourses: remoteCourses,
@@ -702,78 +661,130 @@ class EnrollmentSyncService {
     await _cleanupTeacherLocalDuplicates(currentUser.id);
   }
 
-  Future<bool> _hasPendingTeacherCourseSyncWork({
+  Future<String> _computeStudentEnrollmentState2({
+    required User currentUser,
+    required int remoteUserId,
+  }) async {
+    final assignedRemoteCourses =
+        await _db.getAssignedRemoteCoursesForStudent(currentUser.id);
+    final fingerprints = <String>[];
+    for (final info in assignedRemoteCourses) {
+      final course = await _db.getCourseVersionById(info.courseVersionId);
+      if (course == null) {
+        continue;
+      }
+      final teacher = await _db.getUserById(course.teacherId);
+      final installedVersion =
+          await _secureStorage.readInstalledCourseBundleVersion(
+        remoteUserId: remoteUserId,
+        remoteCourseId: info.remoteCourseId,
+      );
+      final syncState = await _secureStorage.readSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainStudentCourseBundles,
+        scopeKey: _teacherCourseScopeKey(info.remoteCourseId),
+      );
+      fingerprints.add(
+        _buildStudentEnrollmentItemFingerprint(
+          remoteCourseId: info.remoteCourseId,
+          teacherRemoteUserId: teacher?.remoteUserId ?? 0,
+          teacherName: teacher?.username ?? '',
+          courseSubject: course.subject,
+          bundleVersionId: installedVersion ?? 0,
+          bundleHash: syncState?.contentHash ?? '',
+        ),
+      );
+    }
+    return _buildState2FromFingerprints(fingerprints);
+  }
+
+  Future<String> _computeTeacherCourseState2({
     required User currentUser,
     required int remoteUserId,
   }) async {
     final localCourses = await _db.getCourseVersionsForTeacher(currentUser.id);
+    final fingerprints = <String>[];
     for (final course in localCourses) {
       final remoteCourseId = await _db.getRemoteCourseId(course.id);
-      if (remoteCourseId == null || remoteCourseId <= 0) {
-        return true;
+      var installedVersion = 0;
+      var localHash = '';
+      if (remoteCourseId != null && remoteCourseId > 0) {
+        installedVersion =
+            await _secureStorage.readInstalledCourseBundleVersion(
+                  remoteUserId: remoteUserId,
+                  remoteCourseId: remoteCourseId,
+                ) ??
+                0;
+        final hasArtifacts = _courseArtifactService != null &&
+            await _hasCachedCourseArtifacts(course.id);
+        final sourcePath = (course.sourcePath ?? '').trim();
+        final hasSourceFolder =
+            sourcePath.isNotEmpty && Directory(sourcePath).existsSync();
+        if (hasArtifacts || hasSourceFolder) {
+          final syncState = await _secureStorage.readSyncItemState(
+            remoteUserId: remoteUserId,
+            domain: _syncDomainTeacherCourseUpload,
+            scopeKey: _teacherCourseScopeKey(remoteCourseId),
+          );
+          localHash = (await _readTeacherCourseSyncHash(
+                teacher: currentUser,
+                remoteUserId: remoteUserId,
+                syncStateDomain: _syncDomainTeacherCourseUpload,
+                course: course,
+                remoteCourseId: remoteCourseId,
+                syncState: syncState,
+              ))
+                  ?.trim() ??
+              '';
+        }
       }
-      final installedVersion = await _secureStorage.readInstalledCourseBundleVersion(
-        remoteUserId: remoteUserId,
-        remoteCourseId: remoteCourseId,
+      fingerprints.add(
+        _buildTeacherCourseItemFingerprint(
+          courseSubject: course.subject,
+          bundleVersionId: installedVersion,
+          bundleHash: localHash,
+        ),
       );
-      final syncState = await _secureStorage.readSyncItemState(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainTeacherCourseUpload,
-        scopeKey: _teacherCourseScopeKey(remoteCourseId),
-      );
-      if (installedVersion == null || syncState == null) {
-        return true;
-      }
-      final hasArtifacts = _courseArtifactService != null &&
-          await _hasCachedCourseArtifacts(course.id);
-      final sourcePath = (course.sourcePath ?? '').trim();
-      final hasSourceFolder =
-          sourcePath.isNotEmpty && Directory(sourcePath).existsSync();
-      if (!hasArtifacts && !hasSourceFolder) {
-        return true;
-      }
-      final localHash = await _readTeacherCourseSyncHash(
-        remoteUserId: remoteUserId,
-        syncStateDomain: _syncDomainTeacherCourseUpload,
-        teacher: currentUser,
-        course: course,
-        syncState: syncState,
-        remoteCourseId: remoteCourseId,
-      );
-      if (_hasUnsyncedLocalCourseChanges(
-        syncState: syncState,
-        localHash: localHash ?? '',
-      )) {
-        return true;
-      }
     }
-    return false;
+    return _buildState2FromFingerprints(fingerprints);
   }
 
-  Future<MarketplaceListResult<T>> _loadMarketplaceList<T>({
-    required int remoteUserId,
-    required String domain,
-    required String scopeKey,
-    required bool preferDelta,
-    required Future<MarketplaceListResult<T>> Function({
-      required String? ifNoneMatch,
-    }) loadDelta,
-  }) async {
-    final ifNoneMatch = preferDelta
-        ? await _secureStorage.readSyncListEtag(
-            remoteUserId: remoteUserId,
-            domain: domain,
-            scopeKey: scopeKey,
-          )
-        : null;
-    final result = await loadDelta(ifNoneMatch: ifNoneMatch);
-    await _writeSyncListEtag(
-      remoteUserId: remoteUserId,
-      domain: domain,
-      scopeKey: scopeKey,
-      etag: result.etag,
-    );
-    return result;
+  String _buildStudentEnrollmentItemFingerprint({
+    required int remoteCourseId,
+    required int teacherRemoteUserId,
+    required String teacherName,
+    required String courseSubject,
+    required int bundleVersionId,
+    required String bundleHash,
+  }) {
+    return [
+      'student_course',
+      '$remoteCourseId',
+      '$teacherRemoteUserId',
+      teacherName.trim(),
+      courseSubject.trim(),
+      '$bundleVersionId',
+      bundleHash.trim(),
+    ].join('|');
+  }
+
+  String _buildTeacherCourseItemFingerprint({
+    required String courseSubject,
+    required int bundleVersionId,
+    required String bundleHash,
+  }) {
+    return [
+      'teacher_course',
+      _normalizeCourseName(courseSubject),
+      courseSubject.trim(),
+      '$bundleVersionId',
+      bundleHash.trim(),
+    ].join('|');
+  }
+
+  String _buildState2FromFingerprints(List<String> fingerprints) {
+    final canonical = List<String>.from(fingerprints)..sort();
+    return sha256Hex(canonical.join('\n'));
   }
 
   Future<void> _reconcileTeacherCourseMetadata({
@@ -2805,24 +2816,6 @@ class EnrollmentSyncService {
 
   String _teacherCourseScopeKey(int remoteCourseId) {
     return 'course:$remoteCourseId';
-  }
-
-  Future<void> _writeSyncListEtag({
-    required int remoteUserId,
-    required String domain,
-    required String scopeKey,
-    required String? etag,
-  }) async {
-    final normalized = (etag ?? '').trim();
-    if (normalized.isEmpty) {
-      return;
-    }
-    await _secureStorage.writeSyncListEtag(
-      remoteUserId: remoteUserId,
-      domain: domain,
-      scopeKey: scopeKey,
-      etag: normalized,
-    );
   }
 
   CourseVersion? _findLocalCourseCandidate({

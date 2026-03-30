@@ -923,6 +923,14 @@ class MarketplaceApiService {
     return result.items;
   }
 
+  Future<String> getEnrollmentsSyncState2() async {
+    final response = await _get('/api/enrollments/sync-state2');
+    if (response is! Map<String, dynamic>) {
+      throw MarketplaceApiException('Unexpected response format.');
+    }
+    return (response['state2'] as String?)?.trim() ?? '';
+  }
+
   Future<MarketplaceListResult<EnrollmentSummary>> listEnrollmentsDelta({
     String? ifNoneMatch,
   }) async {
@@ -1032,6 +1040,14 @@ class MarketplaceApiService {
   Future<List<TeacherCourseSummary>> listTeacherCourses() async {
     final result = await listTeacherCoursesDelta();
     return result.items;
+  }
+
+  Future<String> getTeacherCoursesSyncState2() async {
+    final response = await _get('/api/teacher/courses/sync-state2');
+    if (response is! Map<String, dynamic>) {
+      throw MarketplaceApiException('Unexpected response format.');
+    }
+    return (response['state2'] as String?)?.trim() ?? '';
   }
 
   Future<MarketplaceListResult<TeacherCourseSummary>> listTeacherCoursesDelta({

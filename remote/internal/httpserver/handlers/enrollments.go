@@ -27,6 +27,18 @@ type quitRequestPayload struct {
 	Reason string `json:"reason"`
 }
 
+type enrollmentSummary struct {
+	EnrollmentID          int64  `json:"enrollment_id"`
+	CourseID              int64  `json:"course_id"`
+	TeacherID             int64  `json:"teacher_id"`
+	Status                string `json:"status"`
+	AssignedAt            string `json:"assigned_at"`
+	CourseName            string `json:"course_subject"`
+	TeacherName           string `json:"teacher_name"`
+	LatestBundleVersionID int64  `json:"latest_bundle_version_id"`
+	LatestBundleHash      string `json:"latest_bundle_hash"`
+}
+
 func (h *EnrollmentHandler) CreateRequest(c *fiber.Ctx) error {
 	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
 	if err != nil {
@@ -338,6 +350,32 @@ func (h *EnrollmentHandler) ListEnrollments(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
+	results, err := h.listEnrollmentSummaries(userID)
+	if err != nil {
+		return err
+	}
+	return respondJSONWithETag(c, results)
+}
+
+func (h *EnrollmentHandler) GetEnrollmentsSyncState2(c *fiber.Ctx) error {
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	}
+	results, err := h.listEnrollmentSummaries(userID)
+	if err != nil {
+		return err
+	}
+	fingerprints := make([]string, 0, len(results))
+	for _, item := range results {
+		fingerprints = append(fingerprints, buildStudentEnrollmentStateFingerprint(item))
+	}
+	return c.JSON(fiber.Map{
+		"state2": buildState2(fingerprints),
+	})
+}
+
+func (h *EnrollmentHandler) listEnrollmentSummaries(userID int64) ([]enrollmentSummary, error) {
 	rows, err := h.cfg.Store.DB.Query(
 		`SELECT e.id, e.course_id, t.user_id, e.status, e.assigned_at,
 		        c.subject, t.display_name,
@@ -370,21 +408,9 @@ func (h *EnrollmentHandler) ListEnrollments(c *fiber.Ctx) error {
 		userID,
 	)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "enrollment list failed")
+		return nil, fiber.NewError(fiber.StatusInternalServerError, "enrollment list failed")
 	}
 	defer rows.Close()
-
-	type enrollmentSummary struct {
-		EnrollmentID          int64  `json:"enrollment_id"`
-		CourseID              int64  `json:"course_id"`
-		TeacherID             int64  `json:"teacher_id"`
-		Status                string `json:"status"`
-		AssignedAt            string `json:"assigned_at"`
-		CourseName            string `json:"course_subject"`
-		TeacherName           string `json:"teacher_name"`
-		LatestBundleVersionID int64  `json:"latest_bundle_version_id"`
-		LatestBundleHash      string `json:"latest_bundle_hash"`
-	}
 
 	results := []enrollmentSummary{}
 	for rows.Next() {
@@ -412,7 +438,7 @@ func (h *EnrollmentHandler) ListEnrollments(c *fiber.Ctx) error {
 			&latestHash,
 			&latestRel,
 		); err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "enrollment list failed")
+			return nil, fiber.NewError(fiber.StatusInternalServerError, "enrollment list failed")
 		}
 		resolvedHash, _, _, hashErr := ensureStoredBundleHash(
 			h.cfg.Store.DB,
@@ -422,7 +448,7 @@ func (h *EnrollmentHandler) ListEnrollments(c *fiber.Ctx) error {
 			latestRel.String,
 		)
 		if hashErr != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "enrollment list failed")
+			return nil, fiber.NewError(fiber.StatusInternalServerError, "enrollment list failed")
 		}
 		results = append(results, enrollmentSummary{
 			EnrollmentID:          id,
@@ -437,9 +463,9 @@ func (h *EnrollmentHandler) ListEnrollments(c *fiber.Ctx) error {
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "enrollment list failed")
+		return nil, fiber.NewError(fiber.StatusInternalServerError, "enrollment list failed")
 	}
-	return respondJSONWithETag(c, results)
+	return results, nil
 }
 
 func (h *EnrollmentHandler) ListTeacherRequests(c *fiber.Ctx) error {

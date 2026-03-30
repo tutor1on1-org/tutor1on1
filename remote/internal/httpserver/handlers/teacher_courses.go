@@ -54,7 +54,39 @@ func (h *TeacherCoursesHandler) ListCourses(c *fiber.Ctx) error {
 		}
 		return fiber.NewError(fiber.StatusInternalServerError, "teacher lookup failed")
 	}
+	results, err := h.listCourseSummaries(teacherID)
+	if err != nil {
+		return err
+	}
+	return respondJSONWithETag(c, results)
+}
 
+func (h *TeacherCoursesHandler) GetCoursesSyncState2(c *fiber.Ctx) error {
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	}
+	teacherID, err := getTeacherAccountID(h.cfg.Store.DB, userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return fiber.NewError(fiber.StatusForbidden, "teacher account required")
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, "teacher lookup failed")
+	}
+	results, err := h.listCourseSummaries(teacherID)
+	if err != nil {
+		return err
+	}
+	fingerprints := make([]string, 0, len(results))
+	for _, item := range results {
+		fingerprints = append(fingerprints, buildTeacherCourseStateFingerprint(item))
+	}
+	return c.JSON(fiber.Map{
+		"state2": buildState2(fingerprints),
+	})
+}
+
+func (h *TeacherCoursesHandler) listCourseSummaries(teacherID int64) ([]teacherCourseSummary, error) {
 	rows, err := h.cfg.Store.DB.Query(
 		`SELECT c.id, c.subject, c.grade, c.description,
 		        ce.visibility, ce.approval_status, ce.published_at,
@@ -93,7 +125,7 @@ func (h *TeacherCoursesHandler) ListCourses(c *fiber.Ctx) error {
 		teacherID,
 	)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "course list failed")
+		return nil, fiber.NewError(fiber.StatusInternalServerError, "course list failed")
 	}
 	defer rows.Close()
 
@@ -123,7 +155,7 @@ func (h *TeacherCoursesHandler) ListCourses(c *fiber.Ctx) error {
 			&latestHash,
 			&latestRelPath,
 		); err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "course list failed")
+			return nil, fiber.NewError(fiber.StatusInternalServerError, "course list failed")
 		}
 		resolvedHash, _, _, hashErr := ensureStoredBundleHash(
 			h.cfg.Store.DB,
@@ -133,7 +165,7 @@ func (h *TeacherCoursesHandler) ListCourses(c *fiber.Ctx) error {
 			latestRelPath.String,
 		)
 		if hashErr != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "course list failed")
+			return nil, fiber.NewError(fiber.StatusInternalServerError, "course list failed")
 		}
 		publishedAt := ""
 		if published.Valid {
@@ -153,16 +185,16 @@ func (h *TeacherCoursesHandler) ListCourses(c *fiber.Ctx) error {
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "course list failed")
+		return nil, fiber.NewError(fiber.StatusInternalServerError, "course list failed")
 	}
 	for index := range results {
 		labels, err := listCourseSubjectLabels(h.cfg.Store.DB, results[index].CourseID)
 		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "course labels failed")
+			return nil, fiber.NewError(fiber.StatusInternalServerError, "course labels failed")
 		}
 		results[index].SubjectLabels = labels
 	}
-	return respondJSONWithETag(c, results)
+	return results, nil
 }
 
 func (h *TeacherCoursesHandler) CreateCourse(c *fiber.Ctx) error {

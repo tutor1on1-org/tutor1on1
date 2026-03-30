@@ -13,6 +13,7 @@ import 'package:path_provider_platform_interface/path_provider_platform_interfac
 
 import 'package:tutor1on1/db/app_database.dart';
 import 'package:tutor1on1/llm/prompt_repository.dart';
+import 'package:tutor1on1/security/hash_utils.dart';
 import 'package:tutor1on1/services/course_artifact_service.dart';
 import 'package:tutor1on1/services/course_bundle_service.dart';
 import 'package:tutor1on1/services/course_service.dart';
@@ -146,9 +147,9 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
     List<EnrollmentDeletionEvent> Function(int? sinceId)?
         deletionEventsProvider,
     this.enrollmentsNotModified = false,
-    this.teacherCoursesNotModified = false,
     this.enrollmentsEtag = 'enrollment-etag',
-    this.teacherCoursesEtag = 'teacher-courses-etag',
+    this.enrollmentsState2,
+    this.teacherCoursesState2,
   })  : _enrollments = enrollments ?? const <EnrollmentSummary>[],
         _deletionEvents = deletionEvents ?? const <EnrollmentDeletionEvent>[],
         _teacherCourses = teacherCourses ?? const <TeacherCourseSummary>[],
@@ -177,9 +178,9 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   final List<EnrollmentDeletionEvent> Function(int? sinceId)?
       _deletionEventsProvider;
   final bool enrollmentsNotModified;
-  final bool teacherCoursesNotModified;
   final String? enrollmentsEtag;
-  final String? teacherCoursesEtag;
+  final String? enrollmentsState2;
+  final String? teacherCoursesState2;
   final List<_UploadedBundleRecord> uploadedBundles = <_UploadedBundleRecord>[];
   int downloadBundleCalls = 0;
   int? lastDeletionSinceId;
@@ -187,9 +188,11 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   String? lastTeacherCoursesIfNoneMatch;
   int listEnrollmentsCalls = 0;
   int listEnrollmentsDeltaCalls = 0;
+  int getEnrollmentsState2Calls = 0;
   int listDeletionEventsCalls = 0;
   int listTeacherCoursesDeltaCalls = 0;
   int listTeacherCoursesCalls = 0;
+  int getTeacherCoursesState2Calls = 0;
   int listTeacherBundleVersionsCalls = 0;
   int latestCourseBundleInfoCalls = 0;
 
@@ -197,6 +200,12 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   Future<List<EnrollmentSummary>> listEnrollments() async {
     listEnrollmentsCalls++;
     return _enrollments;
+  }
+
+  @override
+  Future<String> getEnrollmentsSyncState2() async {
+    getEnrollmentsState2Calls++;
+    return enrollmentsState2 ?? _buildStudentRemoteState2(_enrollments);
   }
 
   @override
@@ -234,18 +243,21 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   }
 
   @override
+  Future<String> getTeacherCoursesSyncState2() async {
+    getTeacherCoursesState2Calls++;
+    return teacherCoursesState2 ?? _buildTeacherRemoteState2(_teacherCourses);
+  }
+
+  @override
   Future<MarketplaceListResult<TeacherCourseSummary>> listTeacherCoursesDelta({
     String? ifNoneMatch,
   }) async {
     listTeacherCoursesDeltaCalls++;
     lastTeacherCoursesIfNoneMatch = ifNoneMatch;
-    final notModified = teacherCoursesNotModified &&
-        (ifNoneMatch ?? '').trim().isNotEmpty &&
-        (ifNoneMatch ?? '').trim() == (teacherCoursesEtag ?? '').trim();
     return MarketplaceListResult<TeacherCourseSummary>(
-      items: notModified ? const <TeacherCourseSummary>[] : _teacherCourses,
-      etag: teacherCoursesEtag,
-      notModified: notModified,
+      items: _teacherCourses,
+      etag: 'teacher-courses-etag',
+      notModified: false,
     );
   }
 
@@ -335,6 +347,40 @@ class _UploadedBundleRecord {
   final int bundleId;
   final String courseName;
   final File bundleFile;
+}
+
+String _buildStudentRemoteState2(List<EnrollmentSummary> enrollments) {
+  final fingerprints = enrollments
+      .map(
+        (item) => [
+          'student_course',
+          '${item.courseId}',
+          '${item.teacherId}',
+          item.teacherName.trim(),
+          item.courseSubject.trim(),
+          '${item.latestBundleVersionId ?? 0}',
+          item.latestBundleHash.trim(),
+        ].join('|'),
+      )
+      .toList()
+    ..sort();
+  return sha256Hex(fingerprints.join('\n'));
+}
+
+String _buildTeacherRemoteState2(List<TeacherCourseSummary> courses) {
+  final fingerprints = courses
+      .map(
+        (item) => [
+          'teacher_course',
+          item.subject.trim().toLowerCase(),
+          item.subject.trim(),
+          '${item.latestBundleVersionId ?? 0}',
+          item.latestBundleHash.trim(),
+        ].join('|'),
+      )
+      .toList()
+    ..sort();
+  return sha256Hex(fingerprints.join('\n'));
 }
 
 class _CountingCourseArtifactService extends CourseArtifactService {
@@ -1256,6 +1302,7 @@ void main() {
             status: 'active',
           ),
         ],
+        teacherCoursesState2: 'force-mismatch',
         latestCourseBundleInfoNotFound: true,
         bundleFilesByVersionId: <int, File>{32: remoteBundle},
       );
@@ -1518,8 +1565,8 @@ void main() {
 
       final stats = await service.syncIfReady(currentUser: teacher!);
 
-      expect(api.listTeacherCoursesDeltaCalls, equals(2));
-      expect(api.listTeacherCoursesCalls, equals(0));
+      expect(api.getTeacherCoursesState2Calls, equals(1));
+      expect(api.listTeacherCoursesCalls, equals(2));
       expect(api.uploadedBundles.length, equals(2));
 
       final uploadedCourseABundle = api.uploadedBundles.firstWhere(
@@ -1970,6 +2017,7 @@ void main() {
       final api = _TestMarketplaceApiService(
         secureStorage: secureStorage,
         latestCourseBundleInfoNotFound: true,
+        enrollmentsState2: 'force-mismatch',
         enrollments: <EnrollmentSummary>[
           EnrollmentSummary(
             enrollmentId: 16,
@@ -2455,7 +2503,8 @@ void main() {
     await service.syncIfReady(currentUser: student!);
     await service.syncIfReady(currentUser: student);
 
-    expect(api.listEnrollmentsDeltaCalls, equals(1));
+    expect(api.getEnrollmentsState2Calls, equals(1));
+    expect(api.listEnrollmentsCalls, equals(0));
   });
 
   test(
@@ -2499,12 +2548,13 @@ void main() {
 
       await service.syncIfReady(currentUser: student!);
 
-      expect(api.listEnrollmentsDeltaCalls, equals(0));
+      expect(api.getEnrollmentsState2Calls, equals(0));
       expect(api.listDeletionEventsCalls, equals(1));
     },
   );
 
-  test('student sync uses cached ETag without falling back to full list', () async {
+  test('student sync compares state2 and skips full list on no change',
+      () async {
     final teacherId = await db.createUser(
       username: 'teacher_h',
       pinHash: 'hash',
@@ -2522,16 +2572,9 @@ void main() {
     expect(student, isNotNull);
 
     final secureStorage = _TestSecureStorageService();
-    await secureStorage.writeSyncListEtag(
-      remoteUserId: 950,
-      domain: 'enrollment_sync_student',
-      scopeKey: 'enrollments',
-      etag: 'cached-student-etag',
-    );
     final api = _TestMarketplaceApiService(
       secureStorage: secureStorage,
-      enrollmentsNotModified: true,
-      enrollmentsEtag: 'cached-student-etag',
+      enrollments: const <EnrollmentSummary>[],
     );
     final service = EnrollmentSyncService(
       db: db,
@@ -2544,12 +2587,12 @@ void main() {
 
     await service.syncIfReady(currentUser: student!);
 
-    expect(api.listEnrollmentsDeltaCalls, equals(1));
-    expect(api.lastEnrollmentsIfNoneMatch, equals('cached-student-etag'));
+    expect(api.getEnrollmentsState2Calls, equals(1));
     expect(api.listEnrollmentsCalls, equals(0));
   });
 
-  test('teacher sync uses cached ETag for delta list calls', () async {
+  test('teacher sync compares state2 and skips full list on no change',
+      () async {
     final teacherId = await db.createUser(
       username: 'teacher_f',
       pinHash: 'hash',
@@ -2560,16 +2603,9 @@ void main() {
     expect(teacher, isNotNull);
 
     final secureStorage = _TestSecureStorageService();
-    await secureStorage.writeSyncListEtag(
-      remoteUserId: 830,
-      domain: 'enrollment_sync_teacher',
-      scopeKey: 'teacher_courses',
-      etag: 'cached-teacher-etag',
-    );
     final api = _TestMarketplaceApiService(
       secureStorage: secureStorage,
-      teacherCoursesNotModified: true,
-      teacherCoursesEtag: 'cached-teacher-etag',
+      teacherCourses: const <TeacherCourseSummary>[],
     );
     final service = EnrollmentSyncService(
       db: db,
@@ -2582,8 +2618,7 @@ void main() {
 
     await service.syncIfReady(currentUser: teacher!);
 
-    expect(api.listTeacherCoursesDeltaCalls, equals(1));
-    expect(api.lastTeacherCoursesIfNoneMatch, equals('cached-teacher-etag'));
+    expect(api.getTeacherCoursesState2Calls, equals(1));
     expect(api.listTeacherCoursesCalls, equals(0));
     final runAt = await secureStorage.readSyncRunAt(
       remoteUserId: 830,

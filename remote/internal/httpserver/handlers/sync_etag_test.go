@@ -602,6 +602,70 @@ func TestEnrollmentListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 	assertSQLMockExpectations(t, mock)
 }
 
+func TestEnrollmentsSyncState2ReturnsCanonicalHash(t *testing.T) {
+	db, mock := newHandlerSQLMock(t)
+	defer db.Close()
+
+	userID := int64(3012)
+	assignedAt := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+	rows := sqlmock.NewRows([]string{
+		"id",
+		"course_id",
+		"teacher_id",
+		"status",
+		"assigned_at",
+		"subject",
+		"display_name",
+		"latest_bundle_version_id",
+		"latest_bundle_hash",
+		"latest_bundle_oss_path",
+	}).AddRow(
+		int64(1),
+		int64(66),
+		int64(77),
+		"active",
+		assignedAt,
+		"Physics",
+		"Teacher A",
+		int64(5),
+		"bundle-hash-5",
+		nil,
+	)
+	mock.ExpectQuery(`SELECT e.id, e.course_id, t.user_id, e.status, e.assigned_at`).
+		WithArgs(userID).
+		WillReturnRows(rows)
+
+	app := buildSyncETagTestApp(db, []string{"test-secret"})
+	token := signTestJWT(t, "test-secret", userID, true)
+
+	status, body, _ := callAPI(
+		t,
+		app,
+		http.MethodGet,
+		"/api/enrollments/sync-state2",
+		token,
+		"",
+	)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", status, http.StatusOK, body)
+	}
+	expected := buildState2([]string{
+		buildStudentEnrollmentStateFingerprint(enrollmentSummary{
+			CourseID:              66,
+			TeacherID:             77,
+			TeacherName:           "Teacher A",
+			CourseName:            "Physics",
+			LatestBundleVersionID: 5,
+			LatestBundleHash:      "bundle-hash-5",
+		}),
+	})
+	if !strings.Contains(body, `"`+"state2"+`":"`+expected+`"`) {
+		t.Fatalf("unexpected state2 response body: %s", body)
+	}
+
+	assertSQLMockExpectations(t, mock)
+}
+
 func TestTeacherCoursesListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 	db, mock := newHandlerSQLMock(t)
 	defer db.Close()
@@ -705,6 +769,74 @@ func TestTeacherCoursesListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 	)
 	if status != http.StatusNotModified {
 		t.Fatalf("status = %d, want %d", status, http.StatusNotModified)
+	}
+
+	assertSQLMockExpectations(t, mock)
+}
+
+func TestTeacherCoursesSyncState2ReturnsCanonicalHash(t *testing.T) {
+	db, mock := newHandlerSQLMock(t)
+	defer db.Close()
+
+	userID := int64(3013)
+	teacherID := int64(7013)
+	mock.ExpectQuery(`SELECT id FROM teacher_accounts WHERE user_id = \? AND status = 'active' LIMIT 1`).
+		WithArgs(userID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(teacherID))
+	rows := sqlmock.NewRows([]string{
+		"id",
+		"subject",
+		"grade",
+		"description",
+		"visibility",
+		"approval_status",
+		"published_at",
+		"latest_bundle_version_id",
+		"latest_bundle_hash",
+		"latest_bundle_oss_path",
+	}).AddRow(
+		int64(88),
+		"Chemistry",
+		"Grade 5",
+		"Desc",
+		"private",
+		"pending",
+		nil,
+		int64(2),
+		"bundle-hash-2",
+		nil,
+	)
+	mock.ExpectQuery(`SELECT c.id, c.subject, c.grade, c.description,\s*ce.visibility, ce.approval_status, ce.published_at`).
+		WithArgs(teacherID, teacherID).
+		WillReturnRows(rows)
+	mock.ExpectQuery(`SELECT sl.id, sl.slug, sl.name, sl.is_active\s+FROM course_subject_labels csl`).
+		WithArgs(int64(88)).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "slug", "name", "is_active"}))
+
+	app := buildSyncETagTestApp(db, []string{"test-secret"})
+	token := signTestJWT(t, "test-secret", userID, true)
+
+	status, body, _ := callAPI(
+		t,
+		app,
+		http.MethodGet,
+		"/api/teacher/courses/sync-state2",
+		token,
+		"",
+	)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", status, http.StatusOK, body)
+	}
+	expected := buildState2([]string{
+		buildTeacherCourseStateFingerprint(teacherCourseSummary{
+			CourseID:              88,
+			Subject:               "Chemistry",
+			LatestBundleVersionID: 2,
+			LatestBundleHash:      "bundle-hash-2",
+		}),
+	})
+	if !strings.Contains(body, `"`+"state2"+`":"`+expected+`"`) {
+		t.Fatalf("unexpected state2 response body: %s", body)
 	}
 
 	assertSQLMockExpectations(t, mock)
@@ -892,7 +1024,9 @@ func buildSyncETagTestApp(db *sql.DB, jwtSecrets []string) *fiber.App {
 
 	app := fiber.New()
 	app.Get("/api/enrollments", enrollments.ListEnrollments)
+	app.Get("/api/enrollments/sync-state2", enrollments.GetEnrollmentsSyncState2)
 	app.Get("/api/teacher/courses", teacherCourses.ListCourses)
+	app.Get("/api/teacher/courses/sync-state2", teacherCourses.GetCoursesSyncState2)
 	app.Get("/api/sessions/sync/list", sessionSync.List)
 	app.Get("/api/progress/sync/list", progressSync.List)
 	app.Get("/api/progress/sync/chunks/list", progressSync.ListChunks)
