@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 
 import '../constants.dart';
+import 'auth_token_refresh_coordinator.dart';
 import 'secure_storage_service.dart';
 
 class MarketplaceApiException implements Exception {
@@ -1677,45 +1678,18 @@ class MarketplaceApiService {
   }
 
   Future<bool> _refreshAccessToken() async {
-    final refreshToken = await _secureStorage.readAuthRefreshToken();
-    if (refreshToken == null || refreshToken.trim().isEmpty) {
-      return false;
-    }
-    http.Response response;
     try {
-      response = await _client.post(
-        Uri.parse('$_baseUrl/api/auth/refresh'),
-        headers: const {'Content-Type': 'application/json'},
-        body: jsonEncode({'refresh_token': refreshToken.trim()}),
+      return await AuthTokenRefreshCoordinator.refresh(
+        client: _client,
+        secureStorage: _secureStorage,
+        baseUrl: _baseUrl,
       );
-    } on Exception catch (error) {
-      throw MarketplaceApiException('Token refresh failed: $error');
-    }
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      if (response.statusCode == 400 || response.statusCode == 401) {
-        await _secureStorage.deleteAuthTokens();
-        return false;
-      }
+    } on AuthTokenRefreshException catch (error) {
       throw MarketplaceApiException(
-        _extractError(response.body) ?? 'Token refresh failed.',
-        statusCode: response.statusCode,
+        error.message,
+        statusCode: error.statusCode,
       );
     }
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map<String, dynamic>) {
-      throw MarketplaceApiException('Token refresh response invalid.');
-    }
-    final accessToken = (decoded['access_token'] as String?)?.trim() ?? '';
-    final nextRefreshToken =
-        (decoded['refresh_token'] as String?)?.trim() ?? '';
-    if (accessToken.isEmpty || nextRefreshToken.isEmpty) {
-      throw MarketplaceApiException('Token refresh response missing tokens.');
-    }
-    await _secureStorage.writeAuthTokens(
-      accessToken: accessToken,
-      refreshToken: nextRefreshToken,
-    );
-    return true;
   }
 
   dynamic _decodeResponse(http.Response response) {

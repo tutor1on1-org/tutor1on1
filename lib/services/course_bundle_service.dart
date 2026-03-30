@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 import 'dart:convert';
 
@@ -26,6 +27,7 @@ class CourseKpDiffSummary {
 
 class CourseBundleService {
   static const String promptMetadataEntryPath = kCurrentPromptMetadataEntryPath;
+  static const int _backgroundBundleThresholdBytes = 256 * 1024;
   static final RegExp _idPattern = RegExp(r'^(\d+(?:\.\d+)*)\s*(.+)$');
 
   Future<File> createBundleFromFolder(
@@ -115,28 +117,13 @@ class CourseBundleService {
     if (!bundleFile.existsSync()) {
       throw StateError('Bundle file not found: ${bundleFile.path}');
     }
-    final input = InputFileStream(bundleFile.path);
-    try {
-      final archive = ZipDecoder().decodeBuffer(input);
-      for (final file in archive) {
-        if (!file.isFile) {
-          continue;
-        }
-        final normalizedName = p.normalize(file.name).replaceAll('\\', '/');
-        if (!isSupportedPromptMetadataEntryPath(normalizedName)) {
-          continue;
-        }
-        final content = utf8.decode(file.content as List<int>);
-        final decoded = jsonDecode(content);
-        if (decoded is Map<String, dynamic>) {
-          return decoded;
-        }
-        throw StateError('Prompt metadata is invalid.');
-      }
-      return null;
-    } finally {
-      input.close();
+    final bundlePath = bundleFile.path;
+    if (bundleFile.lengthSync() < _backgroundBundleThresholdBytes) {
+      return _readPromptMetadataFromPath(bundlePath);
     }
+    return Isolate.run<Map<String, dynamic>?>(() {
+      return CourseBundleService()._readPromptMetadataFromPath(bundlePath);
+    });
   }
 
   Future<String> extractBundleFromBytes({
@@ -163,8 +150,72 @@ class CourseBundleService {
     if (!bundleFile.existsSync()) {
       throw StateError('Bundle file not found: ${bundleFile.path}');
     }
+    final bundlePath = bundleFile.path;
+    if (bundleFile.lengthSync() < _backgroundBundleThresholdBytes) {
+      _validateBundleForImportPath(bundlePath);
+      return;
+    }
+    await Isolate.run<void>(() {
+      CourseBundleService()._validateBundleForImportPath(bundlePath);
+    });
+  }
 
-    final input = InputFileStream(bundleFile.path);
+  Future<String> computeBundleSemanticHash(File bundleFile) async {
+    return computeBundleSemanticHashFromBundle(bundleFile);
+  }
+
+  Future<String> computeBundleSemanticHashFromBundle(
+    File bundleFile, {
+    Map<String, dynamic>? promptMetadataOverride,
+  }) async {
+    if (!bundleFile.existsSync()) {
+      throw StateError('Bundle file not found: ${bundleFile.path}');
+    }
+    final bundlePath = bundleFile.path;
+    final normalizedOverride = promptMetadataOverride == null
+        ? null
+        : Map<String, dynamic>.from(promptMetadataOverride);
+    if (bundleFile.lengthSync() < _backgroundBundleThresholdBytes) {
+      return _computeBundleSemanticHashFromPath(
+        bundlePath,
+        promptMetadataOverride: normalizedOverride,
+      );
+    }
+    return Isolate.run<String>(() {
+      return CourseBundleService()._computeBundleSemanticHashFromPath(
+        bundlePath,
+        promptMetadataOverride: normalizedOverride,
+      );
+    });
+  }
+
+  Map<String, dynamic>? _readPromptMetadataFromPath(String bundlePath) {
+    final input = InputFileStream(bundlePath);
+    try {
+      final archive = ZipDecoder().decodeBuffer(input);
+      for (final file in archive) {
+        if (!file.isFile) {
+          continue;
+        }
+        final normalizedName = p.normalize(file.name).replaceAll('\\', '/');
+        if (!isSupportedPromptMetadataEntryPath(normalizedName)) {
+          continue;
+        }
+        final content = utf8.decode(file.content as List<int>);
+        final decoded = jsonDecode(content);
+        if (decoded is Map<String, dynamic>) {
+          return decoded;
+        }
+        throw StateError('Prompt metadata is invalid.');
+      }
+      return null;
+    } finally {
+      input.close();
+    }
+  }
+
+  void _validateBundleForImportPath(String bundlePath) {
+    final input = InputFileStream(bundlePath);
     try {
       final archive = ZipDecoder().decodeBuffer(input);
       _validateArchivePaths(archive);
@@ -273,18 +324,11 @@ class CourseBundleService {
     }
   }
 
-  Future<String> computeBundleSemanticHash(File bundleFile) async {
-    return computeBundleSemanticHashFromBundle(bundleFile);
-  }
-
-  Future<String> computeBundleSemanticHashFromBundle(
-    File bundleFile, {
+  String _computeBundleSemanticHashFromPath(
+    String bundlePath, {
     Map<String, dynamic>? promptMetadataOverride,
-  }) async {
-    if (!bundleFile.existsSync()) {
-      throw StateError('Bundle file not found: ${bundleFile.path}');
-    }
-    final input = InputFileStream(bundleFile.path);
+  }) {
+    final input = InputFileStream(bundlePath);
     try {
       final archive = ZipDecoder().decodeBuffer(input);
       final files = <_BundleSemanticFile>[];
@@ -342,17 +386,12 @@ class CourseBundleService {
     }
   }
 
-  Future<File> cloneBundleWithPromptMetadata({
-    required File sourceBundle,
+  void _cloneBundleWithPromptMetadataToPath({
+    required String sourcePath,
+    required String targetPath,
     Map<String, dynamic>? promptMetadata,
-    String? label,
-  }) async {
-    if (!sourceBundle.existsSync()) {
-      throw StateError('Bundle file not found: ${sourceBundle.path}');
-    }
-    final targetPath = await createTempBundlePath(label: label);
-    final targetFile = File(targetPath);
-    final input = InputFileStream(sourceBundle.path);
+  }) {
+    final input = InputFileStream(sourcePath);
     try {
       final sourceArchive = ZipDecoder().decodeBuffer(input);
       final archive = Archive();
@@ -398,12 +437,44 @@ class CourseBundleService {
       if (bytes == null) {
         throw StateError('Failed to encode cached course bundle.');
       }
-      await targetFile.writeAsBytes(bytes, flush: true);
-      await validateBundleForImport(targetFile);
-      return targetFile;
+      File(targetPath).writeAsBytesSync(bytes, flush: true);
     } finally {
       input.close();
     }
+  }
+
+  Future<File> cloneBundleWithPromptMetadata({
+    required File sourceBundle,
+    Map<String, dynamic>? promptMetadata,
+    String? label,
+  }) async {
+    if (!sourceBundle.existsSync()) {
+      throw StateError('Bundle file not found: ${sourceBundle.path}');
+    }
+    final targetPath = await createTempBundlePath(label: label);
+    final targetFile = File(targetPath);
+    final sourcePath = sourceBundle.path;
+    final normalizedPromptMetadata = promptMetadata == null
+        ? null
+        : Map<String, dynamic>.from(promptMetadata);
+    if (sourceBundle.lengthSync() < _backgroundBundleThresholdBytes) {
+      _cloneBundleWithPromptMetadataToPath(
+        sourcePath: sourcePath,
+        targetPath: targetPath,
+        promptMetadata: normalizedPromptMetadata,
+      );
+      await validateBundleForImport(targetFile);
+      return targetFile;
+    }
+    await Isolate.run<void>(() {
+      CourseBundleService()._cloneBundleWithPromptMetadataToPath(
+        sourcePath: sourcePath,
+        targetPath: targetPath,
+        promptMetadata: normalizedPromptMetadata,
+      );
+    });
+    await validateBundleForImport(targetFile);
+    return targetFile;
   }
 
   Future<CourseKpDiffSummary> compareCourseFolderWithBundle({
@@ -629,13 +700,15 @@ class CourseBundleService {
 
   List<int> _normalizePromptMetadataBytes(List<int> rawData) {
     final decoded = jsonDecode(utf8.decode(rawData));
-    final cleaned = _normalizePromptMetadataValue(_removeGeneratedFields(decoded));
+    final cleaned =
+        _normalizePromptMetadataValue(_removeGeneratedFields(decoded));
     final canonical = _canonicalJsonEncode(cleaned);
     return utf8.encode(canonical);
   }
 
   List<int> normalizePromptMetadataJson(Map<String, dynamic> value) {
-    final cleaned = _normalizePromptMetadataValue(_removeGeneratedFields(value));
+    final cleaned =
+        _normalizePromptMetadataValue(_removeGeneratedFields(value));
     final canonical = _canonicalJsonEncode(cleaned);
     return utf8.encode(canonical);
   }

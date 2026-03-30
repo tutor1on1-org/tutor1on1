@@ -7,6 +7,7 @@ import '../../services/app_services.dart';
 import '../../services/prompt_template_validator.dart';
 import 'package:tutor1on1/l10n/app_localizations.dart';
 import '../app_close_button.dart';
+import '../widgets/prompt_editor_dialog.dart';
 
 class PromptSettingsPage extends StatefulWidget {
   const PromptSettingsPage({super.key, required this.teacherId});
@@ -344,70 +345,15 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
 
     final result = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(l10n.promptEditTitle(item.title)),
-        content: SizedBox(
-          width: 640,
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(
-                  controller: controller,
-                  maxLines: 18,
-                  minLines: 8,
-                  decoration: InputDecoration(
-                    labelText: l10n.promptTemplateLabel,
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  l10n.promptRequiredVars(
-                    _validator.requiredVariables(item.name).join(', '),
-                  ),
-                ),
-                Text(
-                  l10n.promptAllowedVars(
-                    _validator.allowedVariables(item.name).join(', '),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Prompt variables',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                ..._buildVariableRows(item.name),
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'All supported variables',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                ..._buildVariableRowsForVariables(
-                  _validator.allSupportedVariables().toList()..sort(),
-                ),
-              ],
-            ),
-          ),
+      builder: (context) => PromptEditorDialog(
+        title: l10n.promptEditTitle(item.title),
+        promptName: item.name,
+        initialContent: controller.text,
+        validator: _validator,
+        variableRows: _buildVariableRows(item.name),
+        allVariableRows: _buildVariableRowsForVariables(
+          _validator.allSupportedVariables().toList()..sort(),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text(l10n.cancelButton),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(controller.text),
-            child: Text(l10n.saveButton),
-          ),
-        ],
       ),
     );
 
@@ -421,7 +367,6 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
       allowMissingRequired: false,
     );
     if (!validation.isValid) {
-      await _showValidationErrors(context, validation);
       return;
     }
 
@@ -593,41 +538,6 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
       }
     }
     return result.reversed.toList();
-  }
-
-  Future<void> _showValidationErrors(
-    BuildContext context,
-    PromptValidationResult validation,
-  ) async {
-    final l10n = AppLocalizations.of(context)!;
-    final missing = validation.missingVariables.join(', ');
-    final unknown = validation.unknownVariables.join(', ');
-    final invalid = validation.invalidVariables.join(', ');
-    final messages = <String>[];
-    if (validation.missingVariables.isNotEmpty) {
-      messages.add(l10n.promptMissingVars(missing));
-    }
-    if (validation.unknownVariables.isNotEmpty) {
-      messages.add(l10n.promptUnknownVars(unknown));
-    }
-    if (validation.invalidVariables.isNotEmpty) {
-      messages.add(
-        'Invalid variables: $invalid. Prompt variables must stay English-only, for example {{student_input}}.',
-      );
-    }
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(l10n.promptValidationFailedTitle),
-        content: SelectableText(messages.join('\n')),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text(l10n.closeButton),
-          ),
-        ],
-      ),
-    );
   }
 
   void _showMessage(BuildContext context, String message) {

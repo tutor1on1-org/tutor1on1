@@ -72,7 +72,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       syncLogRepository: services.syncLogRepository,
     );
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await _refreshMarketplaceState();
+      await _refreshMarketplaceState(surfaceAuthErrors: true);
       await _startSync();
       _startAutoSync();
     });
@@ -155,7 +155,9 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     }
   }
 
-  Future<void> _refreshMarketplaceState() async {
+  Future<void> _refreshMarketplaceState({
+    bool surfaceAuthErrors = true,
+  }) async {
     try {
       final teacherCourses = await _marketplaceApi.listTeacherCourses();
       final subjectLabels = await _marketplaceApi.listSubjectLabels();
@@ -166,9 +168,25 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         _remoteTeacherCourses = teacherCourses;
         _subjectLabels = subjectLabels;
       });
+    } on MarketplaceApiException catch (error) {
+      if (surfaceAuthErrors && _isAuthFailure(error)) {
+        _setPersistentMessage(
+          'Server login expired. Log out and sign in again to resume sync.',
+          isError: true,
+        );
+      }
     } catch (_) {
       // Keep the teacher home usable even if marketplace metadata refresh fails.
     }
+  }
+
+  bool _isAuthFailure(MarketplaceApiException error) {
+    if (error.statusCode == 401 || error.statusCode == 403) {
+      return true;
+    }
+    final message = error.message.toLowerCase();
+    return message.contains('missing auth token') ||
+        message.contains('unauthorized');
   }
 
   @override
