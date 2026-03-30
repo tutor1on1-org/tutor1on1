@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../db/app_database.dart';
+import 'background_json_service.dart';
 
 class SessionUploadCacheMessage {
   SessionUploadCacheMessage({
@@ -223,11 +224,15 @@ class SessionUploadCacheService {
   SessionUploadCacheService({
     required AppDatabase db,
     Future<Directory> Function()? cacheRootProvider,
+    BackgroundJsonService? backgroundJsonService,
   })  : _db = db,
-        _cacheRootProvider = cacheRootProvider;
+        _cacheRootProvider = cacheRootProvider,
+        _backgroundJsonService =
+            backgroundJsonService ?? const BackgroundJsonService();
 
   final AppDatabase _db;
   final Future<Directory> Function()? _cacheRootProvider;
+  final BackgroundJsonService _backgroundJsonService;
   static final RegExp _secondLevelChapterPattern = RegExp(r'^(\d+\.\d+)');
 
   Future<void> captureSession(int sessionId) async {
@@ -303,7 +308,9 @@ class SessionUploadCacheService {
     if (!file.existsSync()) {
       return null;
     }
-    final decoded = jsonDecode(await file.readAsString(encoding: utf8));
+    final decoded = await _backgroundJsonService.decode(
+      await file.readAsString(encoding: utf8),
+    );
     if (decoded is! Map<String, dynamic>) {
       throw StateError(
           'Session upload cache is invalid for session $sessionId.');
@@ -319,7 +326,9 @@ class SessionUploadCacheService {
     final file = await _resolveSessionFile(sessionId);
     SessionUploadCacheSnapshot? existingSnapshot;
     if (file.existsSync()) {
-      final decoded = jsonDecode(await file.readAsString(encoding: utf8));
+      final decoded = await _backgroundJsonService.decode(
+        await file.readAsString(encoding: utf8),
+      );
       if (decoded is! Map<String, dynamic>) {
         throw StateError(
           'Session upload cache is invalid for session $sessionId.',
@@ -343,7 +352,9 @@ class SessionUploadCacheService {
     if (!file.existsSync()) {
       return null;
     }
-    final decoded = jsonDecode(await file.readAsString(encoding: utf8));
+    final decoded = await _backgroundJsonService.decode(
+      await file.readAsString(encoding: utf8),
+    );
     if (decoded is! Map<String, dynamic>) {
       throw StateError(
         'Session upload chapter cache is invalid for courseVersionId='
@@ -364,7 +375,9 @@ class SessionUploadCacheService {
       if (entity is! File || !entity.path.endsWith('.json')) {
         continue;
       }
-      final decoded = jsonDecode(await entity.readAsString(encoding: utf8));
+      final decoded = await _backgroundJsonService.decode(
+        await entity.readAsString(encoding: utf8),
+      );
       if (decoded is! Map<String, dynamic>) {
         throw StateError(
           'Session upload chapter cache file is invalid: ${entity.path}',
@@ -374,6 +387,43 @@ class SessionUploadCacheService {
       final normalized = await _normalizeChapterSnapshot(snapshot);
       if (normalized != null) {
         chapters.add(normalized);
+      }
+    }
+    chapters.sort((left, right) {
+      final courseCompare =
+          left.courseVersionId.compareTo(right.courseVersionId);
+      if (courseCompare != 0) {
+        return courseCompare;
+      }
+      return left.chapterKey.compareTo(right.chapterKey);
+    });
+    return chapters;
+  }
+
+  Future<List<SessionUploadChapterSnapshot>> listChaptersForKeys(
+    Iterable<String> courseChapterKeys,
+  ) async {
+    final chapters = <SessionUploadChapterSnapshot>[];
+    final requested = courseChapterKeys.toSet();
+    for (final rawKey in requested) {
+      final separatorIndex = rawKey.indexOf(':');
+      if (separatorIndex <= 0 || separatorIndex >= rawKey.length - 1) {
+        continue;
+      }
+      final courseVersionId = int.tryParse(rawKey.substring(0, separatorIndex));
+      if (courseVersionId == null || courseVersionId <= 0) {
+        continue;
+      }
+      final chapterKey = rawKey.substring(separatorIndex + 1).trim();
+      if (chapterKey.isEmpty) {
+        continue;
+      }
+      final snapshot = await readChapter(
+        courseVersionId: courseVersionId,
+        chapterKey: chapterKey,
+      );
+      if (snapshot != null) {
+        chapters.add(snapshot);
       }
     }
     chapters.sort((left, right) {

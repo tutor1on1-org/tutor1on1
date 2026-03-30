@@ -1,5 +1,7 @@
 # DONES
-Last updated: 2026-03-29
+Last updated: 2026-03-30
+
+- Fixed login-time sync responsiveness end to end: teacher/student home pages now share one core auth-sync coordinator, the blocking server-sync overlay can show staged/determinate progress, session/progress sync yields between heavy batches instead of monopolizing the UI isolate, large cache/envelope JSON decodes offload to a background isolate, chapter-cache upload walks only the pending chapter keys instead of scanning the whole cache directory, and session import now batch-inserts messages. Added `test/session_upload_cache_service_test.dart` coverage for targeted chapter reads and revalidated with `flutter analyze`, `flutter test test/session_upload_cache_service_test.dart test/session_sync_service_test.dart test/enrollment_sync_service_test.dart`, and `flutter test test/widget_test.dart`.
 
 - Reworked teacher-configurable tutor prompts end to end: `learn` / `review` now resolve through teacher default, course, student-global, and student-course scopes with bundled assets only as fallback; Prompt Settings gained student-global scope plus full resolved preview/diff; teacher save and sync-import now block malformed, unknown, missing, or non-English placeholder variables; prompt metadata sync now carries teacher-global and student-global data through bundle metadata for no-rebuild updates; backend prompt-metadata path compatibility now covers both `_family_teacher` and `_tutor1on1` bundle entries; teacher course rows now expose an explicit `Pull Latest Server` action, and bundle-conflict wording now correctly explains that newer server bundles may come from prompt/profile changes too.
 

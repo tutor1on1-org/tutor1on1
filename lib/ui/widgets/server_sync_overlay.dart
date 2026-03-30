@@ -4,9 +4,13 @@ class ServerSyncOverlay extends StatelessWidget {
   const ServerSyncOverlay({
     super.key,
     required this.message,
+    this.progressValue,
+    this.progressDetail,
   });
 
   final String message;
+  final double? progressValue;
+  final String? progressDetail;
 
   @override
   Widget build(BuildContext context) {
@@ -37,8 +41,15 @@ class ServerSyncOverlay extends StatelessWidget {
                           resolvedMessage,
                           key: const Key('server_sync_message'),
                         ),
+                        if ((progressDetail ?? '').trim().isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            progressDetail!.trim(),
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
                         const SizedBox(height: 8),
-                        const LinearProgressIndicator(),
+                        LinearProgressIndicator(value: progressValue),
                       ],
                     ),
                   ),

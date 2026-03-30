@@ -10,10 +10,11 @@ import 'package:tutor1on1/l10n/app_localizations.dart';
 import '../../db/app_database.dart';
 import '../../services/app_services.dart';
 import '../../services/course_bundle_service.dart';
+import '../../services/home_sync_coordinator.dart';
 import '../../services/marketplace_api_service.dart';
 import '../../services/prompt_bundle_compat.dart';
-import '../../services/sync_log_repository.dart';
 import '../../services/teacher_marketplace_upload_service.dart';
+import '../../services/sync_progress.dart';
 import '../../state/auth_controller.dart';
 import '../app_close_button.dart';
 import '../app_settings_page.dart';
@@ -41,6 +42,8 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
   bool _syncInProgress = false;
   bool _syncingFromServer = false;
   String _syncProgressMessage = '';
+  double? _syncProgressValue;
+  String? _syncProgressDetail;
   Timer? _autoSyncTimer;
   final Set<int> _uploadingCourseIds = {};
   final Set<int> _pullingCourseIds = {};
@@ -48,6 +51,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
   bool _persistentMessageIsError = false;
   late MarketplaceApiService _marketplaceApi;
   late TeacherMarketplaceUploadService _uploadService;
+  late HomeSyncCoordinator _syncCoordinator;
   List<TeacherCourseSummary> _remoteTeacherCourses = [];
   List<SubjectLabelSummary> _subjectLabels = [];
 
@@ -60,6 +64,11 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     _uploadService = TeacherMarketplaceUploadService(
       db: services.db,
       marketplaceApi: _marketplaceApi,
+      syncLogRepository: services.syncLogRepository,
+    );
+    _syncCoordinator = HomeSyncCoordinator(
+      enrollmentSyncService: services.enrollmentSyncService,
+      sessionSyncService: services.sessionSyncService,
       syncLogRepository: services.syncLogRepository,
     );
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -99,6 +108,9 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       syncing: showOverlay,
       message: showOverlay ? 'Syncing enrollments from server...' : '',
     );
+    if (showOverlay) {
+      await Future<void>.delayed(Duration.zero);
+    }
     final l10n = AppLocalizations.of(context)!;
     final auth = context.read<AuthController>();
     final user = auth.currentUser;
@@ -107,65 +119,37 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       _syncInProgress = false;
       return;
     }
-    final services = context.read<AppServices>();
-    final stats = SyncRunStats();
     final trigger = showOverlay ? 'login' : 'timer';
-    Object? syncError;
+    String? syncError;
     try {
-      stats.absorb(
-        await services.enrollmentSyncService.syncIfReady(currentUser: user),
+      await _syncCoordinator.runCoreSync(
+        user: user,
+        trigger: trigger,
+        onProgress: showOverlay ? _applySyncProgress : null,
       );
-      _setSyncState(
-        syncing: showOverlay,
-        message: showOverlay ? 'Syncing sessions from server...' : '',
-      );
-      stats.absorb(
-        await services.sessionSyncService.syncIfReady(currentUser: user),
-      );
+      if (showOverlay) {
+        _applySyncProgress(
+          const SyncProgress(
+            message: 'Refreshing course status...',
+            forcePaint: true,
+          ),
+        );
+      }
       await _refreshMarketplaceState();
-    } catch (error) {
-      syncError = error;
+    } on HomeSyncException catch (error) {
+      syncError = error.message;
+    } on Object catch (error) {
+      syncError = '$error';
     } finally {
       _setSyncState(syncing: false, message: '');
       _syncInProgress = false;
     }
     if (syncError != null) {
-      var reportedError = '$syncError';
-      try {
-        await services.syncLogRepository.appendRunEvent(
-          trigger: trigger,
-          actorRole: user.role,
-          actorUserId: user.id,
-          stats: stats,
-          success: false,
-          error: reportedError,
-        );
-      } catch (logError) {
-        reportedError = '$reportedError; sync log write failed: $logError';
-      }
       if (!mounted) {
         return;
       }
       _setPersistentMessage(
-        l10n.sessionSyncFailed(reportedError),
-        isError: true,
-      );
-      return;
-    }
-    try {
-      await services.syncLogRepository.appendRunEvent(
-        trigger: trigger,
-        actorRole: user.role,
-        actorUserId: user.id,
-        stats: stats,
-        success: true,
-      );
-    } catch (logError) {
-      if (!mounted) {
-        return;
-      }
-      _setPersistentMessage(
-        l10n.sessionSyncFailed('Sync log write failed: $logError'),
+        l10n.sessionSyncFailed(syncError),
         isError: true,
       );
     }
@@ -456,14 +440,29 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
           ),
         ),
         if (_syncingFromServer)
-          ServerSyncOverlay(message: _syncProgressMessage),
+          ServerSyncOverlay(
+            message: _syncProgressMessage,
+            progressValue: _syncProgressValue,
+            progressDetail: _syncProgressDetail,
+          ),
       ],
+    );
+  }
+
+  void _applySyncProgress(SyncProgress progress) {
+    _setSyncState(
+      syncing: true,
+      message: progress.message,
+      progressValue: progress.value,
+      progressDetail: progress.detail,
     );
   }
 
   void _setSyncState({
     required bool syncing,
     String message = '',
+    double? progressValue,
+    String? progressDetail,
   }) {
     if (!mounted) {
       return;
@@ -471,6 +470,8 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     setState(() {
       _syncingFromServer = syncing;
       _syncProgressMessage = message;
+      _syncProgressValue = syncing ? progressValue : null;
+      _syncProgressDetail = syncing ? progressDetail : null;
     });
   }
 

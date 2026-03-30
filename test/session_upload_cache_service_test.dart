@@ -212,4 +212,98 @@ void main() {
     expect(updatedChapter!.contentHash, isNot(originalHash));
     expect(updatedChapter.updatedAt, DateTime.utc(2026, 3, 13, 10));
   });
+
+  test('listChaptersForKeys reads only requested chapter snapshots', () async {
+    final teacherId = await db.createUser(
+      username: 'teacher_targeted',
+      pinHash: 'hash',
+      role: 'teacher',
+    );
+    final studentId = await db.createUser(
+      username: 'student_targeted',
+      pinHash: 'hash',
+      role: 'student',
+      teacherId: teacherId,
+    );
+    final courseId = await db.createCourseVersion(
+      teacherId: teacherId,
+      subject: 'UK_MATH_7-13',
+      granularity: 2,
+      textbookText: 'contents',
+      sourcePath: 'C:\\temp\\course',
+    );
+    await db.into(db.courseNodes).insert(
+          CourseNodesCompanion.insert(
+            courseVersionId: courseId,
+            kpKey: '3.1.1',
+            title: 'Requested node',
+            description: 'desc',
+            orderIndex: 0,
+          ),
+        );
+    await db.into(db.courseNodes).insert(
+          CourseNodesCompanion.insert(
+            courseVersionId: courseId,
+            kpKey: '4.1.1',
+            title: 'Unrelated node',
+            description: 'desc',
+            orderIndex: 1,
+          ),
+        );
+
+    final requestedSessionId = await db.into(db.chatSessions).insert(
+          ChatSessionsCompanion.insert(
+            studentId: studentId,
+            courseVersionId: courseId,
+            kpKey: '3.1.1',
+            title: const Value('Requested'),
+            syncId: const Value('sync-requested'),
+            syncUpdatedAt: Value(DateTime.utc(2026, 3, 30, 8)),
+          ),
+        );
+    await db.into(db.chatMessages).insert(
+          ChatMessagesCompanion.insert(
+            sessionId: requestedSessionId,
+            role: 'assistant',
+            content: 'requested payload',
+          ),
+        );
+    final unrelatedSessionId = await db.into(db.chatSessions).insert(
+          ChatSessionsCompanion.insert(
+            studentId: studentId,
+            courseVersionId: courseId,
+            kpKey: '4.1.1',
+            title: const Value('Unrelated'),
+            syncId: const Value('sync-unrelated'),
+            syncUpdatedAt: Value(DateTime.utc(2026, 3, 30, 9)),
+          ),
+        );
+    await db.into(db.chatMessages).insert(
+          ChatMessagesCompanion.insert(
+            sessionId: unrelatedSessionId,
+            role: 'assistant',
+            content: 'unrelated payload',
+          ),
+        );
+
+    await cacheService.captureSession(requestedSessionId);
+    await cacheService.captureSession(unrelatedSessionId);
+
+    final chapterRoot = Directory(p.join(tempRoot.path, 'cache', 'chapters'));
+    final unrelatedChapterFile = File(
+      p.join(chapterRoot.path, 'course_${courseId}__chapter_4_1.json'),
+    );
+    await unrelatedChapterFile.writeAsString('{not valid json');
+
+    final snapshots = await cacheService.listChaptersForKeys(
+      {'$courseId:3.1'},
+    );
+
+    expect(snapshots, hasLength(1));
+    expect(snapshots.single.chapterKey, equals('3.1'));
+    expect(
+      snapshots.single.members.map((item) => item.sessionId).toList(),
+      [requestedSessionId],
+    );
+  });
 }

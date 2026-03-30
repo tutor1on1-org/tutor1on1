@@ -1,6 +1,10 @@
 # LOGBOOK
 Historical timeline. Keep active runbook details in `WORKLOG.md`.
 
+## 2026-03-30
+- Fixed login-time sync responsiveness on client home screens: teacher/student now route startup sync through one shared core coordinator, login overlays can show staged progress with optional determinate counts, and the UI gets an initial paint before heavy sync work starts.
+- Reduced sync main-isolate pressure in the session path: large session/progress loops now yield between batches, large cache/envelope JSON decodes move to a background isolate, chapter-cache upload reads only requested pending chapter snapshots instead of scanning all cached chapters, and session import writes chat messages in one Drift batch.
+
 ## 2026-03-29
 - Reworked teacher-configurable tutor prompts end to end: `learn` / `review` now resolve through teacher default, course, student-global, and student-course scopes with bundled assets only as fallback; Prompt Settings gained student-global scope plus full resolved preview/diff; teacher save and sync-import now block malformed, unknown, missing, or non-English placeholder variables; prompt metadata sync now carries teacher-global and student-global data through bundle metadata for no-rebuild updates; backend prompt-metadata path compatibility now covers both `_family_teacher` and `_tutor1on1` bundle entries.
 - Added an explicit teacher-side `Pull Latest Server` action on course rows and corrected the sync conflict wording to say `bundle` instead of `course`, because newer server bundle versions can now come from prompt/profile metadata changes even when the course tree itself was untouched.

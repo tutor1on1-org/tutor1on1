@@ -9,11 +9,13 @@ import '../constants.dart';
 import '../db/app_database.dart';
 import '../models/tutor_contract.dart';
 import '../security/pin_hasher.dart';
+import 'background_json_service.dart';
 import 'remote_teacher_identity_service.dart';
 import 'session_crypto_service.dart';
 import 'session_sync_api_service.dart';
 import 'session_upload_cache_service.dart';
 import 'sync_log_repository.dart';
+import 'sync_progress.dart';
 import 'sync_state_repository.dart';
 import 'user_key_service.dart';
 
@@ -25,12 +27,15 @@ class SessionSyncService {
     required UserKeyService userKeyService,
     SessionCryptoService? crypto,
     SessionUploadCacheService? sessionUploadCacheService,
+    BackgroundJsonService? backgroundJsonService,
   })  : _db = db,
         _secureStorage = secureStorage,
         _api = api,
         _userKeyService = userKeyService,
         _crypto = crypto ?? SessionCryptoService(),
-        _sessionUploadCacheService = sessionUploadCacheService;
+        _sessionUploadCacheService = sessionUploadCacheService,
+        _backgroundJsonService =
+            backgroundJsonService ?? const BackgroundJsonService();
 
   final AppDatabase _db;
   final SyncStateRepository _secureStorage;
@@ -38,6 +43,7 @@ class SessionSyncService {
   final UserKeyService _userKeyService;
   final SessionCryptoService _crypto;
   final SessionUploadCacheService? _sessionUploadCacheService;
+  final BackgroundJsonService _backgroundJsonService;
   final RemoteTeacherIdentityService _remoteTeacherIdentity =
       const RemoteTeacherIdentityService();
   static final Uuid _uuid = Uuid();
@@ -78,6 +84,7 @@ class SessionSyncService {
   Future<SyncRunStats> syncNow({
     required User currentUser,
     required String password,
+    SyncProgressCallback? onProgress,
   }) async {
     final stats = SyncRunStats();
     if (_syncing) {
@@ -95,13 +102,17 @@ class SessionSyncService {
         remoteUserId,
         keyPair,
         force: true,
+        progressReporter: _SyncProgressReporter(onProgress),
       );
     } finally {
       _syncing = false;
     }
   }
 
-  Future<SyncRunStats> syncIfReady({required User currentUser}) async {
+  Future<SyncRunStats> syncIfReady({
+    required User currentUser,
+    SyncProgressCallback? onProgress,
+  }) async {
     final stats = SyncRunStats();
     if (_syncing) {
       return stats;
@@ -120,6 +131,7 @@ class SessionSyncService {
         currentUser,
         remoteUserId,
         keyPair,
+        progressReporter: _SyncProgressReporter(onProgress),
       );
     } finally {
       _syncing = false;
@@ -129,6 +141,7 @@ class SessionSyncService {
   Future<SyncRunStats> forcePullFromServer({
     required User currentUser,
     bool wipeLocalStudentData = true,
+    SyncProgressCallback? onProgress,
   }) async {
     final stats = SyncRunStats();
     if (_syncing) {
@@ -143,12 +156,17 @@ class SessionSyncService {
     }
     _syncing = true;
     try {
+      final progressReporter = _SyncProgressReporter(onProgress);
       if (currentUser.role == 'student' && wipeLocalStudentData) {
         await _clearLocalStudentSessionAndProgressData(
           studentId: currentUser.id,
         );
       }
       await _resetDownloadSyncState(remoteUserId: remoteUserId);
+      await progressReporter.report(
+        'Downloading sessions/progress from server...',
+        forcePaint: true,
+      );
       await _runCategoryIfDue(
         remoteUserId: remoteUserId,
         runDomain: _syncRunDomainSessionDownload,
@@ -158,6 +176,7 @@ class SessionSyncService {
           remoteUserId,
           keyPair,
           stats: stats,
+          progressReporter: progressReporter,
         ),
       );
       return stats;
@@ -168,8 +187,13 @@ class SessionSyncService {
 
   Future<SyncRunStats> _syncInternal(
       User currentUser, int remoteUserId, SimpleKeyPair keyPair,
-      {bool force = false}) async {
+      {bool force = false,
+      required _SyncProgressReporter progressReporter}) async {
     final stats = SyncRunStats();
+    await progressReporter.report(
+      'Downloading sessions/progress from server...',
+      forcePaint: true,
+    );
     await _runCategoryIfDue(
       remoteUserId: remoteUserId,
       runDomain: _syncRunDomainSessionDownload,
@@ -179,7 +203,12 @@ class SessionSyncService {
         remoteUserId,
         keyPair,
         stats: stats,
+        progressReporter: progressReporter,
       ),
+    );
+    await progressReporter.report(
+      'Uploading progress to server...',
+      forcePaint: true,
     );
     await _runCategoryIfDue(
       remoteUserId: remoteUserId,
@@ -189,7 +218,12 @@ class SessionSyncService {
         currentUser,
         remoteUserId,
         stats: stats,
+        progressReporter: progressReporter,
       ),
+    );
+    await progressReporter.report(
+      'Uploading sessions to server...',
+      forcePaint: true,
     );
     await _runCategoryIfDue(
       remoteUserId: remoteUserId,
@@ -199,6 +233,7 @@ class SessionSyncService {
         currentUser,
         remoteUserId,
         stats: stats,
+        progressReporter: progressReporter,
       ),
     );
     return stats;
@@ -294,8 +329,12 @@ class SessionSyncService {
     );
   }
 
-  Future<void> _uploadPendingProgress(User currentUser, int remoteUserId,
-      {required SyncRunStats stats}) async {
+  Future<void> _uploadPendingProgress(
+    User currentUser,
+    int remoteUserId, {
+    required SyncRunStats stats,
+    required _SyncProgressReporter progressReporter,
+  }) async {
     if (currentUser.role != 'student') {
       return;
     }
@@ -320,10 +359,16 @@ class SessionSyncService {
       return;
     }
     try {
+      await progressReporter.report(
+        'Uploading progress to server...',
+        completed: 0,
+        total: entries.length,
+      );
       await _uploadPendingProgressChunks(
         remoteUserId: remoteUserId,
         entries: entries,
         stats: stats,
+        progressReporter: progressReporter,
       );
     } on SessionSyncApiException catch (error) {
       if (error.statusCode != 404) {
@@ -333,6 +378,7 @@ class SessionSyncService {
         remoteUserId: remoteUserId,
         entries: entries,
         stats: stats,
+        progressReporter: progressReporter,
       );
     }
   }
@@ -341,6 +387,7 @@ class SessionSyncService {
     required int remoteUserId,
     required List<ProgressEntry> entries,
     required SyncRunStats stats,
+    required _SyncProgressReporter progressReporter,
   }) async {
     final chapterGroups = <String, _ProgressChunkGroup>{};
     for (final entry in entries) {
@@ -407,6 +454,7 @@ class SessionSyncService {
         continue;
       }
       group.hasPendingChanges = true;
+      await progressReporter.maybeYield();
     }
     final groupsToUpload = chapterGroups.values
         .where(
@@ -478,6 +526,7 @@ class SessionSyncService {
           ),
         );
         groupUpdatedAt = _latestTimestamp(groupUpdatedAt, member.updatedAt);
+        await progressReporter.maybeYield();
       }
       chunkItems.sort((left, right) {
         final leftKp = (left['kp_key'] as String? ?? '').trim();
@@ -567,6 +616,7 @@ class SessionSyncService {
     if (preparedUploads.isEmpty) {
       return;
     }
+    var uploadedCount = 0;
     for (var index = 0;
         index < preparedUploads.length;
         index += _progressChunkUploadBatchSize) {
@@ -586,6 +636,12 @@ class SessionSyncService {
           0,
           (total, item) => total + _progressChunkUploadSize(item.upload),
         ),
+      );
+      uploadedCount += chunk.length;
+      await progressReporter.report(
+        'Uploading progress to server...',
+        completed: uploadedCount,
+        total: preparedUploads.length,
       );
       for (final prepared in chunk) {
         await _mirrorProgressChunkUploadToDownloadState(
@@ -612,6 +668,7 @@ class SessionSyncService {
           lastSyncedAt: groupStateWrite.lastSyncedAt,
         );
       }
+      await progressReporter.maybeYield();
     }
   }
 
@@ -619,6 +676,7 @@ class SessionSyncService {
     required int remoteUserId,
     required List<ProgressEntry> entries,
     required SyncRunStats stats,
+    required _SyncProgressReporter progressReporter,
   }) async {
     final keysByCourse = <int, CourseKeyBundle>{};
     final courseSubjectsByVersion = <int, String>{};
@@ -716,14 +774,21 @@ class SessionSyncService {
           ),
         ),
       );
+      await progressReporter.maybeYield();
     }
     if (pendingUploads.isEmpty) {
       return;
     }
+    await progressReporter.report(
+      'Uploading progress to server...',
+      completed: 0,
+      total: pendingUploads.length,
+    );
     await _uploadProgressInChunksWithIsolation(
       remoteUserId: remoteUserId,
       pendingUploads: pendingUploads,
       stats: stats,
+      progressReporter: progressReporter,
     );
   }
 
@@ -731,6 +796,7 @@ class SessionSyncService {
     required int remoteUserId,
     required List<_PendingProgressUpload> pendingUploads,
     required SyncRunStats stats,
+    required _SyncProgressReporter progressReporter,
   }) async {
     final failures = <_FailedProgressUpload>[];
     final splitBudget = _ProgressIsolationBudget(
@@ -752,6 +818,9 @@ class SessionSyncService {
         splitBudget: splitBudget,
         failures: failures,
         stats: stats,
+        progressReporter: progressReporter,
+        uploadedSoFar: index,
+        uploadTotal: pendingUploads.length,
       );
     }
     if (failures.isEmpty) {
@@ -775,6 +844,9 @@ class SessionSyncService {
     required _ProgressIsolationBudget splitBudget,
     required List<_FailedProgressUpload> failures,
     required SyncRunStats stats,
+    required _SyncProgressReporter progressReporter,
+    required int uploadedSoFar,
+    required int uploadTotal,
   }) async {
     if (chunk.isEmpty) {
       return;
@@ -789,6 +861,11 @@ class SessionSyncService {
           0,
           (total, pending) => total + _progressUploadSize(pending.upload),
         ),
+      );
+      await progressReporter.report(
+        'Uploading progress to server...',
+        completed: uploadedSoFar + chunk.length,
+        total: uploadTotal,
       );
       for (final pending in chunk) {
         await _mirrorProgressUploadToDownloadState(
@@ -805,6 +882,7 @@ class SessionSyncService {
           lastSyncedAt: stateWrite.lastSyncedAt,
         );
       }
+      await progressReporter.maybeYield();
       return;
     } on SessionSyncApiException catch (error) {
       if (!_shouldIsolateProgressUploadError(error)) {
@@ -834,6 +912,9 @@ class SessionSyncService {
         splitBudget: splitBudget,
         failures: failures,
         stats: stats,
+        progressReporter: progressReporter,
+        uploadedSoFar: uploadedSoFar,
+        uploadTotal: uploadTotal,
       );
       await _uploadProgressChunkWithIsolation(
         remoteUserId: remoteUserId,
@@ -841,6 +922,9 @@ class SessionSyncService {
         splitBudget: splitBudget,
         failures: failures,
         stats: stats,
+        progressReporter: progressReporter,
+        uploadedSoFar: uploadedSoFar + mid,
+        uploadTotal: uploadTotal,
       );
     }
   }
@@ -858,13 +942,18 @@ class SessionSyncService {
         message.contains('progress sync payload');
   }
 
-  Future<void> _uploadPendingSessions(User currentUser, int remoteUserId,
-      {required SyncRunStats stats}) async {
+  Future<void> _uploadPendingSessions(
+    User currentUser,
+    int remoteUserId, {
+    required SyncRunStats stats,
+    required _SyncProgressReporter progressReporter,
+  }) async {
     if (_sessionUploadCacheService != null) {
       await _uploadPendingSessionsFromChapterCache(
         currentUser: currentUser,
         remoteUserId: remoteUserId,
         stats: stats,
+        progressReporter: progressReporter,
       );
       return;
     }
@@ -872,6 +961,7 @@ class SessionSyncService {
       currentUser: currentUser,
       remoteUserId: remoteUserId,
       stats: stats,
+      progressReporter: progressReporter,
     );
   }
 
@@ -879,6 +969,7 @@ class SessionSyncService {
     required User currentUser,
     required int remoteUserId,
     required SyncRunStats stats,
+    required _SyncProgressReporter progressReporter,
   }) async {
     final cacheService = _sessionUploadCacheService;
     if (cacheService == null) {
@@ -910,12 +1001,15 @@ class SessionSyncService {
         continue;
       }
       await cacheService.captureSession(session.id);
+      await progressReporter.maybeYield();
     }
-    final chapterSnapshots = await cacheService.listChapters();
+    final chapterSnapshots =
+        await cacheService.listChaptersForKeys(pendingChapterLocalKeys);
     if (chapterSnapshots.isEmpty) {
       return;
     }
     final keysByCourse = <int, CourseKeyBundle>{};
+    var processedGroups = 0;
     for (final chapterSnapshot in chapterSnapshots) {
       if (!pendingChapterLocalKeys.contains(
           '${chapterSnapshot.courseVersionId}:${chapterSnapshot.chapterKey}')) {
@@ -979,6 +1073,7 @@ class SessionSyncService {
         remoteCourseId: remoteCourseId,
         pendingSessionIds: pendingSessionIds,
         stats: stats,
+        progressReporter: progressReporter,
       );
       await _secureStorage.writeSyncItemState(
         remoteUserId: remoteUserId,
@@ -988,6 +1083,13 @@ class SessionSyncService {
         lastChangedAt: chapterSnapshot.updatedAt,
         lastSyncedAt: chapterSnapshot.updatedAt,
       );
+      processedGroups++;
+      await progressReporter.report(
+        'Uploading sessions to server...',
+        completed: processedGroups,
+        total: chapterSnapshots.length,
+      );
+      await progressReporter.maybeYield();
     }
   }
 
@@ -995,6 +1097,7 @@ class SessionSyncService {
     required User currentUser,
     required int remoteUserId,
     required SyncRunStats stats,
+    required _SyncProgressReporter progressReporter,
   }) async {
     final sessions = await (_db.select(_db.chatSessions)
           ..where((tbl) =>
@@ -1034,11 +1137,13 @@ class SessionSyncService {
               remoteCourseId: remoteCourseId,
             ),
           );
+      await progressReporter.maybeYield();
     }
     if (groupedSessions.isEmpty) {
       return;
     }
     final keysByCourse = <int, CourseKeyBundle>{};
+    var processedGroups = 0;
     for (final groupEntry in groupedSessions.entries) {
       final groupScopeKey = groupEntry.key;
       final groupItems = groupEntry.value;
@@ -1086,6 +1191,7 @@ class SessionSyncService {
         keysByCourse: keysByCourse,
         groupItems: groupItems,
         stats: stats,
+        progressReporter: progressReporter,
       );
       await _secureStorage.writeSyncItemState(
         remoteUserId: remoteUserId,
@@ -1095,6 +1201,13 @@ class SessionSyncService {
         lastChangedAt: groupUpdatedAt,
         lastSyncedAt: groupUpdatedAt,
       );
+      processedGroups++;
+      await progressReporter.report(
+        'Uploading sessions to server...',
+        completed: processedGroups,
+        total: groupedSessions.length,
+      );
+      await progressReporter.maybeYield();
     }
   }
 
@@ -1106,6 +1219,7 @@ class SessionSyncService {
     required int remoteCourseId,
     required Set<int> pendingSessionIds,
     required SyncRunStats stats,
+    required _SyncProgressReporter progressReporter,
   }) async {
     final cacheService = _sessionUploadCacheService;
     if (cacheService == null) {
@@ -1286,6 +1400,7 @@ class SessionSyncService {
     required Map<int, CourseKeyBundle> keysByCourse,
     required List<_PendingSessionUpload> groupItems,
     required SyncRunStats stats,
+    required _SyncProgressReporter progressReporter,
   }) async {
     final preparedUploads = <_PreparedSessionUpload>[];
     final batchEntries = <SessionUploadEntry>[];
@@ -1439,7 +1554,8 @@ class SessionSyncService {
 
   Future<void> _downloadRemoteData(
       User currentUser, int remoteUserId, SimpleKeyPair keyPair,
-      {required SyncRunStats stats}) async {
+      {required SyncRunStats stats,
+      required _SyncProgressReporter progressReporter}) async {
     final includeProgress =
         currentUser.role == 'student' || currentUser.role == 'teacher';
     final manifestScopeKey = _downloadManifestScopeKey(currentUser);
@@ -1482,6 +1598,7 @@ class SessionSyncService {
       )) {
         sessionFetchIds.add(item.sessionSyncId.trim());
       }
+      await progressReporter.maybeYield();
     }
     if (includeProgress) {
       for (final item in manifest.progressChunks) {
@@ -1497,6 +1614,7 @@ class SessionSyncService {
             ),
           );
         }
+        await progressReporter.maybeYield();
       }
       for (final item in manifest.progressRows) {
         if (await _shouldFetchProgressRowManifestItem(
@@ -1513,6 +1631,7 @@ class SessionSyncService {
             ),
           );
         }
+        await progressReporter.maybeYield();
       }
     }
 
@@ -1521,6 +1640,15 @@ class SessionSyncService {
         progressRowFetchKeys.isEmpty) {
       return;
     }
+
+    final totalItemsToApply = sessionFetchIds.length +
+        progressChunkFetchKeys.length +
+        progressRowFetchKeys.length;
+    await progressReporter.report(
+      'Downloading sessions/progress from server...',
+      completed: 0,
+      total: totalItemsToApply,
+    );
 
     final payload = await _api.fetchDownloadPayload(
       request: SyncDownloadFetchRequest(
@@ -1547,12 +1675,19 @@ class SessionSyncService {
           ),
     );
 
+    var appliedItems = 0;
     for (final item in payload.sessions) {
       await _applyDownloadedSessionItem(
         currentUser: currentUser,
         remoteUserId: remoteUserId,
         keyPair: keyPair,
         item: item,
+      );
+      appliedItems++;
+      await progressReporter.report(
+        'Importing synced sessions/progress...',
+        completed: appliedItems,
+        total: totalItemsToApply,
       );
     }
     for (final chunkItem in payload.progressChunks) {
@@ -1590,6 +1725,12 @@ class SessionSyncService {
         lastChangedAt: itemUpdatedAt,
         lastSyncedAt: itemUpdatedAt,
       );
+      appliedItems++;
+      await progressReporter.report(
+        'Importing synced sessions/progress...',
+        completed: appliedItems,
+        total: totalItemsToApply,
+      );
     }
     for (final item in payload.progressRows) {
       await _applyDownloadedProgressItem(
@@ -1599,6 +1740,12 @@ class SessionSyncService {
         item: item,
         localProgressUpdatedAtByRemoteScope:
             localProgressUpdatedAtByRemoteScope,
+      );
+      appliedItems++;
+      await progressReporter.report(
+        'Importing synced sessions/progress...',
+        completed: appliedItems,
+        total: totalItemsToApply,
       );
     }
   }
@@ -1935,7 +2082,7 @@ class SessionSyncService {
         throw StateError('Progress chunk sync envelope hash mismatch.');
       }
     }
-    final decoded = jsonDecode(envelopeJson);
+    final decoded = await _backgroundJsonService.decode(envelopeJson);
     if (decoded is! Map<String, dynamic>) {
       throw StateError('Progress chunk sync envelope invalid.');
     }
@@ -2061,7 +2208,7 @@ class SessionSyncService {
         throw StateError('Session sync envelope hash mismatch.');
       }
     }
-    final decoded = jsonDecode(envelopeJson);
+    final decoded = await _backgroundJsonService.decode(envelopeJson);
     if (decoded is! Map<String, dynamic>) {
       throw StateError('Session sync envelope invalid.');
     }
@@ -2273,18 +2420,25 @@ class SessionSyncService {
             .go();
       }
 
-      for (final message in messages) {
-        await _db.into(_db.chatMessages).insert(
-              ChatMessagesCompanion.insert(
-                sessionId: sessionId,
-                role: message.role,
-                content: message.content,
-                rawContent: Value(message.rawContent),
-                parsedJson: Value(message.parsedJson),
-                action: Value(message.action),
-                createdAt: Value(message.createdAt),
-              ),
-            );
+      if (messages.isNotEmpty) {
+        await _db.batch((batch) {
+          batch.insertAll(
+            _db.chatMessages,
+            messages
+                .map(
+                  (message) => ChatMessagesCompanion.insert(
+                    sessionId: sessionId,
+                    role: message.role,
+                    content: message.content,
+                    rawContent: Value(message.rawContent),
+                    parsedJson: Value(message.parsedJson),
+                    action: Value(message.action),
+                    createdAt: Value(message.createdAt),
+                  ),
+                )
+                .toList(growable: false),
+          );
+        });
       }
 
       final existingEvidence = TutorEvidenceState.fromJsonText(
@@ -2967,7 +3121,7 @@ class SessionSyncService {
         throw StateError('Progress sync envelope hash mismatch.');
       }
     }
-    final decoded = jsonDecode(envelopeJson);
+    final decoded = await _backgroundJsonService.decode(envelopeJson);
     if (decoded is! Map<String, dynamic>) {
       throw StateError('Progress sync envelope invalid.');
     }
@@ -3290,6 +3444,48 @@ class _SyncMessage {
   final String? parsedJson;
   final String? action;
   final DateTime createdAt;
+}
+
+class _SyncProgressReporter {
+  _SyncProgressReporter(this._callback);
+
+  final SyncProgressCallback? _callback;
+  final Stopwatch _yieldStopwatch = Stopwatch()..start();
+  DateTime _lastEmitAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  Future<void> report(
+    String message, {
+    int? completed,
+    int? total,
+    bool forcePaint = false,
+  }) async {
+    final now = DateTime.now();
+    final callback = _callback;
+    if (callback != null &&
+        (forcePaint ||
+            now.difference(_lastEmitAt) >= const Duration(milliseconds: 50))) {
+      callback.call(
+        SyncProgress(
+          message: message,
+          completed: completed,
+          total: total,
+          forcePaint: forcePaint,
+        ),
+      );
+      _lastEmitAt = now;
+    }
+    await maybeYield(force: forcePaint);
+  }
+
+  Future<void> maybeYield({bool force = false}) async {
+    if (!force && _yieldStopwatch.elapsedMilliseconds < 12) {
+      return;
+    }
+    await Future<void>.delayed(Duration.zero);
+    _yieldStopwatch
+      ..reset()
+      ..start();
+  }
 }
 
 class _ResolvedProgressPayload {
