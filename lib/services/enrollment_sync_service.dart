@@ -106,14 +106,14 @@ class EnrollmentSyncService {
           nowUtc: nowUtc,
           force: true,
           action: () async {
-            final enrollmentsResult = await _api.listEnrollmentsDelta(
-              ifNoneMatch: null,
-            );
-            await _writeSyncListEtag(
+            final enrollmentsResult = await _loadMarketplaceList(
               remoteUserId: remoteUserId,
               domain: _syncDomainStudentEnrollments,
               scopeKey: _syncScopeEnrollments,
-              etag: enrollmentsResult.etag,
+              preferDelta: false,
+              loadDelta: ({
+                required String? ifNoneMatch,
+              }) => _api.listEnrollmentsDelta(ifNoneMatch: ifNoneMatch),
             );
             if (!enrollmentsResult.notModified) {
               await _syncStudentEnrollments(
@@ -174,19 +174,14 @@ class EnrollmentSyncService {
           nowUtc: nowUtc,
           force: false,
           action: () async {
-            final ifNoneMatch = await _secureStorage.readSyncListEtag(
+            final enrollmentsResult = await _loadMarketplaceList(
               remoteUserId: remoteUserId,
               domain: _syncDomainStudentEnrollments,
               scopeKey: _syncScopeEnrollments,
-            );
-            final enrollmentsResult = await _api.listEnrollmentsDelta(
-              ifNoneMatch: ifNoneMatch,
-            );
-            await _writeSyncListEtag(
-              remoteUserId: remoteUserId,
-              domain: _syncDomainStudentEnrollments,
-              scopeKey: _syncScopeEnrollments,
-              etag: enrollmentsResult.etag,
+              preferDelta: true,
+              loadDelta: ({
+                required String? ifNoneMatch,
+              }) => _api.listEnrollmentsDelta(ifNoneMatch: ifNoneMatch),
             );
             if (!enrollmentsResult.notModified) {
               await _syncStudentEnrollments(
@@ -626,10 +621,36 @@ class EnrollmentSyncService {
           domain: _syncDomainTeacherCourses,
         ) ==
         null;
-    var remoteCourses = await _loadTeacherCourses(
+    var remoteCoursesResult = await _loadMarketplaceList(
       remoteUserId: remoteUserId,
+      domain: _syncDomainTeacherCourses,
+      scopeKey: _syncScopeTeacherCourses,
       preferDelta: true,
+      loadDelta: ({
+        required String? ifNoneMatch,
+      }) => _api.listTeacherCoursesDelta(ifNoneMatch: ifNoneMatch),
     );
+    var remoteCourses = remoteCoursesResult.items;
+    if (remoteCoursesResult.notModified &&
+        !await _hasPendingTeacherCourseSyncWork(
+          currentUser: currentUser,
+          remoteUserId: remoteUserId,
+        )) {
+      await _cleanupTeacherLocalDuplicates(currentUser.id);
+      return;
+    }
+    if (remoteCoursesResult.notModified) {
+      remoteCoursesResult = await _loadMarketplaceList(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainTeacherCourses,
+        scopeKey: _syncScopeTeacherCourses,
+        preferDelta: false,
+        loadDelta: ({
+          required String? ifNoneMatch,
+        }) => _api.listTeacherCoursesDelta(ifNoneMatch: ifNoneMatch),
+      );
+      remoteCourses = remoteCoursesResult.items;
+    }
     await _reconcileTeacherCourseMetadata(
       currentUser: currentUser,
       remoteCourses: remoteCourses,
@@ -657,10 +678,16 @@ class EnrollmentSyncService {
       remoteCourses: remoteCourses,
       summary: summary,
     );
-    remoteCourses = await _loadTeacherCourses(
+    remoteCourses = (await _loadMarketplaceList(
       remoteUserId: remoteUserId,
+      domain: _syncDomainTeacherCourses,
+      scopeKey: _syncScopeTeacherCourses,
       preferDelta: false,
-    );
+      loadDelta: ({
+        required String? ifNoneMatch,
+      }) => _api.listTeacherCoursesDelta(ifNoneMatch: ifNoneMatch),
+    ))
+        .items;
     await _reconcileTeacherCourseMetadata(
       currentUser: currentUser,
       remoteCourses: remoteCourses,
@@ -675,31 +702,78 @@ class EnrollmentSyncService {
     await _cleanupTeacherLocalDuplicates(currentUser.id);
   }
 
-  Future<List<TeacherCourseSummary>> _loadTeacherCourses({
+  Future<bool> _hasPendingTeacherCourseSyncWork({
+    required User currentUser,
     required int remoteUserId,
-    required bool preferDelta,
   }) async {
-    if (!preferDelta) {
-      return _api.listTeacherCourses();
+    final localCourses = await _db.getCourseVersionsForTeacher(currentUser.id);
+    for (final course in localCourses) {
+      final remoteCourseId = await _db.getRemoteCourseId(course.id);
+      if (remoteCourseId == null || remoteCourseId <= 0) {
+        return true;
+      }
+      final installedVersion = await _secureStorage.readInstalledCourseBundleVersion(
+        remoteUserId: remoteUserId,
+        remoteCourseId: remoteCourseId,
+      );
+      final syncState = await _secureStorage.readSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainTeacherCourseUpload,
+        scopeKey: _teacherCourseScopeKey(remoteCourseId),
+      );
+      if (installedVersion == null || syncState == null) {
+        return true;
+      }
+      final hasArtifacts = _courseArtifactService != null &&
+          await _hasCachedCourseArtifacts(course.id);
+      final sourcePath = (course.sourcePath ?? '').trim();
+      final hasSourceFolder =
+          sourcePath.isNotEmpty && Directory(sourcePath).existsSync();
+      if (!hasArtifacts && !hasSourceFolder) {
+        return true;
+      }
+      final localHash = await _readTeacherCourseSyncHash(
+        remoteUserId: remoteUserId,
+        syncStateDomain: _syncDomainTeacherCourseUpload,
+        teacher: currentUser,
+        course: course,
+        syncState: syncState,
+        remoteCourseId: remoteCourseId,
+      );
+      if (_hasUnsyncedLocalCourseChanges(
+        syncState: syncState,
+        localHash: localHash ?? '',
+      )) {
+        return true;
+      }
     }
-    final ifNoneMatch = await _secureStorage.readSyncListEtag(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainTeacherCourses,
-      scopeKey: _syncScopeTeacherCourses,
-    );
-    final result = await _api.listTeacherCoursesDelta(
-      ifNoneMatch: ifNoneMatch,
-    );
+    return false;
+  }
+
+  Future<MarketplaceListResult<T>> _loadMarketplaceList<T>({
+    required int remoteUserId,
+    required String domain,
+    required String scopeKey,
+    required bool preferDelta,
+    required Future<MarketplaceListResult<T>> Function({
+      required String? ifNoneMatch,
+    }) loadDelta,
+  }) async {
+    final ifNoneMatch = preferDelta
+        ? await _secureStorage.readSyncListEtag(
+            remoteUserId: remoteUserId,
+            domain: domain,
+            scopeKey: scopeKey,
+          )
+        : null;
+    final result = await loadDelta(ifNoneMatch: ifNoneMatch);
     await _writeSyncListEtag(
       remoteUserId: remoteUserId,
-      domain: _syncDomainTeacherCourses,
-      scopeKey: _syncScopeTeacherCourses,
+      domain: domain,
+      scopeKey: scopeKey,
       etag: result.etag,
     );
-    if (result.notModified) {
-      return _api.listTeacherCourses();
-    }
-    return result.items;
+    return result;
   }
 
   Future<void> _reconcileTeacherCourseMetadata({

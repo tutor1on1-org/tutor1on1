@@ -185,6 +185,7 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   int? lastDeletionSinceId;
   String? lastEnrollmentsIfNoneMatch;
   String? lastTeacherCoursesIfNoneMatch;
+  int listEnrollmentsCalls = 0;
   int listEnrollmentsDeltaCalls = 0;
   int listDeletionEventsCalls = 0;
   int listTeacherCoursesDeltaCalls = 0;
@@ -194,6 +195,7 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
 
   @override
   Future<List<EnrollmentSummary>> listEnrollments() async {
+    listEnrollmentsCalls++;
     return _enrollments;
   }
 
@@ -203,11 +205,13 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   }) async {
     listEnrollmentsDeltaCalls++;
     lastEnrollmentsIfNoneMatch = ifNoneMatch;
+    final notModified = enrollmentsNotModified &&
+        (ifNoneMatch ?? '').trim().isNotEmpty &&
+        (ifNoneMatch ?? '').trim() == (enrollmentsEtag ?? '').trim();
     return MarketplaceListResult<EnrollmentSummary>(
-      items:
-          enrollmentsNotModified ? const <EnrollmentSummary>[] : _enrollments,
+      items: notModified ? const <EnrollmentSummary>[] : _enrollments,
       etag: enrollmentsEtag,
-      notModified: enrollmentsNotModified,
+      notModified: notModified,
     );
   }
 
@@ -235,12 +239,13 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   }) async {
     listTeacherCoursesDeltaCalls++;
     lastTeacherCoursesIfNoneMatch = ifNoneMatch;
+    final notModified = teacherCoursesNotModified &&
+        (ifNoneMatch ?? '').trim().isNotEmpty &&
+        (ifNoneMatch ?? '').trim() == (teacherCoursesEtag ?? '').trim();
     return MarketplaceListResult<TeacherCourseSummary>(
-      items: teacherCoursesNotModified
-          ? const <TeacherCourseSummary>[]
-          : _teacherCourses,
+      items: notModified ? const <TeacherCourseSummary>[] : _teacherCourses,
       etag: teacherCoursesEtag,
-      notModified: teacherCoursesNotModified,
+      notModified: notModified,
     );
   }
 
@@ -1513,8 +1518,8 @@ void main() {
 
       final stats = await service.syncIfReady(currentUser: teacher!);
 
-      expect(api.listTeacherCoursesDeltaCalls, equals(1));
-      expect(api.listTeacherCoursesCalls, equals(1));
+      expect(api.listTeacherCoursesDeltaCalls, equals(2));
+      expect(api.listTeacherCoursesCalls, equals(0));
       expect(api.uploadedBundles.length, equals(2));
 
       final uploadedCourseABundle = api.uploadedBundles.firstWhere(
@@ -2499,6 +2504,51 @@ void main() {
     },
   );
 
+  test('student sync uses cached ETag without falling back to full list', () async {
+    final teacherId = await db.createUser(
+      username: 'teacher_h',
+      pinHash: 'hash',
+      role: 'teacher',
+      remoteUserId: 850,
+    );
+    final studentId = await db.createUser(
+      username: 'student_h',
+      pinHash: 'hash',
+      role: 'student',
+      teacherId: teacherId,
+      remoteUserId: 950,
+    );
+    final student = await db.getUserById(studentId);
+    expect(student, isNotNull);
+
+    final secureStorage = _TestSecureStorageService();
+    await secureStorage.writeSyncListEtag(
+      remoteUserId: 950,
+      domain: 'enrollment_sync_student',
+      scopeKey: 'enrollments',
+      etag: 'cached-student-etag',
+    );
+    final api = _TestMarketplaceApiService(
+      secureStorage: secureStorage,
+      enrollmentsNotModified: true,
+      enrollmentsEtag: 'cached-student-etag',
+    );
+    final service = EnrollmentSyncService(
+      db: db,
+      secureStorage: secureStorage,
+      courseService: CourseService(db),
+      marketplaceApi: api,
+      promptRepository: PromptRepository(db: db),
+      courseArtifactService: CourseArtifactService(),
+    );
+
+    await service.syncIfReady(currentUser: student!);
+
+    expect(api.listEnrollmentsDeltaCalls, equals(1));
+    expect(api.lastEnrollmentsIfNoneMatch, equals('cached-student-etag'));
+    expect(api.listEnrollmentsCalls, equals(0));
+  });
+
   test('teacher sync uses cached ETag for delta list calls', () async {
     final teacherId = await db.createUser(
       username: 'teacher_f',
@@ -2534,6 +2584,7 @@ void main() {
 
     expect(api.listTeacherCoursesDeltaCalls, equals(1));
     expect(api.lastTeacherCoursesIfNoneMatch, equals('cached-teacher-etag'));
+    expect(api.listTeacherCoursesCalls, equals(0));
     final runAt = await secureStorage.readSyncRunAt(
       remoteUserId: 830,
       domain: 'enrollment_sync_teacher',
