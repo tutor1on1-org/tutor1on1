@@ -23,6 +23,7 @@ import 'sync_state_repository.dart';
 import 'tts_service.dart';
 import 'tts_log_repository.dart';
 import 'user_key_service.dart';
+
 class AppServices {
   AppServices._({
     required this.db,
@@ -108,6 +109,9 @@ class AppServices {
       promptRepository: promptRepository,
       courseArtifactService: courseArtifactService,
     );
+    db.setSyncRelevantChangeCallback(() async {
+      await enrollmentSyncService.invalidateStoredLocalState2Caches();
+    });
     final sessionUploadCacheService = SessionUploadCacheService(db: db);
     final sessionService = SessionService(
       db,

@@ -878,6 +878,15 @@ class _MarketplacePageState extends State<MarketplacePage> {
           versionId: bundleVersionId,
         );
       }
+      final downloadedBundleHash = enrollment.latestBundleHash.trim().isNotEmpty
+          ? enrollment.latestBundleHash.trim()
+          : await bundleService.computeBundleSemanticHash(bundleFile);
+      await services.enrollmentSyncService.recordStudentMarketplaceDownload(
+        currentUser: user,
+        remoteCourseId: course.courseId,
+        bundleVersionId: bundleVersionId,
+        bundleHash: downloadedBundleHash,
+      );
       if (!mounted) {
         return;
       }

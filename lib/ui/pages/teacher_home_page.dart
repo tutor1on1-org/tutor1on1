@@ -612,6 +612,18 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       );
       final uploadedStatus =
           (uploadResponse['status'] as String?) ?? 'uploaded';
+      if (uploadedStatus != 'unchanged') {
+        final uploadedVersionId =
+            (uploadResponse['bundle_version_id'] as num?)?.toInt() ?? 0;
+        if (uploadedVersionId > 0) {
+          await services.enrollmentSyncService.recordTeacherMarketplaceUpload(
+            currentUser: teacher,
+            remoteCourseId: remoteCourseId,
+            bundleVersionId: uploadedVersionId,
+            bundleHash: prepared.hash,
+          );
+        }
+      }
       if (mounted) {
         if (uploadedStatus == 'unchanged') {
           _setPersistentMessage(
@@ -1267,6 +1279,13 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     }
 
     await db.deleteCourseVersion(course.id);
+    final services = context.read<AppServices>();
+    final teacher = await services.db.getUserById(course.teacherId);
+    if (teacher != null && teacher.role == 'teacher') {
+      await services.enrollmentSyncService.refreshStoredLocalState2(
+        currentUser: teacher,
+      );
+    }
     if (context.mounted) {
       _setPersistentMessage(
         l10n.deleteCourseSuccess,

@@ -235,6 +235,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
                                 courseKey: courseKey,
                                 studentId: studentId,
                               );
+                              await _refreshTeacherSyncState2();
                               promptRepo.invalidatePromptCache(
                                 promptName: item.name,
                               );
@@ -299,6 +300,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
                                           courseKey: courseKey,
                                           studentId: studentId,
                                         );
+                                        await _refreshTeacherSyncState2();
                                         promptRepo.invalidatePromptCache(
                                           promptName: item.name,
                                         );
@@ -378,10 +380,22 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
       courseKey: courseKey,
       studentId: studentId,
     );
+    await _refreshTeacherSyncState2();
     promptRepo.invalidatePromptCache(promptName: item.name);
     if (context.mounted) {
       _showMessage(context, l10n.promptSaved);
     }
+  }
+
+  Future<void> _refreshTeacherSyncState2() async {
+    final services = context.read<AppServices>();
+    final teacher = await services.db.getUserById(widget.teacherId);
+    if (teacher == null || teacher.role != 'teacher') {
+      return;
+    }
+    await services.enrollmentSyncService.refreshStoredLocalState2(
+      currentUser: teacher,
+    );
   }
 
   Future<void> _showCurrentPreview(
@@ -712,6 +726,7 @@ class _StudentPromptProfileSectionState
         courseKey: widget.courseKey,
         studentId: widget.studentId,
       );
+      await _refreshTeacherSyncState2();
       if (!mounted) {
         return;
       }
@@ -732,6 +747,7 @@ class _StudentPromptProfileSectionState
       preferredFormat: _formatController.text,
       supportNotes: _supportNotesController.text,
     );
+    await _refreshTeacherSyncState2();
     final refreshed = await db.getStudentPromptProfile(
       teacherId: widget.teacherId,
       courseKey: widget.courseKey,
@@ -770,6 +786,17 @@ class _StudentPromptProfileSectionState
   void _showMessage(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
+    );
+  }
+
+  Future<void> _refreshTeacherSyncState2() async {
+    final services = context.read<AppServices>();
+    final teacher = await services.db.getUserById(widget.teacherId);
+    if (teacher == null || teacher.role != 'teacher') {
+      return;
+    }
+    await services.enrollmentSyncService.refreshStoredLocalState2(
+      currentUser: teacher,
     );
   }
 
@@ -994,6 +1021,7 @@ class _StudentPassRuleSectionState extends State<_StudentPassRuleSection> {
       hardWeight: hardWeight,
       passThreshold: passThreshold,
     );
+    await _refreshTeacherSyncState2();
     final refreshed = await db.getStudentPassConfig(
       courseVersionId: widget.courseVersionId,
       studentId: widget.studentId,
@@ -1011,6 +1039,7 @@ class _StudentPassRuleSectionState extends State<_StudentPassRuleSection> {
       courseVersionId: widget.courseVersionId,
       studentId: widget.studentId,
     );
+    await _refreshTeacherSyncState2();
     if (!mounted) {
       return;
     }
@@ -1021,6 +1050,22 @@ class _StudentPassRuleSectionState extends State<_StudentPassRuleSection> {
   void _showMessage(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
+    );
+  }
+
+  Future<void> _refreshTeacherSyncState2() async {
+    final services = context.read<AppServices>();
+    final course =
+        await services.db.getCourseVersionById(widget.courseVersionId);
+    if (course == null) {
+      return;
+    }
+    final teacher = await services.db.getUserById(course.teacherId);
+    if (teacher == null || teacher.role != 'teacher') {
+      return;
+    }
+    await services.enrollmentSyncService.refreshStoredLocalState2(
+      currentUser: teacher,
     );
   }
 

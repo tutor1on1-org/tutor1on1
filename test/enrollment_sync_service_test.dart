@@ -32,10 +32,12 @@ class _TestSecureStorageService extends storage.SecureStorageService {
   final String? _accessToken;
   int? _deletionCursor;
   final Map<String, int> _installedVersionByKey = <String, int>{};
+  final Map<String, String> _localState2ByDomain = <String, String>{};
   final Map<String, String> _etagByKey = <String, String>{};
   final Map<String, DateTime> _runAtByDomain = <String, DateTime>{};
   final Map<String, storage.SyncItemState> _syncItemStateByKey =
       <String, storage.SyncItemState>{};
+  int writeSyncItemStateCalls = 0;
 
   @override
   Future<String?> readAuthAccessToken() async => _accessToken;
@@ -68,6 +70,36 @@ class _TestSecureStorageService extends storage.SecureStorageService {
     required int versionId,
   }) async {
     _installedVersionByKey['$remoteUserId:$remoteCourseId'] = versionId;
+  }
+
+  @override
+  Future<String?> readLocalSyncState2({
+    required int remoteUserId,
+    required String domain,
+  }) async {
+    return _localState2ByDomain['$remoteUserId:$domain'];
+  }
+
+  @override
+  Future<void> writeLocalSyncState2({
+    required int remoteUserId,
+    required String domain,
+    required String state2,
+  }) async {
+    _localState2ByDomain['$remoteUserId:$domain'] = state2.trim();
+  }
+
+  @override
+  Future<void> deleteLocalSyncState2({
+    required int remoteUserId,
+    required String domain,
+  }) async {
+    _localState2ByDomain.remove('$remoteUserId:$domain');
+  }
+
+  @override
+  Future<void> clearAllLocalSyncState2() async {
+    _localState2ByDomain.clear();
   }
 
   @override
@@ -124,6 +156,7 @@ class _TestSecureStorageService extends storage.SecureStorageService {
     required DateTime lastChangedAt,
     required DateTime lastSyncedAt,
   }) async {
+    writeSyncItemStateCalls++;
     _syncItemStateByKey['$remoteUserId:$domain:$scopeKey'] =
         storage.SyncItemState(
       contentHash: contentHash,
@@ -1232,7 +1265,7 @@ void main() {
       expect(secondStats.uploadedCount, equals(0));
       expect(api.downloadBundleCalls, equals(1));
       expect(api.uploadedBundles, isEmpty);
-      expect(artifactService.computeUploadHashCalls, greaterThan(0));
+      expect(artifactService.computeUploadHashCalls, equals(0));
       expect(artifactService.prepareUploadBundleCalls, equals(0));
     },
   );
@@ -2485,11 +2518,17 @@ void main() {
     expect(student, isNotNull);
 
     final secureStorage = _TestSecureStorageService();
+    await secureStorage.writeLocalSyncState2(
+      remoteUserId: 920,
+      domain: 'enrollment_sync_student',
+      state2: 'stored-student-state2',
+    );
     final api = _TestMarketplaceApiService(
       secureStorage: secureStorage,
       enrollments: const <EnrollmentSummary>[],
       enrollmentsNotModified: true,
       enrollmentsEtag: 'student-enrollments-etag',
+      enrollmentsState2: 'stored-student-state2',
     );
     final service = EnrollmentSyncService(
       db: db,
@@ -2572,9 +2611,15 @@ void main() {
     expect(student, isNotNull);
 
     final secureStorage = _TestSecureStorageService();
+    await secureStorage.writeLocalSyncState2(
+      remoteUserId: 950,
+      domain: 'enrollment_sync_student',
+      state2: 'stored-student-state2',
+    );
     final api = _TestMarketplaceApiService(
       secureStorage: secureStorage,
       enrollments: const <EnrollmentSummary>[],
+      enrollmentsState2: 'stored-student-state2',
     );
     final service = EnrollmentSyncService(
       db: db,
@@ -2603,9 +2648,15 @@ void main() {
     expect(teacher, isNotNull);
 
     final secureStorage = _TestSecureStorageService();
+    await secureStorage.writeLocalSyncState2(
+      remoteUserId: 830,
+      domain: 'enrollment_sync_teacher',
+      state2: 'stored-teacher-state2',
+    );
     final api = _TestMarketplaceApiService(
       secureStorage: secureStorage,
       teacherCourses: const <TeacherCourseSummary>[],
+      teacherCoursesState2: 'stored-teacher-state2',
     );
     final service = EnrollmentSyncService(
       db: db,
@@ -2626,4 +2677,84 @@ void main() {
     );
     expect(runAt, isNotNull);
   });
+
+  test(
+    'teacher timer no-change uses stored local state2 without rewriting stale local hash',
+    () async {
+      final teacherId = await db.createUser(
+        username: 'teacher_zero_compute',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 860,
+      );
+      final teacher = await db.getUserById(teacherId);
+      expect(teacher, isNotNull);
+
+      final courseDir = await _createCourseFolder(
+        label: 'zero_compute_teacher',
+        rootTitle: 'Timer Zero Compute',
+      );
+      tempPaths.add(courseDir.path);
+
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Timer Zero Compute',
+        granularity: 1,
+        textbookText: '1 Timer Zero Compute\n',
+        sourcePath: courseDir.path,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 861,
+      );
+
+      final artifactService = _CountingCourseArtifactService();
+      await artifactService.rebuildCourseArtifacts(
+        courseVersionId: courseVersionId,
+        folderPath: courseDir.path,
+      );
+
+      final secureStorage = _TestSecureStorageService();
+      await secureStorage.writeInstalledCourseBundleVersion(
+        remoteUserId: 860,
+        remoteCourseId: 861,
+        versionId: 5,
+      );
+      await secureStorage.writeSyncItemState(
+        remoteUserId: 860,
+        domain: 'enrollment_sync_teacher_upload',
+        scopeKey: 'course:861',
+        contentHash: 'stale-hash',
+        lastChangedAt: DateTime.utc(2025, 1, 1),
+        lastSyncedAt: DateTime.utc(2025, 1, 1),
+      );
+      secureStorage.writeSyncItemStateCalls = 0;
+      await secureStorage.writeLocalSyncState2(
+        remoteUserId: 860,
+        domain: 'enrollment_sync_teacher',
+        state2: 'stored-teacher-state2',
+      );
+
+      final api = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+        teacherCourses: const <TeacherCourseSummary>[],
+        teacherCoursesState2: 'stored-teacher-state2',
+      );
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService:
+            CourseService(db, courseArtifactService: artifactService),
+        marketplaceApi: api,
+        promptRepository: PromptRepository(db: db),
+        courseArtifactService: artifactService,
+      );
+
+      await service.syncIfReady(currentUser: teacher!);
+
+      expect(api.getTeacherCoursesState2Calls, equals(1));
+      expect(api.listTeacherCoursesCalls, equals(0));
+      expect(secureStorage.writeSyncItemStateCalls, equals(0));
+    },
+  );
 }

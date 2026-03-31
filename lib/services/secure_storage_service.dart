@@ -47,6 +47,7 @@ class SecureStorageService {
       'installed_course_bundle_version:';
   static const _promptMetadataAppliedAtPrefix = 'prompt_metadata_applied_at:';
   static const _syncItemStatePrefix = 'sync_item_state:';
+  static const _localSyncState2Prefix = 'local_sync_state2:';
   static const _syncListEtagPrefix = 'sync_list_etag:';
   static const _syncRunAtPrefix = 'sync_run_at:';
   static final String _syncRunDeviceHash = _buildSyncRunDeviceHash();
@@ -387,6 +388,53 @@ class SecureStorageService {
     );
   }
 
+  Future<String?> readLocalSyncState2({
+    required int remoteUserId,
+    required String domain,
+  }) {
+    return _storage.read(
+      key: _localSyncState2Key(
+        remoteUserId: remoteUserId,
+        domain: domain,
+      ),
+    );
+  }
+
+  Future<void> writeLocalSyncState2({
+    required int remoteUserId,
+    required String domain,
+    required String state2,
+  }) {
+    return _storage.write(
+      key: _localSyncState2Key(
+        remoteUserId: remoteUserId,
+        domain: domain,
+      ),
+      value: state2.trim(),
+    );
+  }
+
+  Future<void> deleteLocalSyncState2({
+    required int remoteUserId,
+    required String domain,
+  }) {
+    return _storage.delete(
+      key: _localSyncState2Key(
+        remoteUserId: remoteUserId,
+        domain: domain,
+      ),
+    );
+  }
+
+  Future<void> clearAllLocalSyncState2() async {
+    final all = await _storage.readAll();
+    for (final key in all.keys) {
+      if (key.startsWith(_localSyncState2Prefix)) {
+        await _storage.delete(key: key);
+      }
+    }
+  }
+
   Future<String?> readSyncListEtag({
     required int remoteUserId,
     required String domain,
@@ -561,6 +609,14 @@ class SecureStorageService {
     final normalizedScope = scopeKey.trim();
     final scopeHash = sha256Hex(normalizedScope);
     return '$_syncListEtagPrefix$remoteUserId:$normalizedDomain:$scopeHash';
+  }
+
+  String _localSyncState2Key({
+    required int remoteUserId,
+    required String domain,
+  }) {
+    final normalizedDomain = domain.trim().toLowerCase();
+    return '$_localSyncState2Prefix$remoteUserId:$normalizedDomain';
   }
 
   String _syncRunAtKey({

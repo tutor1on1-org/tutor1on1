@@ -59,6 +59,86 @@ class EnrollmentSyncService {
   static const String _syncMetadataDomainTeacherPromptTimestamps =
       'enrollment_sync_teacher_prompt_timestamps';
 
+  Future<void> invalidateStoredLocalState2Caches() {
+    return _secureStorage.clearAllLocalSyncState2();
+  }
+
+  Future<void> refreshStoredLocalState2({required User currentUser}) async {
+    final remoteUserId = currentUser.remoteUserId;
+    if (remoteUserId == null || remoteUserId <= 0) {
+      return;
+    }
+    if (currentUser.role == 'teacher') {
+      final state2 = await _computeTeacherCourseState2(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+      );
+      await _secureStorage.writeLocalSyncState2(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainTeacherCourses,
+        state2: state2,
+      );
+      return;
+    }
+    final state2 = await _computeStudentEnrollmentState2(
+      currentUser: currentUser,
+      remoteUserId: remoteUserId,
+    );
+    await _secureStorage.writeLocalSyncState2(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainStudentEnrollments,
+      state2: state2,
+    );
+  }
+
+  Future<void> recordTeacherMarketplaceUpload({
+    required User currentUser,
+    required int remoteCourseId,
+    required int bundleVersionId,
+    required String bundleHash,
+  }) async {
+    final remoteUserId = currentUser.remoteUserId;
+    if (currentUser.role != 'teacher' ||
+        remoteUserId == null ||
+        remoteUserId <= 0 ||
+        remoteCourseId <= 0) {
+      return;
+    }
+    final now = DateTime.now().toUtc();
+    await _writeCourseSyncState(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainTeacherCourseUpload,
+      remoteCourseId: remoteCourseId,
+      bundleVersionId: bundleVersionId,
+      contentHash: bundleHash,
+      lastChangedAt: now,
+      lastSyncedAt: now,
+    );
+    await refreshStoredLocalState2(currentUser: currentUser);
+  }
+
+  Future<void> recordStudentMarketplaceDownload({
+    required User currentUser,
+    required int remoteCourseId,
+    required int bundleVersionId,
+    required String bundleHash,
+  }) async {
+    final remoteUserId = currentUser.remoteUserId;
+    if (currentUser.role != 'student' ||
+        remoteUserId == null ||
+        remoteUserId <= 0 ||
+        remoteCourseId <= 0) {
+      return;
+    }
+    await _writeStudentCourseSyncState(
+      remoteUserId: remoteUserId,
+      remoteCourseId: remoteCourseId,
+      bundleVersionId: bundleVersionId,
+      bundleHash: bundleHash,
+    );
+    await refreshStoredLocalState2(currentUser: currentUser);
+  }
+
   Future<SyncRunStats> forcePullFromServer({required User currentUser}) async {
     final stats = SyncRunStats();
     if (_syncing) {
@@ -152,12 +232,18 @@ class EnrollmentSyncService {
           force: false,
           action: () async {
             final remoteState2 = await _api.getTeacherCoursesSyncState2();
-            final localState2 = await _computeTeacherCourseState2(
-              currentUser: currentUser,
-              remoteUserId: remoteUserId,
-            );
+            final localState2 = (await _secureStorage.readLocalSyncState2(
+                  remoteUserId: remoteUserId,
+                  domain: _syncDomainTeacherCourses,
+                ))
+                    ?.trim() ??
+                '';
             if (remoteState2 == localState2) {
-              await _cleanupTeacherLocalDuplicates(currentUser.id);
+              final cleanedDuplicates =
+                  await _cleanupTeacherLocalDuplicates(currentUser.id);
+              if (cleanedDuplicates) {
+                await invalidateStoredLocalState2Caches();
+              }
               return;
             }
             await _syncTeacherCourses(
@@ -175,10 +261,12 @@ class EnrollmentSyncService {
           force: false,
           action: () async {
             final remoteState2 = await _api.getEnrollmentsSyncState2();
-            final localState2 = await _computeStudentEnrollmentState2(
-              currentUser: currentUser,
-              remoteUserId: remoteUserId,
-            );
+            final localState2 = (await _secureStorage.readLocalSyncState2(
+                  remoteUserId: remoteUserId,
+                  domain: _syncDomainStudentEnrollments,
+                ))
+                    ?.trim() ??
+                '';
             if (remoteState2 != localState2) {
               final enrollments = await _api.listEnrollments();
               await _syncStudentEnrollments(
@@ -252,7 +340,7 @@ class EnrollmentSyncService {
       latestBundleVersionId: latestBundleVersionId,
       latestBundleHash: remoteCourse.latestBundleHash,
     );
-    return _downloadAndImportTeacherCourse(
+    final pulledCourse = await _downloadAndImportTeacherCourse(
       currentUser: currentUser,
       remoteUserId: remoteUserId,
       remoteCourseId: remoteCourseId,
@@ -261,6 +349,8 @@ class EnrollmentSyncService {
       existingCourseVersionId: course.id,
       summary: _SyncTransferSummary(),
     );
+    await refreshStoredLocalState2(currentUser: currentUser);
+    return pulledCourse;
   }
 
   Future<void> _runCategoryIfDue({
@@ -376,6 +466,7 @@ class EnrollmentSyncService {
     }
     await _secureStorage.writeEnrollmentDeletionCursor(
         remoteUserId, maxEventId);
+    await invalidateStoredLocalState2Caches();
   }
 
   Future<void> _syncStudentEnrollments({
@@ -509,6 +600,7 @@ class EnrollmentSyncService {
       currentUser: currentUser,
       enrollments: enrollments,
     );
+    await refreshStoredLocalState2(currentUser: currentUser);
   }
 
   Future<CourseVersion> _downloadAndImportCourse({
@@ -638,6 +730,7 @@ class EnrollmentSyncService {
     );
     if (firstSync) {
       await _cleanupTeacherLocalDuplicates(currentUser.id);
+      await refreshStoredLocalState2(currentUser: currentUser);
       return;
     }
     await _uploadLocalTeacherCourses(
@@ -659,6 +752,7 @@ class EnrollmentSyncService {
       summary: summary,
     );
     await _cleanupTeacherLocalDuplicates(currentUser.id);
+    await refreshStoredLocalState2(currentUser: currentUser);
   }
 
   Future<String> _computeStudentEnrollmentState2({
@@ -2853,7 +2947,8 @@ class EnrollmentSyncService {
     return candidates.first;
   }
 
-  Future<void> _cleanupTeacherLocalDuplicates(int teacherId) async {
+  Future<bool> _cleanupTeacherLocalDuplicates(int teacherId) async {
+    var changed = false;
     final localCourses = await _db.getCourseVersionsForTeacher(teacherId);
     final localRemoteIdByCourseVersion = <int, int?>{};
     for (final course in localCourses) {
@@ -2899,7 +2994,9 @@ class EnrollmentSyncService {
         );
       }
       await _cleanupCourseIfOrphaned(course.id);
+      changed = true;
     }
+    return changed;
   }
 
   Future<void> _repairStudentStaleDuplicateCourses({

@@ -194,6 +194,7 @@ class _CourseVersionPageState extends State<CourseVersionPage> {
           _courseName = _course!.subject;
           _folderController.text = _course!.sourcePath ?? folderPath;
         }
+        await _refreshTeacherSyncState2();
         _showMessage(l10n.courseLoadedMessage);
       } else {
         await _showErrorDialog(
@@ -213,6 +214,17 @@ class _CourseVersionPageState extends State<CourseVersionPage> {
         setState(() => _loadingCourse = false);
       }
     }
+  }
+
+  Future<void> _refreshTeacherSyncState2() async {
+    final services = context.read<AppServices>();
+    final teacher = await services.db.getUserById(widget.teacherId);
+    if (teacher == null || teacher.role != 'teacher') {
+      return;
+    }
+    await services.enrollmentSyncService.refreshStoredLocalState2(
+      currentUser: teacher,
+    );
   }
 
   Future<CourseReloadMode?> _resolveReloadMode(
