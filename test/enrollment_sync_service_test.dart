@@ -172,6 +172,7 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
     List<EnrollmentSummary>? enrollments,
     List<EnrollmentDeletionEvent>? deletionEvents,
     List<TeacherCourseSummary>? teacherCourses,
+    List<TeacherCourseSummary> Function(int listCallCount)? teacherCoursesProvider,
     Map<int, LatestCourseBundleInfo>? latestCourseBundleInfoByCourseId,
     this.latestCourseBundleInfoNotFound = false,
     Map<int, List<TeacherBundleVersionSummary>>?
@@ -186,6 +187,7 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   })  : _enrollments = enrollments ?? const <EnrollmentSummary>[],
         _deletionEvents = deletionEvents ?? const <EnrollmentDeletionEvent>[],
         _teacherCourses = teacherCourses ?? const <TeacherCourseSummary>[],
+        _teacherCoursesProvider = teacherCoursesProvider,
         _latestCourseBundleInfoByCourseId = latestCourseBundleInfoByCourseId ??
             const <int, LatestCourseBundleInfo>{},
         _teacherBundleVersionsByCourseId = teacherBundleVersionsByCourseId ??
@@ -203,6 +205,8 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   final List<EnrollmentSummary> _enrollments;
   final List<EnrollmentDeletionEvent> _deletionEvents;
   final List<TeacherCourseSummary> _teacherCourses;
+  final List<TeacherCourseSummary> Function(int listCallCount)?
+      _teacherCoursesProvider;
   final Map<int, LatestCourseBundleInfo> _latestCourseBundleInfoByCourseId;
   final bool latestCourseBundleInfoNotFound;
   final Map<int, List<TeacherBundleVersionSummary>>
@@ -272,6 +276,10 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   @override
   Future<List<TeacherCourseSummary>> listTeacherCourses() async {
     listTeacherCoursesCalls++;
+    final provider = _teacherCoursesProvider;
+    if (provider != null) {
+      return provider(listTeacherCoursesCalls);
+    }
     return _teacherCourses;
   }
 
@@ -2546,6 +2554,141 @@ void main() {
     expect(api.listEnrollmentsCalls, equals(0));
   });
 
+  test('teacher local mutation refreshes stored local state2 immediately',
+      () async {
+    final teacherId = await db.createUser(
+      username: 'teacher_state2_local',
+      pinHash: 'hash',
+      role: 'teacher',
+      remoteUserId: 910,
+    );
+    final secureStorage = _TestSecureStorageService();
+    final service = EnrollmentSyncService(
+      db: db,
+      secureStorage: secureStorage,
+      courseService: CourseService(db),
+      marketplaceApi: _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+      ),
+      promptRepository: PromptRepository(db: db),
+      courseArtifactService: CourseArtifactService(),
+    );
+    db.setSyncRelevantChangeCallback(() async {
+      await service.refreshAllStoredLocalState2();
+    });
+
+    final courseVersionId = await db.createCourseVersion(
+      teacherId: teacherId,
+      subject: 'State2 Original',
+      granularity: 1,
+      textbookText: '1 State2 Original\n',
+    );
+    final teacher = await db.getUserById(teacherId);
+    expect(teacher, isNotNull);
+
+    await service.refreshStoredLocalState2(currentUser: teacher!);
+    final before = await secureStorage.readLocalSyncState2(
+      remoteUserId: 910,
+      domain: 'enrollment_sync_teacher',
+    );
+    expect(before, isNotNull);
+
+    await db.updateCourseVersionSubject(
+      id: courseVersionId,
+      subject: 'State2 Updated',
+    );
+
+    final after = await secureStorage.readLocalSyncState2(
+      remoteUserId: 910,
+      domain: 'enrollment_sync_teacher',
+    );
+    expect(after, isNotNull);
+    expect(after, isNot(equals(before)));
+  });
+
+  test(
+    'student local state2 refreshes immediately when teacher metadata changes',
+    () async {
+      final teacherId = await db.createUser(
+        username: 'teacher_state2_teacher_before',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 920,
+      );
+      final studentId = await db.createUser(
+        username: 'student_state2_before',
+        pinHash: 'hash',
+        role: 'student',
+        teacherId: teacherId,
+        remoteUserId: 921,
+      );
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Teacher Metadata Course',
+        granularity: 1,
+        textbookText: '1 Teacher Metadata Course\n',
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 922,
+      );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+      );
+
+      final secureStorage = _TestSecureStorageService();
+      await secureStorage.writeInstalledCourseBundleVersion(
+        remoteUserId: 921,
+        remoteCourseId: 922,
+        versionId: 5,
+      );
+      await secureStorage.writeSyncItemState(
+        remoteUserId: 921,
+        domain: 'enrollment_sync_student_bundle',
+        scopeKey: 'course:922',
+        contentHash: 'bundle-hash-922',
+        lastChangedAt: DateTime.utc(2025, 1, 1),
+        lastSyncedAt: DateTime.utc(2025, 1, 1),
+      );
+
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService: CourseService(db),
+        marketplaceApi: _TestMarketplaceApiService(
+          secureStorage: secureStorage,
+        ),
+        promptRepository: PromptRepository(db: db),
+        courseArtifactService: CourseArtifactService(),
+      );
+      db.setSyncRelevantChangeCallback(() async {
+        await service.refreshAllStoredLocalState2();
+      });
+
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+      await service.refreshStoredLocalState2(currentUser: student!);
+      final before = await secureStorage.readLocalSyncState2(
+        remoteUserId: 921,
+        domain: 'enrollment_sync_student',
+      );
+      expect(before, isNotNull);
+
+      await db.updateUsername(
+        userId: teacherId,
+        username: 'teacher_state2_teacher_after',
+      );
+
+      final after = await secureStorage.readLocalSyncState2(
+        remoteUserId: 921,
+        domain: 'enrollment_sync_student',
+      );
+      expect(after, isNotNull);
+      expect(after, isNot(equals(before)));
+    },
+  );
+
   test(
     'student sync timestamps are category-scoped and still run deletion replay',
     () async {
@@ -2755,6 +2898,154 @@ void main() {
       expect(api.getTeacherCoursesState2Calls, equals(1));
       expect(api.listTeacherCoursesCalls, equals(0));
       expect(secureStorage.writeSyncItemStateCalls, equals(0));
+    },
+  );
+
+  test(
+    'teacher timer mismatch reuses locally refreshed hash after prompt change',
+    () async {
+      final teacherId = await db.createUser(
+        username: 'teacher_timer_prompt_change',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 870,
+      );
+      final teacher = await db.getUserById(teacherId);
+      expect(teacher, isNotNull);
+
+      final courseDir = await _createCourseFolder(
+        label: 'timer_prompt_change',
+        rootTitle: 'Timer Prompt Change',
+      );
+      tempPaths.add(courseDir.path);
+
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Timer Prompt Change',
+        granularity: 1,
+        textbookText: '1 Timer Prompt Change\n',
+        sourcePath: courseDir.path,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 871,
+      );
+
+      final artifactService = _CountingCourseArtifactService();
+      await artifactService.rebuildCourseArtifacts(
+        courseVersionId: courseVersionId,
+        folderPath: courseDir.path,
+      );
+
+      final secureStorage = _TestSecureStorageService();
+      await secureStorage.writeInstalledCourseBundleVersion(
+        remoteUserId: 870,
+        remoteCourseId: 871,
+        versionId: 5,
+      );
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: 870,
+        domain: 'enrollment_sync_teacher',
+        runAt: DateTime.now().toUtc().subtract(const Duration(minutes: 5)),
+      );
+
+      final bootstrapApi = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+      );
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService:
+            CourseService(db, courseArtifactService: artifactService),
+        marketplaceApi: bootstrapApi,
+        promptRepository: PromptRepository(db: db),
+        courseArtifactService: artifactService,
+      );
+      db.setSyncRelevantChangeCallback(() async {
+        await service.refreshAllStoredLocalState2();
+      });
+
+      await service.refreshStoredLocalState2(currentUser: teacher!);
+      final oldLocalState2 = await secureStorage.readLocalSyncState2(
+        remoteUserId: 870,
+        domain: 'enrollment_sync_teacher',
+      );
+      expect(oldLocalState2, isNotNull);
+
+      final initialSyncState = await secureStorage.readSyncItemState(
+        remoteUserId: 870,
+        domain: 'enrollment_sync_teacher_upload',
+        scopeKey: 'course:871',
+      );
+      expect(initialSyncState, isNotNull);
+      final initialHash = initialSyncState!.contentHash;
+      await secureStorage.writeSyncItemState(
+        remoteUserId: 870,
+        domain: 'enrollment_sync_teacher_upload',
+        scopeKey: 'course:871',
+        contentHash: initialHash,
+        lastChangedAt: DateTime.utc(2025, 1, 1),
+        lastSyncedAt: DateTime.utc(2025, 1, 1),
+      );
+
+      artifactService.resetCounters();
+      await db.insertPromptTemplate(
+        teacherId: teacherId,
+        promptName: 'system',
+        content: 'Explain with a new metaphor.',
+        courseKey: courseDir.path,
+      );
+      expect(artifactService.computeUploadHashCalls, equals(1));
+
+      final refreshedLocalState2 = await secureStorage.readLocalSyncState2(
+        remoteUserId: 870,
+        domain: 'enrollment_sync_teacher',
+      );
+      expect(refreshedLocalState2, isNotNull);
+      expect(refreshedLocalState2, isNot(equals(oldLocalState2)));
+      final refreshedSyncState = await secureStorage.readSyncItemState(
+        remoteUserId: 870,
+        domain: 'enrollment_sync_teacher_upload',
+        scopeKey: 'course:871',
+      );
+      expect(refreshedSyncState, isNotNull);
+      final refreshedHash = refreshedSyncState!.contentHash;
+
+      artifactService.resetCounters();
+      final syncApi = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+        teacherCoursesState2: oldLocalState2,
+        teacherCoursesProvider: (listCallCount) => <TeacherCourseSummary>[
+          TeacherCourseSummary(
+            courseId: 871,
+            subject: 'Timer Prompt Change',
+            grade: '',
+            description: '',
+            visibility: 'public',
+            approvalStatus: 'approved',
+            publishedAt: '',
+            latestBundleVersionId: listCallCount == 1 ? 5 : 8710001,
+            latestBundleHash: listCallCount == 1 ? initialHash : refreshedHash,
+            status: '',
+          ),
+        ],
+      );
+      final syncService = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService:
+            CourseService(db, courseArtifactService: artifactService),
+        marketplaceApi: syncApi,
+        promptRepository: PromptRepository(db: db),
+        courseArtifactService: artifactService,
+      );
+
+      await syncService.syncIfReady(currentUser: teacher);
+
+      expect(syncApi.getTeacherCoursesState2Calls, equals(1));
+      expect(syncApi.listTeacherCoursesCalls, greaterThan(0));
+      expect(artifactService.computeUploadHashCalls, equals(0));
+      expect(syncApi.uploadedBundles, isNotEmpty);
     },
   );
 }

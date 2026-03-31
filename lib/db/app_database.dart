@@ -573,6 +573,16 @@ ORDER BY id
     return (select(users)..where((tbl) => tbl.id.equals(id))).getSingleOrNull();
   }
 
+  Future<List<User>> listRemoteSyncUsers() {
+    return (select(users)
+          ..where((tbl) =>
+              tbl.remoteUserId.isNotNull() &
+              tbl.remoteUserId.isBiggerThanValue(0) &
+              (tbl.role.equals('teacher') | tbl.role.equals('student')))
+          ..orderBy([(tbl) => OrderingTerm(expression: tbl.id)]))
+        .get();
+  }
+
   Future<bool> hasAnyTeacher() async {
     final query = selectOnly(users)
       ..addColumns([users.id.count()])

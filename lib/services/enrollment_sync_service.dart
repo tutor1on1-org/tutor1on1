@@ -63,6 +63,23 @@ class EnrollmentSyncService {
     return _secureStorage.clearAllLocalSyncState2();
   }
 
+  Future<void> refreshAllStoredLocalState2() async {
+    await _secureStorage.clearAllLocalSyncState2();
+    final users = await _db.listRemoteSyncUsers();
+    final seen = <String>{};
+    for (final user in users) {
+      final remoteUserId = user.remoteUserId;
+      if (remoteUserId == null || remoteUserId <= 0) {
+        continue;
+      }
+      final key = '$remoteUserId:${user.role}';
+      if (!seen.add(key)) {
+        continue;
+      }
+      await refreshStoredLocalState2(currentUser: user);
+    }
+  }
+
   Future<void> refreshStoredLocalState2({required User currentUser}) async {
     final remoteUserId = currentUser.remoteUserId;
     if (remoteUserId == null || remoteUserId <= 0) {
@@ -242,7 +259,7 @@ class EnrollmentSyncService {
               final cleanedDuplicates =
                   await _cleanupTeacherLocalDuplicates(currentUser.id);
               if (cleanedDuplicates) {
-                await invalidateStoredLocalState2Caches();
+                await refreshAllStoredLocalState2();
               }
               return;
             }
@@ -466,7 +483,7 @@ class EnrollmentSyncService {
     }
     await _secureStorage.writeEnrollmentDeletionCursor(
         remoteUserId, maxEventId);
-    await invalidateStoredLocalState2Caches();
+    await refreshAllStoredLocalState2();
   }
 
   Future<void> _syncStudentEnrollments({

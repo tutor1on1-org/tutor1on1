@@ -110,7 +110,7 @@ class AppServices {
       courseArtifactService: courseArtifactService,
     );
     db.setSyncRelevantChangeCallback(() async {
-      await enrollmentSyncService.invalidateStoredLocalState2Caches();
+      await enrollmentSyncService.refreshAllStoredLocalState2();
     });
     final sessionUploadCacheService = SessionUploadCacheService(db: db);
     final sessionService = SessionService(
