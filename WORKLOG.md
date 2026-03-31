@@ -105,6 +105,14 @@ Historical setup timeline moved to `LOGBOOK.md`.
   - unauthenticated `GET https://api.tutor1on1.org/api/sync/download-manifest` now returns `401 unauthorized`, proving the compatibility route is live on the same deployment.
   - `scripts/test_auth.ps1 -BaseUrl "https://api.tutor1on1.org"` progressed through register/login/change-password/new-login and stopped only at the expected production recovery-token step because `RECOVERY_TOKEN_ECHO=false` and no `FT_RECOVERY_TOKEN` was provided.
 
+## Remote client artifact refresh (2026-03-31, post sync-state2 fix)
+- Republished canonical Android APK to `https://api.tutor1on1.org/downloads/Tutor1on1.apk`.
+- Republished canonical Windows ZIP to `https://api.tutor1on1.org/downloads/Tutor1on1.zip`.
+- Verified candidate-first upload, remote SHA-256 match, and canonical HTTP 200 for both artifacts.
+- Current canonical downloads:
+  - APK SHA-256: `89428cd53686fada3737993abf20f668b940754b2ad210b9d91d61ad640cb30b`
+  - ZIP SHA-256: `49bb884badd17b93e076dc39662fa335103c0fc1b3fe1a16b6eac3941df33738`
+
 ## Remote server updates (2026-03-25, moderation reject fix + production cleanup)
 - Added backend reject-state fixes for subject-admin moderation and deployed a freshly cross-compiled Linux API binary to `/opt/family_teacher_remote/bin/family-teacher-api`.
 - Restarted `family-teacher-api.service`; current service start time is `Wed 2026-03-25 11:19:49 CST`.
