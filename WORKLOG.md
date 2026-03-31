@@ -1,5 +1,5 @@
 # WORKLOG
-Last updated: 2026-03-25
+Last updated: 2026-03-31
 
 ## Remote host (active)
 - Provider: AliCloud ECS
@@ -78,6 +78,18 @@ Last updated: 2026-03-25
 - If the remote source tree is stale or missing files and `go build` on the host fails with undefined symbols that do exist locally, prefer local `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build` and upload the binary instead of trying to repair the host tree ad hoc.
 
 Historical setup timeline moved to `LOGBOOK.md`.
+
+## Remote server updates (2026-03-31, sync-state2 route deploy)
+- Deployed updated API binary to `/opt/family_teacher_remote/bin/family-teacher-api` after the public APK started requiring `/api/teacher/courses/sync-state2` and `/api/enrollments/sync-state2`.
+- Restarted `family-teacher-api.service`; current service start time is `Tue 2026-03-31 11:20:20 CST`.
+- Backup:
+  - MySQL pre-deploy dump: `/home/ecs-user/db_backups/family_teacher_20260331_031758_pre_sync_state2_routes.sql.gz`
+  - API binary backup: `/opt/family_teacher_remote/bin/family-teacher-api.20260331_031837.bak`
+- Verified:
+  - public health endpoint `https://api.tutor1on1.org/health` returned `200 {"status":"ok"}` after restart.
+  - unauthenticated `GET https://api.tutor1on1.org/api/teacher/courses/sync-state2` now returns `401 unauthorized` instead of `404`, proving the route is live.
+  - unauthenticated `GET https://api.tutor1on1.org/api/enrollments/sync-state2` now returns `401 unauthorized` instead of `404`, proving the second route is live.
+  - `scripts/test_auth.ps1 -BaseUrl "https://api.tutor1on1.org"` progressed through register/login/change-password/new-login and stopped only at the expected production recovery-token step because `RECOVERY_TOKEN_ECHO=false` and no `FT_RECOVERY_TOKEN` was provided.
 
 ## Remote server updates (2026-03-25, moderation reject fix + production cleanup)
 - Added backend reject-state fixes for subject-admin moderation and deployed a freshly cross-compiled Linux API binary to `/opt/family_teacher_remote/bin/family-teacher-api`.
