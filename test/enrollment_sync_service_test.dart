@@ -2608,6 +2608,107 @@ void main() {
   });
 
   test(
+    'teacher local-only course mutation updates stored state1 and local state2',
+    () async {
+      final teacherId = await db.createUser(
+        username: 'teacher_state1_local_only',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 911,
+      );
+      final teacher = await db.getUserById(teacherId);
+      expect(teacher, isNotNull);
+
+      final courseDir = await _createCourseFolder(
+        label: 'state1_local_only',
+        rootTitle: 'State1 Local Only',
+      );
+      tempPaths.add(courseDir.path);
+
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'State1 Local Only',
+        granularity: 1,
+        textbookText: '1 State1 Local Only\n',
+        sourcePath: courseDir.path,
+      );
+      final artifactService = _CountingCourseArtifactService();
+      await artifactService.rebuildCourseArtifacts(
+        courseVersionId: courseVersionId,
+        folderPath: courseDir.path,
+      );
+
+      final secureStorage = _TestSecureStorageService();
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService: CourseService(
+          db,
+          courseArtifactService: artifactService,
+        ),
+        marketplaceApi: _TestMarketplaceApiService(
+          secureStorage: secureStorage,
+        ),
+        promptRepository: PromptRepository(db: db),
+        courseArtifactService: artifactService,
+      );
+      db.setSyncRelevantChangeCallback((change) async {
+        await service.handleLocalSyncRelevantChange(change);
+      });
+
+      await service.refreshStoredLocalState2(currentUser: teacher!);
+      final beforeState2 = await secureStorage.readLocalSyncState2(
+        remoteUserId: 911,
+        domain: 'enrollment_sync_teacher',
+      );
+      expect(beforeState2, isNotNull);
+      final beforeMetadataEntries = await (db.select(db.syncMetadataEntries)
+            ..where((tbl) => tbl.remoteUserId.equals(911)))
+          .get();
+      SyncMetadataEntry? beforeState1;
+      for (final entry in beforeMetadataEntries) {
+        if (entry.kind == 'local_state1' &&
+            entry.domain == 'enrollment_sync_teacher' &&
+            entry.scopeKey == 'local-course:$courseVersionId') {
+          beforeState1 = entry;
+          break;
+        }
+      }
+      expect(beforeState1, isNotNull);
+
+      artifactService.resetCounters();
+      await db.insertPromptTemplate(
+        teacherId: teacherId,
+        promptName: 'system',
+        content: 'Local-only prompt change.',
+        courseKey: courseDir.path,
+      );
+      expect(artifactService.computeUploadHashCalls, equals(1));
+
+      final afterState2 = await secureStorage.readLocalSyncState2(
+        remoteUserId: 911,
+        domain: 'enrollment_sync_teacher',
+      );
+      expect(afterState2, isNotNull);
+      expect(afterState2, isNot(equals(beforeState2)));
+      final afterMetadataEntries = await (db.select(db.syncMetadataEntries)
+            ..where((tbl) => tbl.remoteUserId.equals(911)))
+          .get();
+      SyncMetadataEntry? afterState1;
+      for (final entry in afterMetadataEntries) {
+        if (entry.kind == 'local_state1' &&
+            entry.domain == 'enrollment_sync_teacher' &&
+            entry.scopeKey == 'local-course:$courseVersionId') {
+          afterState1 = entry;
+          break;
+        }
+      }
+      expect(afterState1, isNotNull);
+      expect(afterState1!.value, isNot(equals(beforeState1!.value)));
+    },
+  );
+
+  test(
     'student local state2 refreshes immediately when teacher metadata changes',
     () async {
       final teacherId = await db.createUser(
