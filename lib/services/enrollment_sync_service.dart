@@ -45,6 +45,7 @@ class EnrollmentSyncService {
   final RemoteStudentIdentityService _remoteStudentIdentity =
       const RemoteStudentIdentityService();
   bool _syncing = false;
+  int _localState2RefreshSuppressionDepth = 0;
   static final RegExp _versionSuffixPattern = RegExp(r'_(\d{10,})$');
   static const Duration _syncMinInterval = Duration(seconds: 60);
   static const String _syncDomainDeletionEvents = 'enrollment_sync_deletions';
@@ -59,25 +60,62 @@ class EnrollmentSyncService {
   static const String _syncMetadataDomainTeacherPromptTimestamps =
       'enrollment_sync_teacher_prompt_timestamps';
 
-  Future<void> invalidateStoredLocalState2Caches() {
-    return _secureStorage.clearAllLocalSyncState2();
+  bool get _localState2RefreshSuppressed =>
+      _localState2RefreshSuppressionDepth > 0;
+
+  Future<T> _runWithLocalState2RefreshSuppressed<T>(
+    Future<T> Function() action,
+  ) async {
+    _localState2RefreshSuppressionDepth++;
+    try {
+      return await action();
+    } finally {
+      _localState2RefreshSuppressionDepth--;
+    }
   }
 
-  Future<void> refreshAllStoredLocalState2() async {
-    await _secureStorage.clearAllLocalSyncState2();
-    final users = await _db.listRemoteSyncUsers();
-    final seen = <String>{};
-    for (final user in users) {
-      final remoteUserId = user.remoteUserId;
-      if (remoteUserId == null || remoteUserId <= 0) {
+  Future<void> refreshStoredLocalState2ForLocalUsers({
+    required Set<int> localUserIds,
+  }) async {
+    final seen = <int>{};
+    for (final localUserId in localUserIds) {
+      if (localUserId <= 0 || !seen.add(localUserId)) {
         continue;
       }
-      final key = '$remoteUserId:${user.role}';
-      if (!seen.add(key)) {
+      final user = await _db.getUserById(localUserId);
+      if (user == null) {
         continue;
       }
       await refreshStoredLocalState2(currentUser: user);
     }
+  }
+
+  Future<void> handleLocalSyncRelevantChange(
+    SyncRelevantChange change,
+  ) async {
+    if (_localState2RefreshSuppressed || change.isEmpty) {
+      return;
+    }
+    await refreshStoredLocalState2ForLocalUsers(
+      localUserIds: change.localUserIds,
+    );
+  }
+
+  Future<Set<int>> _collectTeacherAffectedLocalUserIds(int teacherId) async {
+    final affected = <int>{};
+    if (teacherId > 0) {
+      affected.add(teacherId);
+    }
+    final courses = await _db.getCourseVersionsForTeacher(teacherId);
+    for (final course in courses) {
+      final assignments = await _db.getAssignmentsForCourse(course.id);
+      for (final assignment in assignments) {
+        if (assignment.studentId > 0) {
+          affected.add(assignment.studentId);
+        }
+      }
+    }
+    return affected;
   }
 
   Future<void> refreshStoredLocalState2({required User currentUser}) async {
@@ -169,49 +207,55 @@ class EnrollmentSyncService {
     final summary = _SyncTransferSummary();
     _syncing = true;
     try {
-      await _resetForcePullState(
-        remoteUserId: remoteUserId,
-        role: currentUser.role,
-      );
-      if (currentUser.role == 'student') {
-        await _autoApproveLegacyCoursesWithoutTeacher(currentUser.id);
-      }
-      await _runCategoryIfDue(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainDeletionEvents,
-        nowUtc: nowUtc,
-        force: true,
-        action: () => _applyDeletionEvents(currentUser, remoteUserId),
-      );
-      if (currentUser.role == 'teacher') {
-        await _runCategoryIfDue(
+      await _runWithLocalState2RefreshSuppressed(() async {
+        await _resetForcePullState(
           remoteUserId: remoteUserId,
-          domain: _syncDomainTeacherCourses,
-          nowUtc: nowUtc,
-          force: true,
-          action: () => _syncTeacherCourses(
-            currentUser: currentUser,
-            remoteUserId: remoteUserId,
-            summary: summary,
-          ),
+          role: currentUser.role,
         );
-      } else {
+        if (currentUser.role == 'student') {
+          final changed =
+              await _autoApproveLegacyCoursesWithoutTeacher(currentUser.id);
+          if (changed) {
+            await refreshStoredLocalState2(currentUser: currentUser);
+          }
+        }
         await _runCategoryIfDue(
           remoteUserId: remoteUserId,
-          domain: _syncDomainStudentEnrollments,
+          domain: _syncDomainDeletionEvents,
           nowUtc: nowUtc,
           force: true,
-          action: () async {
-            final enrollments = await _api.listEnrollments();
-            await _syncStudentEnrollments(
+          action: () => _applyDeletionEvents(currentUser, remoteUserId),
+        );
+        if (currentUser.role == 'teacher') {
+          await _runCategoryIfDue(
+            remoteUserId: remoteUserId,
+            domain: _syncDomainTeacherCourses,
+            nowUtc: nowUtc,
+            force: true,
+            action: () => _syncTeacherCourses(
               currentUser: currentUser,
               remoteUserId: remoteUserId,
-              enrollments: enrollments,
               summary: summary,
-            );
-          },
-        );
-      }
+            ),
+          );
+        } else {
+          await _runCategoryIfDue(
+            remoteUserId: remoteUserId,
+            domain: _syncDomainStudentEnrollments,
+            nowUtc: nowUtc,
+            force: true,
+            action: () async {
+              final enrollments = await _api.listEnrollments();
+              await _syncStudentEnrollments(
+                currentUser: currentUser,
+                remoteUserId: remoteUserId,
+                enrollments: enrollments,
+                summary: summary,
+              );
+            },
+          );
+        }
+      });
       return summary.toStats();
     } finally {
       _syncing = false;
@@ -231,71 +275,81 @@ class EnrollmentSyncService {
     final summary = _SyncTransferSummary();
     _syncing = true;
     try {
-      if (currentUser.role == 'student') {
-        await _autoApproveLegacyCoursesWithoutTeacher(currentUser.id);
-      }
-      await _runCategoryIfDue(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainDeletionEvents,
-        nowUtc: nowUtc,
-        force: false,
-        action: () => _applyDeletionEvents(currentUser, remoteUserId),
-      );
-      if (currentUser.role == 'teacher') {
+      await _runWithLocalState2RefreshSuppressed(() async {
+        if (currentUser.role == 'student') {
+          final changed =
+              await _autoApproveLegacyCoursesWithoutTeacher(currentUser.id);
+          if (changed) {
+            await refreshStoredLocalState2(currentUser: currentUser);
+          }
+        }
         await _runCategoryIfDue(
           remoteUserId: remoteUserId,
-          domain: _syncDomainTeacherCourses,
+          domain: _syncDomainDeletionEvents,
           nowUtc: nowUtc,
           force: false,
-          action: () async {
-            final remoteState2 = await _api.getTeacherCoursesSyncState2();
-            final localState2 = (await _secureStorage.readLocalSyncState2(
-                  remoteUserId: remoteUserId,
-                  domain: _syncDomainTeacherCourses,
-                ))
-                    ?.trim() ??
-                '';
-            if (remoteState2 == localState2) {
-              final cleanedDuplicates =
-                  await _cleanupTeacherLocalDuplicates(currentUser.id);
-              if (cleanedDuplicates) {
-                await refreshAllStoredLocalState2();
-              }
-              return;
-            }
-            await _syncTeacherCourses(
-              currentUser: currentUser,
-              remoteUserId: remoteUserId,
-              summary: summary,
-            );
-          },
+          action: () => _applyDeletionEvents(currentUser, remoteUserId),
         );
-      } else {
-        await _runCategoryIfDue(
-          remoteUserId: remoteUserId,
-          domain: _syncDomainStudentEnrollments,
-          nowUtc: nowUtc,
-          force: false,
-          action: () async {
-            final remoteState2 = await _api.getEnrollmentsSyncState2();
-            final localState2 = (await _secureStorage.readLocalSyncState2(
-                  remoteUserId: remoteUserId,
-                  domain: _syncDomainStudentEnrollments,
-                ))
-                    ?.trim() ??
-                '';
-            if (remoteState2 != localState2) {
-              final enrollments = await _api.listEnrollments();
-              await _syncStudentEnrollments(
+        if (currentUser.role == 'teacher') {
+          await _runCategoryIfDue(
+            remoteUserId: remoteUserId,
+            domain: _syncDomainTeacherCourses,
+            nowUtc: nowUtc,
+            force: false,
+            action: () async {
+              final remoteState2 = await _api.getTeacherCoursesSyncState2();
+              final localState2 = (await _secureStorage.readLocalSyncState2(
+                    remoteUserId: remoteUserId,
+                    domain: _syncDomainTeacherCourses,
+                  ))
+                      ?.trim() ??
+                  '';
+              if (remoteState2 == localState2) {
+                final cleanedDuplicates =
+                    await _cleanupTeacherLocalDuplicates(currentUser.id);
+                if (cleanedDuplicates) {
+                  await refreshStoredLocalState2ForLocalUsers(
+                    localUserIds: await _collectTeacherAffectedLocalUserIds(
+                      currentUser.id,
+                    ),
+                  );
+                }
+                return;
+              }
+              await _syncTeacherCourses(
                 currentUser: currentUser,
                 remoteUserId: remoteUserId,
-                enrollments: enrollments,
                 summary: summary,
               );
-            }
-          },
-        );
-      }
+            },
+          );
+        } else {
+          await _runCategoryIfDue(
+            remoteUserId: remoteUserId,
+            domain: _syncDomainStudentEnrollments,
+            nowUtc: nowUtc,
+            force: false,
+            action: () async {
+              final remoteState2 = await _api.getEnrollmentsSyncState2();
+              final localState2 = (await _secureStorage.readLocalSyncState2(
+                    remoteUserId: remoteUserId,
+                    domain: _syncDomainStudentEnrollments,
+                  ))
+                      ?.trim() ??
+                  '';
+              if (remoteState2 != localState2) {
+                final enrollments = await _api.listEnrollments();
+                await _syncStudentEnrollments(
+                  currentUser: currentUser,
+                  remoteUserId: remoteUserId,
+                  enrollments: enrollments,
+                  summary: summary,
+                );
+              }
+            },
+          );
+        }
+      });
       return summary.toStats();
     } finally {
       _syncing = false;
@@ -314,60 +368,64 @@ class EnrollmentSyncService {
       throw StateError('Teacher remote user id is missing.');
     }
 
-    final teacherCourses = await _api.listTeacherCourses();
-    final normalizedCourseName = _normalizeCourseName(course.subject);
-    var remoteCourseId = await _db.getRemoteCourseId(course.id);
-    TeacherCourseSummary? remoteCourse;
-    if (remoteCourseId != null && remoteCourseId > 0) {
-      for (final candidate in teacherCourses) {
-        if (candidate.courseId == remoteCourseId) {
-          remoteCourse = candidate;
-          break;
+    return _runWithLocalState2RefreshSuppressed(() async {
+      final teacherCourses = await _api.listTeacherCourses();
+      final normalizedCourseName = _normalizeCourseName(course.subject);
+      var remoteCourseId = await _db.getRemoteCourseId(course.id);
+      TeacherCourseSummary? remoteCourse;
+      if (remoteCourseId != null && remoteCourseId > 0) {
+        for (final candidate in teacherCourses) {
+          if (candidate.courseId == remoteCourseId) {
+            remoteCourse = candidate;
+            break;
+          }
         }
       }
-    }
-    if (remoteCourse == null) {
-      for (final candidate in teacherCourses) {
-        if (_normalizeCourseName(candidate.subject) == normalizedCourseName) {
-          remoteCourse = candidate;
-          remoteCourseId = candidate.courseId;
-          break;
+      if (remoteCourse == null) {
+        for (final candidate in teacherCourses) {
+          if (_normalizeCourseName(candidate.subject) == normalizedCourseName) {
+            remoteCourse = candidate;
+            remoteCourseId = candidate.courseId;
+            break;
+          }
         }
       }
-    }
-    if (remoteCourse == null || remoteCourseId == null || remoteCourseId <= 0) {
-      throw StateError(
-        'No remote server course found for "${course.subject}".',
+      if (remoteCourse == null ||
+          remoteCourseId == null ||
+          remoteCourseId <= 0) {
+        throw StateError(
+          'No remote server course found for "${course.subject}".',
+        );
+      }
+      await _db.upsertCourseRemoteLink(
+        courseVersionId: course.id,
+        remoteCourseId: remoteCourseId,
       );
-    }
-    await _db.upsertCourseRemoteLink(
-      courseVersionId: course.id,
-      remoteCourseId: remoteCourseId,
-    );
 
-    final latestBundleVersionId = remoteCourse.latestBundleVersionId ?? 0;
-    if (latestBundleVersionId <= 0) {
-      throw StateError(
-        'Remote server course "${remoteCourse.subject}" has no bundle to pull.',
+      final latestBundleVersionId = remoteCourse.latestBundleVersionId ?? 0;
+      if (latestBundleVersionId <= 0) {
+        throw StateError(
+          'Remote server course "${remoteCourse.subject}" has no bundle to pull.',
+        );
+      }
+      final remoteBundle = await _resolveRemoteBundleInfo(
+        remoteCourseId: remoteCourseId,
+        courseSubject: remoteCourse.subject,
+        latestBundleVersionId: latestBundleVersionId,
+        latestBundleHash: remoteCourse.latestBundleHash,
       );
-    }
-    final remoteBundle = await _resolveRemoteBundleInfo(
-      remoteCourseId: remoteCourseId,
-      courseSubject: remoteCourse.subject,
-      latestBundleVersionId: latestBundleVersionId,
-      latestBundleHash: remoteCourse.latestBundleHash,
-    );
-    final pulledCourse = await _downloadAndImportTeacherCourse(
-      currentUser: currentUser,
-      remoteUserId: remoteUserId,
-      remoteCourseId: remoteCourseId,
-      courseSubject: remoteCourse.subject,
-      bundleVersionId: remoteBundle.bundleVersionId,
-      existingCourseVersionId: course.id,
-      summary: _SyncTransferSummary(),
-    );
-    await refreshStoredLocalState2(currentUser: currentUser);
-    return pulledCourse;
+      final pulledCourse = await _downloadAndImportTeacherCourse(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+        remoteCourseId: remoteCourseId,
+        courseSubject: remoteCourse.subject,
+        bundleVersionId: remoteBundle.bundleVersionId,
+        existingCourseVersionId: course.id,
+        summary: _SyncTransferSummary(),
+      );
+      await refreshStoredLocalState2(currentUser: currentUser);
+      return pulledCourse;
+    });
   }
 
   Future<void> _runCategoryIfDue({
@@ -420,7 +478,8 @@ class EnrollmentSyncService {
     );
   }
 
-  Future<void> _autoApproveLegacyCoursesWithoutTeacher(int studentId) async {
+  Future<bool> _autoApproveLegacyCoursesWithoutTeacher(int studentId) async {
+    var changed = false;
     final assignedCourses = await _db.getAssignedCoursesForStudent(studentId);
     for (final course in assignedCourses) {
       final teacher = await _db.getUserById(course.teacherId);
@@ -437,7 +496,9 @@ class EnrollmentSyncService {
         removeAssignment: true,
       );
       await _cleanupCourseIfOrphaned(course.id);
+      changed = true;
     }
+    return changed;
   }
 
   Future<void> _applyDeletionEvents(User currentUser, int remoteUserId) async {
@@ -448,6 +509,7 @@ class EnrollmentSyncService {
     if (events.isEmpty) {
       return;
     }
+    final affectedLocalUserIds = <int>{currentUser.id};
     var maxEventId = sinceId ?? 0;
     for (final event in events) {
       if (event.eventId > maxEventId) {
@@ -469,6 +531,7 @@ class EnrollmentSyncService {
         if (localStudent == null) {
           continue;
         }
+        affectedLocalUserIds.add(localStudent.id);
         final courseVersionId =
             await _db.getCourseVersionIdForRemoteCourse(event.courseId);
         if (courseVersionId == null) {
@@ -483,7 +546,9 @@ class EnrollmentSyncService {
     }
     await _secureStorage.writeEnrollmentDeletionCursor(
         remoteUserId, maxEventId);
-    await refreshAllStoredLocalState2();
+    await refreshStoredLocalState2ForLocalUsers(
+      localUserIds: affectedLocalUserIds,
+    );
   }
 
   Future<void> _syncStudentEnrollments({

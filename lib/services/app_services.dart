@@ -109,8 +109,8 @@ class AppServices {
       promptRepository: promptRepository,
       courseArtifactService: courseArtifactService,
     );
-    db.setSyncRelevantChangeCallback(() async {
-      await enrollmentSyncService.refreshAllStoredLocalState2();
+    db.setSyncRelevantChangeCallback((change) async {
+      await enrollmentSyncService.handleLocalSyncRelevantChange(change);
     });
     final sessionUploadCacheService = SessionUploadCacheService(db: db);
     final sessionService = SessionService(

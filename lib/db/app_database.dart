@@ -277,6 +277,14 @@ class SyncMetadataEntries extends Table {
   Set<Column> get primaryKey => {remoteUserId, kind, domain, scopeKey};
 }
 
+class SyncRelevantChange {
+  const SyncRelevantChange({this.localUserIds = const <int>{}});
+
+  final Set<int> localUserIds;
+
+  bool get isEmpty => localUserIds.isEmpty;
+}
+
 @DriftDatabase(
   tables: [
     Users,
@@ -306,7 +314,7 @@ class AppDatabase extends _$AppDatabase {
       PinHasher.hash('remote_student_placeholder');
   static final String _remoteUserPlaceholderPinHash =
       PinHasher.hash('remote_user_placeholder');
-  Future<void> Function()? _onSyncRelevantChange;
+  Future<void> Function(SyncRelevantChange change)? _onSyncRelevantChange;
 
   factory AppDatabase.open() {
     return AppDatabase(_openConnection());
@@ -316,16 +324,128 @@ class AppDatabase extends _$AppDatabase {
     return AppDatabase(executor);
   }
 
-  void setSyncRelevantChangeCallback(Future<void> Function()? callback) {
+  void setSyncRelevantChangeCallback(
+    Future<void> Function(SyncRelevantChange change)? callback,
+  ) {
     _onSyncRelevantChange = callback;
   }
 
-  Future<void> _notifySyncRelevantChange() async {
+  Future<void> _notifySyncRelevantChange([
+    SyncRelevantChange change = const SyncRelevantChange(),
+  ]) async {
     final callback = _onSyncRelevantChange;
-    if (callback == null) {
+    if (callback == null || change.isEmpty) {
       return;
     }
-    await callback();
+    await callback(change);
+  }
+
+  Future<void> _notifySyncRelevantUsers(Iterable<int> userIds) async {
+    final normalized = <int>{};
+    for (final userId in userIds) {
+      if (userId > 0) {
+        normalized.add(userId);
+      }
+    }
+    await _notifySyncRelevantChange(
+      SyncRelevantChange(localUserIds: normalized),
+    );
+  }
+
+  Future<Set<int>> _syncAffectedUsersForCourseVersion(
+      int courseVersionId) async {
+    final affected = <int>{};
+    final course = await getCourseVersionById(courseVersionId);
+    if (course != null && course.teacherId > 0) {
+      affected.add(course.teacherId);
+    }
+    final assignments = await getAssignmentsForCourse(courseVersionId);
+    for (final assignment in assignments) {
+      if (assignment.studentId > 0) {
+        affected.add(assignment.studentId);
+      }
+    }
+    return affected;
+  }
+
+  Set<int> _syncAffectedUsersForTeacherOnly(int teacherId) {
+    if (teacherId <= 0) {
+      return const <int>{};
+    }
+    return <int>{teacherId};
+  }
+
+  Future<Set<int>> _syncAffectedUsersForCourseTeacherOnly(
+    int courseVersionId,
+  ) async {
+    final course = await getCourseVersionById(courseVersionId);
+    if (course == null || course.teacherId <= 0) {
+      return const <int>{};
+    }
+    return <int>{course.teacherId};
+  }
+
+  Future<Set<int>> _syncAffectedUsersForTeacher(
+    int teacherId, {
+    required bool includeAssignedStudents,
+  }) async {
+    final affected = <int>{};
+    if (teacherId > 0) {
+      affected.add(teacherId);
+    }
+    if (!includeAssignedStudents) {
+      return affected;
+    }
+    final courses = await getCourseVersionsForTeacher(teacherId);
+    for (final course in courses) {
+      final assignments = await getAssignmentsForCourse(course.id);
+      for (final assignment in assignments) {
+        if (assignment.studentId > 0) {
+          affected.add(assignment.studentId);
+        }
+      }
+    }
+    return affected;
+  }
+
+  Future<Set<int>> _syncAffectedUsersForStudent(
+    int studentId, {
+    required bool includeAssignedTeachers,
+  }) async {
+    final affected = <int>{};
+    if (studentId > 0) {
+      affected.add(studentId);
+    }
+    if (!includeAssignedTeachers) {
+      return affected;
+    }
+    final courses = await getAssignedCoursesForStudent(studentId);
+    for (final course in courses) {
+      if (course.teacherId > 0) {
+        affected.add(course.teacherId);
+      }
+    }
+    return affected;
+  }
+
+  Future<Set<int>> _syncAffectedUsersForUser(int userId) async {
+    final user = await getUserById(userId);
+    if (user == null) {
+      return const <int>{};
+    }
+    if (user.role == 'teacher') {
+      return _syncAffectedUsersForTeacher(
+        userId,
+        includeAssignedStudents: true,
+      );
+    }
+    if (user.role == 'student') {
+      return _syncAffectedUsersForStudent(
+        userId,
+        includeAssignedTeachers: true,
+      );
+    }
+    return <int>{userId};
   }
 
   @override
@@ -573,16 +693,6 @@ ORDER BY id
     return (select(users)..where((tbl) => tbl.id.equals(id))).getSingleOrNull();
   }
 
-  Future<List<User>> listRemoteSyncUsers() {
-    return (select(users)
-          ..where((tbl) =>
-              tbl.remoteUserId.isNotNull() &
-              tbl.remoteUserId.isBiggerThanValue(0) &
-              (tbl.role.equals('teacher') | tbl.role.equals('student')))
-          ..orderBy([(tbl) => OrderingTerm(expression: tbl.id)]))
-        .get();
-  }
-
   Future<bool> hasAnyTeacher() async {
     final query = selectOnly(users)
       ..addColumns([users.id.count()])
@@ -620,10 +730,11 @@ ORDER BY id
     required int userId,
     required String username,
   }) async {
+    final affectedUsers = await _syncAffectedUsersForUser(userId);
     await (update(users)..where((tbl) => tbl.id.equals(userId))).write(
       UsersCompanion(username: Value(username)),
     );
-    await _notifySyncRelevantChange();
+    await _notifySyncRelevantUsers(affectedUsers);
   }
 
   Stream<List<User>> watchStudents(int teacherId) {
@@ -697,7 +808,7 @@ ORDER BY id
         treeGenValid: const Value(false),
       ),
     );
-    await _notifySyncRelevantChange();
+    await _notifySyncRelevantUsers(<int>{teacherId});
     return courseVersionId;
   }
 
@@ -708,6 +819,7 @@ ORDER BY id
     required String textbookText,
     String? sourcePath,
   }) async {
+    final affectedUsers = await _syncAffectedUsersForCourseVersion(id);
     await (update(courseVersions)..where((tbl) => tbl.id.equals(id))).write(
       CourseVersionsCompanion(
         subject: Value(subject),
@@ -718,33 +830,36 @@ ORDER BY id
         updatedAt: Value(DateTime.now()),
       ),
     );
-    await _notifySyncRelevantChange();
+    await _notifySyncRelevantUsers(affectedUsers);
   }
 
   Future<void> updateCourseVersionSubject({
     required int id,
     required String subject,
   }) async {
+    final affectedUsers = await _syncAffectedUsersForCourseVersion(id);
     await (update(courseVersions)..where((tbl) => tbl.id.equals(id))).write(
       CourseVersionsCompanion(
         subject: Value(subject),
         updatedAt: Value(DateTime.now()),
       ),
     );
-    await _notifySyncRelevantChange();
+    await _notifySyncRelevantUsers(affectedUsers);
   }
 
   Future<void> updateCourseVersionTeacherId({
     required int id,
     required int teacherId,
   }) async {
+    final affectedUsers = await _syncAffectedUsersForCourseVersion(id);
     await (update(courseVersions)..where((tbl) => tbl.id.equals(id))).write(
       CourseVersionsCompanion(
         teacherId: Value(teacherId),
         updatedAt: Value(DateTime.now()),
       ),
     );
-    await _notifySyncRelevantChange();
+    affectedUsers.addAll(await _syncAffectedUsersForCourseVersion(id));
+    await _notifySyncRelevantUsers(affectedUsers);
   }
 
   Future<void> assignStudent({
@@ -758,7 +873,9 @@ ORDER BY id
       ),
       mode: InsertMode.insertOrIgnore,
     );
-    await _notifySyncRelevantChange();
+    await _notifySyncRelevantUsers(
+      await _syncAffectedUsersForCourseVersion(courseVersionId),
+    );
   }
 
   Stream<List<CourseVersion>> watchAssignedCourses(int studentId) {
@@ -1645,6 +1762,7 @@ ORDER BY l.created_at DESC
     required String role,
     int? remoteUserId,
   }) async {
+    final affectedUsers = await _syncAffectedUsersForUser(userId);
     await (update(users)..where((tbl) => tbl.id.equals(userId))).write(
       UsersCompanion(
         pinHash: Value(pinHash),
@@ -1653,7 +1771,8 @@ ORDER BY l.created_at DESC
             remoteUserId == null ? const Value.absent() : Value(remoteUserId),
       ),
     );
-    await _notifySyncRelevantChange();
+    affectedUsers.addAll(await _syncAffectedUsersForUser(userId));
+    await _notifySyncRelevantUsers(affectedUsers);
   }
 
   Future<User> upsertAuthenticatedUser({
@@ -1695,9 +1814,11 @@ ORDER BY l.created_at DESC
           role: role,
           remoteUserId: remoteUserId,
         );
+        await _notifySyncRelevantUsers(<int>{userId});
         return (await getUserById(userId))!;
       }
       final targetId = target.id;
+      final affectedUsers = await _syncAffectedUsersForUser(targetId);
 
       await (update(users)..where((tbl) => tbl.id.equals(targetId))).write(
         UsersCompanion(
@@ -1709,7 +1830,8 @@ ORDER BY l.created_at DESC
               remoteUserId == null ? const Value.absent() : Value(remoteUserId),
         ),
       );
-      await _notifySyncRelevantChange();
+      affectedUsers.addAll(await _syncAffectedUsersForUser(targetId));
+      await _notifySyncRelevantUsers(affectedUsers);
       return (await getUserById(targetId))!;
     });
   }
@@ -1757,6 +1879,9 @@ HAVING COUNT(*) > 1
     if (keepUserId == removeUserId) {
       return;
     }
+    final affectedUsers = <int>{keepUserId, removeUserId}
+      ..addAll(await _syncAffectedUsersForUser(keepUserId))
+      ..addAll(await _syncAffectedUsersForUser(removeUserId));
     await transaction(() async {
       final keep = await getUserById(keepUserId);
       final remove = await getUserById(removeUserId);
@@ -1788,12 +1913,16 @@ HAVING COUNT(*) > 1
       );
       await (delete(users)..where((tbl) => tbl.id.equals(removeUserId))).go();
     });
+    affectedUsers.addAll(await _syncAffectedUsersForUser(keepUserId));
+    await _notifySyncRelevantUsers(affectedUsers);
   }
 
   Future<void> updateStudentTeacherId({
     required int studentId,
     required int teacherId,
   }) async {
+    final affectedUsers = <int>{studentId, teacherId}
+      ..addAll(await _syncAffectedUsersForUser(studentId));
     await (update(users)
           ..where(
               (tbl) => tbl.id.equals(studentId) & tbl.role.equals('student')))
@@ -1802,7 +1931,8 @@ HAVING COUNT(*) > 1
         teacherId: Value(teacherId),
       ),
     );
-    await _notifySyncRelevantChange();
+    affectedUsers.addAll(await _syncAffectedUsersForUser(studentId));
+    await _notifySyncRelevantUsers(affectedUsers);
   }
 
   Future<void> _mergeTeacherReferences({
@@ -1973,7 +2103,9 @@ HAVING COUNT(*) > 1
       ),
       mode: InsertMode.insertOrReplace,
     );
-    await _notifySyncRelevantChange();
+    await _notifySyncRelevantUsers(
+      await _syncAffectedUsersForCourseVersion(courseVersionId),
+    );
   }
 
   Future<int?> getRemoteCourseId(int courseVersionId) async {
@@ -2043,6 +2175,9 @@ HAVING COUNT(*) > 1
   }
 
   Future<void> deleteCourseVersion(int courseVersionId) async {
+    final affectedUsers = await _syncAffectedUsersForCourseVersion(
+      courseVersionId,
+    );
     await transaction(() async {
       final sessions = await (select(chatSessions)
             ..where((tbl) => tbl.courseVersionId.equals(courseVersionId)))
@@ -2079,7 +2214,7 @@ HAVING COUNT(*) > 1
             ..where((tbl) => tbl.id.equals(courseVersionId)))
           .go();
     });
-    await _notifySyncRelevantChange();
+    await _notifySyncRelevantUsers(affectedUsers);
   }
 
   Future<void> deleteStudentCourseData({
@@ -2087,6 +2222,9 @@ HAVING COUNT(*) > 1
     required int courseVersionId,
     bool removeAssignment = true,
   }) async {
+    final affectedUsers = removeAssignment
+        ? await _syncAffectedUsersForCourseVersion(courseVersionId)
+        : const <int>{};
     await transaction(() async {
       final sessions = await (select(chatSessions)
             ..where((tbl) =>
@@ -2116,7 +2254,7 @@ HAVING COUNT(*) > 1
             .go();
       }
     });
-    await _notifySyncRelevantChange();
+    await _notifySyncRelevantUsers(affectedUsers);
   }
 
   Future<void> migrateStudentCourseData({
@@ -2354,7 +2492,7 @@ HAVING COUNT(*) > 1
         ),
       );
     });
-    await _notifySyncRelevantChange();
+    await _notifySyncRelevantUsers(_syncAffectedUsersForTeacherOnly(teacherId));
     return templateId;
   }
 
@@ -2392,7 +2530,7 @@ HAVING COUNT(*) > 1
         ),
       );
     });
-    await _notifySyncRelevantChange();
+    await _notifySyncRelevantUsers(_syncAffectedUsersForTeacherOnly(teacherId));
     return templateId;
   }
 
@@ -2429,7 +2567,7 @@ HAVING COUNT(*) > 1
         const PromptTemplatesCompanion(isActive: Value(true)),
       );
     });
-    await _notifySyncRelevantChange();
+    await _notifySyncRelevantUsers(_syncAffectedUsersForTeacherOnly(teacherId));
   }
 
   Future<void> clearActivePromptTemplates({
@@ -2450,7 +2588,7 @@ HAVING COUNT(*) > 1
         .write(
       const PromptTemplatesCompanion(isActive: Value(false)),
     );
-    await _notifySyncRelevantChange();
+    await _notifySyncRelevantUsers(_syncAffectedUsersForTeacherOnly(teacherId));
   }
 
   Future<StudentPromptProfile?> getStudentPromptProfile({
@@ -2654,7 +2792,9 @@ HAVING COUNT(*) > 1
           updatedAt: Value(now),
         ),
       );
-      await _notifySyncRelevantChange();
+      await _notifySyncRelevantUsers(
+        _syncAffectedUsersForTeacherOnly(teacherId),
+      );
       return;
     }
     await (update(studentPromptProfiles)
@@ -2672,7 +2812,7 @@ HAVING COUNT(*) > 1
         updatedAt: Value(now),
       ),
     );
-    await _notifySyncRelevantChange();
+    await _notifySyncRelevantUsers(_syncAffectedUsersForTeacherOnly(teacherId));
   }
 
   Future<void> importStudentPromptProfile({
@@ -2742,7 +2882,9 @@ HAVING COUNT(*) > 1
           updatedAt: Value(normalizedUpdatedAt),
         ),
       );
-      await _notifySyncRelevantChange();
+      await _notifySyncRelevantUsers(
+        _syncAffectedUsersForTeacherOnly(teacherId),
+      );
       return;
     }
     await (update(studentPromptProfiles)
@@ -2761,7 +2903,7 @@ HAVING COUNT(*) > 1
         updatedAt: Value(normalizedUpdatedAt),
       ),
     );
-    await _notifySyncRelevantChange();
+    await _notifySyncRelevantUsers(_syncAffectedUsersForTeacherOnly(teacherId));
   }
 
   Future<void> deleteStudentPromptProfile({
@@ -2779,7 +2921,7 @@ HAVING COUNT(*) > 1
                 studentId: studentId,
               )))
         .go();
-    await _notifySyncRelevantChange();
+    await _notifySyncRelevantUsers(_syncAffectedUsersForTeacherOnly(teacherId));
   }
 
   Future<StudentPassConfig?> getStudentPassConfig({
@@ -2872,7 +3014,9 @@ HAVING COUNT(*) > 1
           updatedAt: Value(now),
         ),
       );
-      await _notifySyncRelevantChange();
+      await _notifySyncRelevantUsers(
+        await _syncAffectedUsersForCourseTeacherOnly(courseVersionId),
+      );
       return;
     }
     await (update(studentPassConfigs)
@@ -2886,7 +3030,9 @@ HAVING COUNT(*) > 1
         updatedAt: Value(now),
       ),
     );
-    await _notifySyncRelevantChange();
+    await _notifySyncRelevantUsers(
+      await _syncAffectedUsersForCourseTeacherOnly(courseVersionId),
+    );
   }
 
   Future<void> importStudentPassConfig({
@@ -2920,7 +3066,9 @@ HAVING COUNT(*) > 1
           updatedAt: Value(normalizedUpdatedAt),
         ),
       );
-      await _notifySyncRelevantChange();
+      await _notifySyncRelevantUsers(
+        await _syncAffectedUsersForCourseTeacherOnly(courseVersionId),
+      );
       return;
     }
     await (update(studentPassConfigs)
@@ -2935,7 +3083,9 @@ HAVING COUNT(*) > 1
         updatedAt: Value(normalizedUpdatedAt),
       ),
     );
-    await _notifySyncRelevantChange();
+    await _notifySyncRelevantUsers(
+      await _syncAffectedUsersForCourseTeacherOnly(courseVersionId),
+    );
   }
 
   Future<void> deleteStudentPassConfig({
@@ -2947,14 +3097,18 @@ HAVING COUNT(*) > 1
               tbl.courseVersionId.equals(courseVersionId) &
               tbl.studentId.equals(studentId)))
         .go();
-    await _notifySyncRelevantChange();
+    await _notifySyncRelevantUsers(
+      await _syncAffectedUsersForCourseTeacherOnly(courseVersionId),
+    );
   }
 
   Future<void> deleteStudentPassConfigsForCourse(int courseVersionId) async {
     await (delete(studentPassConfigs)
           ..where((tbl) => tbl.courseVersionId.equals(courseVersionId)))
         .go();
-    await _notifySyncRelevantChange();
+    await _notifySyncRelevantUsers(
+      await _syncAffectedUsersForCourseTeacherOnly(courseVersionId),
+    );
   }
 
   User _preferAuthCanonicalUser(User left, User right) {

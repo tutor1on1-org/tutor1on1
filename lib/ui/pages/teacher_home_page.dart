@@ -1279,13 +1279,6 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     }
 
     await db.deleteCourseVersion(course.id);
-    final services = context.read<AppServices>();
-    final teacher = await services.db.getUserById(course.teacherId);
-    if (teacher != null && teacher.role == 'teacher') {
-      await services.enrollmentSyncService.refreshStoredLocalState2(
-        currentUser: teacher,
-      );
-    }
     if (context.mounted) {
       _setPersistentMessage(
         l10n.deleteCourseSuccess,

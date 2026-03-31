@@ -172,7 +172,8 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
     List<EnrollmentSummary>? enrollments,
     List<EnrollmentDeletionEvent>? deletionEvents,
     List<TeacherCourseSummary>? teacherCourses,
-    List<TeacherCourseSummary> Function(int listCallCount)? teacherCoursesProvider,
+    List<TeacherCourseSummary> Function(int listCallCount)?
+        teacherCoursesProvider,
     Map<int, LatestCourseBundleInfo>? latestCourseBundleInfoByCourseId,
     this.latestCourseBundleInfoNotFound = false,
     Map<int, List<TeacherBundleVersionSummary>>?
@@ -2573,8 +2574,8 @@ void main() {
       promptRepository: PromptRepository(db: db),
       courseArtifactService: CourseArtifactService(),
     );
-    db.setSyncRelevantChangeCallback(() async {
-      await service.refreshAllStoredLocalState2();
+    db.setSyncRelevantChangeCallback((change) async {
+      await service.handleLocalSyncRelevantChange(change);
     });
 
     final courseVersionId = await db.createCourseVersion(
@@ -2662,8 +2663,8 @@ void main() {
         promptRepository: PromptRepository(db: db),
         courseArtifactService: CourseArtifactService(),
       );
-      db.setSyncRelevantChangeCallback(() async {
-        await service.refreshAllStoredLocalState2();
+      db.setSyncRelevantChangeCallback((change) async {
+        await service.handleLocalSyncRelevantChange(change);
       });
 
       final student = await db.getUserById(studentId);
@@ -2961,8 +2962,8 @@ void main() {
         promptRepository: PromptRepository(db: db),
         courseArtifactService: artifactService,
       );
-      db.setSyncRelevantChangeCallback(() async {
-        await service.refreshAllStoredLocalState2();
+      db.setSyncRelevantChangeCallback((change) async {
+        await service.handleLocalSyncRelevantChange(change);
       });
 
       await service.refreshStoredLocalState2(currentUser: teacher!);
