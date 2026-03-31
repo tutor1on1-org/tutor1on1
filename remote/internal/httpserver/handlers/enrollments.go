@@ -362,16 +362,27 @@ func (h *EnrollmentHandler) GetEnrollmentsSyncState2(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
-	results, err := h.listEnrollmentSummaries(userID)
+	state2, err := readStudentEnrollmentSyncState2(h.cfg.Store.DB, userID)
 	if err != nil {
 		return err
 	}
-	fingerprints := make([]string, 0, len(results))
-	for _, item := range results {
-		fingerprints = append(fingerprints, buildStudentEnrollmentStateFingerprint(item))
+	return c.JSON(fiber.Map{
+		"state2": state2,
+	})
+}
+
+func (h *EnrollmentHandler) GetEnrollmentsSyncState1(c *fiber.Ctx) error {
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	}
+	items, err := listStudentEnrollmentStateItems(h.cfg.Store.DB, userID)
+	if err != nil {
+		return err
 	}
 	return c.JSON(fiber.Map{
-		"state2": buildState2(fingerprints),
+		"state2": buildStudentEnrollmentState2(items),
+		"items":  items,
 	})
 }
 
@@ -695,6 +706,9 @@ func (h *EnrollmentHandler) ApproveRequest(c *fiber.Ctx) error {
 	if err := tx.Commit(); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
 	}
+	if err := refreshStudentEnrollmentSyncStateForUser(h.cfg.Store.DB, studentID); err != nil {
+		return err
+	}
 	return c.JSON(fiber.Map{"status": "approved"})
 }
 
@@ -839,6 +853,9 @@ func (h *EnrollmentHandler) ApproveQuitRequest(c *fiber.Ctx) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
+	}
+	if err := refreshStudentEnrollmentSyncStateForUser(h.cfg.Store.DB, studentID); err != nil {
+		return err
 	}
 	return c.JSON(fiber.Map{"status": "approved"})
 }

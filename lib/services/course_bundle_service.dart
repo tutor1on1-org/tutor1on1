@@ -332,6 +332,7 @@ class CourseBundleService {
     try {
       final archive = ZipDecoder().decodeBuffer(input);
       final files = <_BundleSemanticFile>[];
+      var sawPromptMetadata = false;
       for (final entry in archive.files) {
         if (!entry.isFile) {
           continue;
@@ -349,6 +350,7 @@ class CourseBundleService {
         var semanticName = name;
         var data = _entryBytes(entry);
         if (isSupportedPromptMetadataEntryPath(name)) {
+          sawPromptMetadata = true;
           semanticName = promptMetadataEntryPath;
           if (promptMetadataOverride != null) {
             continue;
@@ -361,7 +363,18 @@ class CourseBundleService {
         files.add(
           _BundleSemanticFile(
             name: promptMetadataEntryPath,
-            data: normalizePromptMetadataJson(promptMetadataOverride),
+            data: _normalizePromptMetadataJsonForSemanticHash(
+              promptMetadataOverride,
+            ),
+          ),
+        );
+      } else if (!sawPromptMetadata) {
+        files.add(
+          _BundleSemanticFile(
+            name: promptMetadataEntryPath,
+            data: _normalizePromptMetadataJsonForSemanticHash(
+              _emptyPromptMetadataDocument(),
+            ),
           ),
         );
       }
@@ -708,24 +721,251 @@ class CourseBundleService {
 
   List<int> normalizePromptMetadataJson(Map<String, dynamic> value) {
     final cleaned =
+        _normalizePromptMetadataBundleValue(_removeGeneratedFields(value));
+    final canonical = _canonicalJsonEncode(cleaned);
+    return utf8.encode(canonical);
+  }
+
+  List<int> _normalizePromptMetadataJsonForSemanticHash(
+    Map<String, dynamic> value,
+  ) {
+    final cleaned =
         _normalizePromptMetadataValue(_removeGeneratedFields(value));
     final canonical = _canonicalJsonEncode(cleaned);
     return utf8.encode(canonical);
   }
 
-  Object? _normalizePromptMetadataValue(Object? value) {
+  Map<String, dynamic> _emptyPromptMetadataDocument() {
+    return <String, dynamic>{
+      'schema': kCurrentPromptBundleSchema,
+      'prompt_templates': const <Map<String, dynamic>>[],
+      'student_prompt_profiles': const <Map<String, dynamic>>[],
+      'student_pass_configs': const <Map<String, dynamic>>[],
+    };
+  }
+
+  Object? _normalizePromptMetadataBundleValue(Object? value) {
+    if (value is List) {
+      return value.map(_normalizePromptMetadataBundleValue).toList();
+    }
     if (value is! Map) {
-      return value;
+      return _normalizePromptMetadataScalar(value);
     }
     final normalized = <String, Object?>{};
     for (final entry in value.entries) {
-      normalized[entry.key.toString()] = entry.value;
+      normalized[entry.key.toString()] =
+          _normalizePromptMetadataBundleValue(entry.value);
     }
     final schema = normalized['schema'];
     if (schema is String && isSupportedPromptBundleSchema(schema)) {
       normalized['schema'] = kCurrentPromptBundleSchema;
     }
     return normalized;
+  }
+
+  Object? _normalizePromptMetadataValue(Object? value) {
+    if (value is List) {
+      return value.map(_normalizePromptMetadataValue).toList();
+    }
+    if (value is! Map) {
+      return _normalizePromptMetadataScalar(value);
+    }
+    final normalized = <String, Object?>{};
+    for (final entry in value.entries) {
+      normalized[entry.key.toString()] =
+          _normalizePromptMetadataValue(entry.value);
+    }
+    final schema = normalized['schema'];
+    if (schema is String && isSupportedPromptBundleSchema(schema)) {
+      return _normalizePromptMetadataDocument(normalized);
+    }
+    return normalized;
+  }
+
+  Map<String, Object?> _normalizePromptMetadataDocument(
+    Map<String, Object?> value,
+  ) {
+    return <String, Object?>{
+      'schema': kCurrentPromptBundleSchema,
+      'prompt_templates': _sortCanonicalMaps(
+        _normalizePromptTemplateList(value['prompt_templates']),
+      ),
+      'student_prompt_profiles': _sortCanonicalMaps(
+        _normalizePromptProfileList(value['student_prompt_profiles']),
+      ),
+      'student_pass_configs': _sortCanonicalMaps(
+        _normalizePassConfigList(value['student_pass_configs']),
+      ),
+    };
+  }
+
+  List<Map<String, Object?>> _normalizePromptTemplateList(Object? raw) {
+    if (raw is! List) {
+      return const <Map<String, Object?>>[];
+    }
+    final items = <Map<String, Object?>>[];
+    for (final entry in raw) {
+      if (entry is! Map) {
+        continue;
+      }
+      final normalized = <String, Object?>{};
+      final promptName = _normalizeNonEmptyString(entry['prompt_name']);
+      final scope = _normalizePromptMetadataScope(entry['scope']);
+      final content = entry['content'];
+      final studentRemoteUserId = _normalizePromptMetadataStudentRemoteUserId(
+        entry['student_remote_user_id'],
+        scope: scope,
+      );
+      if (promptName.isEmpty || scope.isEmpty || content is! String) {
+        continue;
+      }
+      normalized['prompt_name'] = promptName;
+      normalized['scope'] = scope;
+      normalized['content'] = content;
+      if (studentRemoteUserId != null) {
+        normalized['student_remote_user_id'] = studentRemoteUserId;
+      }
+      items.add(normalized);
+    }
+    return items;
+  }
+
+  List<Map<String, Object?>> _normalizePromptProfileList(Object? raw) {
+    if (raw is! List) {
+      return const <Map<String, Object?>>[];
+    }
+    final items = <Map<String, Object?>>[];
+    for (final entry in raw) {
+      if (entry is! Map) {
+        continue;
+      }
+      final scope = _normalizePromptMetadataScope(entry['scope']);
+      if (scope.isEmpty) {
+        continue;
+      }
+      final normalized = <String, Object?>{
+        'scope': scope,
+      };
+      final studentRemoteUserId = _normalizePromptMetadataStudentRemoteUserId(
+        entry['student_remote_user_id'],
+        scope: scope,
+      );
+      if (studentRemoteUserId != null) {
+        normalized['student_remote_user_id'] = studentRemoteUserId;
+      }
+      _copySemanticField(normalized, 'grade_level', entry['grade_level']);
+      _copySemanticField(normalized, 'reading_level', entry['reading_level']);
+      _copySemanticField(
+        normalized,
+        'preferred_language',
+        entry['preferred_language'],
+      );
+      _copySemanticField(normalized, 'interests', entry['interests']);
+      _copySemanticField(normalized, 'preferred_tone', entry['preferred_tone']);
+      _copySemanticField(normalized, 'preferred_pace', entry['preferred_pace']);
+      _copySemanticField(
+        normalized,
+        'preferred_format',
+        entry['preferred_format'],
+      );
+      _copySemanticField(normalized, 'support_notes', entry['support_notes']);
+      items.add(normalized);
+    }
+    return items;
+  }
+
+  List<Map<String, Object?>> _normalizePassConfigList(Object? raw) {
+    if (raw is! List) {
+      return const <Map<String, Object?>>[];
+    }
+    final items = <Map<String, Object?>>[];
+    for (final entry in raw) {
+      if (entry is! Map) {
+        continue;
+      }
+      final studentRemoteUserId = _normalizePromptMetadataStudentRemoteUserId(
+        entry['student_remote_user_id'],
+        scope: 'student_course',
+      );
+      if (studentRemoteUserId == null) {
+        continue;
+      }
+      final normalized = <String, Object?>{
+        'student_remote_user_id': studentRemoteUserId,
+      };
+      _copySemanticField(normalized, 'easy_weight', entry['easy_weight']);
+      _copySemanticField(normalized, 'medium_weight', entry['medium_weight']);
+      _copySemanticField(normalized, 'hard_weight', entry['hard_weight']);
+      _copySemanticField(
+        normalized,
+        'pass_threshold',
+        entry['pass_threshold'],
+      );
+      items.add(normalized);
+    }
+    return items;
+  }
+
+  List<Map<String, Object?>> _sortCanonicalMaps(
+      List<Map<String, Object?>> raw) {
+    final items = List<Map<String, Object?>>.from(raw);
+    items.sort(
+      (left, right) =>
+          _canonicalJsonEncode(left).compareTo(_canonicalJsonEncode(right)),
+    );
+    return items;
+  }
+
+  void _copySemanticField(
+    Map<String, Object?> target,
+    String key,
+    Object? value,
+  ) {
+    final normalized = _normalizePromptMetadataScalar(value);
+    if (normalized == null) {
+      return;
+    }
+    target[key] = normalized;
+  }
+
+  Object? _normalizePromptMetadataScalar(Object? value) {
+    if (value is num) {
+      final asDouble = value.toDouble();
+      if (asDouble.isFinite && asDouble == asDouble.roundToDouble()) {
+        return asDouble.toInt();
+      }
+      return asDouble;
+    }
+    return value;
+  }
+
+  String _normalizeNonEmptyString(Object? value) {
+    return value is String ? value.trim() : '';
+  }
+
+  String _normalizePromptMetadataScope(Object? value) {
+    final normalized = _normalizeNonEmptyString(value);
+    if (normalized == 'student') {
+      return 'student_course';
+    }
+    return normalized;
+  }
+
+  int? _normalizePromptMetadataStudentRemoteUserId(
+    Object? value, {
+    required String scope,
+  }) {
+    if (scope != 'student_course' && scope != 'student_global') {
+      return null;
+    }
+    final raw = _normalizePromptMetadataScalar(value);
+    if (raw is int && raw > 0) {
+      return raw;
+    }
+    if (raw is double && raw.isFinite && raw > 0) {
+      return raw.toInt();
+    }
+    return null;
   }
 
   Object? _removeGeneratedFields(Object? value) {

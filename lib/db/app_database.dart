@@ -1502,6 +1502,7 @@ WHERE p.student_id = ? AND p.kp_key <> ?
     String? summaryRawResponse,
     bool? summaryValid,
     required DateTime updatedAt,
+    bool mergeWithLocal = true,
   }) async {
     final existing = await getProgress(
       studentId: studentId,
@@ -1515,6 +1516,7 @@ WHERE p.student_id = ? AND p.kp_key <> ?
       easyPassedCount: easyPassedCount,
       mediumPassedCount: mediumPassedCount,
       hardPassedCount: hardPassedCount,
+      fallbackHardForLit: lit,
     );
     final clampedPercent = _deriveLitPercentFromPassedCounts(
       easyPassedCount: normalizedCounts.easyPassedCount,
@@ -1522,6 +1524,8 @@ WHERE p.student_id = ? AND p.kp_key <> ?
       hardPassedCount: normalizedCounts.hardPassedCount,
       fallbackPercent: litPercent.clamp(0, 100),
     );
+    final normalizedQuestionLevel =
+        _normalizeLevel(questionLevel) == null ? null : _normalizeLevel(questionLevel);
     if (existing == null) {
       await into(progressEntries).insert(
         ProgressEntriesCompanion.insert(
@@ -1530,7 +1534,25 @@ WHERE p.student_id = ? AND p.kp_key <> ?
           kpKey: kpKey,
           lit: Value(lit),
           litPercent: Value(clampedPercent),
-          questionLevel: const Value(null),
+          questionLevel: Value(mergeWithLocal ? null : normalizedQuestionLevel),
+          easyPassedCount: Value(normalizedCounts.easyPassedCount),
+          mediumPassedCount: Value(normalizedCounts.mediumPassedCount),
+          hardPassedCount: Value(normalizedCounts.hardPassedCount),
+          summaryText: Value(summaryText),
+          summaryRawResponse: Value(summaryRawResponse),
+          summaryValid: Value(summaryValid),
+          updatedAt: Value(updatedAt),
+        ),
+      );
+      return;
+    }
+    if (!mergeWithLocal) {
+      await (update(progressEntries)..where((tbl) => tbl.id.equals(existing.id)))
+          .write(
+        ProgressEntriesCompanion(
+          lit: Value(lit),
+          litPercent: Value(clampedPercent),
+          questionLevel: Value(normalizedQuestionLevel),
           easyPassedCount: Value(normalizedCounts.easyPassedCount),
           mediumPassedCount: Value(normalizedCounts.mediumPassedCount),
           hardPassedCount: Value(normalizedCounts.hardPassedCount),
@@ -2113,6 +2135,15 @@ HAVING COUNT(*) > 1
           ..where((tbl) => tbl.courseVersionId.equals(courseVersionId)))
         .getSingleOrNull();
     return row?.remoteCourseId;
+  }
+
+  Future<void> deleteCourseRemoteLink(int courseVersionId) async {
+    await (delete(courseRemoteLinks)
+          ..where((tbl) => tbl.courseVersionId.equals(courseVersionId)))
+        .go();
+    await _notifySyncRelevantUsers(
+      await _syncAffectedUsersForCourseVersion(courseVersionId),
+    );
   }
 
   Future<int?> getCourseVersionIdForRemoteCourse(int remoteCourseId) async {

@@ -380,7 +380,8 @@ void main() {
         );
 
         final service = CourseBundleService();
-        final legacyHash = await service.computeBundleSemanticHash(legacyBundle);
+        final legacyHash =
+            await service.computeBundleSemanticHash(legacyBundle);
         final currentHash =
             await service.computeBundleSemanticHash(currentBundle);
 
@@ -587,6 +588,179 @@ void main() {
           final bundleC = await service.createBundleFromFolder(courseDir.path);
           final hashC = await service.computeBundleSemanticHash(bundleC);
           expect(hashC, isNot(equals(hashA)));
+        });
+      } finally {
+        await tempDir.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'semantic hash ignores prompt metadata transport fields, order, and legacy scope aliases',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'course_bundle_prompt_hash_test_',
+      );
+      try {
+        await _withMockTempDir(tempDir.path, () async {
+          final courseDir = Directory(p.join(tempDir.path, 'course'))
+            ..createSync(recursive: true);
+          await File(p.join(courseDir.path, 'contents.txt')).writeAsString(
+            '1 Root branch\n',
+            encoding: utf8,
+          );
+          await File(p.join(courseDir.path, '1_lecture.txt')).writeAsString(
+            'Stable lecture content',
+            encoding: utf8,
+          );
+
+          final service = CourseBundleService();
+          final baseBundle =
+              await service.createBundleFromFolder(courseDir.path);
+
+          Future<File> buildBundleWithPromptMetadata({
+            required String fileName,
+            required String metadataEntryPath,
+            required Map<String, dynamic> metadata,
+          }) async {
+            final sourceArchive = ZipDecoder().decodeBytes(
+              await baseBundle.readAsBytes(),
+            );
+            final archive = Archive();
+            for (final entry in sourceArchive.files) {
+              if (!entry.isFile) {
+                continue;
+              }
+              final normalizedName = entry.name.replaceAll('\\', '/');
+              if (normalizedName == kCurrentPromptMetadataEntryPath ||
+                  normalizedName == kLegacyPromptMetadataEntryPath) {
+                continue;
+              }
+              archive.addFile(
+                ArchiveFile(
+                  entry.name,
+                  entry.size,
+                  List<int>.from(entry.content as List<int>),
+                ),
+              );
+            }
+            final metadataBytes = utf8.encode(jsonEncode(metadata));
+            archive.addFile(
+              ArchiveFile(
+                metadataEntryPath,
+                metadataBytes.length,
+                metadataBytes,
+              ),
+            );
+            final encoded = ZipEncoder().encode(archive);
+            expect(encoded, isNotNull);
+            final output = File(p.join(tempDir.path, fileName));
+            await output.writeAsBytes(encoded!, flush: true);
+            return output;
+          }
+
+          final bundleA = await buildBundleWithPromptMetadata(
+            fileName: 'bundle_a.zip',
+            metadataEntryPath: kCurrentPromptMetadataEntryPath,
+            metadata: <String, dynamic>{
+              'schema': kCurrentPromptBundleSchema,
+              'remote_course_id': 111,
+              'teacher_username': 'alice',
+              'prompt_templates': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'prompt_name': 'review',
+                  'scope': 'teacher',
+                  'content': 'Teacher review prompt',
+                  'created_at': '2024-01-01T00:00:00Z',
+                },
+                <String, dynamic>{
+                  'prompt_name': 'learn',
+                  'scope': 'student_course',
+                  'student_remote_user_id': 77,
+                  'student_username': 'amy',
+                  'content': 'Student learn prompt',
+                  'created_at': '2024-01-02T00:00:00Z',
+                },
+              ],
+              'student_prompt_profiles': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'scope': 'student_course',
+                  'student_remote_user_id': 77,
+                  'student_username': 'amy',
+                  'preferred_tone': 'calm',
+                  'updated_at': '2024-01-03T00:00:00Z',
+                },
+              ],
+              'student_pass_configs': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'student_remote_user_id': 77,
+                  'student_username': 'amy',
+                  'easy_weight': 1,
+                  'medium_weight': 2,
+                  'hard_weight': 3,
+                  'pass_threshold': 0.7,
+                  'updated_at': '2024-01-04T00:00:00Z',
+                },
+              ],
+            },
+          );
+
+          final bundleB = await buildBundleWithPromptMetadata(
+            fileName: 'bundle_b.zip',
+            metadataEntryPath: kLegacyPromptMetadataEntryPath,
+            metadata: <String, dynamic>{
+              'schema': kLegacyPromptBundleSchema,
+              'remote_course_id': 999,
+              'teacher_username': 'alice_renamed',
+              'prompt_templates': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'prompt_name': 'learn',
+                  'scope': 'student',
+                  'student_remote_user_id': 77,
+                  'student_username': 'amy_renamed',
+                  'content': 'Student learn prompt',
+                  'created_at': '2025-02-02T00:00:00Z',
+                },
+                <String, dynamic>{
+                  'prompt_name': 'review',
+                  'scope': 'teacher',
+                  'content': 'Teacher review prompt',
+                  'created_at': '2025-02-01T00:00:00Z',
+                },
+              ],
+              'student_prompt_profiles': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'scope': 'student',
+                  'student_remote_user_id': 77,
+                  'student_username': 'amy_renamed',
+                  'preferred_tone': 'calm',
+                  'updated_at': '2025-02-03T00:00:00Z',
+                },
+              ],
+              'student_pass_configs': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'student_remote_user_id': 77,
+                  'student_username': 'amy_renamed',
+                  'easy_weight': 1.0,
+                  'medium_weight': 2.0,
+                  'hard_weight': 3.0,
+                  'pass_threshold': 0.7,
+                  'updated_at': '2025-02-04T00:00:00Z',
+                },
+              ],
+            },
+          );
+
+          final hashA = await service.computeBundleSemanticHash(bundleA);
+          final hashB = await service.computeBundleSemanticHash(bundleB);
+
+          expect(
+            hashA,
+            equals(
+              '6663c7def98c404b383698ca74264b9b8ad3f9182368118c0b9cc64238c25b04',
+            ),
+          );
+          expect(hashB, equals(hashA));
         });
       } finally {
         await tempDir.delete(recursive: true);

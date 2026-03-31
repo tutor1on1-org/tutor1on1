@@ -1,12 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../db/app_database.dart';
 import 'background_json_service.dart';
+import 'sync_semantic_hash.dart';
 
 class SessionUploadCacheMessage {
   SessionUploadCacheMessage({
@@ -616,44 +616,37 @@ class SessionUploadCacheService {
   }
 
   String _hashSessionSnapshot(SessionUploadCacheSnapshot snapshot) {
-    final canonical = jsonEncode(
-      <String, Object?>{
-        'sync_id': snapshot.syncId,
-        'sync_updated_at': snapshot.syncUpdatedAt.toUtc().toIso8601String(),
-        'course_version_id': snapshot.courseVersionId,
-        'course_subject': snapshot.courseSubject,
-        'kp_key': snapshot.kpKey,
-        'kp_title': snapshot.kpTitle,
-        'session_title': snapshot.sessionTitle,
-        'started_at': snapshot.startedAt.toUtc().toIso8601String(),
-        'ended_at': snapshot.endedAt?.toUtc().toIso8601String(),
-        'summary_text': snapshot.summaryText,
-        'control_state_json': snapshot.controlStateJson,
-        'control_state_updated_at':
-            snapshot.controlStateUpdatedAt?.toUtc().toIso8601String(),
-        'evidence_state_json': snapshot.evidenceStateJson,
-        'evidence_state_updated_at':
-            snapshot.evidenceStateUpdatedAt?.toUtc().toIso8601String(),
-        'messages': snapshot.messages
-            .map((message) => message.toJson())
-            .toList(growable: false),
-      },
+    return hashSessionSemanticContent(
+      kpKey: snapshot.kpKey,
+      sessionTitle: snapshot.sessionTitle,
+      summaryText: snapshot.summaryText,
+      controlStateJson: snapshot.controlStateJson,
+      evidenceStateJson: snapshot.evidenceStateJson,
+      messages: snapshot.messages
+          .map(
+            (message) => SessionSemanticMessageInput(
+              role: message.role,
+              content: message.content,
+              rawContent: message.rawContent,
+              parsedJson: message.parsedJson,
+              action: message.action,
+            ),
+          )
+          .toList(growable: false),
     );
-    return sha256.convert(utf8.encode(canonical)).toString();
   }
 
   String _hashChapterMembers(List<SessionUploadChapterMember> members) {
-    final fingerprints = members
-        .map(
-          (member) => [
-            member.syncId,
-            member.syncUpdatedAt.toUtc().toIso8601String(),
-            member.payloadHash,
-          ].join('|'),
-        )
-        .toList(growable: false)
-      ..sort();
-    return sha256.convert(utf8.encode(fingerprints.join('\n'))).toString();
+    return hashSessionChapterSemanticContent(
+      members
+          .map(
+            (member) => SessionChapterSemanticMemberInput(
+              syncId: member.syncId,
+              contentHash: member.payloadHash,
+            ),
+          )
+          .toList(growable: false),
+    );
   }
 
   String _extractSecondLevelChapter(String kpKey) {

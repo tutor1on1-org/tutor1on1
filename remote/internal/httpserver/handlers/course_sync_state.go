@@ -13,9 +13,6 @@ func buildStudentEnrollmentStateFingerprint(item enrollmentSummary) string {
 		"student_course",
 		strconv.FormatInt(item.CourseID, 10),
 		strconv.FormatInt(item.TeacherID, 10),
-		strings.TrimSpace(item.TeacherName),
-		strings.TrimSpace(item.CourseName),
-		strconv.FormatInt(item.LatestBundleVersionID, 10),
 		strings.TrimSpace(item.LatestBundleHash),
 	}, "|")
 }
@@ -23,9 +20,7 @@ func buildStudentEnrollmentStateFingerprint(item enrollmentSummary) string {
 func buildTeacherCourseStateFingerprint(item teacherCourseSummary) string {
 	return strings.Join([]string{
 		"teacher_course",
-		normalizeCourseName(item.Subject),
-		strings.TrimSpace(item.Subject),
-		strconv.FormatInt(item.LatestBundleVersionID, 10),
+		"remote:" + strconv.FormatInt(item.CourseID, 10),
 		strings.TrimSpace(item.LatestBundleHash),
 	}, "|")
 }

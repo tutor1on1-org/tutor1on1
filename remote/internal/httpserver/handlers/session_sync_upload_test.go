@@ -57,6 +57,7 @@ func TestSessionSyncSaveUploadsSkipsStaleUpdate(t *testing.T) {
 				UpdatedAt:     "2026-03-10T07:59:00Z",
 				Envelope:      base64.StdEncoding.EncodeToString([]byte("stale")),
 				EnvelopeHash:  "hash-stale",
+				ContentHash:   "content-hash-stale",
 			},
 		},
 	)
@@ -117,10 +118,14 @@ func TestSessionSyncSaveUploadsUpdatesWhenIncomingIsNewer(t *testing.T) {
 			len(envelopeBytes),
 			envelopeBytes,
 			"hash-newer",
+			"content-hash-newer",
 			sessionSyncID,
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	emptyState2 := encodeSyncDownloadState2(syncDownloadState2Aggregate{})
+	mock.ExpectExec(`DELETE FROM sync_download_state_items`).
+		WithArgs(teacherUserID, syncDownloadItemKindProgressChunk).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT state2\s+FROM sync_download_state2`).
 		WithArgs(teacherUserID).
 		WillReturnRows(sqlmock.NewRows([]string{"state2"}).AddRow(emptyState2))
@@ -135,9 +140,12 @@ func TestSessionSyncSaveUploadsUpdatesWhenIncomingIsNewer(t *testing.T) {
 			courseID,
 			studentUserID,
 			incomingUpdatedAt,
-			"hash-newer",
+			"content-hash-newer",
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`DELETE FROM sync_download_state_items`).
+		WithArgs(studentUserID, syncDownloadItemKindProgressChunk).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT state2\s+FROM sync_download_state2`).
 		WithArgs(studentUserID).
 		WillReturnRows(sqlmock.NewRows([]string{"state2"}).AddRow(emptyState2))
@@ -152,7 +160,7 @@ func TestSessionSyncSaveUploadsUpdatesWhenIncomingIsNewer(t *testing.T) {
 			courseID,
 			studentUserID,
 			incomingUpdatedAt,
-			"hash-newer",
+			"content-hash-newer",
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO sync_download_state2`).
@@ -174,6 +182,7 @@ func TestSessionSyncSaveUploadsUpdatesWhenIncomingIsNewer(t *testing.T) {
 				UpdatedAt:     incomingUpdatedAt.Format(time.RFC3339),
 				Envelope:      base64.StdEncoding.EncodeToString(envelopeBytes),
 				EnvelopeHash:  "hash-newer",
+				ContentHash:   "content-hash-newer",
 			},
 		},
 	)

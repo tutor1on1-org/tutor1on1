@@ -15,6 +15,7 @@ import 'secure_storage_service.dart' show SyncItemState;
 import 'session_crypto_service.dart';
 import 'session_sync_api_service.dart';
 import 'session_upload_cache_service.dart';
+import 'sync_semantic_hash.dart';
 import 'sync_log_repository.dart';
 import 'sync_progress.dart';
 import 'sync_state_repository.dart';
@@ -60,9 +61,10 @@ class SessionSyncService {
   static const String _syncDomainProgressChunkDownload =
       'progress_chunk_download';
   static const String _syncDomainDownloadManifest = 'download_manifest';
+  static const String _syncDomainDownloadLocalState2 =
+      'download_local_state2';
   static const String _syncDownloadItemKindSession = 'session';
   static const String _syncDownloadItemKindProgressRow = 'progress_row';
-  static const String _syncDownloadItemKindProgressChunk = 'progress_chunk';
   static const String _syncDownloadState2Version = 'v2';
   static const int _syncDownloadState2WordCount = 4;
   static const int _syncDownloadState2Mask = 0xFFFFFFFFFFFFFFFF;
@@ -197,6 +199,8 @@ class SessionSyncService {
       {bool force = false,
       required _SyncProgressReporter progressReporter}) async {
     final stats = SyncRunStats();
+    final includeProgress =
+        currentUser.role == 'student' || currentUser.role == 'teacher';
     await progressReporter.report(
       'Downloading sessions/progress from server...',
       forcePaint: true,
@@ -228,10 +232,17 @@ class SessionSyncService {
         progressReporter: progressReporter,
       ),
     );
+    if (stats.uploadedCount > 0) {
+      await _refreshStoredLocalDownloadState2(
+        remoteUserId: remoteUserId,
+        includeProgress: includeProgress,
+      );
+    }
     await progressReporter.report(
       'Uploading sessions to server...',
       forcePaint: true,
     );
+    final uploadedCountBeforeSessions = stats.uploadedCount;
     await _runCategoryIfDue(
       remoteUserId: remoteUserId,
       runDomain: _syncRunDomainSessionUpload,
@@ -243,12 +254,22 @@ class SessionSyncService {
         progressReporter: progressReporter,
       ),
     );
+    if (stats.uploadedCount != uploadedCountBeforeSessions) {
+      await _refreshStoredLocalDownloadState2(
+        remoteUserId: remoteUserId,
+        includeProgress: includeProgress,
+      );
+    }
     return stats;
   }
 
   Future<void> _resetDownloadSyncState({required int remoteUserId}) async {
     await _secureStorage.deleteSessionSyncCursor(remoteUserId);
     await _secureStorage.deleteProgressSyncCursor(remoteUserId);
+    await _secureStorage.deleteLocalSyncState2(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainDownloadLocalState2,
+    );
     await _secureStorage.clearSyncDomainState(
       remoteUserId: remoteUserId,
       domain: _syncDomainDownloadManifest,
@@ -411,8 +432,6 @@ class SessionSyncService {
       final scopeKey = '$remoteCourseId:${entry.kpKey.trim()}';
       final payloadHash = _hashProgressPayloadCore(
         entry: entry,
-        remoteCourseId: remoteCourseId,
-        remoteUserId: remoteUserId,
       );
       final group = chapterGroups.putIfAbsent(
         groupScopeKey,
@@ -515,8 +534,6 @@ class SessionSyncService {
               updatedAt: entry.updatedAt.toUtc(),
               payloadHash: _hashProgressPayloadCore(
                 entry: entry,
-                remoteCourseId: group.remoteCourseId,
-                remoteUserId: remoteUserId,
               ),
             ),
           )
@@ -571,7 +588,16 @@ class SessionSyncService {
         'updated_at': groupUpdatedAt.toUtc().toIso8601String(),
         'items': chunkItems,
       };
-      final chunkHash = _hashCanonicalJson(chunkPayload);
+      final chunkHash = hashProgressChunkSemanticContent(
+        fullMembers
+            .map(
+              (member) => ProgressChunkSemanticMemberInput(
+                kpKey: member.entry.kpKey,
+                contentHash: member.payloadHash,
+              ),
+            )
+            .toList(growable: false),
+      );
       final groupState = await _secureStorage.readSyncItemState(
         remoteUserId: remoteUserId,
         domain: _syncDomainProgressChunkUpload,
@@ -624,6 +650,7 @@ class SessionSyncService {
             updatedAt: groupUpdatedAt.toUtc().toIso8601String(),
             envelope: base64Encode(utf8.encode(envelopeJson)),
             envelopeHash: _hashEnvelope(envelopeJson),
+            contentHash: chunkHash,
           ),
           itemStateWrites: itemStateWrites,
           groupStateWrite: _SyncStateWrite(
@@ -733,8 +760,6 @@ class SessionSyncService {
       final scopeKey = '$remoteCourseId:${entry.kpKey}';
       final payloadHash = _hashProgressPayloadCore(
         entry: entry,
-        remoteCourseId: remoteCourseId,
-        remoteUserId: remoteUserId,
       );
       final syncState = await _secureStorage.readSyncItemState(
         remoteUserId: remoteUserId,
@@ -819,6 +844,7 @@ class SessionSyncService {
             updatedAt: entry.updatedAt.toUtc().toIso8601String(),
             envelope: base64Encode(utf8.encode(envelopeJson)),
             envelopeHash: _hashEnvelope(envelopeJson),
+            contentHash: payloadHash,
           ),
           stateWrite: _SyncStateWrite(
             domain: _syncDomainProgressUpload,
@@ -1227,6 +1253,7 @@ class SessionSyncService {
               syncId: syncId,
               syncUpdatedAt: syncUpdatedAt,
               remoteCourseId: remoteCourseId,
+              contentHash: await _hashLocalSessionContent(syncSession),
             ),
           );
       await progressReporter.maybeYield();
@@ -1387,7 +1414,7 @@ class SessionSyncService {
         studentUserId: resolvedKeys.studentUserId,
         studentUsername: currentUser.username,
       );
-      final payloadHash = _hashCanonicalJson(payload);
+      final payloadHash = member.payloadHash;
       if (syncState != null && syncState.contentHash == payloadHash) {
         await _markSessionUploaded(
           sessionId: member.sessionId,
@@ -1429,6 +1456,7 @@ class SessionSyncService {
               DateTime.now().toUtc().toIso8601String(),
           envelope: envelopeBase64,
           envelopeHash: envelopeHash,
+          contentHash: payloadHash,
         ),
       );
       preparedUploads.add(
@@ -1464,6 +1492,7 @@ class SessionSyncService {
           updatedAt: entry.updatedAt,
           envelope: entry.envelope,
           envelopeHash: entry.envelopeHash,
+          contentHash: entry.contentHash,
         );
       }
     }
@@ -1552,7 +1581,7 @@ class SessionSyncService {
         resolvedKeys: resolvedKeys,
         syncUpdatedAt: syncUpdatedAt,
       );
-      final payloadHash = _hashCanonicalJson(payload);
+      final payloadHash = pending.contentHash;
       if (syncState != null && syncState.contentHash == payloadHash) {
         await _markSessionUploaded(
           sessionId: syncSession.id,
@@ -1594,6 +1623,7 @@ class SessionSyncService {
               DateTime.now().toUtc().toIso8601String(),
           envelope: envelopeBase64,
           envelopeHash: envelopeHash,
+          contentHash: payloadHash,
         ),
       );
       preparedUploads.add(
@@ -1629,6 +1659,7 @@ class SessionSyncService {
           updatedAt: entry.updatedAt,
           envelope: entry.envelope,
           envelopeHash: entry.envelopeHash,
+          contentHash: entry.contentHash,
         );
       }
     }
@@ -1674,23 +1705,15 @@ class SessionSyncService {
       required _SyncProgressReporter progressReporter}) async {
     final includeProgress =
         currentUser.role == 'student' || currentUser.role == 'teacher';
-    final hasPendingLocalUploads =
-        await _hasPendingLocalUploadChanges(currentUser, remoteUserId);
-    String? localState2;
-    if (!hasPendingLocalUploads) {
-      localState2 = await _buildLocalDownloadState2(
-        remoteUserId: remoteUserId,
-        includeProgress: includeProgress,
-      );
-      final remoteState2 = await _api.getDownloadState2();
-      if (remoteState2.state2 == localState2) {
-        return;
-      }
+    final localState2 = await _readStoredLocalDownloadState2(
+      remoteUserId: remoteUserId,
+    );
+    final remoteState2 = await _api.getDownloadState2();
+    if (remoteState2.state2 == localState2) {
+      return;
     }
     final manifest = await _api.getDownloadState1();
-    if (!hasPendingLocalUploads &&
-        localState2 != null &&
-        manifest.state2 == localState2) {
+    if (manifest.state2 == localState2) {
       return;
     }
 
@@ -1704,7 +1727,6 @@ class SessionSyncService {
               )
             : <String, DateTime>{};
     final sessionFetchIds = <String>[];
-    final progressChunkFetchKeys = <ProgressChunkFetchKey>[];
     final progressRowFetchKeys = <ProgressRowFetchKey>[];
 
     for (final item in manifest.sessions) {
@@ -1717,21 +1739,6 @@ class SessionSyncService {
       await progressReporter.maybeYield();
     }
     if (includeProgress) {
-      for (final item in manifest.progressChunks) {
-        if (await _shouldFetchProgressChunkManifestItem(
-          remoteUserId: remoteUserId,
-          item: item,
-        )) {
-          progressChunkFetchKeys.add(
-            ProgressChunkFetchKey(
-              studentUserId: item.studentUserId,
-              courseId: item.courseId,
-              chapterKey: item.chapterKey.trim(),
-            ),
-          );
-        }
-        await progressReporter.maybeYield();
-      }
       for (final item in manifest.progressRows) {
         if (await _shouldFetchProgressRowManifestItem(
           remoteUserId: remoteUserId,
@@ -1751,15 +1758,15 @@ class SessionSyncService {
       }
     }
 
-    if (sessionFetchIds.isEmpty &&
-        progressChunkFetchKeys.isEmpty &&
-        progressRowFetchKeys.isEmpty) {
+    if (sessionFetchIds.isEmpty && progressRowFetchKeys.isEmpty) {
+      await _refreshStoredLocalDownloadState2(
+        remoteUserId: remoteUserId,
+        includeProgress: includeProgress,
+      );
       return;
     }
 
-    final totalItemsToApply = sessionFetchIds.length +
-        progressChunkFetchKeys.length +
-        progressRowFetchKeys.length;
+    final totalItemsToApply = sessionFetchIds.length + progressRowFetchKeys.length;
     await progressReporter.report(
       'Downloading sessions/progress from server...',
       completed: 0,
@@ -1769,21 +1776,15 @@ class SessionSyncService {
     final payload = await _api.fetchDownloadPayload(
       request: SyncDownloadFetchRequest(
         sessionSyncIds: sessionFetchIds,
-        progressChunks: progressChunkFetchKeys,
+        progressChunks: const <ProgressChunkFetchKey>[],
         progressRows: progressRowFetchKeys,
       ),
     );
     stats.addDownloaded(
-      count: payload.sessions.length +
-          payload.progressChunks.length +
-          payload.progressRows.length,
+      count: payload.sessions.length + payload.progressRows.length,
       bytes: payload.sessions.fold<int>(
             0,
             (total, item) => total + _sessionDownloadSize(item),
-          ) +
-          payload.progressChunks.fold<int>(
-            0,
-            (total, item) => total + _progressChunkDownloadSize(item),
           ) +
           payload.progressRows.fold<int>(
             0,
@@ -1793,10 +1794,6 @@ class SessionSyncService {
     final totalDownloadedBytes = payload.sessions.fold<int>(
           0,
           (total, item) => total + _sessionDownloadSize(item),
-        ) +
-        payload.progressChunks.fold<int>(
-          0,
-          (total, item) => total + _progressChunkDownloadSize(item),
         ) +
         payload.progressRows.fold<int>(
           0,
@@ -1830,51 +1827,6 @@ class SessionSyncService {
         totalBytes: totalDownloadedBytes,
       );
     }
-    for (final chunkItem in payload.progressChunks) {
-      final progressItems = await _resolveProgressChunkItems(
-        chunkItem: chunkItem,
-        remoteUserId: remoteUserId,
-        keyPair: keyPair,
-      );
-      for (final progressItem in progressItems) {
-        await _applyDownloadedProgressItem(
-          currentUser: currentUser,
-          remoteUserId: remoteUserId,
-          keyPair: keyPair,
-          item: progressItem,
-          localProgressUpdatedAtByRemoteScope:
-              localProgressUpdatedAtByRemoteScope,
-        );
-      }
-      final chunkScopeKey = _progressChunkDownloadScopeKey(
-        studentRemoteId: chunkItem.studentUserId,
-        courseId: chunkItem.courseId,
-        chapterKey: chunkItem.chapterKey,
-      );
-      final itemUpdatedAt = DateTime.tryParse(chunkItem.updatedAt)?.toUtc() ??
-          DateTime.now().toUtc();
-      final resolvedChunkHash = _resolveSyncHash(
-        primaryHash: chunkItem.envelopeHash,
-        fallbackValue: chunkItem.envelope,
-      );
-      await _secureStorage.writeSyncItemState(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainProgressChunkDownload,
-        scopeKey: chunkScopeKey,
-        contentHash: resolvedChunkHash,
-        lastChangedAt: itemUpdatedAt,
-        lastSyncedAt: itemUpdatedAt,
-      );
-      appliedItems++;
-      appliedBytes += _progressChunkDownloadSize(chunkItem);
-      await progressReporter.report(
-        'Importing synced sessions/progress...',
-        completed: appliedItems,
-        total: totalItemsToApply,
-        completedBytes: appliedBytes,
-        totalBytes: totalDownloadedBytes,
-      );
-    }
     for (final item in payload.progressRows) {
       await _applyDownloadedProgressItem(
         currentUser: currentUser,
@@ -1894,6 +1846,10 @@ class SessionSyncService {
         totalBytes: totalDownloadedBytes,
       );
     }
+    await _refreshStoredLocalDownloadState2(
+      remoteUserId: remoteUserId,
+      includeProgress: includeProgress,
+    );
   }
 
   Future<bool> _shouldFetchSessionManifestItem({
@@ -1911,19 +1867,10 @@ class SessionSyncService {
       domain: _syncDomainSessionDownload,
       scopeKey: sessionSyncId,
     );
-    final remoteHash = _resolveSyncHash(
-      primaryHash: item.envelopeHash,
-      fallbackValue: sessionSyncId,
-    );
-    if (syncState != null &&
-        !_isTimestampNewer(itemUpdatedAt, syncState.lastChangedAt) &&
-        (remoteHash.isEmpty || syncState.contentHash == remoteHash)) {
-      return false;
-    }
+    final remoteHash = item.contentHash.trim();
     if (syncState != null &&
         remoteHash.isNotEmpty &&
-        syncState.contentHash == remoteHash &&
-        !itemUpdatedAt.isAfter(syncState.lastChangedAt.toUtc())) {
+        syncState.contentHash == remoteHash) {
       return false;
     }
     final existingLocalSession = await (_db.select(_db.chatSessions)
@@ -1937,35 +1884,6 @@ class SessionSyncService {
       if (localUpdatedAt.isAfter(itemUpdatedAt)) {
         return false;
       }
-    }
-    return true;
-  }
-
-  Future<bool> _shouldFetchProgressChunkManifestItem({
-    required int remoteUserId,
-    required ProgressSyncChunkManifestItem item,
-  }) async {
-    final scopeKey = _progressChunkDownloadScopeKey(
-      studentRemoteId: item.studentUserId,
-      courseId: item.courseId,
-      chapterKey: item.chapterKey,
-    );
-    final itemUpdatedAt =
-        DateTime.tryParse(item.updatedAt)?.toUtc() ?? DateTime.now().toUtc();
-    final syncState = await _secureStorage.readSyncItemState(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainProgressChunkDownload,
-      scopeKey: scopeKey,
-    );
-    final remoteHash = _resolveSyncHash(
-      primaryHash: item.envelopeHash,
-      fallbackValue: scopeKey,
-    );
-    if (syncState != null &&
-        remoteHash.isNotEmpty &&
-        syncState.contentHash == remoteHash &&
-        !itemUpdatedAt.isAfter(syncState.lastChangedAt.toUtc())) {
-      return false;
     }
     return true;
   }
@@ -1996,14 +1914,10 @@ class SessionSyncService {
       domain: _syncDomainProgressDownload,
       scopeKey: scopeKey,
     );
-    final remoteHash = _resolveSyncHash(
-      primaryHash: item.envelopeHash,
-      fallbackValue: scopeKey,
-    );
+    final remoteHash = item.contentHash.trim();
     if (syncState != null &&
         remoteHash.isNotEmpty &&
-        syncState.contentHash == remoteHash &&
-        !itemUpdatedAt.isAfter(syncState.lastChangedAt.toUtc())) {
+        syncState.contentHash == remoteHash) {
       return false;
     }
     return true;
@@ -2021,12 +1935,9 @@ class SessionSyncService {
     if (sessionSyncId.isEmpty) {
       return;
     }
-    final remoteHash = _resolveSyncHash(
-      primaryHash: item.envelopeHash,
-      fallbackValue: item.envelope,
-    );
+    final remoteHash = item.contentHash.trim();
     final payload = await _decryptItem(item, remoteUserId, keyPair);
-    await _importPayload(
+    final sessionId = await _importPayload(
       currentUser,
       payload,
       teacherRemoteIdHint: item.teacherUserId,
@@ -2035,7 +1946,14 @@ class SessionSyncService {
         DateTime.tryParse(payload['updated_at'] as String? ?? '')?.toUtc() ??
             itemUpdatedAt;
     final resolvedHash =
-        remoteHash.isNotEmpty ? remoteHash : _hashCanonicalJson(payload);
+        remoteHash.isNotEmpty ? remoteHash : _hashSessionPayloadContent(payload);
+    final localHash = await _hashImportedSessionContent(sessionId);
+    if (localHash != resolvedHash) {
+      throw StateError(
+        'Session import parity check failed for $sessionSyncId: '
+        'local=$localHash remote=$resolvedHash',
+      );
+    }
     await _secureStorage.writeSyncItemState(
       remoteUserId: remoteUserId,
       domain: _syncDomainSessionDownload,
@@ -2044,40 +1962,48 @@ class SessionSyncService {
       lastChangedAt: updatedAt,
       lastSyncedAt: updatedAt,
     );
+    await _secureStorage.writeSyncItemState(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainSessionUpload,
+      scopeKey: sessionSyncId,
+      contentHash: resolvedHash,
+      lastChangedAt: updatedAt,
+      lastSyncedAt: updatedAt,
+    );
   }
 
-  Future<bool> _hasPendingLocalUploadChanges(
-    User currentUser,
-    int remoteUserId,
-  ) async {
-    if (currentUser.role != 'student') {
-      return false;
+  Future<String> _readStoredLocalDownloadState2({
+    required int remoteUserId,
+  }) async {
+    final stored = (await _secureStorage.readLocalSyncState2(
+          remoteUserId: remoteUserId,
+          domain: _syncDomainDownloadLocalState2,
+        ))
+            ?.trim() ??
+        '';
+    if (stored.isNotEmpty) {
+      return stored;
     }
-    final latestLocalProgressUpdatedAt =
-        await _db.getLatestProgressUpdatedAtForSync(studentId: currentUser.id);
-    if (latestLocalProgressUpdatedAt != null) {
-      final lastProgressUploadRunAt = await _secureStorage.readSyncRunAt(
-        remoteUserId: remoteUserId,
-        domain: _syncRunDomainProgressUpload,
-      );
-      if (lastProgressUploadRunAt == null ||
-          latestLocalProgressUpdatedAt
-              .toUtc()
-              .isAfter(lastProgressUploadRunAt.toUtc())) {
-        return true;
-      }
-    }
-    final pendingSession = await ((_db.select(_db.chatSessions)
-          ..where(
-            (tbl) =>
-                tbl.studentId.equals(currentUser.id) &
-                tbl.syncUpdatedAt.isNotNull() &
-                (tbl.syncUploadedAt.isNull() |
-                    tbl.syncUploadedAt.isSmallerThan(tbl.syncUpdatedAt)),
-          )
-          ..limit(1))
-        .getSingleOrNull());
-    return pendingSession != null;
+    return _encodeDownloadState2(
+      _DownloadState2Aggregate.empty(
+        wordCount: _syncDownloadState2WordCount,
+      ),
+    );
+  }
+
+  Future<void> _refreshStoredLocalDownloadState2({
+    required int remoteUserId,
+    required bool includeProgress,
+  }) async {
+    final rebuilt = await _buildLocalDownloadState2(
+      remoteUserId: remoteUserId,
+      includeProgress: includeProgress,
+    );
+    await _secureStorage.writeLocalSyncState2(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainDownloadLocalState2,
+      state2: rebuilt,
+    );
   }
 
   Future<String> _buildLocalDownloadState2({
@@ -2086,11 +2012,7 @@ class SessionSyncService {
   }) async {
     final domains = <String>[
       _syncDomainSessionDownload,
-      _syncDomainSessionUpload,
       if (includeProgress) _syncDomainProgressDownload,
-      if (includeProgress) _syncDomainProgressUpload,
-      if (includeProgress) _syncDomainProgressChunkDownload,
-      if (includeProgress) _syncDomainProgressChunkUpload,
     ];
     final rows = await ((_db.select(_db.syncItemStates)
           ..where(
@@ -2127,7 +2049,6 @@ class SessionSyncService {
         _buildDownloadStateFingerprint(
           kind: item.kind,
           scopeKey: item.scopeKey,
-          updatedAt: item.updatedAt,
           contentHash: item.contentHash,
         ),
       );
@@ -2149,14 +2070,13 @@ class SessionSyncService {
     if (normalizedScopeKey.isEmpty || normalizedHash.isEmpty) {
       return null;
     }
-    if (normalizedDomain == _syncDomainSessionDownload ||
-        normalizedDomain == _syncDomainSessionUpload) {
+    if (normalizedDomain == _syncDomainSessionDownload) {
       return _LocalDownloadState1Item(
         kind: _syncDownloadItemKindSession,
         scopeKey: normalizedScopeKey,
         contentHash: normalizedHash,
         updatedAt: lastChangedAt.toUtc(),
-        precedence: normalizedDomain == _syncDomainSessionUpload ? 2 : 1,
+        precedence: 1,
       );
     }
     if (!includeProgress) {
@@ -2169,33 +2089,6 @@ class SessionSyncService {
         contentHash: normalizedHash,
         updatedAt: lastChangedAt.toUtc(),
         precedence: 1,
-      );
-    }
-    if (normalizedDomain == _syncDomainProgressChunkDownload) {
-      return _LocalDownloadState1Item(
-        kind: _syncDownloadItemKindProgressChunk,
-        scopeKey: normalizedScopeKey,
-        contentHash: normalizedHash,
-        updatedAt: lastChangedAt.toUtc(),
-        precedence: 1,
-      );
-    }
-    if (normalizedDomain == _syncDomainProgressUpload) {
-      return _LocalDownloadState1Item(
-        kind: _syncDownloadItemKindProgressRow,
-        scopeKey: '$remoteUserId:$normalizedScopeKey',
-        contentHash: normalizedHash,
-        updatedAt: lastChangedAt.toUtc(),
-        precedence: 2,
-      );
-    }
-    if (normalizedDomain == _syncDomainProgressChunkUpload) {
-      return _LocalDownloadState1Item(
-        kind: _syncDownloadItemKindProgressChunk,
-        scopeKey: '$remoteUserId:$normalizedScopeKey',
-        contentHash: normalizedHash,
-        updatedAt: lastChangedAt.toUtc(),
-        precedence: 2,
       );
     }
     return null;
@@ -2220,13 +2113,11 @@ class SessionSyncService {
   String _buildDownloadStateFingerprint({
     required String kind,
     required String scopeKey,
-    required DateTime updatedAt,
     required String contentHash,
   }) {
     return [
       kind.trim(),
       scopeKey.trim(),
-      updatedAt.toUtc().millisecondsSinceEpoch.toString(),
       contentHash.trim(),
     ].join('|');
   }
@@ -2304,11 +2195,9 @@ class SessionSyncService {
       return;
     }
     final fallbackHash = _hashProgressSyncItem(item);
-    final remoteHash = _resolveSyncHash(
-      primaryHash: item.envelopeHash,
-      fallbackValue:
-          item.envelope.trim().isNotEmpty ? item.envelope : fallbackHash,
-    );
+    final remoteHash = item.contentHash.trim().isNotEmpty
+        ? item.contentHash.trim()
+        : fallbackHash;
     if (syncState != null &&
         remoteHash.isNotEmpty &&
         syncState.contentHash == remoteHash) {
@@ -2420,14 +2309,29 @@ class SessionSyncService {
           : resolved.summaryRawResponse,
       summaryValid: resolved.summaryValid,
       updatedAt: updatedAt,
+      mergeWithLocal: false,
     );
     final updatedAtUtc = updatedAt.toUtc();
-    final uploadComparableHash = _hashResolvedProgressUploadState(
-      payload: resolved,
-      studentRemoteUserId: item.studentUserId,
+    final localProgress = await _db.getProgress(
+      studentId: localStudentId,
+      courseVersionId: courseVersionId,
+      kpKey: resolved.kpKey,
     );
+    if (localProgress == null) {
+      throw StateError(
+        'Progress import missing local row for ${resolved.courseId}:${resolved.kpKey}.',
+      );
+    }
+    final localHash = _hashLocalProgressEntry(localProgress);
     final resolvedHash =
         remoteHash.isNotEmpty ? remoteHash : _hashResolvedProgress(resolved);
+    if (localHash != resolvedHash) {
+      throw StateError(
+        'Progress import parity check failed for '
+        '${resolved.courseId}:${resolved.kpKey}: '
+        'local=$localHash remote=$resolvedHash',
+      );
+    }
     await _secureStorage.writeSyncItemState(
       remoteUserId: remoteUserId,
       domain: _syncDomainProgressDownload,
@@ -2440,137 +2344,11 @@ class SessionSyncService {
       remoteUserId: remoteUserId,
       domain: _syncDomainProgressUpload,
       scopeKey: '${resolved.courseId}:${resolved.kpKey}',
-      contentHash: uploadComparableHash,
+      contentHash: localHash,
       lastChangedAt: updatedAtUtc,
       lastSyncedAt: updatedAtUtc,
     );
     localProgressUpdatedAtByRemoteScope[scopeKey] = updatedAtUtc;
-  }
-
-  Future<List<ProgressSyncItem>> _resolveProgressChunkItems({
-    required ProgressSyncChunkItem chunkItem,
-    required int remoteUserId,
-    required SimpleKeyPair keyPair,
-  }) async {
-    if (chunkItem.envelope.trim().isEmpty) {
-      throw StateError('Progress chunk sync envelope missing.');
-    }
-    final envelopeJson = utf8.decode(base64Decode(chunkItem.envelope));
-    if (chunkItem.envelopeHash.trim().isNotEmpty) {
-      final computed = _hashEnvelope(envelopeJson);
-      if (computed != chunkItem.envelopeHash.trim()) {
-        throw StateError('Progress chunk sync envelope hash mismatch.');
-      }
-    }
-    final decoded = await _backgroundJsonService.decode(envelopeJson);
-    if (decoded is! Map<String, dynamic>) {
-      throw StateError('Progress chunk sync envelope invalid.');
-    }
-    final envelope = EncryptedEnvelope.fromJson(decoded);
-    final payload = await _crypto.decryptEnvelope(
-      envelope: envelope,
-      userKeyPair: keyPair,
-      userId: remoteUserId,
-    );
-
-    final payloadStudentID = _parsePayloadInt(
-      payload['student_remote_user_id'],
-      field: 'student_remote_user_id',
-    );
-    if (payloadStudentID != chunkItem.studentUserId) {
-      throw StateError('Progress chunk payload student mismatch.');
-    }
-    final payloadCourseID = _parsePayloadInt(
-      payload['course_id'],
-      field: 'course_id',
-    );
-    if (payloadCourseID != chunkItem.courseId) {
-      throw StateError('Progress chunk payload course mismatch.');
-    }
-    final payloadTeacherID = _parsePayloadInt(
-      payload['teacher_remote_user_id'],
-      field: 'teacher_remote_user_id',
-    );
-    final payloadCourseSubject = _parsePayloadString(
-      payload['course_subject'],
-      field: 'course_subject',
-      isRequired: false,
-    ).trim();
-    final itemList = payload['items'];
-    if (itemList is! List) {
-      throw StateError('Progress chunk payload items invalid.');
-    }
-    final results = <ProgressSyncItem>[];
-    for (final rawItem in itemList) {
-      if (rawItem is! Map<String, dynamic>) {
-        continue;
-      }
-      final kpKey =
-          _parsePayloadString(rawItem['kp_key'], field: 'kp_key').trim();
-      if (kpKey.isEmpty) {
-        continue;
-      }
-      final updatedAt = _parsePayloadString(
-        rawItem['updated_at'],
-        field: 'updated_at',
-      );
-      final litPercentRaw = _parsePayloadInt(
-        rawItem['lit_percent'],
-        field: 'lit_percent',
-      );
-      final easyPassedCount = _parsePayloadOptionalInt(
-        rawItem['easy_passed_count'],
-        field: 'easy_passed_count',
-      );
-      final mediumPassedCount = _parsePayloadOptionalInt(
-        rawItem['medium_passed_count'],
-        field: 'medium_passed_count',
-      );
-      final hardPassedCount = _parsePayloadOptionalInt(
-        rawItem['hard_passed_count'],
-        field: 'hard_passed_count',
-      );
-      results.add(
-        ProgressSyncItem(
-          cursorId: 0,
-          courseId: payloadCourseID,
-          courseSubject: payloadCourseSubject.isNotEmpty
-              ? payloadCourseSubject
-              : chunkItem.courseSubject,
-          teacherUserId: payloadTeacherID,
-          studentUserId: payloadStudentID,
-          kpKey: kpKey,
-          lit: _parsePayloadBool(rawItem['lit'], field: 'lit'),
-          litPercent: litPercentRaw.clamp(0, 100).toInt(),
-          questionLevel: _parsePayloadString(
-            rawItem['question_level'],
-            field: 'question_level',
-            isRequired: false,
-          ),
-          easyPassedCount: easyPassedCount < 0 ? 0 : easyPassedCount,
-          mediumPassedCount: mediumPassedCount < 0 ? 0 : mediumPassedCount,
-          hardPassedCount: hardPassedCount < 0 ? 0 : hardPassedCount,
-          summaryText: _parsePayloadString(
-            rawItem['summary_text'],
-            field: 'summary_text',
-            isRequired: false,
-          ),
-          summaryRawResponse: _parsePayloadString(
-            rawItem['summary_raw_response'],
-            field: 'summary_raw_response',
-            isRequired: false,
-          ),
-          summaryValid: _parsePayloadNullableBool(
-            rawItem['summary_valid'],
-            field: 'summary_valid',
-          ),
-          updatedAt: updatedAt,
-          envelope: '',
-          envelopeHash: '',
-        ),
-      );
-    }
-    return results;
   }
 
   Future<Map<String, dynamic>> _decryptItem(
@@ -2600,7 +2378,7 @@ class SessionSyncService {
     );
   }
 
-  Future<void> _importPayload(
+  Future<int> _importPayload(
     User currentUser,
     Map<String, dynamic> payload, {
     required int teacherRemoteIdHint,
@@ -2711,7 +2489,7 @@ class SessionSyncService {
       final localUpdatedAt =
           (existing.syncUpdatedAt ?? existing.startedAt).toUtc();
       if (localUpdatedAt.isAfter(updatedAt.toUtc())) {
-        return;
+        return existing.id;
       }
     }
     await _db.transaction(() async {
@@ -2846,6 +2624,14 @@ class SessionSyncService {
         );
       }
     });
+    final importedSession = await (_db.select(_db.chatSessions)
+          ..where((tbl) => tbl.syncId.equals(sessionSyncId))
+          ..limit(1))
+        .getSingleOrNull();
+    if (importedSession == null) {
+      throw StateError('Imported session missing for sync id $sessionSyncId.');
+    }
+    return importedSession.id;
   }
 
   Future<int> _resolveLocalStudentId({
@@ -3173,102 +2959,73 @@ class SessionSyncService {
 
   String _hashProgressPayloadCore({
     required ProgressEntry entry,
-    required int remoteCourseId,
-    required int remoteUserId,
   }) {
-    return _hashCanonicalJson(
-      <String, Object?>{
-        'course_id': remoteCourseId,
-        'student_remote_user_id': remoteUserId,
-        'kp_key': entry.kpKey,
-        'lit': entry.lit,
-        'lit_percent': entry.litPercent,
-        'question_level': entry.questionLevel ?? '',
-        'easy_passed_count': entry.easyPassedCount,
-        'medium_passed_count': entry.mediumPassedCount,
-        'hard_passed_count': entry.hardPassedCount,
-        'summary_text': entry.summaryText ?? '',
-        'summary_raw_response': entry.summaryRawResponse ?? '',
-        'summary_valid': entry.summaryValid,
-        'updated_at': entry.updatedAt.toUtc().toIso8601String(),
-      },
-    );
-  }
-
-  String _hashResolvedProgressUploadState({
-    required _ResolvedProgressPayload payload,
-    required int studentRemoteUserId,
-  }) {
-    return _hashCanonicalJson(
-      <String, Object?>{
-        'course_id': payload.courseId,
-        'student_remote_user_id': studentRemoteUserId,
-        'kp_key': payload.kpKey,
-        'lit': payload.lit,
-        'lit_percent': payload.litPercent,
-        'question_level': payload.questionLevel,
-        'easy_passed_count': payload.easyPassedCount,
-        'medium_passed_count': payload.mediumPassedCount,
-        'hard_passed_count': payload.hardPassedCount,
-        'summary_text': payload.summaryText,
-        'summary_raw_response': payload.summaryRawResponse,
-        'summary_valid': payload.summaryValid,
-        'updated_at': payload.updatedAt,
-      },
+    return hashProgressSemanticContent(
+      lit: entry.lit,
+      litPercent: entry.litPercent,
+      questionLevel: entry.questionLevel ?? '',
+      easyPassedCount: entry.easyPassedCount,
+      mediumPassedCount: entry.mediumPassedCount,
+      hardPassedCount: entry.hardPassedCount,
+      summaryText: entry.summaryText ?? '',
+      summaryRawResponse: entry.summaryRawResponse ?? '',
+      summaryValid: entry.summaryValid,
     );
   }
 
   String _hashProgressSyncItem(ProgressSyncItem item) {
-    return _hashCanonicalJson(
-      <String, Object?>{
-        'course_id': item.courseId,
-        'course_subject': item.courseSubject,
-        'teacher_user_id': item.teacherUserId,
-        'student_user_id': item.studentUserId,
-        'kp_key': item.kpKey,
-        'lit': item.lit,
-        'lit_percent': item.litPercent,
-        'question_level': item.questionLevel,
-        'easy_passed_count': item.easyPassedCount,
-        'medium_passed_count': item.mediumPassedCount,
-        'hard_passed_count': item.hardPassedCount,
-        'summary_text': item.summaryText,
-        'summary_raw_response': item.summaryRawResponse,
-        'summary_valid': item.summaryValid,
-        'updated_at': item.updatedAt,
-      },
+    return hashProgressSemanticContent(
+      lit: item.lit,
+      litPercent: item.litPercent,
+      questionLevel: item.questionLevel,
+      easyPassedCount: item.easyPassedCount,
+      mediumPassedCount: item.mediumPassedCount,
+      hardPassedCount: item.hardPassedCount,
+      summaryText: item.summaryText,
+      summaryRawResponse: item.summaryRawResponse,
+      summaryValid: item.summaryValid,
     );
   }
 
   String _hashResolvedProgress(_ResolvedProgressPayload payload) {
-    return _hashCanonicalJson(
-      <String, Object?>{
-        'course_id': payload.courseId,
-        'course_subject': payload.courseSubject,
-        'kp_key': payload.kpKey,
-        'lit': payload.lit,
-        'lit_percent': payload.litPercent,
-        'question_level': payload.questionLevel,
-        'easy_passed_count': payload.easyPassedCount,
-        'medium_passed_count': payload.mediumPassedCount,
-        'hard_passed_count': payload.hardPassedCount,
-        'summary_text': payload.summaryText,
-        'summary_raw_response': payload.summaryRawResponse,
-        'summary_valid': payload.summaryValid,
-        'updated_at': payload.updatedAt,
-      },
+    return hashProgressSemanticContent(
+      lit: payload.lit,
+      litPercent: payload.litPercent,
+      questionLevel: payload.questionLevel,
+      easyPassedCount: payload.easyPassedCount,
+      mediumPassedCount: payload.mediumPassedCount,
+      hardPassedCount: payload.hardPassedCount,
+      summaryText: payload.summaryText,
+      summaryRawResponse: payload.summaryRawResponse,
+      summaryValid: payload.summaryValid,
+    );
+  }
+
+  String _hashLocalProgressEntry(ProgressEntry entry) {
+    return hashProgressSemanticContent(
+      lit: entry.lit,
+      litPercent: entry.litPercent,
+      questionLevel: entry.questionLevel ?? '',
+      easyPassedCount: entry.easyPassedCount,
+      mediumPassedCount: entry.mediumPassedCount,
+      hardPassedCount: entry.hardPassedCount,
+      summaryText: entry.summaryText ?? '',
+      summaryRawResponse: entry.summaryRawResponse ?? '',
+      summaryValid: entry.summaryValid,
     );
   }
 
   String _hashSessionUploadGroup(List<_PendingSessionUpload> groupItems) {
-    final fingerprints = groupItems
-        .map(
-          (item) =>
-              '${item.syncId}|${item.syncUpdatedAt.toUtc().toIso8601String()}',
-        )
-        .toList()
-      ..sort();
-    return _hashEnvelope(fingerprints.join('\n'));
+    return hashSessionChapterSemanticContent(
+      groupItems
+          .map(
+            (item) => SessionChapterSemanticMemberInput(
+              syncId: item.syncId,
+              contentHash: item.contentHash,
+            ),
+          )
+          .toList(growable: false),
+    );
   }
 
   String _extractSecondLevelChapter(String kpKey) {
@@ -3294,8 +3051,81 @@ class SessionSyncService {
     return trimmed;
   }
 
-  String _hashCanonicalJson(Map<String, Object?> payload) {
-    return _hashEnvelope(jsonEncode(payload));
+  Future<String> _hashLocalSessionContent(ChatSession session) async {
+    final messages = await _db.getMessagesForSession(session.id);
+    return _buildSessionSemanticHash(
+      kpKey: session.kpKey,
+      sessionTitle: session.title ?? '',
+      summaryText: session.summaryText ?? '',
+      controlStateJson: session.controlStateJson ?? '',
+      evidenceStateJson: session.evidenceStateJson ?? '',
+      messages: messages
+          .map(
+            (message) => SessionSemanticMessageInput(
+              role: message.role,
+              content: message.content,
+              rawContent: message.rawContent,
+              parsedJson: message.parsedJson,
+              action: message.action,
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+
+  Future<String> _hashImportedSessionContent(int sessionId) async {
+    final session = await _db.getSession(sessionId);
+    if (session == null) {
+      throw StateError('Imported session $sessionId is missing.');
+    }
+    return _hashLocalSessionContent(session);
+  }
+
+  String _hashSessionPayloadContent(Map<String, dynamic> payload) {
+    final rawMessages = payload['messages'];
+    final semanticMessages = <SessionSemanticMessageInput>[];
+    if (rawMessages is List) {
+      for (final rawMessage in rawMessages) {
+        if (rawMessage is! Map<String, dynamic>) {
+          continue;
+        }
+        semanticMessages.add(
+          SessionSemanticMessageInput(
+            role: (rawMessage['role'] as String?) ?? '',
+            content: (rawMessage['content'] as String?) ?? '',
+            rawContent: rawMessage['raw_content'] as String?,
+            parsedJson: rawMessage['parsed_json'] as String?,
+            action: rawMessage['action'] as String?,
+          ),
+        );
+      }
+    }
+    return _buildSessionSemanticHash(
+      kpKey: (payload['kp_key'] as String?) ?? '',
+      sessionTitle: (payload['session_title'] as String?) ?? '',
+      summaryText: (payload['summary_text'] as String?) ?? '',
+      controlStateJson: (payload['control_state_json'] as String?) ?? '',
+      evidenceStateJson: (payload['evidence_state_json'] as String?) ?? '',
+      messages: semanticMessages,
+    );
+  }
+
+  String _buildSessionSemanticHash({
+    required String kpKey,
+    required String sessionTitle,
+    required String summaryText,
+    required String controlStateJson,
+    required String evidenceStateJson,
+    required List<SessionSemanticMessageInput> messages,
+  }) {
+    return hashSessionSemanticContent(
+      kpKey: kpKey,
+      sessionTitle: sessionTitle,
+      summaryText: summaryText,
+      controlStateJson: controlStateJson,
+      evidenceStateJson: evidenceStateJson,
+      messages: messages,
+    );
   }
 
   int _sessionUploadSize(SessionUploadEntry entry) {
@@ -3324,25 +3154,7 @@ class SessionSyncService {
             'updated_at': item.updatedAt,
             'envelope': item.envelope,
             'envelope_hash': item.envelopeHash,
-          }),
-        )
-        .length;
-  }
-
-  int _progressChunkDownloadSize(ProgressSyncChunkItem item) {
-    return utf8
-        .encode(
-          jsonEncode(<String, Object?>{
-            'cursor_id': item.cursorId,
-            'course_id': item.courseId,
-            'course_subject': item.courseSubject,
-            'teacher_user_id': item.teacherUserId,
-            'student_user_id': item.studentUserId,
-            'chapter_key': item.chapterKey,
-            'item_count': item.itemCount,
-            'updated_at': item.updatedAt,
-            'envelope': item.envelope,
-            'envelope_hash': item.envelopeHash,
+            'content_hash': item.contentHash,
           }),
         )
         .length;
@@ -3370,6 +3182,7 @@ class SessionSyncService {
             'updated_at': item.updatedAt,
             'envelope': item.envelope,
             'envelope_hash': item.envelopeHash,
+            'content_hash': item.contentHash,
           }),
         )
         .length;
@@ -3385,10 +3198,7 @@ class SessionSyncService {
       remoteUserId: remoteUserId,
       domain: _syncDomainSessionDownload,
       scopeKey: entry.sessionSyncId,
-      contentHash: _resolveSyncHash(
-        primaryHash: entry.envelopeHash,
-        fallbackValue: entry.envelope,
-      ),
+      contentHash: entry.contentHash.trim(),
       lastChangedAt: updatedAt,
       lastSyncedAt: updatedAt,
     );
@@ -3408,10 +3218,7 @@ class SessionSyncService {
         courseId: entry.courseId,
         kpKey: entry.kpKey,
       ),
-      contentHash: _resolveSyncHash(
-        primaryHash: entry.envelopeHash,
-        fallbackValue: entry.envelope,
-      ),
+      contentHash: entry.contentHash.trim(),
       lastChangedAt: updatedAt,
       lastSyncedAt: updatedAt,
     );
@@ -3431,28 +3238,10 @@ class SessionSyncService {
         courseId: entry.courseId,
         chapterKey: entry.chapterKey,
       ),
-      contentHash: _resolveSyncHash(
-        primaryHash: entry.envelopeHash,
-        fallbackValue: entry.envelope,
-      ),
+      contentHash: entry.contentHash.trim(),
       lastChangedAt: updatedAt,
       lastSyncedAt: updatedAt,
     );
-  }
-
-  String _resolveSyncHash({
-    required String primaryHash,
-    required String fallbackValue,
-  }) {
-    final trimmedPrimary = primaryHash.trim();
-    if (trimmedPrimary.isNotEmpty) {
-      return trimmedPrimary;
-    }
-    final trimmedFallback = fallbackValue.trim();
-    if (trimmedFallback.isEmpty) {
-      return '';
-    }
-    return _hashEnvelope(trimmedFallback);
   }
 
   bool _isTimestampNewer(DateTime candidate, DateTime? baseline) {
@@ -3983,12 +3772,14 @@ class _PendingSessionUpload {
     required this.syncId,
     required this.syncUpdatedAt,
     required this.remoteCourseId,
+    required this.contentHash,
   });
 
   final ChatSession session;
   final String syncId;
   final DateTime syncUpdatedAt;
   final int remoteCourseId;
+  final String contentHash;
 }
 
 class _ProgressChunkGroup {

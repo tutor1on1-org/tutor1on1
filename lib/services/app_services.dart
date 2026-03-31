@@ -123,7 +123,10 @@ class AppServices {
     );
     final sessionSyncApi = SessionSyncApiService(secureStorage: secureStorage);
     final cryptoService = SessionCryptoService();
-    final syncStateRepository = DatabaseSyncStateRepository(db);
+    final syncStateRepository = LegacyBackfillSyncStateRepository(
+      primary: DatabaseSyncStateRepository(db),
+      legacy: secureStorage,
+    );
     final userKeyService = UserKeyService(
       secureStorage: secureStorage,
       api: sessionSyncApi,

@@ -54,7 +54,7 @@ func (h *TeacherCoursesHandler) ListCourses(c *fiber.Ctx) error {
 		}
 		return fiber.NewError(fiber.StatusInternalServerError, "teacher lookup failed")
 	}
-	results, err := h.listCourseSummaries(teacherID)
+	results, err := h.listTeacherCourseSummaries(teacherID)
 	if err != nil {
 		return err
 	}
@@ -66,27 +66,31 @@ func (h *TeacherCoursesHandler) GetCoursesSyncState2(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
-	teacherID, err := getTeacherAccountID(h.cfg.Store.DB, userID)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return fiber.NewError(fiber.StatusForbidden, "teacher account required")
-		}
-		return fiber.NewError(fiber.StatusInternalServerError, "teacher lookup failed")
-	}
-	results, err := h.listCourseSummaries(teacherID)
+	state2, err := readTeacherCourseSyncState2(h.cfg.Store.DB, userID)
 	if err != nil {
 		return err
 	}
-	fingerprints := make([]string, 0, len(results))
-	for _, item := range results {
-		fingerprints = append(fingerprints, buildTeacherCourseStateFingerprint(item))
-	}
 	return c.JSON(fiber.Map{
-		"state2": buildState2(fingerprints),
+		"state2": state2,
 	})
 }
 
-func (h *TeacherCoursesHandler) listCourseSummaries(teacherID int64) ([]teacherCourseSummary, error) {
+func (h *TeacherCoursesHandler) GetCoursesSyncState1(c *fiber.Ctx) error {
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	}
+	items, err := listTeacherCourseStateItems(h.cfg.Store.DB, userID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{
+		"state2": buildTeacherCourseState2(items),
+		"items":  items,
+	})
+}
+
+func (h *TeacherCoursesHandler) listTeacherCourseSummaries(teacherID int64) ([]teacherCourseSummary, error) {
 	rows, err := h.cfg.Store.DB.Query(
 		`SELECT c.id, c.subject, c.grade, c.description,
 		        ce.visibility, ce.approval_status, ce.published_at,
@@ -286,6 +290,9 @@ func (h *TeacherCoursesHandler) CreateCourse(c *fiber.Ctx) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
+	}
+	if err := refreshTeacherCourseSyncStateForUser(h.cfg.Store.DB, userID); err != nil {
+		return err
 	}
 	labels, err := listCourseSubjectLabels(h.cfg.Store.DB, courseID)
 	if err != nil {
@@ -524,6 +531,7 @@ func (h *TeacherCoursesHandler) DeleteCourse(c *fiber.Ctx) error {
 	}
 
 	filePaths := []string{}
+	affectedStudentIDs := []int64{}
 	rows, err := h.cfg.Store.DB.Query(
 		`SELECT bv.oss_path
 		 FROM bundle_versions bv
@@ -546,6 +554,29 @@ func (h *TeacherCoursesHandler) DeleteCourse(c *fiber.Ctx) error {
 		}
 	}
 	rows.Close()
+
+	studentRows, err := h.cfg.Store.DB.Query(
+		`SELECT DISTINCT student_id
+		 FROM enrollments
+		 WHERE course_id = ? AND status = 'active'`,
+		courseID,
+	)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "enrollment lookup failed")
+	}
+	for studentRows.Next() {
+		var studentID int64
+		if err := studentRows.Scan(&studentID); err != nil {
+			studentRows.Close()
+			return fiber.NewError(fiber.StatusInternalServerError, "enrollment lookup failed")
+		}
+		affectedStudentIDs = append(affectedStudentIDs, studentID)
+	}
+	if err := studentRows.Err(); err != nil {
+		studentRows.Close()
+		return fiber.NewError(fiber.StatusInternalServerError, "enrollment lookup failed")
+	}
+	studentRows.Close()
 
 	tx, err := h.cfg.Store.DB.Begin()
 	if err != nil {
@@ -650,6 +681,12 @@ func (h *TeacherCoursesHandler) DeleteCourse(c *fiber.Ctx) error {
 	}
 	if err = tx.Commit(); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
+	}
+	if err := refreshTeacherCourseSyncStateForUser(h.cfg.Store.DB, userID); err != nil {
+		return err
+	}
+	if err := refreshStudentEnrollmentSyncStateForUsers(h.cfg.Store.DB, affectedStudentIDs); err != nil {
+		return err
 	}
 
 	if h.cfg.Storage != nil {

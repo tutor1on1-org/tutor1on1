@@ -15,6 +15,7 @@ import 'package:tutor1on1/services/session_crypto_service.dart';
 import 'package:tutor1on1/services/session_sync_api_service.dart';
 import 'package:tutor1on1/services/session_sync_service.dart';
 import 'package:tutor1on1/services/session_upload_cache_service.dart';
+import 'package:tutor1on1/services/sync_semantic_hash.dart';
 import 'package:tutor1on1/services/sync_progress.dart';
 import 'package:tutor1on1/services/sync_state_repository.dart';
 import 'package:tutor1on1/services/user_key_service.dart';
@@ -28,6 +29,7 @@ class _MemorySecureStorage extends SecureStorageService
   final Map<int, String> _publicKeys = <int, String>{};
   final Map<int, String> _sessionCursorByRemote = <int, String>{};
   final Map<int, String> _progressCursorByRemote = <int, String>{};
+  final Map<String, String> _localState2ByKey = <String, String>{};
   final Map<String, SyncItemState> _syncItemStateByKey =
       <String, SyncItemState>{};
   final Map<String, String> _etagByKey = <String, String>{};
@@ -50,6 +52,13 @@ class _MemorySecureStorage extends SecureStorageService
   }
 
   String _runAtKey({
+    required int remoteUserId,
+    required String domain,
+  }) {
+    return '$remoteUserId::$domain';
+  }
+
+  String _localState2Key({
     required int remoteUserId,
     required String domain,
   }) {
@@ -107,6 +116,40 @@ class _MemorySecureStorage extends SecureStorageService
   @override
   Future<void> deleteProgressSyncCursor(int remoteUserId) async {
     _progressCursorByRemote.remove(remoteUserId);
+  }
+
+  @override
+  Future<String?> readLocalSyncState2({
+    required int remoteUserId,
+    required String domain,
+  }) async {
+    return _localState2ByKey[_localState2Key(
+      remoteUserId: remoteUserId,
+      domain: domain,
+    )];
+  }
+
+  @override
+  Future<void> writeLocalSyncState2({
+    required int remoteUserId,
+    required String domain,
+    required String state2,
+  }) async {
+    _localState2ByKey[_localState2Key(
+      remoteUserId: remoteUserId,
+      domain: domain,
+    )] = state2.trim();
+  }
+
+  @override
+  Future<void> deleteLocalSyncState2({
+    required int remoteUserId,
+    required String domain,
+  }) async {
+    _localState2ByKey.remove(_localState2Key(
+      remoteUserId: remoteUserId,
+      domain: domain,
+    ));
   }
 
   @override
@@ -222,6 +265,7 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
     required SecureStorageService secureStorage,
     required this.sessionItems,
     required this.progressItems,
+    this.downloadState2Handler,
     this.listSessionsDeltaHandler,
     this.listProgressDeltaHandler,
     this.listProgressChunksDeltaHandler,
@@ -241,6 +285,7 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
 
   final List<SessionSyncItem> sessionItems;
   final List<ProgressSyncItem> progressItems;
+  final SyncDownloadState2Result Function()? downloadState2Handler;
   final SyncListResult<SessionSyncItem> Function({
     String? since,
     int? sinceId,
@@ -307,6 +352,9 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
 
   @override
   Future<SyncDownloadState2Result> getDownloadState2() async {
+    if (downloadState2Handler != null) {
+      return downloadState2Handler!();
+    }
     return SyncDownloadState2Result(state2: 'download-state2');
   }
 
@@ -325,7 +373,7 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
             (item) => SessionSyncManifestItem(
               sessionSyncId: item.sessionSyncId,
               updatedAt: item.updatedAt,
-              envelopeHash: item.envelopeHash,
+              contentHash: item.contentHash,
             ),
           )
           .toList(growable: false),
@@ -337,7 +385,7 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
               courseId: item.courseId,
               kpKey: item.kpKey,
               updatedAt: item.updatedAt,
-              envelopeHash: item.envelopeHash,
+              contentHash: item.contentHash,
             ),
           )
           .toList(growable: false),
@@ -439,6 +487,7 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
     required String updatedAt,
     required String envelope,
     String? envelopeHash,
+    String? contentHash,
   }) async {
     uploadedSessions.add(<String, dynamic>{
       'session_sync_id': sessionSyncId,
@@ -448,6 +497,7 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
       'updated_at': updatedAt,
       'envelope': envelope,
       'envelope_hash': envelopeHash ?? '',
+      'content_hash': contentHash ?? '',
     });
   }
 
@@ -462,6 +512,7 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
         'updated_at': entry.updatedAt,
         'envelope': entry.envelope,
         'envelope_hash': entry.envelopeHash,
+        'content_hash': entry.contentHash,
       });
     }
   }
@@ -489,6 +540,11 @@ class _EnvelopeFixture {
   final String hash;
 }
 
+String _emptyDownloadState2() {
+  const zero = '0000000000000000';
+  return 'v2:$zero:$zero:$zero:$zero:$zero:$zero:$zero:$zero:$zero';
+}
+
 Future<_EnvelopeFixture> _encryptForUser({
   required SessionCryptoService crypto,
   required Map<String, dynamic> payload,
@@ -508,6 +564,49 @@ Future<_EnvelopeFixture> _encryptForUser({
   return _EnvelopeFixture(
     base64Envelope: base64Encode(utf8.encode(jsonText)),
     hash: sha256.convert(utf8.encode(jsonText)).toString(),
+  );
+}
+
+String _hashSessionPayloadForTest(Map<String, dynamic> payload) {
+  final rawMessages = payload['messages'];
+  final semanticMessages = <SessionSemanticMessageInput>[];
+  if (rawMessages is List) {
+    for (final rawMessage in rawMessages) {
+      if (rawMessage is! Map<String, dynamic>) {
+        continue;
+      }
+      semanticMessages.add(
+        SessionSemanticMessageInput(
+          role: (rawMessage['role'] as String?) ?? '',
+          content: (rawMessage['content'] as String?) ?? '',
+          rawContent: rawMessage['raw_content'] as String?,
+          parsedJson: rawMessage['parsed_json'] as String?,
+          action: rawMessage['action'] as String?,
+        ),
+      );
+    }
+  }
+  return hashSessionSemanticContent(
+    kpKey: (payload['kp_key'] as String?) ?? '',
+    sessionTitle: (payload['session_title'] as String?) ?? '',
+    summaryText: (payload['summary_text'] as String?) ?? '',
+    controlStateJson: (payload['control_state_json'] as String?) ?? '',
+    evidenceStateJson: (payload['evidence_state_json'] as String?) ?? '',
+    messages: semanticMessages,
+  );
+}
+
+String _hashProgressPayloadForTest(Map<String, dynamic> payload) {
+  return hashProgressSemanticContent(
+    lit: (payload['lit'] as bool?) ?? false,
+    litPercent: (payload['lit_percent'] as num?)?.toInt() ?? 0,
+    questionLevel: (payload['question_level'] as String?) ?? '',
+    easyPassedCount: (payload['easy_passed_count'] as num?)?.toInt() ?? 0,
+    mediumPassedCount: (payload['medium_passed_count'] as num?)?.toInt() ?? 0,
+    hardPassedCount: (payload['hard_passed_count'] as num?)?.toInt() ?? 0,
+    summaryText: (payload['summary_text'] as String?) ?? '',
+    summaryRawResponse: (payload['summary_raw_response'] as String?) ?? '',
+    summaryValid: payload['summary_valid'] as bool?,
   );
 }
 
@@ -647,6 +746,7 @@ void main() {
             updatedAt: '2026-03-01T10:05:00Z',
             envelope: sessionEnvelope.base64Envelope,
             envelopeHash: sessionEnvelope.hash,
+            contentHash: _hashSessionPayloadForTest(sessionPayload),
           ),
         ],
         progressItems: <ProgressSyncItem>[
@@ -666,6 +766,7 @@ void main() {
             updatedAt: '2026-03-01T10:06:00Z',
             envelope: progressEnvelope.base64Envelope,
             envelopeHash: progressEnvelope.hash,
+            contentHash: _hashProgressPayloadForTest(progressPayload),
           ),
         ],
       );
@@ -838,6 +939,7 @@ void main() {
         updatedAt: '2026-03-01T08:10:00Z',
         envelope: sessionEnvelope.base64Envelope,
         envelopeHash: sessionEnvelope.hash,
+        contentHash: _hashSessionPayloadForTest(sessionPayload),
       );
 
       final progressPayload = <String, dynamic>{
@@ -877,6 +979,7 @@ void main() {
         updatedAt: '2026-03-01T08:20:00Z',
         envelope: progressEnvelope.base64Envelope,
         envelopeHash: progressEnvelope.hash,
+        contentHash: _hashProgressPayloadForTest(progressPayload),
       );
 
       String? observedSessionSince;
@@ -990,6 +1093,325 @@ void main() {
       expect(progressRows.single.litPercent, equals(66));
       expect(stats.downloadedCount, equals(2));
       expect(stats.downloadedBytes, greaterThan(0));
+    },
+  );
+
+  test(
+    'legacy per-item progress download state prevents payload re-download and backfills DB state',
+    () async {
+      final crypto = SessionCryptoService();
+      final legacyStorage = _MemorySecureStorage(accessToken: 'token');
+
+      final localTeacherId = await db.createUser(
+        username: 'teacher_migrated',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 9901,
+      );
+      final teacher = await db.getUserById(localTeacherId);
+      expect(teacher, isNotNull);
+      final remoteTeacherId = teacher!.remoteUserId!;
+
+      final teacherKeyPair = await crypto.generateKeyPair();
+      final teacherPublicKey = await crypto.extractPublicKey(teacherKeyPair);
+      await legacyStorage.writeUserPrivateKey(
+        remoteTeacherId,
+        await crypto.encodePrivateKey(teacherKeyPair),
+      );
+      await legacyStorage.writeUserPublicKey(
+        remoteTeacherId,
+        crypto.encodePublicKey(teacherPublicKey),
+      );
+
+      final itemUpdatedAt = DateTime.parse('2026-03-02T12:00:00Z').toUtc();
+      const scopeKey = '3002:180:2.1.3';
+      await legacyStorage.writeSyncItemState(
+        remoteUserId: remoteTeacherId,
+        domain: 'progress_download',
+        scopeKey: scopeKey,
+        contentHash: 'same-row',
+        lastChangedAt: itemUpdatedAt,
+        lastSyncedAt: itemUpdatedAt,
+      );
+
+      final primaryRepo = DatabaseSyncStateRepository(db);
+      final syncRepo = LegacyBackfillSyncStateRepository(
+        primary: primaryRepo,
+        legacy: legacyStorage,
+      );
+      var manifestCalls = 0;
+      var fetchCalls = 0;
+      final api = _TestSessionSyncApiService(
+        secureStorage: legacyStorage,
+        sessionItems: const <SessionSyncItem>[],
+        progressItems: const <ProgressSyncItem>[],
+        downloadManifestHandler: (
+            {bool includeProgress = false, String? ifNoneMatch}) {
+          manifestCalls++;
+          expect(includeProgress, isTrue);
+          return SyncDownloadManifestResult(
+            state2: 'remote-progress-state2',
+            sessions: const <SessionSyncManifestItem>[],
+            progressChunks: const <ProgressSyncChunkManifestItem>[],
+            progressRows: <ProgressSyncManifestItem>[
+              ProgressSyncManifestItem(
+                studentUserId: 3002,
+                courseId: 180,
+                kpKey: '2.1.3',
+                updatedAt: itemUpdatedAt.toIso8601String(),
+                contentHash: 'same-row',
+              ),
+            ],
+            etag: 'legacy-progress-manifest',
+            notModified: false,
+          );
+        },
+        fetchDownloadPayloadHandler: (request) async {
+          fetchCalls++;
+          return SyncDownloadFetchResult(
+            sessions: const <SessionSyncItem>[],
+            progressChunks: const <ProgressSyncChunkItem>[],
+            progressRows: const <ProgressSyncItem>[],
+          );
+        },
+      );
+      final userKeyService = UserKeyService(
+        secureStorage: legacyStorage,
+        api: api,
+        crypto: crypto,
+      );
+      final syncService = SessionSyncService(
+        db: db,
+        secureStorage: syncRepo,
+        api: api,
+        userKeyService: userKeyService,
+        crypto: crypto,
+      );
+
+      final stats = await syncService.syncIfReady(currentUser: teacher);
+
+      expect(manifestCalls, equals(1));
+      expect(fetchCalls, equals(0));
+      expect(stats.downloadedCount, equals(0));
+      final backfilled = await primaryRepo.readSyncItemState(
+        remoteUserId: remoteTeacherId,
+        domain: 'progress_download',
+        scopeKey: scopeKey,
+      );
+      expect(backfilled, isNotNull);
+      expect(backfilled!.contentHash, equals('same-row'));
+      expect(backfilled.lastChangedAt.toUtc(), equals(itemUpdatedAt));
+      expect(backfilled.lastSyncedAt.toUtc(), equals(itemUpdatedAt));
+    },
+  );
+
+  test(
+    'teacher download state2 fast path ignores upload-only sync domains',
+    () async {
+      final crypto = SessionCryptoService();
+      final secureStorage = _MemorySecureStorage(accessToken: 'token');
+
+      final localTeacherId = await db.createUser(
+        username: 'teacher_fastpath',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 9902,
+      );
+      final teacher = await db.getUserById(localTeacherId);
+      expect(teacher, isNotNull);
+      final remoteTeacherId = teacher!.remoteUserId!;
+
+      final teacherKeyPair = await crypto.generateKeyPair();
+      final teacherPublicKey = await crypto.extractPublicKey(teacherKeyPair);
+      await secureStorage.writeUserPrivateKey(
+        remoteTeacherId,
+        await crypto.encodePrivateKey(teacherKeyPair),
+      );
+      await secureStorage.writeUserPublicKey(
+        remoteTeacherId,
+        crypto.encodePublicKey(teacherPublicKey),
+      );
+
+      final syncRepo = DatabaseSyncStateRepository(db);
+      final uploadOnlyTimestamp =
+          DateTime.parse('2026-03-03T09:30:00Z').toUtc();
+      await syncRepo.writeSyncItemState(
+        remoteUserId: remoteTeacherId,
+        domain: 'progress_upload',
+        scopeKey: '180:2.1.3',
+        contentHash: 'upload-only-hash',
+        lastChangedAt: uploadOnlyTimestamp,
+        lastSyncedAt: uploadOnlyTimestamp,
+      );
+      await syncRepo.writeSyncItemState(
+        remoteUserId: remoteTeacherId,
+        domain: 'session_upload',
+        scopeKey: 'teacher-session-1',
+        contentHash: 'session-upload-only-hash',
+        lastChangedAt: uploadOnlyTimestamp,
+        lastSyncedAt: uploadOnlyTimestamp,
+      );
+
+      var manifestCalls = 0;
+      var fetchCalls = 0;
+      final api = _TestSessionSyncApiService(
+        secureStorage: secureStorage,
+        sessionItems: const <SessionSyncItem>[],
+        progressItems: const <ProgressSyncItem>[],
+        downloadState2Handler: () =>
+            SyncDownloadState2Result(state2: _emptyDownloadState2()),
+        downloadManifestHandler: (
+            {bool includeProgress = false, String? ifNoneMatch}) {
+          manifestCalls++;
+          return SyncDownloadManifestResult(
+            state2: _emptyDownloadState2(),
+            sessions: const <SessionSyncManifestItem>[],
+            progressChunks: const <ProgressSyncChunkManifestItem>[],
+            progressRows: const <ProgressSyncManifestItem>[],
+            etag: 'should-not-be-used',
+            notModified: false,
+          );
+        },
+        fetchDownloadPayloadHandler: (request) async {
+          fetchCalls++;
+          return SyncDownloadFetchResult(
+            sessions: const <SessionSyncItem>[],
+            progressChunks: const <ProgressSyncChunkItem>[],
+            progressRows: const <ProgressSyncItem>[],
+          );
+        },
+      );
+      final userKeyService = UserKeyService(
+        secureStorage: secureStorage,
+        api: api,
+        crypto: crypto,
+      );
+      final syncService = SessionSyncService(
+        db: db,
+        secureStorage: syncRepo,
+        api: api,
+        userKeyService: userKeyService,
+        crypto: crypto,
+      );
+
+      final stats = await syncService.syncIfReady(currentUser: teacher);
+
+      expect(manifestCalls, equals(0));
+      expect(fetchCalls, equals(0));
+      expect(stats.downloadedCount, equals(0));
+    },
+  );
+
+  test(
+    'teacher download local state2 rebuild excludes upload-only domains after mismatch refresh',
+    () async {
+      final crypto = SessionCryptoService();
+      final secureStorage = _MemorySecureStorage(accessToken: 'token');
+
+      final localTeacherId = await db.createUser(
+        username: 'teacher_fastpath_refresh',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 9903,
+      );
+      final teacher = await db.getUserById(localTeacherId);
+      expect(teacher, isNotNull);
+      final remoteTeacherId = teacher!.remoteUserId!;
+
+      final teacherKeyPair = await crypto.generateKeyPair();
+      final teacherPublicKey = await crypto.extractPublicKey(teacherKeyPair);
+      await secureStorage.writeUserPrivateKey(
+        remoteTeacherId,
+        await crypto.encodePrivateKey(teacherKeyPair),
+      );
+      await secureStorage.writeUserPublicKey(
+        remoteTeacherId,
+        crypto.encodePublicKey(teacherPublicKey),
+      );
+
+      final syncRepo = DatabaseSyncStateRepository(db);
+      final uploadOnlyTimestamp =
+          DateTime.parse('2026-03-03T09:31:00Z').toUtc();
+      await syncRepo.writeSyncItemState(
+        remoteUserId: remoteTeacherId,
+        domain: 'progress_upload',
+        scopeKey: '181:2.1.4',
+        contentHash: 'upload-only-progress-hash',
+        lastChangedAt: uploadOnlyTimestamp,
+        lastSyncedAt: uploadOnlyTimestamp,
+      );
+      await syncRepo.writeSyncItemState(
+        remoteUserId: remoteTeacherId,
+        domain: 'session_upload',
+        scopeKey: 'teacher-session-2',
+        contentHash: 'upload-only-session-hash',
+        lastChangedAt: uploadOnlyTimestamp,
+        lastSyncedAt: uploadOnlyTimestamp,
+      );
+      await syncRepo.writeLocalSyncState2(
+        remoteUserId: remoteTeacherId,
+        domain: 'download_local_state2',
+        state2: 'stale-local-state2',
+      );
+
+      var manifestCalls = 0;
+      var fetchCalls = 0;
+      final api = _TestSessionSyncApiService(
+        secureStorage: secureStorage,
+        sessionItems: const <SessionSyncItem>[],
+        progressItems: const <ProgressSyncItem>[],
+        downloadState2Handler: () =>
+            SyncDownloadState2Result(state2: _emptyDownloadState2()),
+        downloadManifestHandler: (
+            {bool includeProgress = false, String? ifNoneMatch}) {
+          manifestCalls++;
+          return SyncDownloadManifestResult(
+            state2: _emptyDownloadState2(),
+            sessions: const <SessionSyncManifestItem>[],
+            progressChunks: const <ProgressSyncChunkManifestItem>[],
+            progressRows: const <ProgressSyncManifestItem>[],
+            etag: 'empty-download-manifest',
+            notModified: false,
+          );
+        },
+        fetchDownloadPayloadHandler: (request) async {
+          fetchCalls++;
+          return SyncDownloadFetchResult(
+            sessions: const <SessionSyncItem>[],
+            progressChunks: const <ProgressSyncChunkItem>[],
+            progressRows: const <ProgressSyncItem>[],
+          );
+        },
+      );
+      final userKeyService = UserKeyService(
+        secureStorage: secureStorage,
+        api: api,
+        crypto: crypto,
+      );
+      final syncService = SessionSyncService(
+        db: db,
+        secureStorage: syncRepo,
+        api: api,
+        userKeyService: userKeyService,
+        crypto: crypto,
+      );
+
+      final firstStats = await syncService.syncIfReady(currentUser: teacher);
+      expect(firstStats.downloadedCount, equals(0));
+      expect(manifestCalls, equals(1));
+      expect(fetchCalls, equals(0));
+      expect(
+        await syncRepo.readLocalSyncState2(
+          remoteUserId: remoteTeacherId,
+          domain: 'download_local_state2',
+        ),
+        equals(_emptyDownloadState2()),
+      );
+
+      final secondStats = await syncService.syncIfReady(currentUser: teacher);
+      expect(secondStats.downloadedCount, equals(0));
+      expect(manifestCalls, equals(1));
+      expect(fetchCalls, equals(0));
     },
   );
 
@@ -1108,6 +1530,7 @@ void main() {
             updatedAt: '2026-03-01T10:05:00Z',
             envelope: sessionEnvelope.base64Envelope,
             envelopeHash: sessionEnvelope.hash,
+            contentHash: _hashSessionPayloadForTest(sessionPayload),
           ),
         ],
         progressItems: <ProgressSyncItem>[
@@ -1127,6 +1550,7 @@ void main() {
             updatedAt: '2026-03-01T10:06:00Z',
             envelope: progressEnvelope.base64Envelope,
             envelopeHash: progressEnvelope.hash,
+            contentHash: _hashProgressPayloadForTest(progressPayload),
           ),
         ],
       );
@@ -1166,7 +1590,7 @@ void main() {
   );
 
   test(
-    'session keeps newer copy while progress keeps stronger value',
+    'session keeps newer copy while progress import matches remote semantics',
     () async {
       final crypto = SessionCryptoService();
       final secureStorage = _MemorySecureStorage(accessToken: 'token');
@@ -1350,6 +1774,7 @@ void main() {
           updatedAt: updatedAt,
           envelope: envelope.base64Envelope,
           envelopeHash: envelope.hash,
+          contentHash: _hashSessionPayloadForTest(payload),
         );
       }
 
@@ -1397,6 +1822,7 @@ void main() {
           updatedAt: updatedAt,
           envelope: envelope.base64Envelope,
           envelopeHash: envelope.hash,
+          contentHash: _hashProgressPayloadForTest(payload),
         );
       }
 
@@ -1477,8 +1903,8 @@ void main() {
       };
       expect(byKey['1.1']!.litPercent, equals(100));
       expect(byKey['1.2']!.litPercent, equals(66));
-      expect(byKey['1.3']!.litPercent, equals(100));
-      expect(byKey['1.3']!.questionLevel, isNull);
+      expect(byKey['1.3']!.litPercent, equals(33));
+      expect(byKey['1.3']!.questionLevel, equals('easy'));
       expect(stats.downloadedCount, greaterThan(0));
       expect(stats.downloadedBytes, greaterThan(0));
     },
@@ -1550,7 +1976,7 @@ void main() {
         return SessionSyncManifestItem(
           sessionSyncId: sessionSyncId,
           updatedAt: '2026-03-01T08:00:00Z',
-          envelopeHash: 'hash-$sessionSyncId',
+          contentHash: 'hash-$sessionSyncId',
         );
       });
 
@@ -2081,7 +2507,7 @@ void main() {
                 courseId: 180,
                 kpKey: '2.1.3',
                 updatedAt: '2026-03-02T12:00:00Z',
-                envelopeHash: 'same-row',
+                contentHash: 'same-row',
               ),
             ],
             etag: 'progress-manifest-stale-row',
@@ -2344,7 +2770,7 @@ void main() {
           courseId: 191,
           kpKey: '2.1.$index',
           updatedAt: updatedAt.toUtc().toIso8601String(),
-          envelopeHash: 'row-hash-$index',
+          contentHash: 'row-hash-$index',
         );
       });
 
@@ -2880,6 +3306,7 @@ void main() {
           updatedAt: uploaded['updated_at'] as String,
           envelope: uploaded['envelope'] as String,
           envelopeHash: uploaded['envelope_hash'] as String,
+          contentHash: uploaded['content_hash'] as String,
         ),
       );
 
@@ -3000,6 +3427,7 @@ void main() {
         updatedAt: '2026-03-01T08:06:00Z',
         envelope: remoteProgressEnvelope.base64Envelope,
         envelopeHash: remoteProgressEnvelope.hash,
+        contentHash: _hashProgressPayloadForTest(remoteProgressPayload),
       );
 
       final api = _TestSessionSyncApiService(
@@ -3181,6 +3609,7 @@ void main() {
         updatedAt: '2026-03-01T08:05:00Z',
         envelope: remoteSessionEnvelope.base64Envelope,
         envelopeHash: remoteSessionEnvelope.hash,
+        contentHash: _hashSessionPayloadForTest(remoteSessionPayload),
       );
 
       final remoteProgressPayload = <String, dynamic>{
@@ -3220,6 +3649,7 @@ void main() {
         updatedAt: '2026-03-01T08:06:00Z',
         envelope: remoteProgressEnvelope.base64Envelope,
         envelopeHash: remoteProgressEnvelope.hash,
+        contentHash: _hashProgressPayloadForTest(remoteProgressPayload),
       );
 
       final api = _TestSessionSyncApiService(

@@ -159,6 +159,73 @@ class CourseArtifactService {
     return CourseArtifactManifest.fromJson(decoded);
   }
 
+  Future<void> replaceStoredContentBundle({
+    required int courseVersionId,
+    required File bundleFile,
+  }) async {
+    if (courseVersionId <= 0) {
+      throw StateError('Course version id must be positive.');
+    }
+    if (!bundleFile.existsSync()) {
+      throw StateError('Bundle file not found: ${bundleFile.path}');
+    }
+    final manifest = await readCourseArtifacts(courseVersionId);
+    if (manifest == null) {
+      throw StateError(
+        'Cached course artifacts are missing for course version '
+        '$courseVersionId.',
+      );
+    }
+    final target = File(manifest.contentBundlePath);
+    await target.parent.create(recursive: true);
+    await bundleFile.copy(target.path);
+  }
+
+  Future<CourseArtifactManifest> storeImportedContentBundle({
+    required int courseVersionId,
+    required String folderPath,
+    required File bundleFile,
+  }) async {
+    if (courseVersionId <= 0) {
+      throw StateError('Course version id must be positive.');
+    }
+    final normalizedFolderPath = p.normalize(folderPath);
+    final sourceFolder = Directory(normalizedFolderPath);
+    if (!sourceFolder.existsSync()) {
+      throw StateError('Course folder not found: $normalizedFolderPath');
+    }
+    if (!bundleFile.existsSync()) {
+      throw StateError('Bundle file not found: ${bundleFile.path}');
+    }
+
+    final courseDir = await _resolveCourseArtifactDirectory(courseVersionId);
+    if (courseDir.existsSync()) {
+      await courseDir.delete(recursive: true);
+    }
+    await courseDir.create(recursive: true);
+
+    final contentBundlePath = p.join(courseDir.path, 'content_bundle.zip');
+    final contentBundle = File(contentBundlePath);
+    await bundleFile.copy(contentBundle.path);
+
+    final chaptersDir = Directory(p.join(courseDir.path, 'chapters'));
+    await chaptersDir.create(recursive: true);
+    final chapterArtifacts = await _buildChapterArchives(
+      folderPath: normalizedFolderPath,
+      outputDirectory: chaptersDir,
+    );
+
+    final manifest = CourseArtifactManifest(
+      courseVersionId: courseVersionId,
+      folderPath: normalizedFolderPath,
+      contentBundlePath: contentBundle.path,
+      chapters: chapterArtifacts,
+      builtAt: DateTime.now().toUtc(),
+    );
+    await _writeManifest(courseDir, manifest);
+    return manifest;
+  }
+
   Future<PreparedCourseUploadBundle> prepareUploadBundle({
     required int courseVersionId,
     required Map<String, dynamic>? promptMetadata,

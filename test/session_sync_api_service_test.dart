@@ -412,6 +412,7 @@ void main() {
         updatedAt: '2026-03-02T00:00:00Z',
         envelope: 'ZW52',
         envelopeHash: 'hash',
+        contentHash: 'content-hash',
       ),
     ]);
 
@@ -442,6 +443,7 @@ void main() {
         updatedAt: '2026-03-02T00:00:00Z',
         envelope: 'ZW52',
         envelopeHash: 'hash',
+        contentHash: 'content-hash',
       ),
     ]);
 

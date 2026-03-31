@@ -27,6 +27,7 @@ type uploadSessionRequest struct {
 	UpdatedAt     string `json:"updated_at"`
 	Envelope      string `json:"envelope"`
 	EnvelopeHash  string `json:"envelope_hash"`
+	ContentHash   string `json:"content_hash"`
 }
 
 type uploadSessionBatchRequest struct {
@@ -103,8 +104,8 @@ func (h *SessionSyncHandler) saveUploads(
 
 	insertStmt, err := tx.Prepare(
 		`INSERT INTO session_text_sync
-		 (session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, chapter_key, updated_at, payload_size, envelope, envelope_hash)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 (session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, chapter_key, updated_at, payload_size, envelope, envelope_hash, content_hash)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	)
 	if err != nil {
 		return 0, fiber.NewError(fiber.StatusInternalServerError, "session sync save failed")
@@ -121,7 +122,8 @@ func (h *SessionSyncHandler) saveUploads(
 		     updated_at = ?,
 		     payload_size = ?,
 		     envelope = ?,
-		     envelope_hash = ?
+		     envelope_hash = ?,
+		     content_hash = ?
 		 WHERE session_sync_id = ?`,
 	)
 	if err != nil {
@@ -138,7 +140,8 @@ func (h *SessionSyncHandler) saveUploads(
 			item.CourseID <= 0 ||
 			item.StudentUserID <= 0 ||
 			strings.TrimSpace(item.UpdatedAt) == "" ||
-			strings.TrimSpace(item.Envelope) == "" {
+			strings.TrimSpace(item.Envelope) == "" ||
+			strings.TrimSpace(item.ContentHash) == "" {
 			return 0, fiber.NewError(fiber.StatusBadRequest, "missing required fields")
 		}
 		updatedAt, err := parseTime(item.UpdatedAt)
@@ -202,7 +205,7 @@ func (h *SessionSyncHandler) saveUploads(
 
 		chapterKey := strings.TrimSpace(item.ChapterKey)
 		sessionSyncID := strings.TrimSpace(item.SessionSyncID)
-		contentHash := resolveSyncDownloadContentHash(item.EnvelopeHash, envelopeBytes)
+		contentHash := resolveSyncDownloadContentHash(item.ContentHash, envelopeBytes)
 		var (
 			existingUpdatedAt time.Time
 			existingFound     bool
@@ -232,6 +235,7 @@ func (h *SessionSyncHandler) saveUploads(
 				len(envelopeBytes),
 				envelopeBytes,
 				strings.TrimSpace(item.EnvelopeHash),
+				strings.TrimSpace(item.ContentHash),
 				sessionSyncID,
 			); err != nil {
 				return 0, fiber.NewError(fiber.StatusInternalServerError, "session sync save failed")
@@ -264,6 +268,7 @@ func (h *SessionSyncHandler) saveUploads(
 			len(envelopeBytes),
 			envelopeBytes,
 			strings.TrimSpace(item.EnvelopeHash),
+			strings.TrimSpace(item.ContentHash),
 		); err != nil {
 			return 0, fiber.NewError(fiber.StatusInternalServerError, "session sync save failed")
 		}
@@ -319,14 +324,14 @@ func (h *SessionSyncHandler) List(c *fiber.Ctx) error {
 		}
 		sinceID = parsed
 	}
-	query := `SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, chapter_key, updated_at, envelope, envelope_hash
+	query := `SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, chapter_key, updated_at, envelope, envelope_hash, content_hash
 		 FROM session_text_sync
 		 WHERE (teacher_user_id = ? OR student_user_id = ?) AND updated_at > ?
 		 ORDER BY updated_at ASC, id ASC
 		 LIMIT ?`
 	args := []any{userID, userID, sinceTime, limit}
 	if sinceID > 0 {
-		query = `SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, chapter_key, updated_at, envelope, envelope_hash
+		query = `SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, chapter_key, updated_at, envelope, envelope_hash, content_hash
 		 FROM session_text_sync
 		 WHERE (teacher_user_id = ? OR student_user_id = ?)
 		   AND (updated_at > ? OR (updated_at = ? AND id > ?))
@@ -353,6 +358,7 @@ func (h *SessionSyncHandler) List(c *fiber.Ctx) error {
 			updatedAt     time.Time
 			envelopeBytes []byte
 			envelopeHash  sql.NullString
+			contentHash   sql.NullString
 		)
 		if err := rows.Scan(
 			&id,
@@ -365,6 +371,7 @@ func (h *SessionSyncHandler) List(c *fiber.Ctx) error {
 			&updatedAt,
 			&envelopeBytes,
 			&envelopeHash,
+			&contentHash,
 		); err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "session sync list failed")
 		}
@@ -383,6 +390,7 @@ func (h *SessionSyncHandler) List(c *fiber.Ctx) error {
 			"updated_at":      updatedAt.UTC().Format(time.RFC3339),
 			"envelope":        base64.StdEncoding.EncodeToString(envelopeBytes),
 			"envelope_hash":   hashValue,
+			"content_hash":    contentHash.String,
 		})
 	}
 	if err := rows.Err(); err != nil {

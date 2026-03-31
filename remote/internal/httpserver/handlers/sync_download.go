@@ -55,7 +55,7 @@ func (h *SyncDownloadHandler) Manifest(c *fiber.Ctx) error {
 		strings.TrimSpace(c.Query("include_progress")),
 		"true",
 	)
-	if err := ensureSyncDownloadStateInitialized(h.cfg.Store.DB, userID); err != nil {
+	if _, err := readSyncDownloadState2(h.cfg.Store.DB, userID); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "sync download manifest failed")
 	}
 	items, err := listSyncDownloadStateItems(h.cfg.Store.DB, userID)
@@ -71,9 +71,6 @@ func (h *SyncDownloadHandler) State2(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
-	if err := ensureSyncDownloadStateInitialized(h.cfg.Store.DB, userID); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "sync download state2 failed")
-	}
 	state2, err := readSyncDownloadState2(h.cfg.Store.DB, userID)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "sync download state2 failed")
@@ -86,14 +83,11 @@ func (h *SyncDownloadHandler) State1(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
-	if err := ensureSyncDownloadStateInitialized(h.cfg.Store.DB, userID); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "sync download state1 failed")
-	}
-	items, err := listSyncDownloadStateItems(h.cfg.Store.DB, userID)
+	state2, err := readSyncDownloadState2(h.cfg.Store.DB, userID)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "sync download state1 failed")
 	}
-	state2, err := readSyncDownloadState2(h.cfg.Store.DB, userID)
+	items, err := listSyncDownloadStateItems(h.cfg.Store.DB, userID)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "sync download state1 failed")
 	}
@@ -121,30 +115,7 @@ func buildSyncDownloadManifestResponse(
 			response.Sessions = append(response.Sessions, fiber.Map{
 				"session_sync_id": item.ScopeKey,
 				"updated_at":      item.UpdatedAt.UTC().Format(time.RFC3339),
-				"envelope_hash":   item.ContentHash,
-			})
-		case syncDownloadItemKindProgressChunk:
-			if !includeProgress {
-				continue
-			}
-			parts := strings.SplitN(item.ScopeKey, ":", 3)
-			if len(parts) != 3 {
-				continue
-			}
-			studentUserID, parseErr := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
-			if parseErr != nil {
-				continue
-			}
-			courseID, parseErr := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
-			if parseErr != nil {
-				continue
-			}
-			response.ProgressChunks = append(response.ProgressChunks, fiber.Map{
-				"student_user_id": studentUserID,
-				"course_id":       courseID,
-				"chapter_key":     parts[2],
-				"updated_at":      item.UpdatedAt.UTC().Format(time.RFC3339),
-				"envelope_hash":   item.ContentHash,
+				"content_hash":    item.ContentHash,
 			})
 		case syncDownloadItemKindProgressRow:
 			if !includeProgress {
@@ -167,7 +138,7 @@ func buildSyncDownloadManifestResponse(
 				"course_id":       courseID,
 				"kp_key":          parts[2],
 				"updated_at":      item.UpdatedAt.UTC().Format(time.RFC3339),
-				"envelope_hash":   item.ContentHash,
+				"content_hash":    item.ContentHash,
 			})
 		}
 	}
@@ -206,7 +177,7 @@ func (h *SyncDownloadHandler) Fetch(c *fiber.Ctx) error {
 
 func (h *SyncDownloadHandler) listSessionManifest(userID int64) ([]fiber.Map, error) {
 	rows, err := h.cfg.Store.DB.Query(
-		`SELECT session_sync_id, updated_at, envelope_hash, envelope
+		`SELECT session_sync_id, updated_at, content_hash, envelope
 		 FROM session_text_sync
 		 WHERE teacher_user_id = ? OR student_user_id = ?
 		 ORDER BY updated_at ASC, id ASC`,
@@ -222,19 +193,16 @@ func (h *SyncDownloadHandler) listSessionManifest(userID int64) ([]fiber.Map, er
 	for rows.Next() {
 		var sessionSyncID string
 		var updatedAt time.Time
-		var envelopeHash sql.NullString
+		var contentHash sql.NullString
 		var envelope []byte
-		if err := rows.Scan(&sessionSyncID, &updatedAt, &envelopeHash, &envelope); err != nil {
+		if err := rows.Scan(&sessionSyncID, &updatedAt, &contentHash, &envelope); err != nil {
 			return nil, fiber.NewError(fiber.StatusInternalServerError, "session sync manifest failed")
 		}
-		hashValue := strings.TrimSpace(envelopeHash.String)
-		if hashValue == "" && len(envelope) > 0 {
-			hashValue = buildWeakETag(envelope)
-		}
+		hashValue := resolveSyncDownloadContentHash(contentHash.String, envelope)
 		results = append(results, fiber.Map{
 			"session_sync_id": sessionSyncID,
 			"updated_at":      updatedAt.UTC().Format(time.RFC3339),
-			"envelope_hash":   hashValue,
+			"content_hash":    hashValue,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -255,7 +223,7 @@ func (h *SyncDownloadHandler) listProgressManifest(userID int64) ([]fiber.Map, [
 	}
 	if chunkErr == nil {
 		rows, err := h.cfg.Store.DB.Query(
-			`SELECT student_user_id, course_id, chapter_key, updated_at, envelope_hash, envelope
+			`SELECT student_user_id, course_id, chapter_key, updated_at, content_hash, envelope
 			 FROM progress_sync_chunks
 			 WHERE teacher_user_id = ? OR student_user_id = ?
 			 ORDER BY updated_at ASC, id ASC`,
@@ -272,15 +240,12 @@ func (h *SyncDownloadHandler) listProgressManifest(userID int64) ([]fiber.Map, [
 			var courseID int64
 			var chapterKey string
 			var updatedAt sql.NullTime
-			var envelopeHash sql.NullString
+			var contentHash sql.NullString
 			var envelope []byte
-			if err := rows.Scan(&studentUserID, &courseID, &chapterKey, &updatedAt, &envelopeHash, &envelope); err != nil {
+			if err := rows.Scan(&studentUserID, &courseID, &chapterKey, &updatedAt, &contentHash, &envelope); err != nil {
 				return nil, nil, fiber.NewError(fiber.StatusInternalServerError, "progress sync manifest failed")
 			}
-			hashValue := strings.TrimSpace(envelopeHash.String)
-			if hashValue == "" && len(envelope) > 0 {
-				hashValue = buildWeakETag(envelope)
-			}
+			hashValue := resolveSyncDownloadContentHash(contentHash.String, envelope)
 			updatedAtValue := ""
 			if updatedAt.Valid {
 				updatedAtValue = updatedAt.Time.UTC().Format(time.RFC3339)
@@ -290,7 +255,7 @@ func (h *SyncDownloadHandler) listProgressManifest(userID int64) ([]fiber.Map, [
 				"course_id":       courseID,
 				"chapter_key":     chapterKey,
 				"updated_at":      updatedAtValue,
-				"envelope_hash":   hashValue,
+				"content_hash":    hashValue,
 			})
 		}
 		if err := rows.Err(); err != nil {
@@ -300,7 +265,7 @@ func (h *SyncDownloadHandler) listProgressManifest(userID int64) ([]fiber.Map, [
 	}
 
 	rows, err := h.cfg.Store.DB.Query(
-		`SELECT student_user_id, course_id, kp_key, updated_at, envelope_hash, envelope
+		`SELECT student_user_id, course_id, kp_key, updated_at, content_hash, envelope
 		 FROM progress_sync
 		 WHERE teacher_user_id = ? OR student_user_id = ?
 		 ORDER BY updated_at ASC, id ASC`,
@@ -317,15 +282,12 @@ func (h *SyncDownloadHandler) listProgressManifest(userID int64) ([]fiber.Map, [
 		var courseID int64
 		var kpKey string
 		var updatedAt sql.NullTime
-		var envelopeHash sql.NullString
+		var contentHash sql.NullString
 		var envelope []byte
-		if err := rows.Scan(&studentUserID, &courseID, &kpKey, &updatedAt, &envelopeHash, &envelope); err != nil {
+		if err := rows.Scan(&studentUserID, &courseID, &kpKey, &updatedAt, &contentHash, &envelope); err != nil {
 			return nil, nil, fiber.NewError(fiber.StatusInternalServerError, "progress sync manifest failed")
 		}
-		hashValue := strings.TrimSpace(envelopeHash.String)
-		if hashValue == "" && len(envelope) > 0 {
-			hashValue = buildWeakETag(envelope)
-		}
+		hashValue := resolveSyncDownloadContentHash(contentHash.String, envelope)
 		updatedAtValue := ""
 		if updatedAt.Valid {
 			updatedAtValue = updatedAt.Time.UTC().Format(time.RFC3339)
@@ -335,7 +297,7 @@ func (h *SyncDownloadHandler) listProgressManifest(userID int64) ([]fiber.Map, [
 			"course_id":       courseID,
 			"kp_key":          kpKey,
 			"updated_at":      updatedAtValue,
-			"envelope_hash":   hashValue,
+			"content_hash":    hashValue,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -354,7 +316,7 @@ func (h *SyncDownloadHandler) fetchSessions(userID int64, requested []string) ([
 	for _, id := range sessionIDs {
 		args = append(args, id)
 	}
-	query := `SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, chapter_key, updated_at, envelope, envelope_hash
+	query := `SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, chapter_key, updated_at, envelope, envelope_hash, content_hash
 		 FROM session_text_sync
 		 WHERE (teacher_user_id = ? OR student_user_id = ?)
 		   AND session_sync_id IN (` + sqlPlaceholders(len(sessionIDs)) + `)
@@ -378,6 +340,7 @@ func (h *SyncDownloadHandler) fetchSessions(userID int64, requested []string) ([
 			updatedAt     time.Time
 			envelopeBytes []byte
 			envelopeHash  sql.NullString
+			contentHash   sql.NullString
 		)
 		if err := rows.Scan(
 			&id,
@@ -390,6 +353,7 @@ func (h *SyncDownloadHandler) fetchSessions(userID int64, requested []string) ([
 			&updatedAt,
 			&envelopeBytes,
 			&envelopeHash,
+			&contentHash,
 		); err != nil {
 			return nil, fiber.NewError(fiber.StatusInternalServerError, "session sync fetch failed")
 		}
@@ -404,6 +368,7 @@ func (h *SyncDownloadHandler) fetchSessions(userID int64, requested []string) ([
 			"updated_at":      updatedAt.UTC().Format(time.RFC3339),
 			"envelope":        base64.StdEncoding.EncodeToString(envelopeBytes),
 			"envelope_hash":   envelopeHash.String,
+			"content_hash":    contentHash.String,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -423,7 +388,7 @@ func (h *SyncDownloadHandler) fetchProgressChunks(userID int64, requested []sync
 		conditions = append(conditions, "(p.student_user_id = ? AND p.course_id = ? AND p.chapter_key = ?)")
 		args = append(args, key.StudentUserID, key.CourseID, key.ChapterKey)
 	}
-	query := `SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.chapter_key, p.item_count, p.updated_at, p.envelope, p.envelope_hash
+	query := `SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.chapter_key, p.item_count, p.updated_at, p.envelope, p.envelope_hash, p.content_hash
 		 FROM progress_sync_chunks p
 		 JOIN courses c ON c.id = p.course_id
 		 WHERE (p.teacher_user_id = ? OR p.student_user_id = ?) AND (` + strings.Join(conditions, " OR ") + `)
@@ -447,6 +412,7 @@ func (h *SyncDownloadHandler) fetchProgressChunks(userID int64, requested []sync
 			updatedAtTime sql.NullTime
 			envelopeBytes []byte
 			envelopeHash  sql.NullString
+			contentHash   sql.NullString
 		)
 		if err := rows.Scan(
 			&id,
@@ -459,6 +425,7 @@ func (h *SyncDownloadHandler) fetchProgressChunks(userID int64, requested []sync
 			&updatedAtTime,
 			&envelopeBytes,
 			&envelopeHash,
+			&contentHash,
 		); err != nil {
 			return nil, fiber.NewError(fiber.StatusInternalServerError, "progress chunk sync fetch failed")
 		}
@@ -477,6 +444,7 @@ func (h *SyncDownloadHandler) fetchProgressChunks(userID int64, requested []sync
 			"updated_at":      updatedAt,
 			"envelope":        base64.StdEncoding.EncodeToString(envelopeBytes),
 			"envelope_hash":   envelopeHash.String,
+			"content_hash":    contentHash.String,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -497,7 +465,7 @@ func (h *SyncDownloadHandler) fetchProgressRows(userID int64, requested []syncDo
 		args = append(args, key.StudentUserID, key.CourseID, key.KpKey)
 	}
 	query := `SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.kp_key, p.lit, p.lit_percent,
-		        p.question_level, p.summary_text, p.summary_raw_response, p.summary_valid, p.updated_at, p.envelope, p.envelope_hash
+		        p.question_level, p.summary_text, p.summary_raw_response, p.summary_valid, p.updated_at, p.envelope, p.envelope_hash, p.content_hash
 		 FROM progress_sync p
 		 JOIN courses c ON c.id = p.course_id
 		 WHERE (p.teacher_user_id = ? OR p.student_user_id = ?) AND (` + strings.Join(conditions, " OR ") + `)
@@ -526,6 +494,7 @@ func (h *SyncDownloadHandler) fetchProgressRows(userID int64, requested []syncDo
 			updatedAtTime      sql.NullTime
 			envelopeBytes      []byte
 			envelopeHash       sql.NullString
+			contentHash        sql.NullString
 		)
 		if err := rows.Scan(
 			&id,
@@ -543,6 +512,7 @@ func (h *SyncDownloadHandler) fetchProgressRows(userID int64, requested []syncDo
 			&updatedAtTime,
 			&envelopeBytes,
 			&envelopeHash,
+			&contentHash,
 		); err != nil {
 			return nil, fiber.NewError(fiber.StatusInternalServerError, "progress sync fetch failed")
 		}
@@ -566,6 +536,7 @@ func (h *SyncDownloadHandler) fetchProgressRows(userID int64, requested []syncDo
 			"updated_at":           updatedAt,
 			"envelope":             base64.StdEncoding.EncodeToString(envelopeBytes),
 			"envelope_hash":        envelopeHash.String,
+			"content_hash":         contentHash.String,
 		})
 	}
 	if err := rows.Err(); err != nil {

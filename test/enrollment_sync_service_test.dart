@@ -227,12 +227,24 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   int listEnrollmentsCalls = 0;
   int listEnrollmentsDeltaCalls = 0;
   int getEnrollmentsState2Calls = 0;
+  int getEnrollmentsState1Calls = 0;
   int listDeletionEventsCalls = 0;
   int listTeacherCoursesDeltaCalls = 0;
   int listTeacherCoursesCalls = 0;
   int getTeacherCoursesState2Calls = 0;
+  int getTeacherCoursesState1Calls = 0;
   int listTeacherBundleVersionsCalls = 0;
   int latestCourseBundleInfoCalls = 0;
+  int _teacherCoursesSnapshotCalls = 0;
+
+  List<TeacherCourseSummary> _nextTeacherCoursesSnapshot() {
+    _teacherCoursesSnapshotCalls++;
+    final provider = _teacherCoursesProvider;
+    if (provider != null) {
+      return provider(_teacherCoursesSnapshotCalls);
+    }
+    return _teacherCourses;
+  }
 
   @override
   Future<List<EnrollmentSummary>> listEnrollments() async {
@@ -244,6 +256,16 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   Future<String> getEnrollmentsSyncState2() async {
     getEnrollmentsState2Calls++;
     return enrollmentsState2 ?? _buildStudentRemoteState2(_enrollments);
+  }
+
+  @override
+  Future<MarketplaceSyncState1Result<EnrollmentSyncState1Item>>
+      getEnrollmentsSyncState1() async {
+    getEnrollmentsState1Calls++;
+    return MarketplaceSyncState1Result<EnrollmentSyncState1Item>(
+      state2: enrollmentsState2 ?? _buildStudentRemoteState2(_enrollments),
+      items: _enrollments.map(_buildEnrollmentState1Item).toList(),
+    );
   }
 
   @override
@@ -277,17 +299,24 @@ class _TestMarketplaceApiService extends MarketplaceApiService {
   @override
   Future<List<TeacherCourseSummary>> listTeacherCourses() async {
     listTeacherCoursesCalls++;
-    final provider = _teacherCoursesProvider;
-    if (provider != null) {
-      return provider(listTeacherCoursesCalls);
-    }
-    return _teacherCourses;
+    return _nextTeacherCoursesSnapshot();
   }
 
   @override
   Future<String> getTeacherCoursesSyncState2() async {
     getTeacherCoursesState2Calls++;
     return teacherCoursesState2 ?? _buildTeacherRemoteState2(_teacherCourses);
+  }
+
+  @override
+  Future<MarketplaceSyncState1Result<TeacherCourseSyncState1Item>>
+      getTeacherCoursesSyncState1() async {
+    getTeacherCoursesState1Calls++;
+    final courses = _nextTeacherCoursesSnapshot();
+    return MarketplaceSyncState1Result<TeacherCourseSyncState1Item>(
+      state2: teacherCoursesState2 ?? _buildTeacherRemoteState2(courses),
+      items: courses.map(_buildTeacherCourseState1Item).toList(),
+    );
   }
 
   @override
@@ -398,9 +427,6 @@ String _buildStudentRemoteState2(List<EnrollmentSummary> enrollments) {
           'student_course',
           '${item.courseId}',
           '${item.teacherId}',
-          item.teacherName.trim(),
-          item.courseSubject.trim(),
-          '${item.latestBundleVersionId ?? 0}',
           item.latestBundleHash.trim(),
         ].join('|'),
       )
@@ -414,15 +440,35 @@ String _buildTeacherRemoteState2(List<TeacherCourseSummary> courses) {
       .map(
         (item) => [
           'teacher_course',
-          item.subject.trim().toLowerCase(),
-          item.subject.trim(),
-          '${item.latestBundleVersionId ?? 0}',
+          'remote:${item.courseId}',
           item.latestBundleHash.trim(),
         ].join('|'),
       )
       .toList()
     ..sort();
   return sha256Hex(fingerprints.join('\n'));
+}
+
+EnrollmentSyncState1Item _buildEnrollmentState1Item(EnrollmentSummary item) {
+  return EnrollmentSyncState1Item(
+    courseId: item.courseId,
+    teacherId: item.teacherId,
+    courseSubject: item.courseSubject,
+    teacherName: item.teacherName,
+    latestBundleVersionId: item.latestBundleVersionId,
+    latestBundleHash: item.latestBundleHash,
+  );
+}
+
+TeacherCourseSyncState1Item _buildTeacherCourseState1Item(
+  TeacherCourseSummary item,
+) {
+  return TeacherCourseSyncState1Item(
+    courseId: item.courseId,
+    subject: item.subject,
+    latestBundleVersionId: item.latestBundleVersionId,
+    latestBundleHash: item.latestBundleHash,
+  );
 }
 
 class _CountingCourseArtifactService extends CourseArtifactService {
@@ -482,6 +528,20 @@ class _CountingCourseArtifactService extends CourseArtifactService {
       courseVersionId: courseVersionId,
       promptMetadata: promptMetadata,
     );
+  }
+}
+
+class _MismatchedUploadHashCourseArtifactService extends CourseArtifactService {
+  @override
+  Future<String> computeUploadHash({
+    required int courseVersionId,
+    required Map<String, dynamic>? promptMetadata,
+  }) async {
+    await super.computeUploadHash(
+      courseVersionId: courseVersionId,
+      promptMetadata: promptMetadata,
+    );
+    return 'mismatched-local-hash';
   }
 }
 
@@ -1013,6 +1073,180 @@ void main() {
   );
 
   test(
+    'teacher imported bundle keeps the same local fingerprint after forced rehash',
+    () async {
+      final teacherId = await db.createUser(
+        username: 'teacher_rehash_stable',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 1760,
+      );
+      final localDir = await _createCourseFolder(
+        label: 'teacher_rehash_stable_local',
+        rootTitle: 'Local Topic',
+      );
+      tempPaths.add(localDir.path);
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Math',
+        granularity: 1,
+        textbookText: '1 Local Topic',
+        sourcePath: localDir.path,
+      );
+      await db.upsertCourseRemoteLink(
+        courseVersionId: courseVersionId,
+        remoteCourseId: 9202,
+      );
+      final teacher = await db.getUserById(teacherId);
+      expect(teacher, isNotNull);
+
+      final remoteTempDir = await Directory.systemTemp.createTemp(
+        'teacher_rehash_stable_bundle_',
+      );
+      tempPaths.add(remoteTempDir.path);
+      final archive = Archive();
+      final contentsBytes = Uint8List.fromList(
+        utf8.encode('1 Remote Topic\n1.1 Remote Subtopic\n'),
+      );
+      archive.addFile(
+        ArchiveFile('contents.txt', contentsBytes.length, contentsBytes),
+      );
+      final lecture1 = Uint8List.fromList(utf8.encode('Remote lecture 1'));
+      final lecture2 = Uint8List.fromList(utf8.encode('Remote lecture 1.1'));
+      archive.addFile(
+        ArchiveFile('1_lecture.txt', lecture1.length, lecture1),
+      );
+      archive.addFile(
+        ArchiveFile('1.1_lecture.txt', lecture2.length, lecture2),
+      );
+      final metadataBytes = Uint8List.fromList(
+        utf8.encode(
+          jsonEncode(<String, dynamic>{
+            'schema': kLegacyPromptBundleSchema,
+            'remote_course_id': 9202,
+            'teacher_username': 'teacher_rehash_stable_remote',
+            'prompt_templates': <Map<String, dynamic>>[
+              <String, dynamic>{
+                'prompt_name': 'learn',
+                'scope': 'student',
+                'student_remote_user_id': 501,
+                'student_username': 'remote_student',
+                'content':
+                    '{{kp_description}}\n{{student_input}}\n{{lesson_content}}',
+                'created_at': '2025-02-02T00:00:00Z',
+              },
+              <String, dynamic>{
+                'prompt_name': 'review',
+                'scope': 'teacher',
+                'content':
+                    '{{kp_description}}\n{{student_input}}\n{{active_review_question_json}}\n{{target_difficulty}}\n{{presented_questions}}\n{{error_book_summary}}',
+                'created_at': '2025-02-01T00:00:00Z',
+              },
+            ],
+            'student_prompt_profiles': <Map<String, dynamic>>[
+              <String, dynamic>{
+                'scope': 'student',
+                'student_remote_user_id': 501,
+                'student_username': 'remote_student',
+                'preferred_tone': 'calm',
+                'updated_at': '2025-02-03T00:00:00Z',
+              },
+            ],
+            'student_pass_configs': <Map<String, dynamic>>[
+              <String, dynamic>{
+                'student_remote_user_id': 501,
+                'student_username': 'remote_student',
+                'easy_weight': 1.0,
+                'medium_weight': 2.0,
+                'hard_weight': 3.0,
+                'pass_threshold': 0.7,
+                'updated_at': '2025-02-04T00:00:00Z',
+              },
+            ],
+          }),
+        ),
+      );
+      archive.addFile(
+        ArchiveFile(
+          kLegacyPromptMetadataEntryPath,
+          metadataBytes.length,
+          metadataBytes,
+        ),
+      );
+      final zipBytes = ZipEncoder().encode(archive);
+      expect(zipBytes, isNotNull);
+      final remoteBundle =
+          File(p.join(remoteTempDir.path, 'rehash_stable_remote.zip'));
+      await remoteBundle.writeAsBytes(zipBytes!, flush: true);
+      tempFiles.add(remoteBundle.path);
+
+      final bundleService = CourseBundleService();
+      final remoteHash =
+          await bundleService.computeBundleSemanticHash(remoteBundle);
+
+      final secureStorage = _TestSecureStorageService();
+      final artifactService = CourseArtifactService();
+      final api = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+        teacherCourses: <TeacherCourseSummary>[
+          TeacherCourseSummary(
+            courseId: 9202,
+            subject: 'Math',
+            grade: '',
+            description: '',
+            visibility: 'private',
+            publishedAt: '',
+            latestBundleVersionId: 402,
+            latestBundleHash: remoteHash,
+            status: 'active',
+          ),
+        ],
+        bundleFilesByVersionId: <int, File>{402: remoteBundle},
+      );
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService: CourseService(
+          db,
+          courseArtifactService: artifactService,
+        ),
+        marketplaceApi: api,
+        promptRepository: PromptRepository(db: db),
+        courseArtifactService: artifactService,
+      );
+
+      final firstStats = await service.syncIfReady(currentUser: teacher!);
+      expect(firstStats.downloadedCount, equals(1));
+
+      final state2Before = await secureStorage.readLocalSyncState2(
+        remoteUserId: 1760,
+        domain: 'enrollment_sync_teacher',
+      );
+      expect(state2Before, isNotEmpty);
+
+      await (db.update(db.courseVersions)
+            ..where((tbl) => tbl.id.equals(courseVersionId)))
+          .write(
+        CourseVersionsCompanion(
+          updatedAt: Value(DateTime.utc(2026, 1, 1)),
+        ),
+      );
+
+      await service.refreshStoredLocalState2(currentUser: teacher);
+
+      final state2After = await secureStorage.readLocalSyncState2(
+        remoteUserId: 1760,
+        domain: 'enrollment_sync_teacher',
+      );
+      expect(state2After, equals(state2Before));
+
+      final secondStats = await service.syncIfReady(currentUser: teacher);
+      expect(secondStats.downloadedCount, equals(0));
+      expect(api.uploadedBundles, isEmpty);
+    },
+  );
+
+  test(
     'teacher unchanged sync skips local bundle hash and bundle preparation work',
     () async {
       final teacherId = await db.createUser(
@@ -1370,7 +1604,7 @@ void main() {
       expect(api.uploadedBundles, isEmpty);
       expect(stats.downloadedCount, equals(1));
       expect(stats.downloadedBytes, greaterThan(0));
-      expect(api.latestCourseBundleInfoCalls, equals(2));
+      expect(api.latestCourseBundleInfoCalls, equals(1));
       expect(
         await secureStorage.readInstalledCourseBundleVersion(
           remoteUserId: 1901,
@@ -1571,6 +1805,15 @@ void main() {
         domain: 'enrollment_sync_teacher',
         runAt: DateTime.now().toUtc().subtract(const Duration(minutes: 5)),
       );
+      final artifactService = CourseArtifactService();
+      await artifactService.rebuildCourseArtifacts(
+        courseVersionId: courseAId,
+        folderPath: courseADir.path,
+      );
+      await artifactService.rebuildCourseArtifacts(
+        courseVersionId: courseBId,
+        folderPath: courseBDir.path,
+      );
       final api = _TestMarketplaceApiService(
         secureStorage: secureStorage,
         teacherCourses: <TeacherCourseSummary>[
@@ -1602,13 +1845,14 @@ void main() {
         courseService: CourseService(db),
         marketplaceApi: api,
         promptRepository: PromptRepository(db: db),
-        courseArtifactService: CourseArtifactService(),
+        courseArtifactService: artifactService,
       );
 
       final stats = await service.syncIfReady(currentUser: teacher!);
 
       expect(api.getTeacherCoursesState2Calls, equals(1));
-      expect(api.listTeacherCoursesCalls, equals(2));
+      expect(api.listTeacherCoursesCalls, equals(0));
+      expect(api.getTeacherCoursesState1Calls, equals(2));
       expect(api.uploadedBundles.length, equals(2));
 
       final uploadedCourseABundle = api.uploadedBundles.firstWhere(
@@ -1653,6 +1897,64 @@ void main() {
       );
       expect(stats.uploadedCount, equals(2));
       expect(stats.uploadedBytes, greaterThan(0));
+    },
+  );
+
+  test(
+    'teacher sync fails instead of rebuilding bundles on hot path when cached artifacts are missing',
+    () async {
+      final teacherId = await db.createUser(
+        username: 'teacher_missing_artifacts',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 1811,
+      );
+      final courseDir = await _createCourseFolder(
+        label: 'teacher_missing_artifacts',
+        rootTitle: 'Missing Artifacts Topic',
+      );
+      tempPaths.add(courseDir.path);
+      await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Missing Artifacts Course',
+        granularity: 1,
+        textbookText: '1 Missing Artifacts Topic',
+        sourcePath: courseDir.path,
+      );
+      final teacher = await db.getUserById(teacherId);
+      expect(teacher, isNotNull);
+
+      final secureStorage = _TestSecureStorageService();
+      await secureStorage.writeSyncRunAt(
+        remoteUserId: 1811,
+        domain: 'enrollment_sync_teacher',
+        runAt: DateTime.now().toUtc().subtract(const Duration(minutes: 5)),
+      );
+      final api = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+        teacherCourses: const <TeacherCourseSummary>[],
+        teacherCoursesState2: 'remote-empty-state2',
+      );
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService: CourseService(db),
+        marketplaceApi: api,
+        promptRepository: PromptRepository(db: db),
+        courseArtifactService: CourseArtifactService(),
+      );
+      await service.refreshStoredLocalState2(currentUser: teacher!);
+
+      await expectLater(
+        () => service.syncIfReady(currentUser: teacher),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('Teacher sync cannot rebuild bundles on the hot path'),
+          ),
+        ),
+      );
     },
   );
 
@@ -2012,6 +2314,72 @@ void main() {
   );
 
   test(
+    'student import crashes when downloaded bundle and local materialized hash diverge',
+    () async {
+      final studentId = await db.createUser(
+        username: 'student_hash_mismatch',
+        pinHash: 'hash',
+        role: 'student',
+        remoteUserId: 964,
+      );
+      final remoteDir = await _createCourseFolder(
+        label: 'student_hash_mismatch_remote',
+        rootTitle: 'Mismatch Topic',
+      );
+      tempPaths.add(remoteDir.path);
+      final remoteBundle = await CourseBundleService().createBundleFromFolder(
+        remoteDir.path,
+      );
+      tempFiles.add(remoteBundle.path);
+      final remoteHash =
+          await CourseBundleService().computeBundleSemanticHash(remoteBundle);
+
+      final student = await db.getUserById(studentId);
+      expect(student, isNotNull);
+
+      final secureStorage = _TestSecureStorageService();
+      final api = _TestMarketplaceApiService(
+        secureStorage: secureStorage,
+        enrollments: <EnrollmentSummary>[
+          EnrollmentSummary(
+            enrollmentId: 18,
+            courseId: 8108,
+            teacherId: 9914,
+            status: 'approved',
+            assignedAt: '2026-03-04T00:00:00Z',
+            courseSubject: 'Mismatch Course',
+            teacherName: 'remote_teacher_mismatch',
+            latestBundleVersionId: 58,
+            latestBundleHash: remoteHash,
+          ),
+        ],
+        bundleFilesByVersionId: <int, File>{58: remoteBundle},
+      );
+      final service = EnrollmentSyncService(
+        db: db,
+        secureStorage: secureStorage,
+        courseService: CourseService(db),
+        marketplaceApi: api,
+        promptRepository: PromptRepository(db: db),
+        courseArtifactService: _MismatchedUploadHashCourseArtifactService(),
+      );
+
+      await expectLater(
+        () => service.syncIfReady(currentUser: student!),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains(
+              'Imported student bundle fingerprint mismatch after local materialization',
+            ),
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
     'student sync tolerates missing latest-info endpoint on older server',
     () async {
       final studentId = await db.createUser(
@@ -2085,6 +2453,9 @@ void main() {
 
       await service.syncIfReady(currentUser: student!);
 
+      expect(api.getEnrollmentsState2Calls, equals(1));
+      expect(api.getEnrollmentsState1Calls, equals(1));
+      expect(api.listEnrollmentsCalls, equals(0));
       expect(api.latestCourseBundleInfoCalls, equals(1));
       expect(api.downloadBundleCalls, equals(0));
       final assigned = await db.getAssignedCoursesForStudent(studentId);
@@ -2555,7 +2926,7 @@ void main() {
     expect(api.listEnrollmentsCalls, equals(0));
   });
 
-  test('teacher local mutation refreshes stored local state2 immediately',
+  test('teacher display-only metadata changes do not perturb local state2',
       () async {
     final teacherId = await db.createUser(
       username: 'teacher_state2_local',
@@ -2604,7 +2975,7 @@ void main() {
       domain: 'enrollment_sync_teacher',
     );
     expect(after, isNotNull);
-    expect(after, isNot(equals(before)));
+    expect(after, equals(before));
   });
 
   test(
@@ -2709,7 +3080,7 @@ void main() {
   );
 
   test(
-    'student local state2 refreshes immediately when teacher metadata changes',
+    'student local state2 ignores teacher display-name changes',
     () async {
       final teacherId = await db.createUser(
         username: 'teacher_state2_teacher_before',
@@ -2787,7 +3158,7 @@ void main() {
         domain: 'enrollment_sync_student',
       );
       expect(after, isNotNull);
-      expect(after, isNot(equals(before)));
+      expect(after, equals(before));
     },
   );
 
@@ -3145,7 +3516,8 @@ void main() {
       await syncService.syncIfReady(currentUser: teacher);
 
       expect(syncApi.getTeacherCoursesState2Calls, equals(1));
-      expect(syncApi.listTeacherCoursesCalls, greaterThan(0));
+      expect(syncApi.listTeacherCoursesCalls, equals(0));
+      expect(syncApi.getTeacherCoursesState1Calls, equals(2));
       expect(artifactService.computeUploadHashCalls, equals(0));
       expect(syncApi.uploadedBundles, isNotEmpty);
     },

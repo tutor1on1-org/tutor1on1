@@ -30,6 +30,16 @@ class MarketplaceListResult<T> {
   final bool notModified;
 }
 
+class MarketplaceSyncState1Result<T> {
+  MarketplaceSyncState1Result({
+    required this.state2,
+    required this.items,
+  });
+
+  final String state2;
+  final List<T> items;
+}
+
 class SubjectLabelSummary {
   SubjectLabelSummary({
     required this.subjectLabelId,
@@ -223,6 +233,36 @@ class EnrollmentSummary {
   }
 }
 
+class EnrollmentSyncState1Item {
+  EnrollmentSyncState1Item({
+    required this.courseId,
+    required this.teacherId,
+    required this.courseSubject,
+    required this.teacherName,
+    required this.latestBundleVersionId,
+    this.latestBundleHash = '',
+  });
+
+  final int courseId;
+  final int teacherId;
+  final String courseSubject;
+  final String teacherName;
+  final int? latestBundleVersionId;
+  final String latestBundleHash;
+
+  factory EnrollmentSyncState1Item.fromJson(Map<String, dynamic> json) {
+    return EnrollmentSyncState1Item(
+      courseId: (json['course_id'] as num?)?.toInt() ?? 0,
+      teacherId: (json['teacher_id'] as num?)?.toInt() ?? 0,
+      courseSubject: (json['course_subject'] as String?) ?? '',
+      teacherName: (json['teacher_name'] as String?) ?? '',
+      latestBundleVersionId:
+          (json['latest_bundle_version_id'] as num?)?.toInt(),
+      latestBundleHash: (json['latest_bundle_hash'] as String?) ?? '',
+    );
+  }
+}
+
 class TeacherRequestSummary {
   TeacherRequestSummary({
     required this.requestId,
@@ -363,6 +403,30 @@ class TeacherCourseSummary {
       latestBundleHash: (json['latest_bundle_hash'] as String?) ?? '',
       status: (json['status'] as String?) ?? '',
       subjectLabels: _decodeSubjectLabelsList(json['subject_labels']),
+    );
+  }
+}
+
+class TeacherCourseSyncState1Item {
+  TeacherCourseSyncState1Item({
+    required this.courseId,
+    required this.subject,
+    required this.latestBundleVersionId,
+    this.latestBundleHash = '',
+  });
+
+  final int courseId;
+  final String subject;
+  final int? latestBundleVersionId;
+  final String latestBundleHash;
+
+  factory TeacherCourseSyncState1Item.fromJson(Map<String, dynamic> json) {
+    return TeacherCourseSyncState1Item(
+      courseId: (json['course_id'] as num?)?.toInt() ?? 0,
+      subject: (json['subject'] as String?) ?? '',
+      latestBundleVersionId:
+          (json['latest_bundle_version_id'] as num?)?.toInt(),
+      latestBundleHash: (json['latest_bundle_hash'] as String?) ?? '',
     );
   }
 }
@@ -931,6 +995,24 @@ class MarketplaceApiService {
     return (response['state2'] as String?)?.trim() ?? '';
   }
 
+  Future<MarketplaceSyncState1Result<EnrollmentSyncState1Item>>
+      getEnrollmentsSyncState1() async {
+    final response = await _get('/api/enrollments/sync-state1');
+    if (response is! Map<String, dynamic>) {
+      throw MarketplaceApiException('Unexpected response format.');
+    }
+    final rawItems = response['items'];
+    return MarketplaceSyncState1Result<EnrollmentSyncState1Item>(
+      state2: (response['state2'] as String?)?.trim() ?? '',
+      items: rawItems is List
+          ? rawItems
+              .whereType<Map<String, dynamic>>()
+              .map(EnrollmentSyncState1Item.fromJson)
+              .toList()
+          : const <EnrollmentSyncState1Item>[],
+    );
+  }
+
   Future<MarketplaceListResult<EnrollmentSummary>> listEnrollmentsDelta({
     String? ifNoneMatch,
   }) async {
@@ -1048,6 +1130,24 @@ class MarketplaceApiService {
       throw MarketplaceApiException('Unexpected response format.');
     }
     return (response['state2'] as String?)?.trim() ?? '';
+  }
+
+  Future<MarketplaceSyncState1Result<TeacherCourseSyncState1Item>>
+      getTeacherCoursesSyncState1() async {
+    final response = await _get('/api/teacher/courses/sync-state1');
+    if (response is! Map<String, dynamic>) {
+      throw MarketplaceApiException('Unexpected response format.');
+    }
+    final rawItems = response['items'];
+    return MarketplaceSyncState1Result<TeacherCourseSyncState1Item>(
+      state2: (response['state2'] as String?)?.trim() ?? '',
+      items: rawItems is List
+          ? rawItems
+              .whereType<Map<String, dynamic>>()
+              .map(TeacherCourseSyncState1Item.fromJson)
+              .toList()
+          : const <TeacherCourseSyncState1Item>[],
+    );
   }
 
   Future<MarketplaceListResult<TeacherCourseSummary>> listTeacherCoursesDelta({

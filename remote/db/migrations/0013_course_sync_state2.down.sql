@@ -1,0 +1,2 @@
+DROP TABLE student_enrollment_sync_state2;
+DROP TABLE teacher_course_sync_state2;

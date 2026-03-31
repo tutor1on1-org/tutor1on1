@@ -52,7 +52,6 @@ func buildSyncDownloadStateFingerprint(item syncDownloadStateItem) string {
 	return strings.Join([]string{
 		strings.TrimSpace(item.ItemKind),
 		strings.TrimSpace(item.ScopeKey),
-		strconv.FormatInt(item.UpdatedAt.UTC().UnixMilli(), 10),
 		strings.TrimSpace(item.ContentHash),
 	}, "|")
 }
@@ -319,12 +318,16 @@ func listSyncDownloadStateItems(
 	exec syncDownloadSQLExecutor,
 	userID int64,
 ) ([]syncDownloadStateItem, error) {
+	if _, err := pruneLegacyProgressChunkSyncDownloadState(exec, userID); err != nil {
+		return nil, err
+	}
 	rows, err := exec.Query(
 		`SELECT user_id, item_kind, scope_key, course_id, student_user_id, updated_at, content_hash
 		 FROM sync_download_state_items
-		 WHERE user_id = ?
+		 WHERE user_id = ? AND item_kind <> ?
 		 ORDER BY item_kind ASC, scope_key ASC`,
 		userID,
+		syncDownloadItemKindProgressChunk,
 	)
 	if err != nil {
 		return nil, err
@@ -385,13 +388,37 @@ func readSyncDownloadState2(
 	exec syncDownloadSQLExecutor,
 	userID int64,
 ) (string, error) {
+	pruned, err := pruneLegacyProgressChunkSyncDownloadState(exec, userID)
+	if err != nil {
+		return "", err
+	}
+	if pruned {
+		if err := rebuildSyncDownloadState2(exec, userID); err != nil {
+			return "", err
+		}
+	}
 	var state2 string
 	if err := exec.QueryRow(
 		`SELECT state2 FROM sync_download_state2 WHERE user_id = ?`,
 		userID,
 	).Scan(&state2); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return encodeSyncDownloadState2(syncDownloadState2Aggregate{}), nil
+			if err := backfillSyncDownloadStateForUser(exec, userID); err != nil {
+				return "", err
+			}
+			if err := rebuildSyncDownloadState2(exec, userID); err != nil {
+				return "", err
+			}
+			if scanErr := exec.QueryRow(
+				`SELECT state2 FROM sync_download_state2 WHERE user_id = ?`,
+				userID,
+			).Scan(&state2); scanErr != nil {
+				if errors.Is(scanErr, sql.ErrNoRows) {
+					return encodeSyncDownloadState2(syncDownloadState2Aggregate{}), nil
+				}
+				return "", scanErr
+			}
+			return strings.TrimSpace(state2), nil
 		}
 		return "", err
 	}
@@ -431,8 +458,17 @@ func (tracker *syncDownloadState2MutationTracker) loadAggregate(userID int64) (s
 	if aggregate, exists := tracker.aggregateByUser[userID]; exists {
 		return aggregate, nil
 	}
+	pruned, err := pruneLegacyProgressChunkSyncDownloadState(tracker.exec, userID)
+	if err != nil {
+		return syncDownloadState2Aggregate{}, err
+	}
+	if pruned {
+		if err := rebuildSyncDownloadState2(tracker.exec, userID); err != nil {
+			return syncDownloadState2Aggregate{}, err
+		}
+	}
 	var state2 string
-	err := tracker.exec.QueryRow(
+	err = tracker.exec.QueryRow(
 		`SELECT state2
 		 FROM sync_download_state2
 		 WHERE user_id = ?
@@ -599,7 +635,7 @@ func backfillSyncDownloadStateForUser(
 	userID int64,
 ) error {
 	sessionRows, err := exec.Query(
-		`SELECT course_id, teacher_user_id, student_user_id, session_sync_id, updated_at, envelope_hash, envelope
+		`SELECT course_id, teacher_user_id, student_user_id, session_sync_id, updated_at, content_hash, envelope_hash, envelope
 		 FROM session_text_sync
 		 WHERE teacher_user_id = ? OR student_user_id = ?`,
 		userID,
@@ -616,6 +652,7 @@ func backfillSyncDownloadStateForUser(
 			studentUserID int64
 			sessionSyncID string
 			updatedAt     time.Time
+			contentHash   sql.NullString
 			envelopeHash  sql.NullString
 			envelopeBytes []byte
 		)
@@ -625,6 +662,7 @@ func backfillSyncDownloadStateForUser(
 			&studentUserID,
 			&sessionSyncID,
 			&updatedAt,
+			&contentHash,
 			&envelopeHash,
 			&envelopeBytes,
 		); err != nil {
@@ -632,7 +670,10 @@ func backfillSyncDownloadStateForUser(
 			return err
 		}
 		_ = teacherUserID
-		contentHash := resolveSyncDownloadContentHash(envelopeHash.String, envelopeBytes)
+		resolvedContentHash := resolveSyncDownloadContentHash(
+			contentHash.String,
+			envelopeBytes,
+		)
 		sessionItems = append(sessionItems, syncDownloadStateItem{
 			UserID:        userID,
 			ItemKind:      syncDownloadItemKindSession,
@@ -640,7 +681,7 @@ func backfillSyncDownloadStateForUser(
 			CourseID:      courseID,
 			StudentUserID: studentUserID,
 			UpdatedAt:     updatedAt.UTC(),
-			ContentHash:   contentHash,
+			ContentHash:   resolvedContentHash,
 		})
 	}
 	if err := sessionRows.Err(); err != nil {
@@ -653,7 +694,7 @@ func backfillSyncDownloadStateForUser(
 	}
 
 	progressRows, err := exec.Query(
-		`SELECT course_id, teacher_user_id, student_user_id, kp_key, updated_at, envelope_hash, envelope
+		`SELECT course_id, teacher_user_id, student_user_id, kp_key, updated_at, content_hash, envelope_hash, envelope
 		 FROM progress_sync
 		 WHERE teacher_user_id = ? OR student_user_id = ?`,
 		userID,
@@ -670,6 +711,7 @@ func backfillSyncDownloadStateForUser(
 			studentUserID int64
 			kpKey         string
 			updatedAt     sql.NullTime
+			contentHash   sql.NullString
 			envelopeHash  sql.NullString
 			envelopeBytes []byte
 		)
@@ -679,6 +721,7 @@ func backfillSyncDownloadStateForUser(
 			&studentUserID,
 			&kpKey,
 			&updatedAt,
+			&contentHash,
 			&envelopeHash,
 			&envelopeBytes,
 		); err != nil {
@@ -689,7 +732,10 @@ func backfillSyncDownloadStateForUser(
 		if !updatedAt.Valid {
 			continue
 		}
-		contentHash := resolveSyncDownloadContentHash(envelopeHash.String, envelopeBytes)
+		resolvedContentHash := resolveSyncDownloadContentHash(
+			contentHash.String,
+			envelopeBytes,
+		)
 		progressItems = append(progressItems, syncDownloadStateItem{
 			UserID:        userID,
 			ItemKind:      syncDownloadItemKindProgressRow,
@@ -697,7 +743,7 @@ func backfillSyncDownloadStateForUser(
 			CourseID:      courseID,
 			StudentUserID: studentUserID,
 			UpdatedAt:     updatedAt.Time.UTC(),
-			ContentHash:   contentHash,
+			ContentHash:   resolvedContentHash,
 		})
 	}
 	if err := progressRows.Err(); err != nil {
@@ -708,61 +754,33 @@ func backfillSyncDownloadStateForUser(
 	if err := rawUpsertSyncDownloadStateItems(exec, progressItems); err != nil {
 		return err
 	}
+	_, err = exec.Exec(
+		`DELETE FROM sync_download_state_items
+		 WHERE user_id = ? AND item_kind = ?`,
+		userID,
+		syncDownloadItemKindProgressChunk,
+	)
+	return err
+}
 
-	chunkRows, err := exec.Query(
-		`SELECT course_id, teacher_user_id, student_user_id, chapter_key, updated_at, envelope_hash, envelope
-		 FROM progress_sync_chunks
-		 WHERE teacher_user_id = ? OR student_user_id = ?`,
+func pruneLegacyProgressChunkSyncDownloadState(
+	exec syncDownloadSQLExecutor,
+	userID int64,
+) (bool, error) {
+	result, err := exec.Exec(
+		`DELETE FROM sync_download_state_items
+		 WHERE user_id = ? AND item_kind = ?`,
 		userID,
-		userID,
+		syncDownloadItemKindProgressChunk,
 	)
 	if err != nil {
-		return err
+		return false, err
 	}
-	chunkItems := []syncDownloadStateItem{}
-	for chunkRows.Next() {
-		var (
-			courseID      int64
-			teacherUserID int64
-			studentUserID int64
-			chapterKey    string
-			updatedAt     sql.NullTime
-			envelopeHash  sql.NullString
-			envelopeBytes []byte
-		)
-		if err := chunkRows.Scan(
-			&courseID,
-			&teacherUserID,
-			&studentUserID,
-			&chapterKey,
-			&updatedAt,
-			&envelopeHash,
-			&envelopeBytes,
-		); err != nil {
-			chunkRows.Close()
-			return err
-		}
-		_ = teacherUserID
-		if !updatedAt.Valid {
-			continue
-		}
-		contentHash := resolveSyncDownloadContentHash(envelopeHash.String, envelopeBytes)
-		chunkItems = append(chunkItems, syncDownloadStateItem{
-			UserID:        userID,
-			ItemKind:      syncDownloadItemKindProgressChunk,
-			ScopeKey:      buildProgressChunkStateScopeKey(studentUserID, courseID, chapterKey),
-			CourseID:      courseID,
-			StudentUserID: studentUserID,
-			UpdatedAt:     updatedAt.Time.UTC(),
-			ContentHash:   contentHash,
-		})
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return true, nil
 	}
-	if err := chunkRows.Err(); err != nil {
-		chunkRows.Close()
-		return err
-	}
-	chunkRows.Close()
-	return rawUpsertSyncDownloadStateItems(exec, chunkItems)
+	return affected > 0, nil
 }
 
 func listSyncDownloadStateItemsForDelete(

@@ -126,6 +126,7 @@ class SessionSyncItem {
     required this.updatedAt,
     required this.envelope,
     required this.envelopeHash,
+    required this.contentHash,
   });
 
   final int cursorId;
@@ -138,6 +139,7 @@ class SessionSyncItem {
   final String updatedAt;
   final String envelope;
   final String envelopeHash;
+  final String contentHash;
 
   factory SessionSyncItem.fromJson(Map<String, dynamic> json) {
     return SessionSyncItem(
@@ -151,6 +153,7 @@ class SessionSyncItem {
       updatedAt: (json['updated_at'] as String?) ?? '',
       envelope: (json['envelope'] as String?) ?? '',
       envelopeHash: (json['envelope_hash'] as String?) ?? '',
+      contentHash: (json['content_hash'] as String?) ?? '',
     );
   }
 }
@@ -164,6 +167,7 @@ class SessionUploadEntry {
     required this.updatedAt,
     required this.envelope,
     required this.envelopeHash,
+    required this.contentHash,
   });
 
   final String sessionSyncId;
@@ -173,6 +177,7 @@ class SessionUploadEntry {
   final String updatedAt;
   final String envelope;
   final String envelopeHash;
+  final String contentHash;
 
   Map<String, dynamic> toJson() => {
         'session_sync_id': sessionSyncId,
@@ -182,6 +187,7 @@ class SessionUploadEntry {
         'updated_at': updatedAt,
         'envelope': envelope,
         'envelope_hash': envelopeHash,
+        'content_hash': contentHash,
       };
 }
 
@@ -205,6 +211,7 @@ class ProgressSyncItem {
     required this.updatedAt,
     required this.envelope,
     required this.envelopeHash,
+    required this.contentHash,
   });
 
   final int cursorId;
@@ -225,6 +232,7 @@ class ProgressSyncItem {
   final String updatedAt;
   final String envelope;
   final String envelopeHash;
+  final String contentHash;
 
   factory ProgressSyncItem.fromJson(Map<String, dynamic> json) {
     return ProgressSyncItem(
@@ -246,6 +254,7 @@ class ProgressSyncItem {
       updatedAt: (json['updated_at'] as String?) ?? '',
       envelope: (json['envelope'] as String?) ?? '',
       envelopeHash: (json['envelope_hash'] as String?) ?? '',
+      contentHash: (json['content_hash'] as String?) ?? '',
     );
   }
 }
@@ -262,6 +271,7 @@ class ProgressSyncChunkItem {
     required this.updatedAt,
     required this.envelope,
     required this.envelopeHash,
+    required this.contentHash,
   });
 
   final int cursorId;
@@ -274,6 +284,7 @@ class ProgressSyncChunkItem {
   final String updatedAt;
   final String envelope;
   final String envelopeHash;
+  final String contentHash;
 
   factory ProgressSyncChunkItem.fromJson(Map<String, dynamic> json) {
     return ProgressSyncChunkItem(
@@ -287,6 +298,7 @@ class ProgressSyncChunkItem {
       updatedAt: (json['updated_at'] as String?) ?? '',
       envelope: (json['envelope'] as String?) ?? '',
       envelopeHash: (json['envelope_hash'] as String?) ?? '',
+      contentHash: (json['content_hash'] as String?) ?? '',
     );
   }
 }
@@ -295,18 +307,18 @@ class SessionSyncManifestItem {
   SessionSyncManifestItem({
     required this.sessionSyncId,
     required this.updatedAt,
-    required this.envelopeHash,
+    required this.contentHash,
   });
 
   final String sessionSyncId;
   final String updatedAt;
-  final String envelopeHash;
+  final String contentHash;
 
   factory SessionSyncManifestItem.fromJson(Map<String, dynamic> json) {
     return SessionSyncManifestItem(
       sessionSyncId: (json['session_sync_id'] as String?) ?? '',
       updatedAt: (json['updated_at'] as String?) ?? '',
-      envelopeHash: (json['envelope_hash'] as String?) ?? '',
+      contentHash: (json['content_hash'] as String?) ?? '',
     );
   }
 }
@@ -317,14 +329,14 @@ class ProgressSyncChunkManifestItem {
     required this.courseId,
     required this.chapterKey,
     required this.updatedAt,
-    required this.envelopeHash,
+    required this.contentHash,
   });
 
   final int studentUserId;
   final int courseId;
   final String chapterKey;
   final String updatedAt;
-  final String envelopeHash;
+  final String contentHash;
 
   factory ProgressSyncChunkManifestItem.fromJson(Map<String, dynamic> json) {
     return ProgressSyncChunkManifestItem(
@@ -332,7 +344,7 @@ class ProgressSyncChunkManifestItem {
       courseId: (json['course_id'] as num?)?.toInt() ?? 0,
       chapterKey: (json['chapter_key'] as String?) ?? '',
       updatedAt: (json['updated_at'] as String?) ?? '',
-      envelopeHash: (json['envelope_hash'] as String?) ?? '',
+      contentHash: (json['content_hash'] as String?) ?? '',
     );
   }
 }
@@ -343,14 +355,14 @@ class ProgressSyncManifestItem {
     required this.courseId,
     required this.kpKey,
     required this.updatedAt,
-    required this.envelopeHash,
+    required this.contentHash,
   });
 
   final int studentUserId;
   final int courseId;
   final String kpKey;
   final String updatedAt;
-  final String envelopeHash;
+  final String contentHash;
 
   factory ProgressSyncManifestItem.fromJson(Map<String, dynamic> json) {
     return ProgressSyncManifestItem(
@@ -358,7 +370,7 @@ class ProgressSyncManifestItem {
       courseId: (json['course_id'] as num?)?.toInt() ?? 0,
       kpKey: (json['kp_key'] as String?) ?? '',
       updatedAt: (json['updated_at'] as String?) ?? '',
-      envelopeHash: (json['envelope_hash'] as String?) ?? '',
+      contentHash: (json['content_hash'] as String?) ?? '',
     );
   }
 }
@@ -455,6 +467,7 @@ class ProgressUploadEntry {
     required this.updatedAt,
     required this.envelope,
     required this.envelopeHash,
+    required this.contentHash,
   });
 
   final int courseId;
@@ -462,6 +475,7 @@ class ProgressUploadEntry {
   final String updatedAt;
   final String envelope;
   final String envelopeHash;
+  final String contentHash;
 
   Map<String, dynamic> toJson() => {
         'course_id': courseId,
@@ -469,6 +483,7 @@ class ProgressUploadEntry {
         'updated_at': updatedAt,
         'envelope': envelope,
         'envelope_hash': envelopeHash,
+        'content_hash': contentHash,
       };
 }
 
@@ -480,6 +495,7 @@ class ProgressChunkUploadEntry {
     required this.updatedAt,
     required this.envelope,
     required this.envelopeHash,
+    required this.contentHash,
   });
 
   final int courseId;
@@ -488,6 +504,7 @@ class ProgressChunkUploadEntry {
   final String updatedAt;
   final String envelope;
   final String envelopeHash;
+  final String contentHash;
 
   Map<String, dynamic> toJson() => {
         'course_id': courseId,
@@ -496,6 +513,7 @@ class ProgressChunkUploadEntry {
         'updated_at': updatedAt,
         'envelope': envelope,
         'envelope_hash': envelopeHash,
+        'content_hash': contentHash,
       };
 }
 
@@ -645,6 +663,7 @@ class SessionSyncApiService {
     required String updatedAt,
     required String envelope,
     String? envelopeHash,
+    String? contentHash,
   }) async {
     await _post('/api/sessions/sync/upload', {
       'session_sync_id': sessionSyncId,
@@ -654,6 +673,7 @@ class SessionSyncApiService {
       'updated_at': updatedAt,
       'envelope': envelope,
       'envelope_hash': envelopeHash ?? '',
+      'content_hash': contentHash ?? '',
     });
   }
 
@@ -727,6 +747,7 @@ class SessionSyncApiService {
     required String updatedAt,
     required String envelope,
     String? envelopeHash,
+    String? contentHash,
   }) async {
     await _post('/api/progress/sync/upload', {
       'course_id': courseId,
@@ -734,6 +755,7 @@ class SessionSyncApiService {
       'updated_at': updatedAt,
       'envelope': envelope,
       'envelope_hash': envelopeHash ?? '',
+      'content_hash': contentHash ?? '',
     });
   }
 

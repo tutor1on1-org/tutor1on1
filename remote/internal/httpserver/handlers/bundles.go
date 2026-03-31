@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path"
 	"regexp"
@@ -297,6 +298,14 @@ func (h *BundlesHandler) Upload(c *fiber.Ctx) error {
 			_ = h.removeStoredFile(relPath)
 			return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
 		}
+		if rebuildErr := refreshTeacherCourseSyncStateForUser(h.cfg.Store.DB, info.teacherUserID); rebuildErr != nil {
+			_ = h.removeStoredFile(relPath)
+			return rebuildErr
+		}
+		if rebuildErr := refreshStudentEnrollmentSyncStateForCourse(h.cfg.Store.DB, info.courseID); rebuildErr != nil {
+			_ = h.removeStoredFile(relPath)
+			return rebuildErr
+		}
 		for _, target := range prunedTargets {
 			if removeErr := h.removeStoredFile(target.relPath); removeErr != nil {
 				return fiber.NewError(fiber.StatusInternalServerError, "bundle file delete failed")
@@ -561,6 +570,12 @@ func (h *BundlesHandler) DeleteTeacherCourseBundleVersion(c *fiber.Ctx) error {
 		); err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "catalog update failed")
 		}
+	}
+	if err := refreshTeacherCourseSyncStateForUser(h.cfg.Store.DB, userID); err != nil {
+		return err
+	}
+	if err := refreshStudentEnrollmentSyncStateForCourse(h.cfg.Store.DB, courseID); err != nil {
+		return err
 	}
 
 	if removeErr := h.removeStoredFile(relPath); removeErr != nil {
@@ -920,6 +935,7 @@ func computeBundleSemanticHash(zipPath string) (string, error) {
 		data []byte
 	}
 	files := []filePayload{}
+	sawPromptMetadata := false
 	for _, file := range reader.File {
 		if file.FileInfo().IsDir() {
 			continue
@@ -943,16 +959,29 @@ func computeBundleSemanticHash(zipPath string) (string, error) {
 		if err != nil {
 			return "", errors.New("zip entry read failed")
 		}
+		semanticName := name
 		if isPromptMetadataEntry(name) {
+			sawPromptMetadata = true
 			normalized, normErr := normalizePromptMetadata(data)
 			if normErr != nil {
 				return "", normErr
 			}
+			semanticName = "_tutor1on1/prompt_bundle.json"
 			data = normalized
 		}
 		files = append(files, filePayload{
-			name: name,
+			name: semanticName,
 			data: data,
+		})
+	}
+	if !sawPromptMetadata {
+		normalized, normErr := normalizePromptMetadata([]byte(`{"schema":"tutor1on1_prompt_bundle_v1","prompt_templates":[],"student_prompt_profiles":[],"student_pass_configs":[]}`))
+		if normErr != nil {
+			return "", normErr
+		}
+		files = append(files, filePayload{
+			name: "_tutor1on1/prompt_bundle.json",
+			data: normalized,
 		})
 	}
 	sort.Slice(files, func(i, j int) bool {
@@ -974,12 +1003,199 @@ func normalizePromptMetadata(raw []byte) ([]byte, error) {
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return nil, errors.New("prompt metadata json invalid")
 	}
-	cleaned := removeGeneratedFields(decoded)
+	cleaned := normalizePromptMetadataValue(removeGeneratedFields(decoded))
 	canonical, err := marshalCanonicalJSON(cleaned)
 	if err != nil {
 		return nil, errors.New("prompt metadata canonicalize failed")
 	}
 	return canonical, nil
+}
+
+func normalizePromptMetadataValue(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case []interface{}:
+		next := make([]interface{}, 0, len(typed))
+		for _, inner := range typed {
+			next = append(next, normalizePromptMetadataValue(inner))
+		}
+		return next
+	case map[string]interface{}:
+		next := make(map[string]interface{}, len(typed))
+		for key, inner := range typed {
+			next[key] = normalizePromptMetadataValue(inner)
+		}
+		schema, _ := next["schema"].(string)
+		if schema == "tutor1on1_prompt_bundle_v1" || schema == "family_teacher_prompt_bundle_v1" {
+			return normalizePromptMetadataDocument(next)
+		}
+		return next
+	default:
+		return normalizePromptMetadataScalar(value)
+	}
+}
+
+func normalizePromptMetadataDocument(value map[string]interface{}) map[string]interface{} {
+	return map[string]interface{}{
+		"schema":                  "tutor1on1_prompt_bundle_v1",
+		"prompt_templates":        sortCanonicalMaps(normalizePromptTemplateList(value["prompt_templates"])),
+		"student_prompt_profiles": sortCanonicalMaps(normalizePromptProfileList(value["student_prompt_profiles"])),
+		"student_pass_configs":    sortCanonicalMaps(normalizePassConfigList(value["student_pass_configs"])),
+	}
+}
+
+func normalizePromptTemplateList(raw interface{}) []interface{} {
+	list, ok := raw.([]interface{})
+	if !ok {
+		return []interface{}{}
+	}
+	items := make([]interface{}, 0, len(list))
+	for _, entry := range list {
+		item, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		promptName := normalizeNonEmptyString(item["prompt_name"])
+		scope := normalizePromptMetadataScope(item["scope"])
+		content, ok := item["content"].(string)
+		if promptName == "" || scope == "" || !ok {
+			continue
+		}
+		normalized := map[string]interface{}{
+			"prompt_name": promptName,
+			"scope":       scope,
+			"content":     content,
+		}
+		if studentRemoteUserID, ok := normalizePromptMetadataStudentRemoteUserID(item["student_remote_user_id"], scope); ok {
+			normalized["student_remote_user_id"] = studentRemoteUserID
+		}
+		items = append(items, normalized)
+	}
+	return items
+}
+
+func normalizePromptProfileList(raw interface{}) []interface{} {
+	list, ok := raw.([]interface{})
+	if !ok {
+		return []interface{}{}
+	}
+	items := make([]interface{}, 0, len(list))
+	for _, entry := range list {
+		item, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		scope := normalizePromptMetadataScope(item["scope"])
+		if scope == "" {
+			continue
+		}
+		normalized := map[string]interface{}{
+			"scope": scope,
+		}
+		if studentRemoteUserID, ok := normalizePromptMetadataStudentRemoteUserID(item["student_remote_user_id"], scope); ok {
+			normalized["student_remote_user_id"] = studentRemoteUserID
+		}
+		copySemanticField(normalized, "grade_level", item["grade_level"])
+		copySemanticField(normalized, "reading_level", item["reading_level"])
+		copySemanticField(normalized, "preferred_language", item["preferred_language"])
+		copySemanticField(normalized, "interests", item["interests"])
+		copySemanticField(normalized, "preferred_tone", item["preferred_tone"])
+		copySemanticField(normalized, "preferred_pace", item["preferred_pace"])
+		copySemanticField(normalized, "preferred_format", item["preferred_format"])
+		copySemanticField(normalized, "support_notes", item["support_notes"])
+		items = append(items, normalized)
+	}
+	return items
+}
+
+func normalizePassConfigList(raw interface{}) []interface{} {
+	list, ok := raw.([]interface{})
+	if !ok {
+		return []interface{}{}
+	}
+	items := make([]interface{}, 0, len(list))
+	for _, entry := range list {
+		item, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		studentRemoteUserID, ok := normalizePromptMetadataStudentRemoteUserID(item["student_remote_user_id"], "student_course")
+		if !ok {
+			continue
+		}
+		normalized := map[string]interface{}{
+			"student_remote_user_id": studentRemoteUserID,
+		}
+		copySemanticField(normalized, "easy_weight", item["easy_weight"])
+		copySemanticField(normalized, "medium_weight", item["medium_weight"])
+		copySemanticField(normalized, "hard_weight", item["hard_weight"])
+		copySemanticField(normalized, "pass_threshold", item["pass_threshold"])
+		items = append(items, normalized)
+	}
+	return items
+}
+
+func sortCanonicalMaps(raw []interface{}) []interface{} {
+	items := append([]interface{}(nil), raw...)
+	sort.Slice(items, func(i, j int) bool {
+		left, _ := marshalCanonicalJSON(items[i])
+		right, _ := marshalCanonicalJSON(items[j])
+		return bytes.Compare(left, right) < 0
+	})
+	return items
+}
+
+func copySemanticField(target map[string]interface{}, key string, value interface{}) {
+	normalized := normalizePromptMetadataScalar(value)
+	if normalized == nil {
+		return
+	}
+	target[key] = normalized
+}
+
+func normalizePromptMetadataScalar(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case float64:
+		if !math.IsNaN(typed) && !math.IsInf(typed, 0) && typed == math.Trunc(typed) {
+			return int64(typed)
+		}
+		return typed
+	default:
+		return value
+	}
+}
+
+func normalizeNonEmptyString(value interface{}) string {
+	typed, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(typed)
+}
+
+func normalizePromptMetadataScope(value interface{}) string {
+	scope := normalizeNonEmptyString(value)
+	if scope == "student" {
+		return "student_course"
+	}
+	return scope
+}
+
+func normalizePromptMetadataStudentRemoteUserID(value interface{}, scope string) (int64, bool) {
+	if scope != "student_course" && scope != "student_global" {
+		return 0, false
+	}
+	normalized := normalizePromptMetadataScalar(value)
+	switch typed := normalized.(type) {
+	case int64:
+		return typed, typed > 0
+	case int:
+		return int64(typed), typed > 0
+	case float64:
+		if typed > 0 && typed == math.Trunc(typed) {
+			return int64(typed), true
+		}
+	}
+	return 0, false
 }
 
 func removeGeneratedFields(value interface{}) interface{} {

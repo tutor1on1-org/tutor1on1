@@ -34,6 +34,7 @@ func TestSessionSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"updated_at",
 		"envelope",
 		"envelope_hash",
+		"content_hash",
 	}).AddRow(
 		int64(1),
 		"s1",
@@ -45,8 +46,9 @@ func TestSessionSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		updatedAt,
 		[]byte("session_payload"),
 		"session_hash",
+		"session_content_hash",
 	)
-	mock.ExpectQuery(`SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, chapter_key, updated_at, envelope, envelope_hash`).
+	mock.ExpectQuery(`SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, chapter_key, updated_at, envelope, envelope_hash, content_hash`).
 		WithArgs(userID, userID, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(rows)
 	rows2 := sqlmock.NewRows([]string{
@@ -60,6 +62,7 @@ func TestSessionSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"updated_at",
 		"envelope",
 		"envelope_hash",
+		"content_hash",
 	}).AddRow(
 		int64(1),
 		"s1",
@@ -71,8 +74,9 @@ func TestSessionSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		updatedAt,
 		[]byte("session_payload"),
 		"session_hash",
+		"session_content_hash",
 	)
-	mock.ExpectQuery(`SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, chapter_key, updated_at, envelope, envelope_hash`).
+	mock.ExpectQuery(`SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, chapter_key, updated_at, envelope, envelope_hash, content_hash`).
 		WithArgs(userID, userID, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(rows2)
 
@@ -135,6 +139,7 @@ func TestProgressSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"updated_at",
 		"envelope",
 		"envelope_hash",
+		"content_hash",
 	}).AddRow(
 		int64(1),
 		int64(55),
@@ -151,6 +156,7 @@ func TestProgressSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		updatedAt,
 		[]byte("progress_payload"),
 		"progress_hash",
+		"progress_content_hash",
 	)
 	mock.ExpectQuery(`SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.kp_key, p.lit, p.lit_percent`).
 		WithArgs(userID, sqlmock.AnyArg(), sqlmock.AnyArg()).
@@ -171,6 +177,7 @@ func TestProgressSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"updated_at",
 		"envelope",
 		"envelope_hash",
+		"content_hash",
 	}).AddRow(
 		int64(1),
 		int64(55),
@@ -187,6 +194,7 @@ func TestProgressSyncListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		updatedAt,
 		[]byte("progress_payload"),
 		"progress_hash",
+		"progress_content_hash",
 	)
 	mock.ExpectQuery(`SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.kp_key, p.lit, p.lit_percent`).
 		WithArgs(userID, sqlmock.AnyArg(), sqlmock.AnyArg()).
@@ -246,6 +254,7 @@ func TestProgressSyncChunksListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"updated_at",
 		"envelope",
 		"envelope_hash",
+		"content_hash",
 	}).AddRow(
 		int64(1),
 		int64(77),
@@ -257,8 +266,9 @@ func TestProgressSyncChunksListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		updatedAt,
 		[]byte("chunk_payload"),
 		"chunk_hash",
+		"chunk_content_hash",
 	)
-	mock.ExpectQuery(`SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.chapter_key, p.item_count, p.updated_at, p.envelope, p.envelope_hash`).
+	mock.ExpectQuery(`SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.chapter_key, p.item_count, p.updated_at, p.envelope, p.envelope_hash, p.content_hash`).
 		WithArgs(userID, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(rows)
 	rows2 := sqlmock.NewRows([]string{
@@ -272,6 +282,7 @@ func TestProgressSyncChunksListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		"updated_at",
 		"envelope",
 		"envelope_hash",
+		"content_hash",
 	}).AddRow(
 		int64(1),
 		int64(77),
@@ -283,8 +294,9 @@ func TestProgressSyncChunksListReturnsNotModifiedWhenETagMatches(t *testing.T) {
 		updatedAt,
 		[]byte("chunk_payload"),
 		"chunk_hash",
+		"chunk_content_hash",
 	)
-	mock.ExpectQuery(`SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.chapter_key, p.item_count, p.updated_at, p.envelope, p.envelope_hash`).
+	mock.ExpectQuery(`SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.chapter_key, p.item_count, p.updated_at, p.envelope, p.envelope_hash, p.content_hash`).
 		WithArgs(userID, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(rows2)
 
@@ -342,6 +354,7 @@ func TestSessionSyncListSinceIDIncludesEqualTimestampRows(t *testing.T) {
 		"updated_at",
 		"envelope",
 		"envelope_hash",
+		"content_hash",
 	}).AddRow(
 		int64(11),
 		"s-next",
@@ -353,8 +366,9 @@ func TestSessionSyncListSinceIDIncludesEqualTimestampRows(t *testing.T) {
 		since,
 		[]byte("payload"),
 		"hash",
+		"content-hash",
 	)
-	mock.ExpectQuery(`SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, chapter_key, updated_at, envelope, envelope_hash`).
+	mock.ExpectQuery(`SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, chapter_key, updated_at, envelope, envelope_hash, content_hash`).
 		WithArgs(userID, userID, since, since, int64(10), 5).
 		WillReturnRows(rows)
 
@@ -404,6 +418,7 @@ func TestProgressSyncListSinceIDIncludesEqualTimestampRows(t *testing.T) {
 		"updated_at",
 		"envelope",
 		"envelope_hash",
+		"content_hash",
 	}).AddRow(
 		int64(22),
 		int64(55),
@@ -420,6 +435,7 @@ func TestProgressSyncListSinceIDIncludesEqualTimestampRows(t *testing.T) {
 		since,
 		[]byte("progress_payload"),
 		"progress_hash",
+		"progress_content_hash",
 	)
 	mock.ExpectQuery(`SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.kp_key, p.lit, p.lit_percent`).
 		WithArgs(userID, since, since, int64(21), 5).
@@ -466,6 +482,7 @@ func TestProgressSyncChunksListSinceIDIncludesEqualTimestampRows(t *testing.T) {
 		"updated_at",
 		"envelope",
 		"envelope_hash",
+		"content_hash",
 	}).AddRow(
 		int64(24),
 		int64(77),
@@ -477,8 +494,9 @@ func TestProgressSyncChunksListSinceIDIncludesEqualTimestampRows(t *testing.T) {
 		since,
 		[]byte("chunk_payload"),
 		"chunk_hash",
+		"chunk_content_hash",
 	)
-	mock.ExpectQuery(`SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.chapter_key, p.item_count, p.updated_at, p.envelope, p.envelope_hash`).
+	mock.ExpectQuery(`SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.chapter_key, p.item_count, p.updated_at, p.envelope, p.envelope_hash, p.content_hash`).
 		WithArgs(userID, since, since, int64(23), 5).
 		WillReturnRows(rows)
 
@@ -607,33 +625,19 @@ func TestEnrollmentsSyncState2ReturnsCanonicalHash(t *testing.T) {
 	defer db.Close()
 
 	userID := int64(3012)
-	assignedAt := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
-	rows := sqlmock.NewRows([]string{
-		"id",
-		"course_id",
-		"teacher_id",
-		"status",
-		"assigned_at",
-		"subject",
-		"display_name",
-		"latest_bundle_version_id",
-		"latest_bundle_hash",
-		"latest_bundle_oss_path",
-	}).AddRow(
-		int64(1),
-		int64(66),
-		int64(77),
-		"active",
-		assignedAt,
-		"Physics",
-		"Teacher A",
-		int64(5),
-		"bundle-hash-5",
-		nil,
-	)
-	mock.ExpectQuery(`SELECT e.id, e.course_id, t.user_id, e.status, e.assigned_at`).
+	expected := buildState2([]string{
+		buildStudentEnrollmentStateFingerprint(enrollmentSummary{
+			CourseID:              66,
+			TeacherID:             77,
+			TeacherName:           "Teacher A",
+			CourseName:            "Physics",
+			LatestBundleVersionID: 5,
+			LatestBundleHash:      "bundle-hash-5",
+		}),
+	})
+	mock.ExpectQuery(`SELECT state2 FROM student_enrollment_sync_state2 WHERE user_id = \?`).
 		WithArgs(userID).
-		WillReturnRows(rows)
+		WillReturnRows(sqlmock.NewRows([]string{"state2"}).AddRow(expected))
 
 	app := buildSyncETagTestApp(db, []string{"test-secret"})
 	token := signTestJWT(t, "test-secret", userID, true)
@@ -649,6 +653,48 @@ func TestEnrollmentsSyncState2ReturnsCanonicalHash(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want %d body=%s", status, http.StatusOK, body)
 	}
+	if !strings.Contains(body, `"`+"state2"+`":"`+expected+`"`) {
+		t.Fatalf("unexpected state2 response body: %s", body)
+	}
+
+	assertSQLMockExpectations(t, mock)
+}
+
+func TestEnrollmentsSyncState2ReturnsStoredHashWithoutRebuild(t *testing.T) {
+	db, mock := newHandlerSQLMock(t)
+	defer db.Close()
+
+	userID := int64(3412)
+	mock.ExpectQuery(`SELECT state2 FROM student_enrollment_sync_state2 WHERE user_id = \?`).
+		WithArgs(userID).
+		WillReturnRows(sqlmock.NewRows([]string{"state2"}).AddRow("stored-enrollment-state2"))
+
+	app := buildSyncETagTestApp(db, []string{"test-secret"})
+	token := signTestJWT(t, "test-secret", userID, true)
+
+	status, body, _ := callAPI(
+		t,
+		app,
+		http.MethodGet,
+		"/api/enrollments/sync-state2",
+		token,
+		"",
+	)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", status, http.StatusOK, body)
+	}
+	if !strings.Contains(body, `"state2":"stored-enrollment-state2"`) {
+		t.Fatalf("unexpected state2 response body: %s", body)
+	}
+
+	assertSQLMockExpectations(t, mock)
+}
+
+func TestEnrollmentsSyncState1ReturnsCanonicalItemsAndState2(t *testing.T) {
+	db, mock := newHandlerSQLMock(t)
+	defer db.Close()
+
+	userID := int64(3512)
 	expected := buildState2([]string{
 		buildStudentEnrollmentStateFingerprint(enrollmentSummary{
 			CourseID:              66,
@@ -659,8 +705,44 @@ func TestEnrollmentsSyncState2ReturnsCanonicalHash(t *testing.T) {
 			LatestBundleHash:      "bundle-hash-5",
 		}),
 	})
+	rows := sqlmock.NewRows([]string{
+		"course_id",
+		"teacher_user_id",
+		"teacher_name",
+		"course_subject",
+		"latest_bundle_version_id",
+		"latest_bundle_hash",
+	}).AddRow(
+		int64(66),
+		int64(77),
+		"Teacher A",
+		"Physics",
+		int64(5),
+		"bundle-hash-5",
+	)
+	mock.ExpectQuery(`SELECT course_id, teacher_user_id, teacher_name, course_subject`).
+		WithArgs(userID).
+		WillReturnRows(rows)
+
+	app := buildSyncETagTestApp(db, []string{"test-secret"})
+	token := signTestJWT(t, "test-secret", userID, true)
+
+	status, body, _ := callAPI(
+		t,
+		app,
+		http.MethodGet,
+		"/api/enrollments/sync-state1",
+		token,
+		"",
+	)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", status, http.StatusOK, body)
+	}
 	if !strings.Contains(body, `"`+"state2"+`":"`+expected+`"`) {
-		t.Fatalf("unexpected state2 response body: %s", body)
+		t.Fatalf("unexpected sync-state1 response body: %s", body)
+	}
+	if !strings.Contains(body, `"course_id":66`) {
+		t.Fatalf("missing enrollment item in response body: %s", body)
 	}
 
 	assertSQLMockExpectations(t, mock)
@@ -780,38 +862,20 @@ func TestTeacherCoursesSyncState2ReturnsCanonicalHash(t *testing.T) {
 
 	userID := int64(3013)
 	teacherID := int64(7013)
+	expected := buildState2([]string{
+		buildTeacherCourseStateFingerprint(teacherCourseSummary{
+			CourseID:              88,
+			Subject:               "Chemistry",
+			LatestBundleVersionID: 2,
+			LatestBundleHash:      "bundle-hash-2",
+		}),
+	})
 	mock.ExpectQuery(`SELECT id FROM teacher_accounts WHERE user_id = \? AND status = 'active' LIMIT 1`).
 		WithArgs(userID).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(teacherID))
-	rows := sqlmock.NewRows([]string{
-		"id",
-		"subject",
-		"grade",
-		"description",
-		"visibility",
-		"approval_status",
-		"published_at",
-		"latest_bundle_version_id",
-		"latest_bundle_hash",
-		"latest_bundle_oss_path",
-	}).AddRow(
-		int64(88),
-		"Chemistry",
-		"Grade 5",
-		"Desc",
-		"private",
-		"pending",
-		nil,
-		int64(2),
-		"bundle-hash-2",
-		nil,
-	)
-	mock.ExpectQuery(`SELECT c.id, c.subject, c.grade, c.description,\s*ce.visibility, ce.approval_status, ce.published_at`).
-		WithArgs(teacherID, teacherID).
-		WillReturnRows(rows)
-	mock.ExpectQuery(`SELECT sl.id, sl.slug, sl.name, sl.is_active\s+FROM course_subject_labels csl`).
-		WithArgs(int64(88)).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "slug", "name", "is_active"}))
+	mock.ExpectQuery(`SELECT state2 FROM teacher_course_sync_state2 WHERE user_id = \?`).
+		WithArgs(userID).
+		WillReturnRows(sqlmock.NewRows([]string{"state2"}).AddRow(expected))
 
 	app := buildSyncETagTestApp(db, []string{"test-secret"})
 	token := signTestJWT(t, "test-secret", userID, true)
@@ -827,6 +891,52 @@ func TestTeacherCoursesSyncState2ReturnsCanonicalHash(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want %d body=%s", status, http.StatusOK, body)
 	}
+	if !strings.Contains(body, `"`+"state2"+`":"`+expected+`"`) {
+		t.Fatalf("unexpected state2 response body: %s", body)
+	}
+
+	assertSQLMockExpectations(t, mock)
+}
+
+func TestTeacherCoursesSyncState2ReturnsStoredHashWithoutRebuild(t *testing.T) {
+	db, mock := newHandlerSQLMock(t)
+	defer db.Close()
+
+	userID := int64(3413)
+	mock.ExpectQuery(`SELECT id FROM teacher_accounts WHERE user_id = \? AND status = 'active' LIMIT 1`).
+		WithArgs(userID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(7413)))
+	mock.ExpectQuery(`SELECT state2 FROM teacher_course_sync_state2 WHERE user_id = \?`).
+		WithArgs(userID).
+		WillReturnRows(sqlmock.NewRows([]string{"state2"}).AddRow("stored-teacher-state2"))
+
+	app := buildSyncETagTestApp(db, []string{"test-secret"})
+	token := signTestJWT(t, "test-secret", userID, true)
+
+	status, body, _ := callAPI(
+		t,
+		app,
+		http.MethodGet,
+		"/api/teacher/courses/sync-state2",
+		token,
+		"",
+	)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", status, http.StatusOK, body)
+	}
+	if !strings.Contains(body, `"state2":"stored-teacher-state2"`) {
+		t.Fatalf("unexpected state2 response body: %s", body)
+	}
+
+	assertSQLMockExpectations(t, mock)
+}
+
+func TestTeacherCoursesSyncState1ReturnsCanonicalItemsAndState2(t *testing.T) {
+	db, mock := newHandlerSQLMock(t)
+	defer db.Close()
+
+	userID := int64(3513)
+	teacherID := int64(7513)
 	expected := buildState2([]string{
 		buildTeacherCourseStateFingerprint(teacherCourseSummary{
 			CourseID:              88,
@@ -835,8 +945,43 @@ func TestTeacherCoursesSyncState2ReturnsCanonicalHash(t *testing.T) {
 			LatestBundleHash:      "bundle-hash-2",
 		}),
 	})
+	mock.ExpectQuery(`SELECT id FROM teacher_accounts WHERE user_id = \? AND status = 'active' LIMIT 1`).
+		WithArgs(userID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(teacherID))
+	rows := sqlmock.NewRows([]string{
+		"course_id",
+		"subject",
+		"latest_bundle_version_id",
+		"latest_bundle_hash",
+	}).AddRow(
+		int64(88),
+		"Chemistry",
+		int64(2),
+		"bundle-hash-2",
+	)
+	mock.ExpectQuery(`SELECT course_id, subject, latest_bundle_version_id, latest_bundle_hash`).
+		WithArgs(userID).
+		WillReturnRows(rows)
+
+	app := buildSyncETagTestApp(db, []string{"test-secret"})
+	token := signTestJWT(t, "test-secret", userID, true)
+
+	status, body, _ := callAPI(
+		t,
+		app,
+		http.MethodGet,
+		"/api/teacher/courses/sync-state1",
+		token,
+		"",
+	)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", status, http.StatusOK, body)
+	}
 	if !strings.Contains(body, `"`+"state2"+`":"`+expected+`"`) {
-		t.Fatalf("unexpected state2 response body: %s", body)
+		t.Fatalf("unexpected sync-state1 response body: %s", body)
+	}
+	if !strings.Contains(body, `"course_id":88`) {
+		t.Fatalf("missing teacher course item in response body: %s", body)
 	}
 
 	assertSQLMockExpectations(t, mock)
@@ -848,11 +993,18 @@ func TestDownloadManifestReturnsNotModifiedWhenETagMatches(t *testing.T) {
 
 	userID := int64(3010)
 	updatedAt := time.Date(2026, 3, 8, 8, 0, 0, 0, time.UTC)
-	mock.ExpectQuery(`SELECT 1 FROM sync_download_state2 WHERE user_id = \? LIMIT 1`).
+	emptyState2 := encodeSyncDownloadState2(syncDownloadState2Aggregate{})
+	mock.ExpectExec(`DELETE FROM sync_download_state_items`).
+		WithArgs(userID, syncDownloadItemKindProgressChunk).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT state2 FROM sync_download_state2 WHERE user_id = \?`).
 		WithArgs(userID).
-		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+		WillReturnRows(sqlmock.NewRows([]string{"state2"}).AddRow(emptyState2))
+	mock.ExpectExec(`DELETE FROM sync_download_state_items`).
+		WithArgs(userID, syncDownloadItemKindProgressChunk).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT user_id, item_kind, scope_key, course_id, student_user_id, updated_at, content_hash FROM sync_download_state_items`).
-		WithArgs(userID).
+		WithArgs(userID, syncDownloadItemKindProgressChunk).
 		WillReturnRows(
 			sqlmock.NewRows([]string{
 				"user_id", "item_kind", "scope_key", "course_id", "student_user_id", "updated_at", "content_hash",
@@ -866,11 +1018,17 @@ func TestDownloadManifestReturnsNotModifiedWhenETagMatches(t *testing.T) {
 				"session-hash",
 			),
 		)
-	mock.ExpectQuery(`SELECT 1 FROM sync_download_state2 WHERE user_id = \? LIMIT 1`).
+	mock.ExpectExec(`DELETE FROM sync_download_state_items`).
+		WithArgs(userID, syncDownloadItemKindProgressChunk).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT state2 FROM sync_download_state2 WHERE user_id = \?`).
 		WithArgs(userID).
-		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+		WillReturnRows(sqlmock.NewRows([]string{"state2"}).AddRow(emptyState2))
+	mock.ExpectExec(`DELETE FROM sync_download_state_items`).
+		WithArgs(userID, syncDownloadItemKindProgressChunk).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT user_id, item_kind, scope_key, course_id, student_user_id, updated_at, content_hash FROM sync_download_state_items`).
-		WithArgs(userID).
+		WithArgs(userID, syncDownloadItemKindProgressChunk).
 		WillReturnRows(
 			sqlmock.NewRows([]string{
 				"user_id", "item_kind", "scope_key", "course_id", "student_user_id", "updated_at", "content_hash",
@@ -927,9 +1085,9 @@ func TestDownloadState2ReturnsStoredAggregate(t *testing.T) {
 	defer db.Close()
 
 	userID := int64(3010)
-	mock.ExpectQuery(`SELECT 1 FROM sync_download_state2 WHERE user_id = \? LIMIT 1`).
-		WithArgs(userID).
-		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+	mock.ExpectExec(`DELETE FROM sync_download_state_items`).
+		WithArgs(userID, syncDownloadItemKindProgressChunk).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT state2 FROM sync_download_state2 WHERE user_id = \?`).
 		WithArgs(userID).
 		WillReturnRows(sqlmock.NewRows([]string{"state2"}).AddRow("state2-abc"))
@@ -961,22 +1119,24 @@ func TestDownloadState1ReturnsStoredMetadataItems(t *testing.T) {
 
 	userID := int64(3012)
 	updatedAt := time.Date(2026, 3, 8, 8, 2, 0, 0, time.UTC)
-	mock.ExpectQuery(`SELECT 1 FROM sync_download_state2 WHERE user_id = \? LIMIT 1`).
+	mock.ExpectExec(`DELETE FROM sync_download_state_items`).
+		WithArgs(userID, syncDownloadItemKindProgressChunk).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT state2 FROM sync_download_state2 WHERE user_id = \?`).
 		WithArgs(userID).
-		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+		WillReturnRows(sqlmock.NewRows([]string{"state2"}).AddRow("state2-xyz"))
+	mock.ExpectExec(`DELETE FROM sync_download_state_items`).
+		WithArgs(userID, syncDownloadItemKindProgressChunk).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery(`SELECT user_id, item_kind, scope_key, course_id, student_user_id, updated_at, content_hash FROM sync_download_state_items`).
-		WithArgs(userID).
+		WithArgs(userID, syncDownloadItemKindProgressChunk).
 		WillReturnRows(
 			sqlmock.NewRows([]string{
 				"user_id", "item_kind", "scope_key", "course_id", "student_user_id", "updated_at", "content_hash",
 			}).
 				AddRow(userID, syncDownloadItemKindSession, "s1", int64(55), int64(3012), updatedAt, "session-hash").
-				AddRow(userID, syncDownloadItemKindProgressChunk, "3012:55:1.1", int64(55), int64(3012), updatedAt, "chunk-hash").
 				AddRow(userID, syncDownloadItemKindProgressRow, "3012:55:1.1.1", int64(55), int64(3012), updatedAt, "progress-hash"),
 		)
-	mock.ExpectQuery(`SELECT state2 FROM sync_download_state2 WHERE user_id = \?`).
-		WithArgs(userID).
-		WillReturnRows(sqlmock.NewRows([]string{"state2"}).AddRow("state2-xyz"))
 
 	app := buildSyncETagTestApp(db, []string{"test-secret"})
 	token := signTestJWT(t, "test-secret", userID, true)
@@ -997,9 +1157,6 @@ func TestDownloadState1ReturnsStoredMetadataItems(t *testing.T) {
 	}
 	if !strings.Contains(body, `"session_sync_id":"s1"`) {
 		t.Fatalf("missing session item in body: %s", body)
-	}
-	if !strings.Contains(body, `"chapter_key":"1.1"`) {
-		t.Fatalf("missing progress chunk item in body: %s", body)
 	}
 	if !strings.Contains(body, `"kp_key":"1.1.1"`) {
 		t.Fatalf("missing progress row item in body: %s", body)
@@ -1026,6 +1183,7 @@ func TestDownloadFetchReturnsRequestedPayload(t *testing.T) {
 		"updated_at",
 		"envelope",
 		"envelope_hash",
+		"content_hash",
 	}).AddRow(
 		int64(11),
 		"s1",
@@ -1037,8 +1195,9 @@ func TestDownloadFetchReturnsRequestedPayload(t *testing.T) {
 		updatedAt,
 		[]byte("session_payload"),
 		"session-hash",
+		"session-content-hash",
 	)
-	mock.ExpectQuery(`SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, chapter_key, updated_at, envelope, envelope_hash`).
+	mock.ExpectQuery(`SELECT id, session_sync_id, course_id, teacher_user_id, student_user_id, sender_user_id, chapter_key, updated_at, envelope, envelope_hash, content_hash`).
 		WithArgs(userID, userID, "s1").
 		WillReturnRows(sessionRows)
 
@@ -1058,6 +1217,7 @@ func TestDownloadFetchReturnsRequestedPayload(t *testing.T) {
 		"updated_at",
 		"envelope",
 		"envelope_hash",
+		"content_hash",
 	}).AddRow(
 		int64(33),
 		int64(55),
@@ -1074,6 +1234,7 @@ func TestDownloadFetchReturnsRequestedPayload(t *testing.T) {
 		updatedAt,
 		[]byte("progress_payload"),
 		"progress-hash",
+		"progress-content-hash",
 	)
 	mock.ExpectQuery(`SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.kp_key, p.lit, p.lit_percent`).
 		WithArgs(userID, userID, userID, int64(55), "1.1.1").
@@ -1118,8 +1279,10 @@ func buildSyncETagTestApp(db *sql.DB, jwtSecrets []string) *fiber.App {
 
 	app := fiber.New()
 	app.Get("/api/enrollments", enrollments.ListEnrollments)
+	app.Get("/api/enrollments/sync-state1", enrollments.GetEnrollmentsSyncState1)
 	app.Get("/api/enrollments/sync-state2", enrollments.GetEnrollmentsSyncState2)
 	app.Get("/api/teacher/courses", teacherCourses.ListCourses)
+	app.Get("/api/teacher/courses/sync-state1", teacherCourses.GetCoursesSyncState1)
 	app.Get("/api/teacher/courses/sync-state2", teacherCourses.GetCoursesSyncState2)
 	app.Get("/api/sessions/sync/list", sessionSync.List)
 	app.Get("/api/progress/sync/list", progressSync.List)

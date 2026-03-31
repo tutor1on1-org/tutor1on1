@@ -33,6 +33,7 @@ type uploadProgressRequest struct {
 	UpdatedAt          string `json:"updated_at"`
 	Envelope           string `json:"envelope"`
 	EnvelopeHash       string `json:"envelope_hash"`
+	ContentHash        string `json:"content_hash"`
 }
 
 type uploadProgressBatchRequest struct {
@@ -46,6 +47,7 @@ type uploadProgressChunkRequest struct {
 	UpdatedAt    string `json:"updated_at"`
 	Envelope     string `json:"envelope"`
 	EnvelopeHash string `json:"envelope_hash"`
+	ContentHash  string `json:"content_hash"`
 }
 
 type uploadProgressChunkBatchRequest struct {
@@ -179,8 +181,8 @@ func (h *ProgressSyncHandler) saveUploads(
 
 	insertStmt, err := tx.Prepare(
 		`INSERT INTO progress_sync
-		 (course_id, teacher_user_id, student_user_id, kp_key, lit, lit_percent, question_level, summary_text, summary_raw_response, summary_valid, updated_at, envelope, envelope_hash)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 (course_id, teacher_user_id, student_user_id, kp_key, lit, lit_percent, question_level, summary_text, summary_raw_response, summary_valid, updated_at, envelope, envelope_hash, content_hash)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	)
 	if err != nil {
 		log.Printf(
@@ -205,7 +207,8 @@ func (h *ProgressSyncHandler) saveUploads(
 		     summary_valid = ?,
 		     updated_at = ?,
 		     envelope = ?,
-		     envelope_hash = ?
+		     envelope_hash = ?,
+		     content_hash = ?
 		 WHERE course_id = ? AND student_user_id = ? AND kp_key = ?`,
 	)
 	if err != nil {
@@ -243,7 +246,10 @@ func (h *ProgressSyncHandler) saveUploads(
 
 	for _, item := range items {
 		kpKey := strings.TrimSpace(item.KpKey)
-		if item.CourseID <= 0 || kpKey == "" || strings.TrimSpace(item.UpdatedAt) == "" {
+		if item.CourseID <= 0 ||
+			kpKey == "" ||
+			strings.TrimSpace(item.UpdatedAt) == "" ||
+			strings.TrimSpace(item.ContentHash) == "" {
 			return 0, fiber.NewError(fiber.StatusBadRequest, "missing required fields")
 		}
 		updatedAt, err := parseTime(item.UpdatedAt)
@@ -295,7 +301,7 @@ func (h *ProgressSyncHandler) saveUploads(
 			}
 			envelopeBytes = decodedEnvelope
 		}
-		contentHash := resolveSyncDownloadContentHash(item.EnvelopeHash, envelopeBytes)
+		contentHash := resolveSyncDownloadContentHash(item.ContentHash, envelopeBytes)
 
 		var (
 			existingLitPercent    int
@@ -405,6 +411,7 @@ func (h *ProgressSyncHandler) saveUploads(
 				updatedAt,
 				envelopeBytes,
 				nullableStringToInterface(incomingEnvelopeHash),
+				nullableStringToInterface(nullableString(item.ContentHash)),
 				item.CourseID,
 				userID,
 				kpKey,
@@ -479,6 +486,7 @@ func (h *ProgressSyncHandler) saveUploads(
 			updatedAt,
 			envelopeBytes,
 			nullableStringToInterface(incomingEnvelopeHash),
+			nullableStringToInterface(nullableString(item.ContentHash)),
 		); err != nil {
 			log.Printf(
 				"progress sync save failed: user_id=%d course_id=%d kp_key=%q updated_at=%q error=%v",
@@ -575,8 +583,8 @@ func (h *ProgressSyncHandler) saveChunkUploads(
 
 	insertStmt, err := tx.Prepare(
 		`INSERT INTO progress_sync_chunks
-		 (course_id, teacher_user_id, student_user_id, chapter_key, item_count, updated_at, envelope, envelope_hash)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		 (course_id, teacher_user_id, student_user_id, chapter_key, item_count, updated_at, envelope, envelope_hash, content_hash)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	)
 	if err != nil {
 		log.Printf(
@@ -596,7 +604,8 @@ func (h *ProgressSyncHandler) saveChunkUploads(
 		     item_count = ?,
 		     updated_at = ?,
 		     envelope = ?,
-		     envelope_hash = ?
+		     envelope_hash = ?,
+		     content_hash = ?
 		 WHERE course_id = ? AND student_user_id = ? AND chapter_key = ?`,
 	)
 	if err != nil {
@@ -616,7 +625,9 @@ func (h *ProgressSyncHandler) saveChunkUploads(
 	savedCount := 0
 
 	for _, item := range items {
-		if item.CourseID <= 0 || strings.TrimSpace(item.UpdatedAt) == "" {
+		if item.CourseID <= 0 ||
+			strings.TrimSpace(item.UpdatedAt) == "" ||
+			strings.TrimSpace(item.ContentHash) == "" {
 			return 0, fiber.NewError(fiber.StatusBadRequest, "missing required fields")
 		}
 		updatedAt, err := parseTime(item.UpdatedAt)
@@ -661,7 +672,6 @@ func (h *ProgressSyncHandler) saveChunkUploads(
 		if err != nil || len(decodedEnvelope) == 0 {
 			return 0, fiber.NewError(fiber.StatusBadRequest, "envelope invalid")
 		}
-		contentHash := resolveSyncDownloadContentHash(item.EnvelopeHash, decodedEnvelope)
 
 		var (
 			existingUpdatedAt time.Time
@@ -695,6 +705,7 @@ func (h *ProgressSyncHandler) saveChunkUploads(
 				updatedAt,
 				decodedEnvelope,
 				nullableString(item.EnvelopeHash),
+				nullableString(item.ContentHash),
 				item.CourseID,
 				userID,
 				chapterKey,
@@ -710,19 +721,6 @@ func (h *ProgressSyncHandler) saveChunkUploads(
 				status, message := classifyProgressSyncSaveError(err)
 				return 0, fiber.NewError(status, message)
 			}
-			if err := upsertSyncDownloadStateItems(
-				tx,
-				buildProgressChunkDownloadStateItems(
-					teacherUserID,
-					userID,
-					item.CourseID,
-					chapterKey,
-					updatedAt,
-					contentHash,
-				),
-			); err != nil {
-				return 0, fiber.NewError(fiber.StatusInternalServerError, "progress chunk sync save failed")
-			}
 			savedCount++
 			continue
 		}
@@ -736,6 +734,7 @@ func (h *ProgressSyncHandler) saveChunkUploads(
 			updatedAt,
 			decodedEnvelope,
 			nullableString(item.EnvelopeHash),
+			nullableString(item.ContentHash),
 		); err != nil {
 			log.Printf(
 				"progress chunk sync save failed: user_id=%d course_id=%d chapter_key=%q updated_at=%q error=%v",
@@ -747,19 +746,6 @@ func (h *ProgressSyncHandler) saveChunkUploads(
 			)
 			status, message := classifyProgressSyncSaveError(err)
 			return 0, fiber.NewError(status, message)
-		}
-		if err := upsertSyncDownloadStateItems(
-			tx,
-			buildProgressChunkDownloadStateItems(
-				teacherUserID,
-				userID,
-				item.CourseID,
-				chapterKey,
-				updatedAt,
-				contentHash,
-			),
-		); err != nil {
-			return 0, fiber.NewError(fiber.StatusInternalServerError, "progress chunk sync save failed")
 		}
 		savedCount++
 	}
@@ -801,7 +787,7 @@ func (h *ProgressSyncHandler) List(c *fiber.Ctx) error {
 		sinceID = parsed
 	}
 	query := `SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.kp_key, p.lit, p.lit_percent,
-		        p.question_level, p.summary_text, p.summary_raw_response, p.summary_valid, p.updated_at, p.envelope, p.envelope_hash
+		        p.question_level, p.summary_text, p.summary_raw_response, p.summary_valid, p.updated_at, p.envelope, p.envelope_hash, p.content_hash
 		 FROM progress_sync p
 		 JOIN courses c ON c.id = p.course_id
 		 WHERE p.student_user_id = ? AND p.updated_at > ?
@@ -810,7 +796,7 @@ func (h *ProgressSyncHandler) List(c *fiber.Ctx) error {
 	args := []any{userID, sinceTime, limit}
 	if sinceID > 0 {
 		query = `SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.kp_key, p.lit, p.lit_percent,
-		        p.question_level, p.summary_text, p.summary_raw_response, p.summary_valid, p.updated_at, p.envelope, p.envelope_hash
+		        p.question_level, p.summary_text, p.summary_raw_response, p.summary_valid, p.updated_at, p.envelope, p.envelope_hash, p.content_hash
 		 FROM progress_sync p
 		 JOIN courses c ON c.id = p.course_id
 		 WHERE p.student_user_id = ?
@@ -842,6 +828,7 @@ func (h *ProgressSyncHandler) List(c *fiber.Ctx) error {
 			summaryValid       sql.NullBool
 			envelopeBytes      []byte
 			envelopeHash       sql.NullString
+			contentHash        sql.NullString
 			updatedAt          string
 		)
 		var updatedAtTime sql.NullTime
@@ -861,6 +848,7 @@ func (h *ProgressSyncHandler) List(c *fiber.Ctx) error {
 			&updatedAtTime,
 			&envelopeBytes,
 			&envelopeHash,
+			&contentHash,
 		); err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "progress sync list failed")
 		}
@@ -892,6 +880,7 @@ func (h *ProgressSyncHandler) List(c *fiber.Ctx) error {
 			"updated_at":           updatedAt,
 			"envelope":             encodedEnvelope,
 			"envelope_hash":        hashValue,
+			"content_hash":         contentHash.String,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -930,7 +919,7 @@ func (h *ProgressSyncHandler) ListChunks(c *fiber.Ctx) error {
 		}
 		sinceID = parsed
 	}
-	query := `SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.chapter_key, p.item_count, p.updated_at, p.envelope, p.envelope_hash
+	query := `SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.chapter_key, p.item_count, p.updated_at, p.envelope, p.envelope_hash, p.content_hash
 		 FROM progress_sync_chunks p
 		 JOIN courses c ON c.id = p.course_id
 		 WHERE p.student_user_id = ? AND p.updated_at > ?
@@ -938,7 +927,7 @@ func (h *ProgressSyncHandler) ListChunks(c *fiber.Ctx) error {
 		 LIMIT ?`
 	args := []any{userID, sinceTime, limit}
 	if sinceID > 0 {
-		query = `SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.chapter_key, p.item_count, p.updated_at, p.envelope, p.envelope_hash
+		query = `SELECT p.id, p.course_id, c.subject, p.teacher_user_id, p.student_user_id, p.chapter_key, p.item_count, p.updated_at, p.envelope, p.envelope_hash, p.content_hash
 		 FROM progress_sync_chunks p
 		 JOIN courses c ON c.id = p.course_id
 		 WHERE p.student_user_id = ?
@@ -966,6 +955,7 @@ func (h *ProgressSyncHandler) ListChunks(c *fiber.Ctx) error {
 			updatedAtTime sql.NullTime
 			envelopeBytes []byte
 			envelopeHash  sql.NullString
+			contentHash   sql.NullString
 		)
 		if err := rows.Scan(
 			&id,
@@ -978,6 +968,7 @@ func (h *ProgressSyncHandler) ListChunks(c *fiber.Ctx) error {
 			&updatedAtTime,
 			&envelopeBytes,
 			&envelopeHash,
+			&contentHash,
 		); err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "progress chunk sync list failed")
 		}
@@ -1004,6 +995,7 @@ func (h *ProgressSyncHandler) ListChunks(c *fiber.Ctx) error {
 			"updated_at":      updatedAt,
 			"envelope":        encodedEnvelope,
 			"envelope_hash":   hashValue,
+			"content_hash":    contentHash.String,
 		})
 	}
 	if err := rows.Err(); err != nil {
