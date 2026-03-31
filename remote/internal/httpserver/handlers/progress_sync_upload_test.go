@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/base64"
 	"testing"
 	"time"
@@ -167,6 +168,48 @@ func TestProgressSyncSaveUploadsUpdatesWhenIncomingIsNewerAndWritesAudit(t *test
 			incomingUpdatedAt,
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	scopeKey := buildProgressRowStateScopeKey(userID, courseID, kpKey)
+	emptyState2 := encodeSyncDownloadState2(syncDownloadState2Aggregate{})
+	mock.ExpectQuery(`SELECT state2\s+FROM sync_download_state2`).
+		WithArgs(teacherUserID).
+		WillReturnRows(sqlmock.NewRows([]string{"state2"}).AddRow(emptyState2))
+	mock.ExpectQuery(`SELECT user_id, item_kind, scope_key, course_id, student_user_id, updated_at, content_hash FROM sync_download_state_items`).
+		WithArgs(teacherUserID, syncDownloadItemKindProgressRow, scopeKey).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(`INSERT INTO sync_download_state_items`).
+		WithArgs(
+			teacherUserID,
+			syncDownloadItemKindProgressRow,
+			scopeKey,
+			courseID,
+			userID,
+			incomingUpdatedAt,
+			"hash-1",
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT state2\s+FROM sync_download_state2`).
+		WithArgs(userID).
+		WillReturnRows(sqlmock.NewRows([]string{"state2"}).AddRow(emptyState2))
+	mock.ExpectQuery(`SELECT user_id, item_kind, scope_key, course_id, student_user_id, updated_at, content_hash FROM sync_download_state_items`).
+		WithArgs(userID, syncDownloadItemKindProgressRow, scopeKey).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(`INSERT INTO sync_download_state_items`).
+		WithArgs(
+			userID,
+			syncDownloadItemKindProgressRow,
+			scopeKey,
+			courseID,
+			userID,
+			incomingUpdatedAt,
+			"hash-1",
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO sync_download_state2`).
+		WithArgs(teacherUserID, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO sync_download_state2`).
+		WithArgs(userID, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
 	savedCount, err := handler.saveUploads(
@@ -332,6 +375,119 @@ func TestProgressSyncSaveChunkUploadsSkipsStaleUpdate(t *testing.T) {
 	}
 	if savedCount != 0 {
 		t.Fatalf("savedCount = %d, want 0", savedCount)
+	}
+
+	assertSQLMockExpectations(t, mock)
+}
+
+func TestProgressSyncSaveChunkUploadsUpdatesWhenIncomingIsNewer(t *testing.T) {
+	db, mock := newHandlerSQLMock(t)
+	defer db.Close()
+
+	handler := NewProgressSyncHandler(
+		Dependencies{
+			Store: &storepkg.Store{DB: db},
+		},
+	)
+
+	userID := int64(11)
+	courseID := int64(10)
+	teacherUserID := int64(9)
+	chapterKey := "1.1"
+	existingUpdatedAt := time.Date(2026, 3, 2, 0, 0, 0, 0, time.UTC)
+	incomingUpdatedAt := time.Date(2026, 3, 2, 0, 10, 0, 0, time.UTC)
+	envelopeBytes := []byte("chunk-newer")
+
+	mock.ExpectBegin()
+	mock.ExpectPrepare(`SELECT updated_at FROM progress_sync_chunks`)
+	mock.ExpectPrepare(`INSERT INTO progress_sync_chunks`)
+	mock.ExpectPrepare(`UPDATE progress_sync_chunks`)
+	mock.ExpectQuery(`SELECT ta.user_id`).
+		WithArgs(courseID).
+		WillReturnRows(sqlmock.NewRows([]string{"user_id"}).AddRow(teacherUserID))
+	mock.ExpectQuery(`SELECT 1 FROM enrollments`).
+		WithArgs(userID, courseID).
+		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+	mock.ExpectQuery(`SELECT updated_at FROM progress_sync_chunks`).
+		WithArgs(courseID, userID, chapterKey).
+		WillReturnRows(
+			sqlmock.NewRows([]string{"updated_at"}).
+				AddRow(existingUpdatedAt),
+		)
+	mock.ExpectExec(`UPDATE progress_sync_chunks`).
+		WithArgs(
+			teacherUserID,
+			4,
+			incomingUpdatedAt,
+			envelopeBytes,
+			sqlmock.AnyArg(),
+			courseID,
+			userID,
+			chapterKey,
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	scopeKey := buildProgressChunkStateScopeKey(userID, courseID, chapterKey)
+	emptyState2 := encodeSyncDownloadState2(syncDownloadState2Aggregate{})
+	mock.ExpectQuery(`SELECT state2\s+FROM sync_download_state2`).
+		WithArgs(teacherUserID).
+		WillReturnRows(sqlmock.NewRows([]string{"state2"}).AddRow(emptyState2))
+	mock.ExpectQuery(`SELECT user_id, item_kind, scope_key, course_id, student_user_id, updated_at, content_hash FROM sync_download_state_items`).
+		WithArgs(teacherUserID, syncDownloadItemKindProgressChunk, scopeKey).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(`INSERT INTO sync_download_state_items`).
+		WithArgs(
+			teacherUserID,
+			syncDownloadItemKindProgressChunk,
+			scopeKey,
+			courseID,
+			userID,
+			incomingUpdatedAt,
+			"chunk-hash-newer",
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT state2\s+FROM sync_download_state2`).
+		WithArgs(userID).
+		WillReturnRows(sqlmock.NewRows([]string{"state2"}).AddRow(emptyState2))
+	mock.ExpectQuery(`SELECT user_id, item_kind, scope_key, course_id, student_user_id, updated_at, content_hash FROM sync_download_state_items`).
+		WithArgs(userID, syncDownloadItemKindProgressChunk, scopeKey).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(`INSERT INTO sync_download_state_items`).
+		WithArgs(
+			userID,
+			syncDownloadItemKindProgressChunk,
+			scopeKey,
+			courseID,
+			userID,
+			incomingUpdatedAt,
+			"chunk-hash-newer",
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO sync_download_state2`).
+		WithArgs(teacherUserID, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO sync_download_state2`).
+		WithArgs(userID, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	savedCount, err := handler.saveChunkUploads(
+		userID,
+		[]uploadProgressChunkRequest{
+			{
+				CourseID:     courseID,
+				ChapterKey:   chapterKey,
+				ItemCount:    4,
+				UpdatedAt:    incomingUpdatedAt.Format(time.RFC3339),
+				Envelope:     base64.StdEncoding.EncodeToString(envelopeBytes),
+				EnvelopeHash: "chunk-hash-newer",
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("saveChunkUploads() error = %v", err)
+	}
+	if savedCount != 1 {
+		t.Fatalf("savedCount = %d, want 1", savedCount)
 	}
 
 	assertSQLMockExpectations(t, mock)

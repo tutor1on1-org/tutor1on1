@@ -32,6 +32,7 @@ class SyncListResult<T> {
 
 class SyncDownloadManifestResult {
   SyncDownloadManifestResult({
+    required this.state2,
     required this.sessions,
     required this.progressChunks,
     required this.progressRows,
@@ -39,11 +40,18 @@ class SyncDownloadManifestResult {
     required this.notModified,
   });
 
+  final String state2;
   final List<SessionSyncManifestItem> sessions;
   final List<ProgressSyncChunkManifestItem> progressChunks;
   final List<ProgressSyncManifestItem> progressRows;
   final String? etag;
   final bool notModified;
+}
+
+class SyncDownloadState2Result {
+  SyncDownloadState2Result({required this.state2});
+
+  final String state2;
 }
 
 class UserKeyRecord {
@@ -549,6 +557,7 @@ class SessionSyncApiService {
     );
     if (response.statusCode == 304) {
       return SyncDownloadManifestResult(
+        state2: '',
         sessions: const <SessionSyncManifestItem>[],
         progressChunks: const <ProgressSyncChunkManifestItem>[],
         progressRows: const <ProgressSyncManifestItem>[],
@@ -561,6 +570,7 @@ class SessionSyncApiService {
       throw SessionSyncApiException('Unexpected response format.');
     }
     return SyncDownloadManifestResult(
+      state2: ((decoded['state2'] as String?) ?? '').trim(),
       sessions: ((decoded['sessions'] as List?) ?? const <dynamic>[])
           .whereType<Map<String, dynamic>>()
           .map(SessionSyncManifestItem.fromJson)
@@ -575,6 +585,41 @@ class SessionSyncApiService {
           .map(ProgressSyncManifestItem.fromJson)
           .toList(),
       etag: response.headers['etag'],
+      notModified: false,
+    );
+  }
+
+  Future<SyncDownloadState2Result> getDownloadState2() async {
+    final response = await _get('/api/sync/download-state2');
+    if (response is! Map<String, dynamic>) {
+      throw SessionSyncApiException('Unexpected response format.');
+    }
+    return SyncDownloadState2Result(
+      state2: ((response['state2'] as String?) ?? '').trim(),
+    );
+  }
+
+  Future<SyncDownloadManifestResult> getDownloadState1() async {
+    final response = await _get('/api/sync/download-state1');
+    if (response is! Map<String, dynamic>) {
+      throw SessionSyncApiException('Unexpected response format.');
+    }
+    return SyncDownloadManifestResult(
+      state2: ((response['state2'] as String?) ?? '').trim(),
+      sessions: ((response['sessions'] as List?) ?? const <dynamic>[])
+          .whereType<Map<String, dynamic>>()
+          .map(SessionSyncManifestItem.fromJson)
+          .toList(),
+      progressChunks:
+          ((response['progress_chunks'] as List?) ?? const <dynamic>[])
+              .whereType<Map<String, dynamic>>()
+              .map(ProgressSyncChunkManifestItem.fromJson)
+              .toList(),
+      progressRows: ((response['progress_rows'] as List?) ?? const <dynamic>[])
+          .whereType<Map<String, dynamic>>()
+          .map(ProgressSyncManifestItem.fromJson)
+          .toList(),
+      etag: null,
       notModified: false,
     );
   }

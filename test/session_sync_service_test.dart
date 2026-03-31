@@ -302,13 +302,24 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
     required bool includeProgress,
     String? ifNoneMatch,
   }) async {
+    return getDownloadState1();
+  }
+
+  @override
+  Future<SyncDownloadState2Result> getDownloadState2() async {
+    return SyncDownloadState2Result(state2: 'download-state2');
+  }
+
+  @override
+  Future<SyncDownloadManifestResult> getDownloadState1() async {
     if (downloadManifestHandler != null) {
       return downloadManifestHandler!(
-        includeProgress: includeProgress,
-        ifNoneMatch: ifNoneMatch,
+        includeProgress: true,
+        ifNoneMatch: null,
       );
     }
     return SyncDownloadManifestResult(
+      state2: 'download-state2',
       sessions: sessionItems
           .map(
             (item) => SessionSyncManifestItem(
@@ -319,19 +330,17 @@ class _TestSessionSyncApiService extends SessionSyncApiService {
           )
           .toList(growable: false),
       progressChunks: const <ProgressSyncChunkManifestItem>[],
-      progressRows: includeProgress
-          ? progressItems
-              .map(
-                (item) => ProgressSyncManifestItem(
-                  studentUserId: item.studentUserId,
-                  courseId: item.courseId,
-                  kpKey: item.kpKey,
-                  updatedAt: item.updatedAt,
-                  envelopeHash: item.envelopeHash,
-                ),
-              )
-              .toList(growable: false)
-          : const <ProgressSyncManifestItem>[],
+      progressRows: progressItems
+          .map(
+            (item) => ProgressSyncManifestItem(
+              studentUserId: item.studentUserId,
+              courseId: item.courseId,
+              kpKey: item.kpKey,
+              updatedAt: item.updatedAt,
+              envelopeHash: item.envelopeHash,
+            ),
+          )
+          .toList(growable: false),
       etag: 'download-manifest-etag',
       notModified: false,
     );
@@ -1557,6 +1566,7 @@ void main() {
           expect(includeProgress, isTrue);
           expect(ifNoneMatch, isNull);
           return SyncDownloadManifestResult(
+            state2: 'bulk-session-state2',
             sessions: manifestItems,
             progressChunks: const <ProgressSyncChunkManifestItem>[],
             progressRows: const <ProgressSyncManifestItem>[],
@@ -2062,6 +2072,7 @@ void main() {
           expect(includeProgress, isTrue);
           expect(ifNoneMatch, isNull);
           return SyncDownloadManifestResult(
+            state2: 'progress-row-state2',
             sessions: const <SessionSyncManifestItem>[],
             progressChunks: const <ProgressSyncChunkManifestItem>[],
             progressRows: <ProgressSyncManifestItem>[
@@ -2348,6 +2359,7 @@ void main() {
           manifestCalls++;
           expect(includeProgress, isTrue);
           return SyncDownloadManifestResult(
+            state2: 'progress-bulk-state2',
             sessions: const <SessionSyncManifestItem>[],
             progressChunks: const <ProgressSyncChunkManifestItem>[],
             progressRows: manifestItems,

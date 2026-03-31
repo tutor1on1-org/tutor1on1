@@ -24,6 +24,10 @@ type syncDownloadManifestResponse struct {
 	ProgressRows   []fiber.Map `json:"progress_rows"`
 }
 
+type syncDownloadState2Response struct {
+	State2 string `json:"state2"`
+}
+
 type syncDownloadFetchRequest struct {
 	SessionSyncIDs []string                       `json:"session_sync_ids"`
 	ProgressChunks []syncDownloadProgressChunkKey `json:"progress_chunks"`
@@ -51,26 +55,123 @@ func (h *SyncDownloadHandler) Manifest(c *fiber.Ctx) error {
 		strings.TrimSpace(c.Query("include_progress")),
 		"true",
 	)
-
-	sessions, err := h.listSessionManifest(userID)
-	if err != nil {
-		return err
+	if err := ensureSyncDownloadStateInitialized(h.cfg.Store.DB, userID); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "sync download manifest failed")
 	}
+	items, err := listSyncDownloadStateItems(h.cfg.Store.DB, userID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "sync download manifest failed")
+	}
+	response := buildSyncDownloadManifestResponse(items, includeProgress)
+	return respondJSONWithETag(c, response)
+}
 
+func (h *SyncDownloadHandler) State2(c *fiber.Ctx) error {
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	}
+	if err := ensureSyncDownloadStateInitialized(h.cfg.Store.DB, userID); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "sync download state2 failed")
+	}
+	state2, err := readSyncDownloadState2(h.cfg.Store.DB, userID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "sync download state2 failed")
+	}
+	return c.JSON(syncDownloadState2Response{State2: state2})
+}
+
+func (h *SyncDownloadHandler) State1(c *fiber.Ctx) error {
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	}
+	if err := ensureSyncDownloadStateInitialized(h.cfg.Store.DB, userID); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "sync download state1 failed")
+	}
+	items, err := listSyncDownloadStateItems(h.cfg.Store.DB, userID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "sync download state1 failed")
+	}
+	state2, err := readSyncDownloadState2(h.cfg.Store.DB, userID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "sync download state1 failed")
+	}
+	response := buildSyncDownloadManifestResponse(items, true)
+	return c.JSON(fiber.Map{
+		"state2":          state2,
+		"sessions":        response.Sessions,
+		"progress_chunks": response.ProgressChunks,
+		"progress_rows":   response.ProgressRows,
+	})
+}
+
+func buildSyncDownloadManifestResponse(
+	items []syncDownloadStateItem,
+	includeProgress bool,
+) syncDownloadManifestResponse {
 	response := syncDownloadManifestResponse{
-		Sessions:       sessions,
+		Sessions:       []fiber.Map{},
 		ProgressChunks: []fiber.Map{},
 		ProgressRows:   []fiber.Map{},
 	}
-	if includeProgress {
-		progressChunks, progressRows, err := h.listProgressManifest(userID)
-		if err != nil {
-			return err
+	for _, item := range items {
+		switch item.ItemKind {
+		case syncDownloadItemKindSession:
+			response.Sessions = append(response.Sessions, fiber.Map{
+				"session_sync_id": item.ScopeKey,
+				"updated_at":      item.UpdatedAt.UTC().Format(time.RFC3339),
+				"envelope_hash":   item.ContentHash,
+			})
+		case syncDownloadItemKindProgressChunk:
+			if !includeProgress {
+				continue
+			}
+			parts := strings.SplitN(item.ScopeKey, ":", 3)
+			if len(parts) != 3 {
+				continue
+			}
+			studentUserID, parseErr := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
+			if parseErr != nil {
+				continue
+			}
+			courseID, parseErr := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+			if parseErr != nil {
+				continue
+			}
+			response.ProgressChunks = append(response.ProgressChunks, fiber.Map{
+				"student_user_id": studentUserID,
+				"course_id":       courseID,
+				"chapter_key":     parts[2],
+				"updated_at":      item.UpdatedAt.UTC().Format(time.RFC3339),
+				"envelope_hash":   item.ContentHash,
+			})
+		case syncDownloadItemKindProgressRow:
+			if !includeProgress {
+				continue
+			}
+			parts := strings.SplitN(item.ScopeKey, ":", 3)
+			if len(parts) != 3 {
+				continue
+			}
+			studentUserID, parseErr := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
+			if parseErr != nil {
+				continue
+			}
+			courseID, parseErr := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+			if parseErr != nil {
+				continue
+			}
+			response.ProgressRows = append(response.ProgressRows, fiber.Map{
+				"student_user_id": studentUserID,
+				"course_id":       courseID,
+				"kp_key":          parts[2],
+				"updated_at":      item.UpdatedAt.UTC().Format(time.RFC3339),
+				"envelope_hash":   item.ContentHash,
+			})
 		}
-		response.ProgressChunks = progressChunks
-		response.ProgressRows = progressRows
 	}
-	return respondJSONWithETag(c, response)
+	return response
 }
 
 func (h *SyncDownloadHandler) Fetch(c *fiber.Ctx) error {

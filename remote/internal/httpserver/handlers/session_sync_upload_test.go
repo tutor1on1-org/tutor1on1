@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/base64"
 	"testing"
 	"time"
@@ -118,6 +119,47 @@ func TestSessionSyncSaveUploadsUpdatesWhenIncomingIsNewer(t *testing.T) {
 			"hash-newer",
 			sessionSyncID,
 		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	emptyState2 := encodeSyncDownloadState2(syncDownloadState2Aggregate{})
+	mock.ExpectQuery(`SELECT state2\s+FROM sync_download_state2`).
+		WithArgs(teacherUserID).
+		WillReturnRows(sqlmock.NewRows([]string{"state2"}).AddRow(emptyState2))
+	mock.ExpectQuery(`SELECT user_id, item_kind, scope_key, course_id, student_user_id, updated_at, content_hash FROM sync_download_state_items`).
+		WithArgs(teacherUserID, syncDownloadItemKindSession, sessionSyncID).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(`INSERT INTO sync_download_state_items`).
+		WithArgs(
+			teacherUserID,
+			syncDownloadItemKindSession,
+			sessionSyncID,
+			courseID,
+			studentUserID,
+			incomingUpdatedAt,
+			"hash-newer",
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT state2\s+FROM sync_download_state2`).
+		WithArgs(studentUserID).
+		WillReturnRows(sqlmock.NewRows([]string{"state2"}).AddRow(emptyState2))
+	mock.ExpectQuery(`SELECT user_id, item_kind, scope_key, course_id, student_user_id, updated_at, content_hash FROM sync_download_state_items`).
+		WithArgs(studentUserID, syncDownloadItemKindSession, sessionSyncID).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(`INSERT INTO sync_download_state_items`).
+		WithArgs(
+			studentUserID,
+			syncDownloadItemKindSession,
+			sessionSyncID,
+			courseID,
+			studentUserID,
+			incomingUpdatedAt,
+			"hash-newer",
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO sync_download_state2`).
+		WithArgs(teacherUserID, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO sync_download_state2`).
+		WithArgs(studentUserID, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 

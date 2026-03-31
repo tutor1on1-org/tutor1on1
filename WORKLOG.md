@@ -91,6 +91,20 @@ Historical setup timeline moved to `LOGBOOK.md`.
   - unauthenticated `GET https://api.tutor1on1.org/api/enrollments/sync-state2` now returns `401 unauthorized` instead of `404`, proving the second route is live.
   - `scripts/test_auth.ps1 -BaseUrl "https://api.tutor1on1.org"` progressed through register/login/change-password/new-login and stopped only at the expected production recovery-token step because `RECOVERY_TOKEN_ECHO=false` and no `FT_RECOVERY_TOKEN` was provided.
 
+## Remote server updates (2026-03-31, sync download-state incremental aggregate deploy)
+- Applied DB migration `remote/db/migrations/0012_sync_download_state.up.sql` on production.
+- Deployed updated API binary to `/opt/family_teacher_remote/bin/family-teacher-api`.
+- Restarted `family-teacher-api.service`; current service start time is `Tue 2026-03-31 14:25:39 CST`.
+- Backup:
+  - MySQL pre-deploy dump: `/home/ecs-user/db_backups/family_teacher_20260331_062538_pre_sync_download_state2_agg.sql.gz`
+  - API binary backup: `/opt/family_teacher_remote/bin/family-teacher-api.20260331_062538.bak`
+- Verified:
+  - public health endpoint `https://api.tutor1on1.org/health` returned `200 {"status":"ok"}` after restart.
+  - unauthenticated `GET https://api.tutor1on1.org/api/sync/download-state2` now returns `401 unauthorized`, proving the new state2 route is live.
+  - unauthenticated `GET https://api.tutor1on1.org/api/sync/download-state1` now returns `401 unauthorized`, proving the new state1 route is live.
+  - unauthenticated `GET https://api.tutor1on1.org/api/sync/download-manifest` now returns `401 unauthorized`, proving the compatibility route is live on the same deployment.
+  - `scripts/test_auth.ps1 -BaseUrl "https://api.tutor1on1.org"` progressed through register/login/change-password/new-login and stopped only at the expected production recovery-token step because `RECOVERY_TOKEN_ECHO=false` and no `FT_RECOVERY_TOKEN` was provided.
+
 ## Remote server updates (2026-03-25, moderation reject fix + production cleanup)
 - Added backend reject-state fixes for subject-admin moderation and deployed a freshly cross-compiled Linux API binary to `/opt/family_teacher_remote/bin/family-teacher-api`.
 - Restarted `family-teacher-api.service`; current service start time is `Wed 2026-03-25 11:19:49 CST`.

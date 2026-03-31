@@ -202,6 +202,7 @@ func (h *SessionSyncHandler) saveUploads(
 
 		chapterKey := strings.TrimSpace(item.ChapterKey)
 		sessionSyncID := strings.TrimSpace(item.SessionSyncID)
+		contentHash := resolveSyncDownloadContentHash(item.EnvelopeHash, envelopeBytes)
 		var (
 			existingUpdatedAt time.Time
 			existingFound     bool
@@ -235,6 +236,19 @@ func (h *SessionSyncHandler) saveUploads(
 			); err != nil {
 				return 0, fiber.NewError(fiber.StatusInternalServerError, "session sync save failed")
 			}
+			if err := upsertSyncDownloadStateItems(
+				tx,
+				buildSessionDownloadStateItems(
+					teacherUserID,
+					item.StudentUserID,
+					item.CourseID,
+					sessionSyncID,
+					updatedAt,
+					contentHash,
+				),
+			); err != nil {
+				return 0, fiber.NewError(fiber.StatusInternalServerError, "session sync save failed")
+			}
 			savedCount++
 			continue
 		}
@@ -253,9 +267,21 @@ func (h *SessionSyncHandler) saveUploads(
 		); err != nil {
 			return 0, fiber.NewError(fiber.StatusInternalServerError, "session sync save failed")
 		}
+		if err := upsertSyncDownloadStateItems(
+			tx,
+			buildSessionDownloadStateItems(
+				teacherUserID,
+				item.StudentUserID,
+				item.CourseID,
+				sessionSyncID,
+				updatedAt,
+				contentHash,
+			),
+		); err != nil {
+			return 0, fiber.NewError(fiber.StatusInternalServerError, "session sync save failed")
+		}
 		savedCount++
 	}
-
 	if err := tx.Commit(); err != nil {
 		return 0, fiber.NewError(fiber.StatusInternalServerError, "commit failed")
 	}

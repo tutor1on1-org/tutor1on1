@@ -799,6 +799,13 @@ func (h *EnrollmentHandler) ApproveQuitRequest(c *fiber.Ctx) error {
 	if affected == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "enrollment not active")
 	}
+	if err := deleteSyncDownloadStateByCourseAndStudent(
+		tx,
+		courseID,
+		studentID,
+	); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "sync download state delete failed")
+	}
 	if _, err := tx.Exec(
 		`DELETE FROM session_text_sync WHERE course_id = ? AND student_user_id = ?`,
 		courseID, studentID,
@@ -810,6 +817,12 @@ func (h *EnrollmentHandler) ApproveQuitRequest(c *fiber.Ctx) error {
 		courseID, studentID,
 	); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "progress sync delete failed")
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM progress_sync_chunks WHERE course_id = ? AND student_user_id = ?`,
+		courseID, studentID,
+	); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "progress chunk sync delete failed")
 	}
 	if _, err := tx.Exec(
 		`DELETE FROM e2ee_events WHERE course_id = ? AND (sender_user_id = ? OR recipient_user_id = ?)`,

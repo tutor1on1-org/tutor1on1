@@ -557,6 +557,9 @@ func (h *TeacherCoursesHandler) DeleteCourse(c *fiber.Ctx) error {
 		}
 	}()
 
+	if err = deleteSyncDownloadStateByCourse(tx, courseID); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "sync download state delete failed")
+	}
 	if _, err = tx.Exec(
 		`DELETE FROM session_text_sync WHERE course_id = ?`,
 		courseID,
@@ -568,6 +571,12 @@ func (h *TeacherCoursesHandler) DeleteCourse(c *fiber.Ctx) error {
 		courseID,
 	); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "progress sync delete failed")
+	}
+	if _, err = tx.Exec(
+		`DELETE FROM progress_sync_chunks WHERE course_id = ?`,
+		courseID,
+	); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "progress chunk sync delete failed")
 	}
 	if _, err = tx.Exec(
 		`DELETE FROM e2ee_events WHERE course_id = ?`,

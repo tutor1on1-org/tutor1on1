@@ -60,6 +60,12 @@ class SessionSyncService {
   static const String _syncDomainProgressChunkDownload =
       'progress_chunk_download';
   static const String _syncDomainDownloadManifest = 'download_manifest';
+  static const String _syncDownloadItemKindSession = 'session';
+  static const String _syncDownloadItemKindProgressRow = 'progress_row';
+  static const String _syncDownloadItemKindProgressChunk = 'progress_chunk';
+  static const String _syncDownloadState2Version = 'v2';
+  static const int _syncDownloadState2WordCount = 4;
+  static const int _syncDownloadState2Mask = 0xFFFFFFFFFFFFFFFF;
   static const String _syncRunDomainProgressUpload =
       'session_sync_run_progress_upload';
   static const String _syncRunDomainSessionUpload =
@@ -1668,23 +1674,23 @@ class SessionSyncService {
       required _SyncProgressReporter progressReporter}) async {
     final includeProgress =
         currentUser.role == 'student' || currentUser.role == 'teacher';
-    final manifestScopeKey = _downloadManifestScopeKey(currentUser);
-    final manifestEtag = await _secureStorage.readSyncListEtag(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainDownloadManifest,
-      scopeKey: manifestScopeKey,
-    );
-    final manifest = await _api.getDownloadManifest(
-      includeProgress: includeProgress,
-      ifNoneMatch: manifestEtag,
-    );
-    await _writeSyncListEtag(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainDownloadManifest,
-      scopeKey: manifestScopeKey,
-      etag: manifest.etag,
-    );
-    if (manifest.notModified) {
+    final hasPendingLocalUploads =
+        await _hasPendingLocalUploadChanges(currentUser, remoteUserId);
+    String? localState2;
+    if (!hasPendingLocalUploads) {
+      localState2 = await _buildLocalDownloadState2(
+        remoteUserId: remoteUserId,
+        includeProgress: includeProgress,
+      );
+      final remoteState2 = await _api.getDownloadState2();
+      if (remoteState2.state2 == localState2) {
+        return;
+      }
+    }
+    final manifest = await _api.getDownloadState1();
+    if (!hasPendingLocalUploads &&
+        localState2 != null &&
+        manifest.state2 == localState2) {
       return;
     }
 
@@ -2040,8 +2046,230 @@ class SessionSyncService {
     );
   }
 
-  String _downloadManifestScopeKey(User currentUser) {
-    return currentUser.role == 'student' ? 'student' : 'teacher';
+  Future<bool> _hasPendingLocalUploadChanges(
+    User currentUser,
+    int remoteUserId,
+  ) async {
+    if (currentUser.role != 'student') {
+      return false;
+    }
+    final latestLocalProgressUpdatedAt =
+        await _db.getLatestProgressUpdatedAtForSync(studentId: currentUser.id);
+    if (latestLocalProgressUpdatedAt != null) {
+      final lastProgressUploadRunAt = await _secureStorage.readSyncRunAt(
+        remoteUserId: remoteUserId,
+        domain: _syncRunDomainProgressUpload,
+      );
+      if (lastProgressUploadRunAt == null ||
+          latestLocalProgressUpdatedAt
+              .toUtc()
+              .isAfter(lastProgressUploadRunAt.toUtc())) {
+        return true;
+      }
+    }
+    final pendingSession = await ((_db.select(_db.chatSessions)
+          ..where(
+            (tbl) =>
+                tbl.studentId.equals(currentUser.id) &
+                tbl.syncUpdatedAt.isNotNull() &
+                (tbl.syncUploadedAt.isNull() |
+                    tbl.syncUploadedAt.isSmallerThan(tbl.syncUpdatedAt)),
+          )
+          ..limit(1))
+        .getSingleOrNull());
+    return pendingSession != null;
+  }
+
+  Future<String> _buildLocalDownloadState2({
+    required int remoteUserId,
+    required bool includeProgress,
+  }) async {
+    final domains = <String>[
+      _syncDomainSessionDownload,
+      _syncDomainSessionUpload,
+      if (includeProgress) _syncDomainProgressDownload,
+      if (includeProgress) _syncDomainProgressUpload,
+      if (includeProgress) _syncDomainProgressChunkDownload,
+      if (includeProgress) _syncDomainProgressChunkUpload,
+    ];
+    final rows = await ((_db.select(_db.syncItemStates)
+          ..where(
+            (tbl) =>
+                tbl.remoteUserId.equals(remoteUserId) &
+                tbl.domain.isIn(domains),
+          ))
+        .get());
+    final merged = <String, _LocalDownloadState1Item>{};
+    for (final row in rows) {
+      final mapped = _mapStoredSyncStateToDownloadStateItem(
+        remoteUserId: remoteUserId,
+        domain: row.domain,
+        scopeKey: row.scopeKey,
+        contentHash: row.contentHash,
+        lastChangedAt: row.lastChangedAt,
+        includeProgress: includeProgress,
+      );
+      if (mapped == null) {
+        continue;
+      }
+      final key = '${mapped.kind}|${mapped.scopeKey}';
+      final existing = merged[key];
+      if (existing == null || _preferDownloadStateItem(mapped, existing)) {
+        merged[key] = mapped;
+      }
+    }
+    final aggregate = _DownloadState2Aggregate.empty(
+      wordCount: _syncDownloadState2WordCount,
+    );
+    for (final item in merged.values) {
+      _applyDownloadStateFingerprint(
+        aggregate,
+        _buildDownloadStateFingerprint(
+          kind: item.kind,
+          scopeKey: item.scopeKey,
+          updatedAt: item.updatedAt,
+          contentHash: item.contentHash,
+        ),
+      );
+    }
+    return _encodeDownloadState2(aggregate);
+  }
+
+  _LocalDownloadState1Item? _mapStoredSyncStateToDownloadStateItem({
+    required int remoteUserId,
+    required String domain,
+    required String scopeKey,
+    required String contentHash,
+    required DateTime lastChangedAt,
+    required bool includeProgress,
+  }) {
+    final normalizedDomain = domain.trim();
+    final normalizedScopeKey = scopeKey.trim();
+    final normalizedHash = contentHash.trim();
+    if (normalizedScopeKey.isEmpty || normalizedHash.isEmpty) {
+      return null;
+    }
+    if (normalizedDomain == _syncDomainSessionDownload ||
+        normalizedDomain == _syncDomainSessionUpload) {
+      return _LocalDownloadState1Item(
+        kind: _syncDownloadItemKindSession,
+        scopeKey: normalizedScopeKey,
+        contentHash: normalizedHash,
+        updatedAt: lastChangedAt.toUtc(),
+        precedence: normalizedDomain == _syncDomainSessionUpload ? 2 : 1,
+      );
+    }
+    if (!includeProgress) {
+      return null;
+    }
+    if (normalizedDomain == _syncDomainProgressDownload) {
+      return _LocalDownloadState1Item(
+        kind: _syncDownloadItemKindProgressRow,
+        scopeKey: normalizedScopeKey,
+        contentHash: normalizedHash,
+        updatedAt: lastChangedAt.toUtc(),
+        precedence: 1,
+      );
+    }
+    if (normalizedDomain == _syncDomainProgressChunkDownload) {
+      return _LocalDownloadState1Item(
+        kind: _syncDownloadItemKindProgressChunk,
+        scopeKey: normalizedScopeKey,
+        contentHash: normalizedHash,
+        updatedAt: lastChangedAt.toUtc(),
+        precedence: 1,
+      );
+    }
+    if (normalizedDomain == _syncDomainProgressUpload) {
+      return _LocalDownloadState1Item(
+        kind: _syncDownloadItemKindProgressRow,
+        scopeKey: '$remoteUserId:$normalizedScopeKey',
+        contentHash: normalizedHash,
+        updatedAt: lastChangedAt.toUtc(),
+        precedence: 2,
+      );
+    }
+    if (normalizedDomain == _syncDomainProgressChunkUpload) {
+      return _LocalDownloadState1Item(
+        kind: _syncDownloadItemKindProgressChunk,
+        scopeKey: '$remoteUserId:$normalizedScopeKey',
+        contentHash: normalizedHash,
+        updatedAt: lastChangedAt.toUtc(),
+        precedence: 2,
+      );
+    }
+    return null;
+  }
+
+  bool _preferDownloadStateItem(
+    _LocalDownloadState1Item candidate,
+    _LocalDownloadState1Item existing,
+  ) {
+    if (candidate.updatedAt.isAfter(existing.updatedAt)) {
+      return true;
+    }
+    if (candidate.updatedAt.isBefore(existing.updatedAt)) {
+      return false;
+    }
+    if (candidate.precedence != existing.precedence) {
+      return candidate.precedence > existing.precedence;
+    }
+    return candidate.contentHash.compareTo(existing.contentHash) >= 0;
+  }
+
+  String _buildDownloadStateFingerprint({
+    required String kind,
+    required String scopeKey,
+    required DateTime updatedAt,
+    required String contentHash,
+  }) {
+    return [
+      kind.trim(),
+      scopeKey.trim(),
+      updatedAt.toUtc().millisecondsSinceEpoch.toString(),
+      contentHash.trim(),
+    ].join('|');
+  }
+
+  void _applyDownloadStateFingerprint(
+    _DownloadState2Aggregate aggregate,
+    String fingerprint,
+  ) {
+    final normalized = fingerprint.trim();
+    if (normalized.isEmpty) {
+      return;
+    }
+    final digest = sha256.convert(utf8.encode(normalized)).bytes;
+    aggregate.count = (aggregate.count + 1) & _syncDownloadState2Mask;
+    for (var index = 0; index < _syncDownloadState2WordCount; index++) {
+      final word = _readDownloadStateUint64(digest, index * 8);
+      aggregate.sums[index] =
+          (aggregate.sums[index] + word) & _syncDownloadState2Mask;
+      aggregate.xors[index] =
+          (aggregate.xors[index] ^ word) & _syncDownloadState2Mask;
+    }
+  }
+
+  int _readDownloadStateUint64(List<int> bytes, int offset) {
+    var value = 0;
+    for (var index = 0; index < 8; index++) {
+      value = ((value << 8) | bytes[offset + index]) & _syncDownloadState2Mask;
+    }
+    return value;
+  }
+
+  String _encodeDownloadState2(_DownloadState2Aggregate aggregate) {
+    final parts = <String>[
+      _syncDownloadState2Version,
+      _formatDownloadStateUint64(aggregate.count),
+      ...aggregate.sums.map(_formatDownloadStateUint64),
+      ...aggregate.xors.map(_formatDownloadStateUint64),
+    ];
+    return parts.join(':');
+  }
+
+  String _formatDownloadStateUint64(int value) {
+    return (value & _syncDownloadState2Mask).toRadixString(16).padLeft(16, '0');
   }
 
   Future<void> _applyDownloadedProgressItem({
@@ -3212,24 +3440,6 @@ class SessionSyncService {
     );
   }
 
-  Future<void> _writeSyncListEtag({
-    required int remoteUserId,
-    required String domain,
-    required String scopeKey,
-    required String? etag,
-  }) async {
-    final normalized = (etag ?? '').trim();
-    if (normalized.isEmpty) {
-      return;
-    }
-    await _secureStorage.writeSyncListEtag(
-      remoteUserId: remoteUserId,
-      domain: domain,
-      scopeKey: scopeKey,
-      etag: normalized,
-    );
-  }
-
   String _resolveSyncHash({
     required String primaryHash,
     required String fallbackValue,
@@ -3633,6 +3843,33 @@ class _SyncMessage {
   final String? parsedJson;
   final String? action;
   final DateTime createdAt;
+}
+
+class _LocalDownloadState1Item {
+  _LocalDownloadState1Item({
+    required this.kind,
+    required this.scopeKey,
+    required this.contentHash,
+    required this.updatedAt,
+    required this.precedence,
+  });
+
+  final String kind;
+  final String scopeKey;
+  final String contentHash;
+  final DateTime updatedAt;
+  final int precedence;
+}
+
+class _DownloadState2Aggregate {
+  _DownloadState2Aggregate.empty({required int wordCount})
+      : count = 0,
+        sums = List<int>.filled(wordCount, 0, growable: false),
+        xors = List<int>.filled(wordCount, 0, growable: false);
+
+  int count;
+  final List<int> sums;
+  final List<int> xors;
 }
 
 class _SyncProgressReporter {

@@ -295,6 +295,7 @@ func (h *ProgressSyncHandler) saveUploads(
 			}
 			envelopeBytes = decodedEnvelope
 		}
+		contentHash := resolveSyncDownloadContentHash(item.EnvelopeHash, envelopeBytes)
 
 		var (
 			existingLitPercent    int
@@ -447,6 +448,19 @@ func (h *ProgressSyncHandler) saveUploads(
 				status, message := classifyProgressSyncSaveError(err)
 				return 0, fiber.NewError(status, message)
 			}
+			if err := upsertSyncDownloadStateItems(
+				tx,
+				buildProgressRowDownloadStateItems(
+					teacherUserID,
+					userID,
+					item.CourseID,
+					kpKey,
+					updatedAt,
+					contentHash,
+				),
+			); err != nil {
+				return 0, fiber.NewError(fiber.StatusInternalServerError, "progress sync save failed")
+			}
 			savedCount++
 			continue
 		}
@@ -503,9 +517,21 @@ func (h *ProgressSyncHandler) saveUploads(
 			status, message := classifyProgressSyncSaveError(err)
 			return 0, fiber.NewError(status, message)
 		}
+		if err := upsertSyncDownloadStateItems(
+			tx,
+			buildProgressRowDownloadStateItems(
+				teacherUserID,
+				userID,
+				item.CourseID,
+				kpKey,
+				updatedAt,
+				contentHash,
+			),
+		); err != nil {
+			return 0, fiber.NewError(fiber.StatusInternalServerError, "progress sync save failed")
+		}
 		savedCount++
 	}
-
 	if err := tx.Commit(); err != nil {
 		return 0, fiber.NewError(fiber.StatusInternalServerError, "commit failed")
 	}
@@ -635,6 +661,7 @@ func (h *ProgressSyncHandler) saveChunkUploads(
 		if err != nil || len(decodedEnvelope) == 0 {
 			return 0, fiber.NewError(fiber.StatusBadRequest, "envelope invalid")
 		}
+		contentHash := resolveSyncDownloadContentHash(item.EnvelopeHash, decodedEnvelope)
 
 		var (
 			existingUpdatedAt time.Time
@@ -683,6 +710,19 @@ func (h *ProgressSyncHandler) saveChunkUploads(
 				status, message := classifyProgressSyncSaveError(err)
 				return 0, fiber.NewError(status, message)
 			}
+			if err := upsertSyncDownloadStateItems(
+				tx,
+				buildProgressChunkDownloadStateItems(
+					teacherUserID,
+					userID,
+					item.CourseID,
+					chapterKey,
+					updatedAt,
+					contentHash,
+				),
+			); err != nil {
+				return 0, fiber.NewError(fiber.StatusInternalServerError, "progress chunk sync save failed")
+			}
 			savedCount++
 			continue
 		}
@@ -708,9 +748,21 @@ func (h *ProgressSyncHandler) saveChunkUploads(
 			status, message := classifyProgressSyncSaveError(err)
 			return 0, fiber.NewError(status, message)
 		}
+		if err := upsertSyncDownloadStateItems(
+			tx,
+			buildProgressChunkDownloadStateItems(
+				teacherUserID,
+				userID,
+				item.CourseID,
+				chapterKey,
+				updatedAt,
+				contentHash,
+			),
+		); err != nil {
+			return 0, fiber.NewError(fiber.StatusInternalServerError, "progress chunk sync save failed")
+		}
 		savedCount++
 	}
-
 	if err := tx.Commit(); err != nil {
 		return 0, fiber.NewError(fiber.StatusInternalServerError, "commit failed")
 	}
