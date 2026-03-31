@@ -79,6 +79,34 @@ Last updated: 2026-03-31
 
 Historical setup timeline moved to `LOGBOOK.md`.
 
+## Remote server updates (2026-04-01, state1-first sync topology deploy)
+- Pushed commit `d363fc9082158fe5b82c6ade13deb12408329a1b` to `origin/simple`.
+- Uploaded a freshly cross-compiled Linux API binary and deployed it to `/opt/family_teacher_remote/bin/family-teacher-api`.
+- Applied production schema additions for course/enrollment sync state1/state2 tables and sync `content_hash` columns.
+- Restarted `family-teacher-api.service`; current service start time is `Wed 2026-04-01 04:58:17 CST`.
+- Backup:
+  - MySQL dump path: `/home/ecs-user/db_backups/family_teacher_20260401_045816_pre_state1_topology.sql.gz`
+  - API binary backup: `/opt/family_teacher_remote/bin/family-teacher-api.20260401_045816.bak`
+- Verified:
+  - public health endpoint `https://api.tutor1on1.org/health` returned `200 {"status":"ok"}` after restart.
+  - unauthenticated `GET https://api.tutor1on1.org/api/teacher/courses/sync-state1` returned `401 unauthorized`.
+  - unauthenticated `GET https://api.tutor1on1.org/api/enrollments/sync-state1` returned `401 unauthorized`.
+  - unauthenticated `GET https://api.tutor1on1.org/api/sync/download-state1` returned `401 unauthorized`.
+
+## Remote client artifact refresh (2026-04-01, post state1-first sync deploy)
+- Ran `scripts/release_public.ps1 -SkipGit` after backend deploy completed.
+- Republished canonical Android APK to `https://api.tutor1on1.org/downloads/Tutor1on1.apk`.
+- Republished canonical Windows ZIP to `https://api.tutor1on1.org/downloads/Tutor1on1.zip`.
+- Republished GitHub release assets under `https://github.com/tutor1on1-org/tutor1on1/releases/tag/v1.0.1`.
+- Republished the website under `https://www.tutor1on1.org/`.
+- Verified:
+  - APK SHA-256: `b70c9337f25d586a109aba3e54a2f8aa33427ca6bba72957ca4634c6769f14fe`
+  - ZIP SHA-256: `aaa010f691d2d135b6f8826f2cc3e961bd92047b00ec44c98083190ee0fc60e1`
+  - canonical APK URL returned HTTP `200`.
+  - canonical ZIP URL returned HTTP `200`.
+  - website root returned HTTP `200`.
+  - GitHub release asset URLs for `Tutor1on1.apk` and `Tutor1on1.zip` returned HTTP `302` to release asset storage.
+
 ## Remote server updates (2026-03-31, sync-state2 route deploy)
 - Deployed updated API binary to `/opt/family_teacher_remote/bin/family-teacher-api` after the public APK started requiring `/api/teacher/courses/sync-state2` and `/api/enrollments/sync-state2`.
 - Restarted `family-teacher-api.service`; current service start time is `Tue 2026-03-31 11:20:20 CST`.
