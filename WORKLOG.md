@@ -86,6 +86,7 @@ Historical setup timeline moved to `LOGBOOK.md`.
 - Restarted `family-teacher-api.service`; current service start time is `Wed 2026-04-01 04:58:17 CST`.
 - Backup:
   - MySQL dump path: `/home/ecs-user/db_backups/family_teacher_20260401_045816_pre_state1_topology.sql.gz`
+  - Clean follow-up MySQL dump with `--no-tablespaces`: `/home/ecs-user/db_backups/family_teacher_20260401_052001_post_state1_topology_notablespaces.sql.gz`
   - API binary backup: `/opt/family_teacher_remote/bin/family-teacher-api.20260401_045816.bak`
 - Verified:
   - public health endpoint `https://api.tutor1on1.org/health` returned `200 {"status":"ok"}` after restart.
