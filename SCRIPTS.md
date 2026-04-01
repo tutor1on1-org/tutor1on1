@@ -211,6 +211,10 @@ What it validates:
 - local ZIP import-readiness checks (`contents/context` + lecture files)
 Optional flags:
 - `-KeepArtifacts` (preserve temp bundle/download folder for debugging)
+Optional env inputs for moderation-enabled servers:
+- `FT_SMOKE_ADMIN_USERNAME`
+- `FT_SMOKE_ADMIN_PASSWORD`
+When teacher registration or course upload requires admin approval, the smoke script uses those admin credentials to approve the pending teacher-registration request and pending course-upload request before continuing.
 
 ### Decrypt LLM JSONL metadata for a known user
 ```powershell

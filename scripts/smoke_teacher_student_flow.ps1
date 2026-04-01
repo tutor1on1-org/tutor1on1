@@ -1,5 +1,7 @@
 param(
   [string]$BaseUrl = $env:FT_REMOTE_BASE_URL,
+  [string]$AdminUsername = $env:FT_SMOKE_ADMIN_USERNAME,
+  [string]$AdminPassword = $env:FT_SMOKE_ADMIN_PASSWORD,
   [switch]$KeepArtifacts
 )
 
@@ -48,6 +50,101 @@ function Invoke-Json {
     $reader.Dispose()
     throw "HTTP $($response.StatusCode.value__) $Method $Path failed: $raw"
   }
+}
+
+function Invoke-AuthLogin {
+  param(
+    [Parameter(Mandatory = $true)][string]$Username,
+    [Parameter(Mandatory = $true)][string]$Password
+  )
+
+  return Invoke-Json -Method 'POST' -Path '/api/auth/login' -Body @{
+    username = $Username
+    password = $Password
+  }
+}
+
+function Expand-JsonList {
+  param(
+    [Parameter(Mandatory = $true)]$Value
+  )
+
+  $items = @($Value)
+  if ($items.Count -eq 1 -and $items[0] -is [System.Array]) {
+    return @($items[0])
+  }
+  return $items
+}
+
+function Get-AdminAccessToken {
+  param(
+    [Parameter(Mandatory = $true)][ref]$CachedToken
+  )
+
+  if (-not [string]::IsNullOrWhiteSpace($CachedToken.Value)) {
+    return $CachedToken.Value
+  }
+  if ([string]::IsNullOrWhiteSpace($AdminUsername) -or [string]::IsNullOrWhiteSpace($AdminPassword)) {
+    throw 'Teacher/course moderation is active. Set FT_SMOKE_ADMIN_USERNAME and FT_SMOKE_ADMIN_PASSWORD (or pass -AdminUsername/-AdminPassword) so the smoke flow can approve pending requests.'
+  }
+  $adminAuth = Invoke-AuthLogin -Username $AdminUsername -Password $AdminPassword
+  $token = "$($adminAuth.access_token)"
+  if ([string]::IsNullOrWhiteSpace($token)) {
+    throw 'Admin login returned empty access_token.'
+  }
+  $CachedToken.Value = $token
+  return $token
+}
+
+function Approve-PendingTeacherRegistration {
+  param(
+    [Parameter(Mandatory = $true)][string]$TeacherUsername,
+    [Parameter(Mandatory = $true)][ref]$AdminToken
+  )
+
+  $token = Get-AdminAccessToken -CachedToken $AdminToken
+  $pendingRequest = $null
+  for ($attempt = 0; $attempt -lt 10 -and $null -eq $pendingRequest; $attempt++) {
+    $requests = Expand-JsonList (
+      Invoke-Json -Method 'GET' -Path '/api/admin/teacher-registration-requests' -AccessToken $token
+    )
+    $pendingRequest = $requests | Where-Object {
+      "$($_.username)" -eq $TeacherUsername -and "$($_.status)" -eq 'pending'
+    } | Select-Object -First 1
+    if ($null -eq $pendingRequest) {
+      Start-Sleep -Seconds 1
+    }
+  }
+  if ($null -eq $pendingRequest) {
+    throw "Pending teacher registration request not found for $TeacherUsername."
+  }
+  [void](Invoke-Json -Method 'POST' -Path "/api/admin/teacher-registration-requests/$($pendingRequest.request_id)/approve" -AccessToken $token)
+}
+
+function Approve-PendingCourseUpload {
+  param(
+    [Parameter(Mandatory = $true)][int64]$CourseId,
+    [Parameter(Mandatory = $true)][ref]$AdminToken
+  )
+
+  $token = Get-AdminAccessToken -CachedToken $AdminToken
+  $pendingRequest = $null
+  for ($attempt = 0; $attempt -lt 10 -and $null -eq $pendingRequest; $attempt++) {
+    $requests = Expand-JsonList (
+      Invoke-Json -Method 'GET' -Path '/api/admin/course-upload-requests' -AccessToken $token
+    )
+    $pendingRequest = $requests | Where-Object {
+      ([int64]$_.course_id -eq $CourseId) -and "$($_.status)" -eq 'pending'
+    } | Select-Object -First 1
+    if ($null -eq $pendingRequest) {
+      Start-Sleep -Seconds 1
+    }
+  }
+  if ($null -eq $pendingRequest) {
+    return $false
+  }
+  [void](Invoke-Json -Method 'POST' -Path "/api/admin/course-upload-requests/$($pendingRequest.request_id)/approve" -AccessToken $token)
+  return $true
 }
 
 function New-BundleZip {
@@ -240,6 +337,7 @@ $teacherEmail = "$teacherUsername@example.com"
 $studentEmail = "$studentUsername@example.com"
 $courseSubject = "Smoke Algebra $suffix"
 $workDir = Join-Path ([System.IO.Path]::GetTempPath()) "family_teacher_smoke_$suffix"
+$adminToken = $null
 
 Write-Host "Base URL: $BaseUrl"
 Write-Host "Work directory: $workDir"
@@ -260,6 +358,17 @@ try {
   $teacherToken = "$($teacherAuth.access_token)"
   if ([string]::IsNullOrWhiteSpace($teacherToken)) {
     throw 'Teacher registration returned empty access_token.'
+  }
+  $teacherRole = "$($teacherAuth.role)"
+  if ($teacherRole -eq 'teacher_pending') {
+    Write-Host 'Teacher registration is pending. Approving through admin moderation...'
+    Approve-PendingTeacherRegistration -TeacherUsername $teacherUsername -AdminToken ([ref]$adminToken)
+    $teacherLogin = Invoke-AuthLogin -Username $teacherUsername -Password $teacherPassword
+    $teacherToken = "$($teacherLogin.access_token)"
+    $teacherRole = "$($teacherLogin.role)"
+    if ([string]::IsNullOrWhiteSpace($teacherToken) -or $teacherRole -ne 'teacher') {
+      throw "Teacher approval completed but refreshed login role is '$teacherRole'."
+    }
   }
 
   Write-Host 'Registering student...'
@@ -298,6 +407,9 @@ try {
   $bundleVersionId = [int64]$uploadResult.bundle_version_id
   if ($bundleVersionId -le 0) {
     throw 'Upload response missing bundle_version_id.'
+  }
+  if (Approve-PendingCourseUpload -CourseId $effectiveCourseId -AdminToken ([ref]$adminToken)) {
+    Write-Host 'Approved pending course upload through admin moderation.'
   }
 
   Write-Host 'Publishing course...'
