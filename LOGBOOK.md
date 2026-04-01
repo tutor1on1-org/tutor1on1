@@ -1,5 +1,5 @@
 # LOGBOOK
-Historical timeline. Keep active runbook details in `WORKLOG.md`.
+Historical timeline. Keep active runbook details in `WORKLOG.md`. Entries that mention row-level session/progress/enrollment sync remain as historical delivery records only.
 
 ## 2026-03-30
 - Fixed the fresh-device progress replay bug: downloading/importing server progress now also stamps the local progress-upload sync ledger, so the next normal sync does not re-upload that server data from scratch on a new install.

@@ -23,9 +23,9 @@ Intentionally excluded from this snapshot:
 
 ## What This Client Does
 
-- Teacher workflows: course import/reload, marketplace upload, enrollment review, student progress review
+- Teacher workflows: course import/reload, marketplace upload, enrollment review, and artifact publishing
 - Student workflows: login, catalog browsing, enrollment request, bundle download, guided tutor sessions
-- Multi-device sync for session and progress data
+- Artifact-manifest sync for course and bundle updates
 - Optional LLM/TTS/STT integrations with user-supplied API keys
 
 ## Transparency Notes
@@ -45,7 +45,7 @@ The client stores data in two places:
 
 Official app backend:
 
-- Default auth/sync/course-download base URL: `https://api.tutor1on1.org`
+- Default backend base URL: `https://api.tutor1on1.org`
 - This can be overridden at build time with `--dart-define=AUTH_BASE_URL=...`
 
 Optional user-configured model providers:
@@ -98,7 +98,7 @@ flutter run --dart-define=AUTH_ALLOW_INSECURE_TLS=true
 The public release flow is versioned around Git tags and GitHub Release assets.
 
 - Current public release tag: `v1.0.1`
-- App version in `pubspec.yaml`: `1.0.1+2`
+- App version in `pubspec.yaml`: `1.0.1+7`
 - Standard asset names:
   - `Tutor1on1.apk`
   - `Tutor1on1.zip`

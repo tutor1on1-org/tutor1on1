@@ -1,5 +1,7 @@
 # DONES
-Last updated: 2026-03-30
+Last updated: 2026-04-01
+
+- Historical scope note: entries below are delivery history. Some older entries reference the retired row-level sync model and should not be read as the current architecture contract.
 
 - Fixed teacher sync auth-loss + prompt-editor freeze regressions together: access-token refresh now runs through one shared single-flight coordinator across marketplace and session-sync clients so concurrent `401` refresh paths do not race and wipe rotated tokens, teacher home now surfaces background auth-expiry instead of silently swallowing it after sync, prompt-template validation now stays inside the editor dialog so invalid saves do not close/rebuild the heavy Prompt Settings page, and large bundle hash/validate/metadata hot-path work now offloads from the UI isolate for smoother timer syncs. Added `test/auth_token_refresh_coordinator_test.dart` and `test/prompt_editor_dialog_test.dart`, revalidated with focused API/dialog/bundle tests, `flutter analyze`, full `flutter test`, and fresh release builds, and bumped the client build to `1.0.1+7`.
 

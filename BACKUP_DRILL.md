@@ -1,8 +1,8 @@
 # Backup Restore Drill
-Last updated: 2026-02-28
+Last updated: 2026-04-01
 
 ## Goal
-Verify backups are restorable and usable for service recovery before a real incident.
+Verify backups are restorable and usable for account, marketplace, bundle, and artifact-manifest recovery before a real incident.
 
 ## Frequency
 - Run at least monthly.
@@ -29,7 +29,7 @@ mysql -u <user> -p family_teacher_restore_drill < /path/to/backup.sql
 ```
 
 3. Validate schema and data integrity
-- Confirm critical tables exist: `users`, `teacher_accounts`, `courses`, `bundles`, `bundle_versions`, `enrollments`, `chat_sessions`, `student_course_progress`.
+- Confirm critical account, marketplace, bundle, enrollment, and artifact-manifest tables exist.
 - Run row-count sanity checks and compare against expected production ranges at backup time.
 - Command template:
 ```bash
@@ -45,7 +45,7 @@ mysql -u <user> -p -D family_teacher_restore_drill -e "SELECT COUNT(*) AS bundle
 powershell -ExecutionPolicy Bypass -File scripts/test_auth.ps1 -BaseUrl "https://<restore-host>"
 powershell -ExecutionPolicy Bypass -File scripts/smoke_teacher_student_flow.ps1 -BaseUrl "https://<restore-host>"
 ```
-- Verify enrollment request, approval, and bundle download paths pass.
+- Verify enrollment request, approval, bundle download, and current artifact-manifest delivery paths pass.
 
 5. Cleanup and record evidence
 - Stop restore API instance.
@@ -75,5 +75,5 @@ powershell -ExecutionPolicy Bypass -File scripts/smoke_teacher_student_flow.ps1 
 9. After recovery, run post-incident verification:
 - login/auth flows
 - enrollment and bundle download
-- session/progress sync
+- artifact compare/download paths
 10. Publish postmortem with root cause, timeline, and prevention actions.

@@ -1,8 +1,11 @@
 # BUGS
-Last updated: 2026-03-30
+Last updated: 2026-04-01
 
 ## Active watch
 - Student import race after bundle download (monitoring): fixed by awaiting archive extraction in client bundle service (`f77e7e0`); keep watching for recurrence in production-like flow.
+
+## Scope note
+- Current canonical sync model is zip-artifact manifest sync. Bug entries that explicitly target the retired row-level session/progress/enrollment sync model are kept only as historical root-cause references.
 
 ## Lessons learned (do not repeat)
 1. Archive extraction race

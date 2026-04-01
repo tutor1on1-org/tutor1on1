@@ -18,6 +18,6 @@ MVP server for teacher hosting + student marketplace.
 
 ## Notes
 - This repo is intentionally minimal; most endpoints are stubs until Phase 2.
-- All content bodies are E2EE; server stores only ciphertext + minimal metadata.
+- Current server scope is account, marketplace, enrollment, bundle storage, and artifact-manifest delivery metadata. It is not the retired row-level message/progress sync service.
 - JWT rotation supports a staged rollout: sign with `JWT_SECRET`, optionally verify legacy tokens via `JWT_PREVIOUS_SECRETS` (comma-separated).
 - Set `APP_ENV=production` to enforce `RECOVERY_TOKEN_ECHO=false`.

@@ -16,10 +16,9 @@ By using the service, you agree to these Terms, the Privacy Notice, and the Mark
 ## 3. Service description
 We provide:
 - A public marketplace for teachers to publish courses and descriptions
-- Enrollment request/approval per course
-- Authenticated download access to course bundles for approved students
-- Multi-device synchronization for messages/progress (end-to-end encrypted content)
-- Optional peer-to-peer transfer when available; otherwise delivery may occur via the service
+- Enrollment request and approval per course
+- Authenticated bundle download access for approved students
+- Artifact-manifest comparison and bundle delivery for the current sync flow
 
 ## 4. User content (Marketplace)
 Teachers are responsible for the content they publish, including any contact details they choose to disclose.
@@ -27,23 +26,22 @@ You grant us a limited license to host and display marketplace content for opera
 
 ## 5. Prohibited conduct
 You must not:
-- Publish anyone else’s personal information (doxxing)
+- Publish anyone else's personal information (doxxing)
 - Harass, spam, impersonate others, or post illegal content
 - Attempt to bypass security controls or abuse the service
 
 ## 6. Enforcement
-We may remove marketplace content, restrict features, or suspend/terminate accounts based on reports and reviews.
+We may remove marketplace content, restrict features, or suspend or terminate accounts based on reports and reviews.
 
 ## 7. Deletions
-- Users may delete content within the app. Deletions are irreversible and will be synchronized to other devices and authorized recipient devices within the service.
-- Users may delete their account, which immediately disables login and triggers deletion processes (subject to backup rotation).
+- Users may delete their account, which immediately disables login and triggers deletion processes for account, marketplace, enrollment, and related service records (subject to backup rotation).
 
 ## 8. Disclaimers
-- Connectivity and synchronization depend on networks and may be interrupted.
-- The service is provided “as is” to the maximum extent permitted by applicable law.
+- Connectivity, bundle delivery, and artifact comparison depend on networks and may be interrupted.
+- The service is provided "as is" to the maximum extent permitted by applicable law.
 
 ## 9. Limitation of liability
 To the maximum extent permitted by applicable law, we are not liable for indirect or consequential damages.
 
 ## 10. Governing law
-These Terms are governed by applicable law of the Operator’s jurisdiction. (Replace with your final legal choice.)
+These Terms are governed by applicable law of the Operator's jurisdiction. (Replace with your final legal choice.)
