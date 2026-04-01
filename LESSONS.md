@@ -2,6 +2,16 @@
 
 Durable cross-session lessons and operating rules moved from AGENTS.md (memory-maintenance refactor).
 
+## Active sync model
+
+- Canonical sync direction rule: zip-artifact sync is the active source of truth. The canonical equality contract is the persisted artifact manifest only (`state1` sorted artifact list, `state2 = hash(state1)`), not row-level session/progress/enrollment payload sync.
+- Artifact-state generation rule: recompute artifact `state1/state2` only after successful artifact mutations or one-time migration/bootstrap. Do not hide business-row scans, folder rebuilds, or prompt-sensitive recomputes inside normal login/read sync.
+- Documentation alignment rule: when the sync model pivots, update `README.md`, `TODOS.md`, `PLANS.md`, and any sync-related `LESSONS.md` guidance in the same turn so retired designs do not remain documented as current behavior.
+
+## Historical lessons from the retired row-level sync design
+
+- Historical-scope note: any lesson below that talks about enrollment/course-list/session/progress `state1/state2`, per-item row sync state, session/progress upload/download mirrors, or E2EE row payload sync belongs to the retired row-level sync model unless a newer artifact-sync lesson explicitly restates it.
+
 - Tutor branching rule: do not ask students to type navigation commands like "another question" or "summarize". Drive tutor branching through explicit `Learn` / `Review` / `Summary` buttons; session auto-start and the `Learn` button must dispatch `learn`, the `Review` button must dispatch `review`, and prompt output must never auto-route the student between learn/review/summary modes.
 - Prompt bundle hash compatibility rule: treat legacy/current prompt metadata representations as semantically identical during bundle hashing. `_family_teacher/prompt_bundle.json` vs `_tutor1on1/prompt_bundle.json`, and `family_teacher_prompt_bundle_v1` vs `tutor1on1_prompt_bundle_v1`, must canonicalize to one hash or teacher sync will raise false bundle conflicts immediately after pulling a server bundle.
 - Teacher bundle round-trip rule: bundle fingerprints must be semantic, not transport-shaped. Canonicalize prompt metadata so field order, legacy `student` vs `student_course` scope aliases, timestamps/usernames/course ids, and even "missing prompt metadata" vs "explicit empty prompt metadata" hash the same when the effective teacher bundle is the same. After teacher/student import, store the downloaded bundle itself as the canonical local content artifact and immediately verify that local recompute reproduces the remote fingerprint.
