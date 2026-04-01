@@ -2,6 +2,7 @@ import '../db/app_database.dart';
 import '../llm/llm_service.dart';
 import '../llm/prompt_repository.dart';
 import '../llm/schema_validator.dart';
+import 'artifact_sync_api_service.dart';
 import 'backup_service.dart';
 import 'course_artifact_service.dart';
 import 'course_service.dart';
@@ -10,19 +11,16 @@ import 'enrollment_sync_service.dart';
 import 'llm_call_repository.dart';
 import 'llm_log_repository.dart';
 import 'marketplace_api_service.dart';
-import 'session_crypto_service.dart';
-import 'session_sync_api_service.dart';
 import 'session_sync_service.dart';
 import 'session_upload_cache_service.dart';
 import 'secure_storage_service.dart';
 import 'settings_repository.dart';
 import 'session_service.dart';
+import 'student_kp_artifact_store_service.dart';
 import 'stt_service.dart';
 import 'sync_log_repository.dart';
-import 'sync_state_repository.dart';
 import 'tts_service.dart';
 import 'tts_log_repository.dart';
-import 'user_key_service.dart';
 
 class AppServices {
   AppServices._({
@@ -72,6 +70,7 @@ class AppServices {
     final settingsRepository = SettingsRepository(db);
     final secureStorage = SecureStorageService();
     await secureStorage.ensureReadableOrReset();
+    await secureStorage.clearLegacySyncCompatibilityState();
     final deviceIdentityService = DeviceIdentityService(secureStorage);
     final settings = await settingsRepository.load();
     final baseUrl = settings.baseUrl.trim();
@@ -101,17 +100,17 @@ class AppServices {
       courseArtifactService: courseArtifactService,
     );
     final marketplaceApi = MarketplaceApiService(secureStorage: secureStorage);
+    final artifactSyncApi =
+        ArtifactSyncApiService(secureStorage: secureStorage);
     final enrollmentSyncService = EnrollmentSyncService(
       db: db,
       secureStorage: secureStorage,
       courseService: courseService,
       marketplaceApi: marketplaceApi,
       promptRepository: promptRepository,
+      artifactApi: artifactSyncApi,
       courseArtifactService: courseArtifactService,
     );
-    db.setSyncRelevantChangeCallback((change) async {
-      await enrollmentSyncService.handleLocalSyncRelevantChange(change);
-    });
     final sessionUploadCacheService = SessionUploadCacheService(db: db);
     final sessionService = SessionService(
       db,
@@ -121,25 +120,17 @@ class AppServices {
       llmLogRepository,
       sessionUploadCacheService: sessionUploadCacheService,
     );
-    final sessionSyncApi = SessionSyncApiService(secureStorage: secureStorage);
-    final cryptoService = SessionCryptoService();
-    final syncStateRepository = LegacyBackfillSyncStateRepository(
-      primary: DatabaseSyncStateRepository(db),
-      legacy: secureStorage,
-    );
-    final userKeyService = UserKeyService(
-      secureStorage: secureStorage,
-      api: sessionSyncApi,
-      crypto: cryptoService,
-    );
+    final artifactStore = StudentKpArtifactStoreService();
     final sessionSyncService = SessionSyncService(
       db: db,
-      secureStorage: syncStateRepository,
-      api: sessionSyncApi,
-      userKeyService: userKeyService,
-      crypto: cryptoService,
-      sessionUploadCacheService: sessionUploadCacheService,
+      api: artifactSyncApi,
+      artifactStore: artifactStore,
     );
+    await sessionSyncService.ensureLocalCutoverInitialized();
+    db.setSyncRelevantChangeCallback((change) async {
+      await enrollmentSyncService.handleLocalSyncRelevantChange(change);
+      await sessionSyncService.handleLocalSyncRelevantChange(change);
+    });
     final ttsLogRepository = TtsLogRepository(settingsRepository, db: db);
     final ttsService =
         TtsService(secureStorage, settingsRepository, ttsLogRepository);

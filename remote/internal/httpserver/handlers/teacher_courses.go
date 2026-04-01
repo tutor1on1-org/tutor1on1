@@ -61,35 +61,6 @@ func (h *TeacherCoursesHandler) ListCourses(c *fiber.Ctx) error {
 	return respondJSONWithETag(c, results)
 }
 
-func (h *TeacherCoursesHandler) GetCoursesSyncState2(c *fiber.Ctx) error {
-	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
-	if err != nil {
-		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
-	}
-	state2, err := readTeacherCourseSyncState2(h.cfg.Store.DB, userID)
-	if err != nil {
-		return err
-	}
-	return c.JSON(fiber.Map{
-		"state2": state2,
-	})
-}
-
-func (h *TeacherCoursesHandler) GetCoursesSyncState1(c *fiber.Ctx) error {
-	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
-	if err != nil {
-		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
-	}
-	items, err := listTeacherCourseStateItems(h.cfg.Store.DB, userID)
-	if err != nil {
-		return err
-	}
-	return c.JSON(fiber.Map{
-		"state2": buildTeacherCourseState2(items),
-		"items":  items,
-	})
-}
-
 func (h *TeacherCoursesHandler) listTeacherCourseSummaries(teacherID int64) ([]teacherCourseSummary, error) {
 	rows, err := h.cfg.Store.DB.Query(
 		`SELECT c.id, c.subject, c.grade, c.description,
@@ -290,9 +261,6 @@ func (h *TeacherCoursesHandler) CreateCourse(c *fiber.Ctx) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
-	}
-	if err := refreshTeacherCourseSyncStateForUser(h.cfg.Store.DB, userID); err != nil {
-		return err
 	}
 	labels, err := listCourseSubjectLabels(h.cfg.Store.DB, courseID)
 	if err != nil {
@@ -588,26 +556,8 @@ func (h *TeacherCoursesHandler) DeleteCourse(c *fiber.Ctx) error {
 		}
 	}()
 
-	if err = deleteSyncDownloadStateByCourse(tx, courseID); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "sync download state delete failed")
-	}
-	if _, err = tx.Exec(
-		`DELETE FROM session_text_sync WHERE course_id = ?`,
-		courseID,
-	); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "session sync delete failed")
-	}
-	if _, err = tx.Exec(
-		`DELETE FROM progress_sync WHERE course_id = ?`,
-		courseID,
-	); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "progress sync delete failed")
-	}
-	if _, err = tx.Exec(
-		`DELETE FROM progress_sync_chunks WHERE course_id = ?`,
-		courseID,
-	); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "progress chunk sync delete failed")
+	if err = deleteStudentArtifactsForCourseTx(tx, courseID); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "student artifact delete failed")
 	}
 	if _, err = tx.Exec(
 		`DELETE FROM e2ee_events WHERE course_id = ?`,
@@ -626,16 +576,6 @@ func (h *TeacherCoursesHandler) DeleteCourse(c *fiber.Ctx) error {
 		courseID,
 	); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "requests delete failed")
-	}
-	if _, err = tx.Exec(
-		`INSERT INTO enrollment_deletion_events (student_id, teacher_user_id, course_id, reason)
-		 SELECT e.student_id, ?, e.course_id, 'course_deleted'
-		 FROM enrollments e
-		 WHERE e.course_id = ? AND e.status = 'active'`,
-		userID,
-		courseID,
-	); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "deletion event insert failed")
 	}
 	if _, err = tx.Exec(
 		`DELETE FROM enrollments WHERE course_id = ?`,
@@ -682,11 +622,11 @@ func (h *TeacherCoursesHandler) DeleteCourse(c *fiber.Ctx) error {
 	if err = tx.Commit(); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
 	}
-	if err := refreshTeacherCourseSyncStateForUser(h.cfg.Store.DB, userID); err != nil {
-		return err
-	}
-	if err := refreshStudentEnrollmentSyncStateForUsers(h.cfg.Store.DB, affectedStudentIDs); err != nil {
-		return err
+	if err := refreshArtifactStatesForUsers(
+		h.cfg.Store.DB,
+		append([]int64{userID}, affectedStudentIDs...),
+	); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
 	}
 
 	if h.cfg.Storage != nil {

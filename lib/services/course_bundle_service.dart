@@ -164,6 +164,14 @@ class CourseBundleService {
     return computeBundleSemanticHashFromBundle(bundleFile);
   }
 
+  Future<String> computeBundleByteHash(File bundleFile) async {
+    if (!bundleFile.existsSync()) {
+      throw StateError('Bundle file not found: ${bundleFile.path}');
+    }
+    final bytes = await bundleFile.readAsBytes();
+    return sha256.convert(bytes).toString();
+  }
+
   Future<String> computeBundleSemanticHashFromBundle(
     File bundleFile, {
     Map<String, dynamic>? promptMetadataOverride,

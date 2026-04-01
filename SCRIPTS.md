@@ -65,6 +65,7 @@ Current integration flow covers deterministic auth-gated register/logout/login p
 
 ## Local app run and release build
 ```powershell
+flutter build apk --config-only
 flutter build apk --release
 flutter run -d windows
 flutter build windows --release
@@ -105,6 +106,7 @@ Optional flags:
 - `-SkipBuild` (reuse existing `build/app/outputs/flutter-apk/app-release.apk`)
 
 Default safeguards:
+- Runs `flutter build apk --config-only` immediately before the release APK build to refresh Android plugin wiring when the Flutter toolchain regresses on `integration_test` dev dependencies.
 - Publishes candidate first as `Tutor1on1_candidate.apk`.
 - Verifies remote SHA-256 against the local APK before promotion.
 - Verifies both candidate and canonical public download URLs.
@@ -298,6 +300,16 @@ go test ./...
 go run ./cmd/server
 go build -o family-teacher-api ./cmd/server
 ```
+
+### One-time artifact cutover migration
+```powershell
+cd remote
+go run ./cmd/artifact_cutover -student albert=1234 -student dennis=1234
+go run ./cmd/artifact_cutover -student albert=1234 -student dennis=1234 -drop-legacy -confirm-hard-cutover
+```
+Operational notes:
+- `-student` may be repeated, but the provided username set must exactly match the distinct legacy student usernames present in `session_text_sync` / `progress_sync` or the cutover fails hard.
+- Use `-drop-legacy -confirm-hard-cutover` only after backup verification and artifact-manifest validation succeed.
 
 ## SQLC generation
 ```powershell

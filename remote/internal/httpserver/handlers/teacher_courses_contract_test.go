@@ -95,41 +95,6 @@ func TestDeleteLastBundleVersionAutoUnpublishesCourse(t *testing.T) {
 	mock.ExpectExec(`(?s)UPDATE course_catalog_entries\s+SET visibility = 'private', published_at = NULL\s+WHERE course_id = \? AND teacher_id = \?`).
 		WithArgs(courseID, teacherID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery(`SELECT id FROM teacher_accounts WHERE user_id = \? AND status = 'active' LIMIT 1`).
-		WithArgs(userID).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(teacherID))
-	mock.ExpectQuery(`SELECT c.id, c.subject,\s*\(`).
-		WithArgs(teacherID, teacherID).
-		WillReturnRows(sqlmock.NewRows([]string{
-			"id",
-			"subject",
-			"latest_bundle_version_id",
-			"latest_bundle_hash",
-		}).AddRow(
-			courseID,
-			"Physics",
-			nil,
-			nil,
-		))
-	mock.ExpectBegin()
-	mock.ExpectExec(`DELETE FROM teacher_course_sync_state1_items WHERE user_id = \?`).
-		WithArgs(userID).
-		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`INSERT INTO teacher_course_sync_state1_items`).
-		WithArgs(userID, courseID, "Physics", int64(0), "").
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec(`INSERT INTO teacher_course_sync_state2 \(user_id, state2, updated_at\)`).
-		WithArgs(userID, buildState2([]string{
-			buildTeacherCourseStateFingerprint(teacherCourseSummary{
-				CourseID: courseID,
-				Subject:  "Physics",
-			}),
-		})).
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectCommit()
-	mock.ExpectQuery(`SELECT DISTINCT student_id\s+FROM enrollments\s+WHERE course_id = \? AND status = 'active'`).
-		WithArgs(courseID).
-		WillReturnRows(sqlmock.NewRows([]string{"student_id"}))
 
 	app := buildTeacherContractTestApp(db, []string{"test-secret"})
 	token := signTestJWT(t, "test-secret", userID, true)

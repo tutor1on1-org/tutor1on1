@@ -567,7 +567,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         bundleLabel: course.subject,
       );
       bundleFile = prepared.bundleFile;
-      final localSemanticHash = prepared.hash;
+      final localBundleHash = prepared.hash;
       final remoteVersions = await _marketplaceApi.listTeacherBundleVersions(
         remoteCourseId,
       );
@@ -575,7 +575,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
           remoteVersions.isNotEmpty ? remoteVersions.first : null;
       if (latestRemoteVersion != null &&
           latestRemoteVersion.hash.isNotEmpty &&
-          latestRemoteVersion.hash == localSemanticHash) {
+          latestRemoteVersion.hash == localBundleHash) {
         _setPersistentMessage(
           'No file changes detected compared with latest version hash. No upload needed.',
           isError: false,
@@ -650,9 +650,6 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     } catch (error) {
       _setPersistentMessage(l10n.marketplaceUploadFailed('$error'));
     } finally {
-      if (bundleFile != null && bundleFile.existsSync()) {
-        await bundleFile.delete();
-      }
       if (mounted) {
         setState(() {
           _uploadingCourseIds.remove(course.id);

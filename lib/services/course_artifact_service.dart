@@ -244,14 +244,34 @@ class CourseArtifactService {
         'Cached course content bundle is missing: ${contentBundle.path}',
       );
     }
-    final bundleFile = await _bundleService.cloneBundleWithPromptMetadata(
+    final inputFingerprint =
+        await _bundleService.computeBundleSemanticHashFromBundle(
+      contentBundle,
+      promptMetadataOverride: promptMetadata,
+    );
+    final cached = await _readPreparedUploadBundle(
+      courseVersionId: courseVersionId,
+      expectedInputFingerprint: inputFingerprint,
+    );
+    if (cached != null) {
+      return cached;
+    }
+    final tempBundle = await _bundleService.cloneBundleWithPromptMetadata(
       sourceBundle: contentBundle,
       promptMetadata: promptMetadata,
       label: bundleLabel,
     );
-    final hash = await _bundleService.computeBundleSemanticHashFromBundle(
-      contentBundle,
-      promptMetadataOverride: promptMetadata,
+    final bundleFile = await _writePreparedUploadBundle(
+      courseVersionId: courseVersionId,
+      tempBundle: tempBundle,
+    );
+    final hash = await _bundleService.computeBundleByteHash(bundleFile);
+    await _writePreparedUploadBundleMetadata(
+      courseVersionId: courseVersionId,
+      metadata: _StoredUploadBundleMetadata(
+        inputFingerprint: inputFingerprint,
+        sha256: hash,
+      ),
     );
     return PreparedCourseUploadBundle(
       bundleFile: bundleFile,
@@ -282,6 +302,33 @@ class CourseArtifactService {
     );
   }
 
+  Future<PreparedCourseUploadBundle?> readPreparedUploadBundle(
+    int courseVersionId,
+  ) async {
+    if (courseVersionId <= 0) {
+      throw StateError('Course version id must be positive.');
+    }
+    final metadata = await _readPreparedUploadBundleMetadata(courseVersionId);
+    if (metadata == null) {
+      return null;
+    }
+    final bundleFile = await _preparedUploadBundleFile(courseVersionId);
+    if (!bundleFile.existsSync()) {
+      return null;
+    }
+    final hash = metadata.sha256.trim();
+    if (hash.isEmpty) {
+      throw StateError(
+        'Prepared upload bundle metadata is missing sha256 for course '
+        '$courseVersionId.',
+      );
+    }
+    return PreparedCourseUploadBundle(
+      bundleFile: bundleFile,
+      hash: hash,
+    );
+  }
+
   Future<void> _writeManifest(
     Directory courseDir,
     CourseArtifactManifest manifest,
@@ -289,6 +336,86 @@ class CourseArtifactService {
     final manifestFile = File(p.join(courseDir.path, 'manifest.json'));
     await manifestFile.writeAsString(
       jsonEncode(manifest.toJson()),
+      encoding: utf8,
+    );
+  }
+
+  Future<PreparedCourseUploadBundle?> _readPreparedUploadBundle({
+    required int courseVersionId,
+    required String expectedInputFingerprint,
+  }) async {
+    final metadata = await _readPreparedUploadBundleMetadata(courseVersionId);
+    if (metadata == null ||
+        metadata.inputFingerprint.trim() != expectedInputFingerprint.trim()) {
+      return null;
+    }
+    final bundleFile = await _preparedUploadBundleFile(courseVersionId);
+    if (!bundleFile.existsSync()) {
+      return null;
+    }
+    final hash = metadata.sha256.trim();
+    if (hash.isEmpty) {
+      return null;
+    }
+    return PreparedCourseUploadBundle(
+      bundleFile: bundleFile,
+      hash: hash,
+    );
+  }
+
+  Future<File> _writePreparedUploadBundle({
+    required int courseVersionId,
+    required File tempBundle,
+  }) async {
+    try {
+      final bundleFile = await _preparedUploadBundleFile(courseVersionId);
+      await bundleFile.parent.create(recursive: true);
+      if (bundleFile.existsSync()) {
+        await bundleFile.delete();
+      }
+      await tempBundle.copy(bundleFile.path);
+      return bundleFile;
+    } finally {
+      if (tempBundle.existsSync()) {
+        await tempBundle.delete();
+      }
+    }
+  }
+
+  Future<File> _preparedUploadBundleFile(int courseVersionId) async {
+    final courseDir = await _resolveCourseArtifactDirectory(courseVersionId);
+    return File(p.join(courseDir.path, 'sync_upload_bundle.zip'));
+  }
+
+  Future<File> _preparedUploadBundleMetadataFile(int courseVersionId) async {
+    final courseDir = await _resolveCourseArtifactDirectory(courseVersionId);
+    return File(p.join(courseDir.path, 'sync_upload_bundle.json'));
+  }
+
+  Future<_StoredUploadBundleMetadata?> _readPreparedUploadBundleMetadata(
+    int courseVersionId,
+  ) async {
+    final metadataFile =
+        await _preparedUploadBundleMetadataFile(courseVersionId);
+    if (!metadataFile.existsSync()) {
+      return null;
+    }
+    final decoded = jsonDecode(await metadataFile.readAsString(encoding: utf8));
+    if (decoded is! Map<String, dynamic>) {
+      throw StateError('Prepared upload bundle metadata is invalid.');
+    }
+    return _StoredUploadBundleMetadata.fromJson(decoded);
+  }
+
+  Future<void> _writePreparedUploadBundleMetadata({
+    required int courseVersionId,
+    required _StoredUploadBundleMetadata metadata,
+  }) async {
+    final metadataFile =
+        await _preparedUploadBundleMetadataFile(courseVersionId);
+    await metadataFile.parent.create(recursive: true);
+    await metadataFile.writeAsString(
+      jsonEncode(metadata.toJson()),
       encoding: utf8,
     );
   }
@@ -465,6 +592,28 @@ class CourseArtifactService {
       root.createSync(recursive: true);
     }
     return root;
+  }
+}
+
+class _StoredUploadBundleMetadata {
+  _StoredUploadBundleMetadata({
+    required this.inputFingerprint,
+    required this.sha256,
+  });
+
+  final String inputFingerprint;
+  final String sha256;
+
+  Map<String, dynamic> toJson() => {
+        'input_fingerprint': inputFingerprint,
+        'sha256': sha256,
+      };
+
+  factory _StoredUploadBundleMetadata.fromJson(Map<String, dynamic> json) {
+    return _StoredUploadBundleMetadata(
+      inputFingerprint: (json['input_fingerprint'] as String?) ?? '',
+      sha256: (json['sha256'] as String?) ?? '',
+    );
   }
 }
 

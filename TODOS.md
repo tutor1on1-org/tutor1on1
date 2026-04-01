@@ -18,19 +18,19 @@ Purpose: Make sync equality mechanical and auditable instead of interpretation-b
 
 #### V1 Artifact Inventory
 Purpose: Remove implementation guesswork by defining exactly which zip files are syncable in the first hard-cutover release.
-- The v1 syncable artifact classes are published course bundle zip files and student per-session zip files.
+- The v1 syncable artifact classes are published course bundle zip files and student per-kp zip files.
 - Course bundle artifacts are stored by the server bundle storage path `bundles/<bundle_id>/<version>.zip`.
-- Student mutable artifacts are per-session zip files. Each student session is one syncable zip artifact and is not aggregated by chapter.
-- Student session artifacts carry the student-owned session/progress sync payload for that session.
+- Student mutable artifacts are per-kp zip files. Each artifact is scoped to one `student + course + kp_key` tuple and is not aggregated by chapter.
+- Each student per-kp artifact carries all sessions for that `kp_key` plus the canonical progress state for that same `kp_key`.
 - Prompt metadata is part of the course bundle zip and is not a separate sync artifact.
 - Local chapter zip files, extracted course folders, temporary upload bundles, and any other rebuild/cache outputs are derived local artifacts and are not syncable artifacts.
 - Student and teacher manifests are different filtered views over the same canonical server artifact set.
-- Enrollment/publication records may decide which bundle artifacts appear in a user's manifest, and session ownership records may decide which session artifacts appear in a user's manifest, but those business records are not themselves sync artifacts.
-- Teacher uploads course bundle artifacts. Students upload their own per-session session/progress artifacts. Conflict resolution is artifact-class-specific but is always explicit.
+- Enrollment/publication records may decide which bundle artifacts appear in a user's manifest, and session ownership records may decide which per-kp student artifacts appear in a user's manifest, but those business records are not themselves sync artifacts.
+- Teacher uploads course bundle artifacts. Students upload their own per-kp session/progress artifacts. Conflict resolution is artifact-class-specific but is always explicit.
 
 #### Remote Data Fate
 Purpose: State exactly which existing remote data survives as part of the new runtime and which data is retired into backup only.
-- Promote existing server course bundle zip assets, plus convert existing row-level student session/progress data into canonical per-session student artifacts in the new artifact-manifest runtime.
+- Promote existing server course bundle zip assets, plus convert existing row-level student session/progress data into canonical per-kp student artifacts in the new artifact-manifest runtime.
 - Retire old row-level sync data to backup only, including `session_text_sync`, `progress_sync`, `progress_sync_chunks`, `progress_sync_audit`, `sync_download_state_items`, `sync_download_state2`, `teacher_course_sync_state1_items`, `teacher_course_sync_state2`, `student_enrollment_sync_state1_items`, and `student_enrollment_sync_state2`.
 - Retire old row-level sync APIs, old row-level cursors, old secure-storage compatibility records, old sync item-state metadata, and old read-time backfill/rebuild logic to backup/history only.
 
@@ -47,7 +47,7 @@ Purpose: Keep `state2` cheap and reliable by updating it only when the artifact 
 #### Shared Sync Path
 Purpose: Ensure teacher and student use one sync engine instead of keeping two approximate compare/download implementations alive.
 - Teacher and student must use the same artifact-manifest sync pipeline: `compare state2 -> fetch state1 -> diff by artifact_id -> transfer changed artifacts -> verify hash parity`.
-- Teacher and student are allowed to differ only in data sources, permissions, artifact classes, or post-transfer side effects. In v1, teacher upload targets course bundle artifacts and student upload targets per-session student artifacts.
+- Teacher and student are allowed to differ only in data sources, permissions, artifact classes, or post-transfer side effects. In v1, teacher upload targets course bundle artifacts and student upload targets per-kp student artifacts.
 - Teacher and student must not keep separate row-level equality logic, separate fallback logic, or separate compare/download topology.
 
 #### Mandatory Deletion Scope
@@ -69,7 +69,7 @@ Purpose: Convert the plan from broad direction into a strict implementation orde
 - Step 4: Create the new server APIs: `get_state2`, `get_state1`, `download_artifacts(diff_ids)`, and `upload_artifacts(diff_ids)`.
 - Step 5: Make server upload persist the uploaded zip as the canonical artifact directly, without repacking, metadata rewriting, or business-row rebuild.
 - Step 6: Make server upload return explicit artifact-level conflicts and never auto-resolve by timestamp.
-- Step 7: Write the one-time server conversion script that imports existing server course bundle zip assets and converts existing row-level student session/progress data into per-session student artifacts before generating the first authoritative `state1/state2`.
+- Step 7: Write the one-time server conversion script that imports existing server course bundle zip assets and converts existing row-level student session/progress data into per-kp student artifacts before generating the first authoritative `state1/state2`.
 - Step 8: Verify the production backup, run the conversion once, validate the converted manifest, and keep the backup as the only restore path.
 - Step 9: Delete old server sync code paths, old server sync APIs, and old sync-only tables instead of leaving them dormant.
 - Step 10: Add the new client artifact store and make it the only local runtime source for `state1/state2`.
@@ -96,7 +96,7 @@ Purpose: Refuse release until the hard cutover is proven by real artifact behavi
 - Gate 2: Fast-path test proves `login -> sync -> logout -> login` performs zero uploads and zero downloads on the second login.
 - Gate 3: Single-change download test proves one changed server artifact transfers exactly one artifact.
 - Gate 4: Single-change upload test proves one changed local artifact transfers exactly one artifact.
-- Gate 4a: Student upload gate proves a single changed student session transfers exactly one per-session artifact and does not aggregate by chapter.
+- Gate 4a: Student upload gate proves a single changed `student + course + kp_key` scope transfers exactly one per-kp artifact and does not aggregate by chapter.
 - Gate 5: Conflict gate proves artifact conflicts block on user choice and do not mark sync clean before the decision.
 - Gate 6: Delete gate proves artifact deletion propagates correctly without silent restore or silent delete.
 - Gate 7: Migration gate proves production backup verification, conversion success, restore drill, and interrupted-rollout handling.

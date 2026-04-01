@@ -3,7 +3,6 @@ package handlers
 import (
 	"database/sql"
 	"errors"
-	"strconv"
 	"strings"
 	"time"
 
@@ -357,35 +356,6 @@ func (h *EnrollmentHandler) ListEnrollments(c *fiber.Ctx) error {
 	return respondJSONWithETag(c, results)
 }
 
-func (h *EnrollmentHandler) GetEnrollmentsSyncState2(c *fiber.Ctx) error {
-	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
-	if err != nil {
-		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
-	}
-	state2, err := readStudentEnrollmentSyncState2(h.cfg.Store.DB, userID)
-	if err != nil {
-		return err
-	}
-	return c.JSON(fiber.Map{
-		"state2": state2,
-	})
-}
-
-func (h *EnrollmentHandler) GetEnrollmentsSyncState1(c *fiber.Ctx) error {
-	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
-	if err != nil {
-		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
-	}
-	items, err := listStudentEnrollmentStateItems(h.cfg.Store.DB, userID)
-	if err != nil {
-		return err
-	}
-	return c.JSON(fiber.Map{
-		"state2": buildStudentEnrollmentState2(items),
-		"items":  items,
-	})
-}
-
 func (h *EnrollmentHandler) listEnrollmentSummaries(userID int64) ([]enrollmentSummary, error) {
 	rows, err := h.cfg.Store.DB.Query(
 		`SELECT e.id, e.course_id, t.user_id, e.status, e.assigned_at,
@@ -706,8 +676,11 @@ func (h *EnrollmentHandler) ApproveRequest(c *fiber.Ctx) error {
 	if err := tx.Commit(); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
 	}
-	if err := refreshStudentEnrollmentSyncStateForUser(h.cfg.Store.DB, studentID); err != nil {
-		return err
+	if err := refreshArtifactStatesForUsers(
+		h.cfg.Store.DB,
+		[]int64{studentID, userID},
+	); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
 	}
 	return c.JSON(fiber.Map{"status": "approved"})
 }
@@ -813,30 +786,12 @@ func (h *EnrollmentHandler) ApproveQuitRequest(c *fiber.Ctx) error {
 	if affected == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "enrollment not active")
 	}
-	if err := deleteSyncDownloadStateByCourseAndStudent(
+	if err := deleteStudentArtifactsForCourseAndStudentTx(
 		tx,
 		courseID,
 		studentID,
 	); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "sync download state delete failed")
-	}
-	if _, err := tx.Exec(
-		`DELETE FROM session_text_sync WHERE course_id = ? AND student_user_id = ?`,
-		courseID, studentID,
-	); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "session sync delete failed")
-	}
-	if _, err := tx.Exec(
-		`DELETE FROM progress_sync WHERE course_id = ? AND student_user_id = ?`,
-		courseID, studentID,
-	); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "progress sync delete failed")
-	}
-	if _, err := tx.Exec(
-		`DELETE FROM progress_sync_chunks WHERE course_id = ? AND student_user_id = ?`,
-		courseID, studentID,
-	); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "progress chunk sync delete failed")
+		return fiber.NewError(fiber.StatusInternalServerError, "student artifact delete failed")
 	}
 	if _, err := tx.Exec(
 		`DELETE FROM e2ee_events WHERE course_id = ? AND (sender_user_id = ? OR recipient_user_id = ?)`,
@@ -844,18 +799,14 @@ func (h *EnrollmentHandler) ApproveQuitRequest(c *fiber.Ctx) error {
 	); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "events delete failed")
 	}
-	if _, err := tx.Exec(
-		`INSERT INTO enrollment_deletion_events (student_id, teacher_user_id, course_id, reason)
-		 VALUES (?, ?, ?, 'quit_approved')`,
-		studentID, userID, courseID,
-	); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "deletion event insert failed")
-	}
 	if err := tx.Commit(); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
 	}
-	if err := refreshStudentEnrollmentSyncStateForUser(h.cfg.Store.DB, studentID); err != nil {
-		return err
+	if err := refreshArtifactStatesForUsers(
+		h.cfg.Store.DB,
+		[]int64{studentID, userID},
+	); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
 	}
 	return c.JSON(fiber.Map{"status": "approved"})
 }
@@ -890,87 +841,6 @@ func (h *EnrollmentHandler) RejectQuitRequest(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "quit request not found")
 	}
 	return c.JSON(fiber.Map{"status": "rejected"})
-}
-
-func (h *EnrollmentHandler) ListDeletionEvents(c *fiber.Ctx) error {
-	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
-	if err != nil {
-		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
-	}
-	limit, err := parseLimitQuery(c, 200, 500)
-	if err != nil {
-		return err
-	}
-	sinceID := int64(0)
-	sinceRaw := strings.TrimSpace(c.Query("since_id"))
-	if sinceRaw != "" {
-		parsed, err := strconv.ParseInt(sinceRaw, 10, 64)
-		if err != nil || parsed < 0 {
-			return fiber.NewError(fiber.StatusBadRequest, "since_id invalid")
-		}
-		sinceID = parsed
-	}
-	rows, err := h.cfg.Store.DB.Query(
-		`SELECT ede.id, ede.student_id, ede.teacher_user_id, ede.course_id, ede.reason, ede.created_at
-		 FROM enrollment_deletion_events ede
-		 WHERE ede.id > ?
-		   AND (ede.student_id = ? OR ede.teacher_user_id = ?)
-		   AND NOT EXISTS (
-		     SELECT 1 FROM enrollments e
-		     WHERE e.student_id = ede.student_id
-		       AND e.course_id = ede.course_id
-		       AND e.status = 'active'
-		   )
-		 ORDER BY ede.id ASC
-		 LIMIT ?`,
-		sinceID, userID, userID, limit,
-	)
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "deletion event list failed")
-	}
-	defer rows.Close()
-
-	type deletionEvent struct {
-		EventID       int64  `json:"event_id"`
-		StudentID     int64  `json:"student_id"`
-		TeacherUserID int64  `json:"teacher_user_id"`
-		CourseID      int64  `json:"course_id"`
-		Reason        string `json:"reason"`
-		CreatedAt     string `json:"created_at"`
-	}
-	results := []deletionEvent{}
-	for rows.Next() {
-		var (
-			eventID       int64
-			studentID     int64
-			teacherUserID int64
-			courseID      int64
-			reason        string
-			createdAt     time.Time
-		)
-		if err := rows.Scan(
-			&eventID,
-			&studentID,
-			&teacherUserID,
-			&courseID,
-			&reason,
-			&createdAt,
-		); err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "deletion event list failed")
-		}
-		results = append(results, deletionEvent{
-			EventID:       eventID,
-			StudentID:     studentID,
-			TeacherUserID: teacherUserID,
-			CourseID:      courseID,
-			Reason:        reason,
-			CreatedAt:     createdAt.Format(timeLayout),
-		})
-	}
-	if err := rows.Err(); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "deletion event list failed")
-	}
-	return c.JSON(results)
 }
 
 func (h *EnrollmentHandler) isEnrolled(studentID int64, courseID int64, teacherID int64) (bool, error) {

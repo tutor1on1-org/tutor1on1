@@ -45,3 +45,5 @@ remote/.env
 remote/.env.*
 !remote/.env.example
 remote/*-api-linux
+remote/artifact-cutover-linux
+remote/artifact_cutover.exe

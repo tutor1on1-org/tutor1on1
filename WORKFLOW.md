@@ -9,7 +9,7 @@ For app changes, the default same-turn handoff is: validate, build, git, and pub
 3. Implement the minimal correct root-cause change.
 4. Run a self-battle before handoff: summarize the conclusion, criticize it, then refine the answer or fix.
 5. Validate changed path first, then adjacent regressions, then end-to-end path when feasible.
-6. Run concrete builds before reporting done (`flutter build apk --release` and `flutter build windows --release` for public app releases; `go build -o family-teacher-api ./cmd/server` for backend changes). For Windows publishes, the uploaded ZIP must come from the freshly updated local `build/windows/x64/runner/Release` output for the same commit; do not server-upload a stale local Release directory.
+6. Run concrete builds before reporting done (`flutter build apk --config-only` then `flutter build apk --release`, plus `flutter build windows --release` for public app releases; `go build -o family-teacher-api ./cmd/server` for backend changes). For Windows publishes, the uploaded ZIP must come from the freshly updated local `build/windows/x64/runner/Release` output for the same commit; do not server-upload a stale local Release directory.
 7. Update memory docs intentionally; the memory hook auto-consolidates only memory markdown files whose line-count delta is `>10` from `scripts/memory_line_snapshot.json`.
 8. Update docs (`BUGS.md`, `LOGBOOK.md`, `TODOS.md`, `DONEs.md`) as applicable.
 9. Run `powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1 -NoPostHook`.

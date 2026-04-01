@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 
+	"family_teacher_remote/internal/artifactsync"
 	"family_teacher_remote/internal/storage"
 
 	"github.com/gofiber/fiber/v2"
@@ -80,7 +81,7 @@ func ensureStoredBundleHash(
 	if hashVal != "" {
 		return hashVal, false, sizeBytes, nil
 	}
-	semanticHash, hashErr := computeBundleSemanticHash(absPath)
+	semanticHash, hashErr := computeBundleByteHash(absPath)
 	if hashErr != nil {
 		return "", false, 0, hashErr
 	}
@@ -183,7 +184,7 @@ func (h *BundlesHandler) Upload(c *fiber.Ctx) error {
 			_ = h.removeStoredFile(relPath)
 			return fiber.NewError(fiber.StatusBadRequest, "invalid bundle: "+validateErr.Error())
 		}
-		semanticHash, hashErr := computeBundleSemanticHash(absPath)
+		semanticHash, hashErr := computeBundleByteHash(absPath)
 		if hashErr != nil {
 			_ = h.removeStoredFile(relPath)
 			return fiber.NewError(fiber.StatusBadRequest, "invalid bundle: "+hashErr.Error())
@@ -199,7 +200,7 @@ func (h *BundlesHandler) Upload(c *fiber.Ctx) error {
 				return fiber.NewError(fiber.StatusInternalServerError, "latest bundle parse failed")
 			}
 			addedCount, removedCount = countNodeDiff(oldNodeSet, newNodeSet)
-			latestSemanticHash, latestHashErr := computeBundleSemanticHash(oldPath)
+			latestSemanticHash, latestHashErr := computeBundleByteHash(oldPath)
 			if latestHashErr != nil {
 				_ = h.removeStoredFile(relPath)
 				return fiber.NewError(fiber.StatusInternalServerError, "latest bundle hash failed")
@@ -298,13 +299,11 @@ func (h *BundlesHandler) Upload(c *fiber.Ctx) error {
 			_ = h.removeStoredFile(relPath)
 			return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
 		}
-		if rebuildErr := refreshTeacherCourseSyncStateForUser(h.cfg.Store.DB, info.teacherUserID); rebuildErr != nil {
-			_ = h.removeStoredFile(relPath)
-			return rebuildErr
-		}
-		if rebuildErr := refreshStudentEnrollmentSyncStateForCourse(h.cfg.Store.DB, info.courseID); rebuildErr != nil {
-			_ = h.removeStoredFile(relPath)
-			return rebuildErr
+		if h.cfg.Storage != nil {
+			if rebuildErr := artifactsync.RefreshUsersForCourse(h.cfg.Store.DB, info.courseID); rebuildErr != nil {
+				_ = h.removeStoredFile(relPath)
+				return fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
+			}
 		}
 		for _, target := range prunedTargets {
 			if removeErr := h.removeStoredFile(target.relPath); removeErr != nil {
@@ -571,11 +570,10 @@ func (h *BundlesHandler) DeleteTeacherCourseBundleVersion(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusInternalServerError, "catalog update failed")
 		}
 	}
-	if err := refreshTeacherCourseSyncStateForUser(h.cfg.Store.DB, userID); err != nil {
-		return err
-	}
-	if err := refreshStudentEnrollmentSyncStateForCourse(h.cfg.Store.DB, courseID); err != nil {
-		return err
+	if h.cfg.Storage != nil {
+		if err := artifactsync.RefreshUsersForCourse(h.cfg.Store.DB, courseID); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
+		}
 	}
 
 	if removeErr := h.removeStoredFile(relPath); removeErr != nil {
@@ -921,6 +919,20 @@ func isDuplicateEntryError(err error) bool {
 
 func normalizeCourseName(value string) string {
 	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(value)), " "))
+}
+
+func computeBundleByteHash(filePath string) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", errors.New("bundle open failed")
+	}
+	defer file.Close()
+
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return "", errors.New("bundle read failed")
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
 func computeBundleSemanticHash(zipPath string) (string, error) {

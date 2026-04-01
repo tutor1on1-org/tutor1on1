@@ -79,6 +79,9 @@ $legacyCleanupPattern = 'family_teacher*.apk'
 Push-Location $repoRoot
 try {
   if (-not $SkipBuild.IsPresent) {
+    Invoke-Checked -Label 'flutter build apk --config-only' -Action {
+      flutter build apk --config-only
+    }
     Invoke-Checked -Label 'flutter build apk --release' -Action {
       flutter build apk --release
     }

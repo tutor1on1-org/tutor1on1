@@ -51,7 +51,7 @@ void main() {
   });
 
   test(
-      'cached course artifacts reproduce upload bundle hash without source folder',
+      'cached course artifacts reuse a stable upload bundle without source folder',
       () async {
     final courseDir = await _createCourseFolder(
       root: tempRoot,
@@ -85,16 +85,17 @@ void main() {
       promptMetadata: promptMetadata,
       bundleLabel: 'math',
     );
-    try {
-      final hash = await bundleService.computeBundleSemanticHash(
-        prepared.bundleFile,
-      );
-      expect(prepared.hash, equals(hash));
-    } finally {
-      if (prepared.bundleFile.existsSync()) {
-        await prepared.bundleFile.delete();
-      }
-    }
+    final preparedAgain = await artifactService.prepareUploadBundle(
+      courseVersionId: 17,
+      promptMetadata: promptMetadata,
+      bundleLabel: 'math',
+    );
+    final hash = await bundleService.computeBundleByteHash(
+      prepared.bundleFile,
+    );
+    expect(prepared.hash, equals(hash));
+    expect(preparedAgain.hash, equals(prepared.hash));
+    expect(preparedAgain.bundleFile.path, equals(prepared.bundleFile.path));
   });
 }
 
