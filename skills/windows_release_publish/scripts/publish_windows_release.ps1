@@ -51,17 +51,30 @@ function Assert-Http200 {
     [Parameter(Mandatory = $true)]
     [string]$Url,
     [Parameter(Mandatory = $true)]
-    [string]$Label
+    [string]$Label,
+    [int]$MaxAttempts = 5,
+    [int]$RetryDelaySeconds = 5
   )
-  Write-Host "==> Verify URL ($Label): $Url"
-  $headers = & curl.exe -k -I --max-time 20 $Url
-  if ($LASTEXITCODE -ne 0) {
-    throw "curl header check failed for $Label with exit code $LASTEXITCODE."
+  $lastExitCode = 0
+  $lastHeaders = @()
+  for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+    Write-Host "==> Verify URL ($Label) attempt $attempt/${MaxAttempts}: $Url"
+    $headers = & curl.exe -k -I --max-time 20 $Url
+    $lastExitCode = $LASTEXITCODE
+    $lastHeaders = @($headers)
+    $lastHeaders | ForEach-Object { Write-Host $_ }
+    if ($lastExitCode -eq 0 -and ($lastHeaders -match 'HTTP/\d\.\d 200 OK')) {
+      return
+    }
+    if ($attempt -lt $MaxAttempts) {
+      Write-Host "URL check did not succeed for $Label. Retry in $RetryDelaySeconds second(s)."
+      Start-Sleep -Seconds $RetryDelaySeconds
+    }
   }
-  $headers | ForEach-Object { Write-Host $_ }
-  if (-not ($headers -match 'HTTP/\d\.\d 200 OK')) {
-    throw "URL check failed for $Label. Expected HTTP 200: $Url"
+  if ($lastExitCode -ne 0) {
+    throw "curl header check failed for $Label with exit code $lastExitCode after $MaxAttempts attempt(s)."
   }
+  throw "URL check failed for $Label after $MaxAttempts attempt(s). Expected HTTP 200: $Url"
 }
 
 function New-ExplorerCompatibleZip {

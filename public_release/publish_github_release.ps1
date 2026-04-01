@@ -80,6 +80,11 @@ function Invoke-GitHubApi {
     '-o', $tempBody,
     '-w', '%{http_code}'
   )
+  $maxAttempts = 1
+  $retryDelaySeconds = 3
+  if ($Method -in @('GET', 'DELETE')) {
+    $maxAttempts = 5
+  }
 
   if (-not [string]::IsNullOrWhiteSpace($UploadFile)) {
     $args += @(
@@ -98,9 +103,17 @@ function Invoke-GitHubApi {
 
   $args += $Url
   try {
-    $statusCode = & curl.exe @args
-    if ($LASTEXITCODE -ne 0) {
-      throw "curl.exe failed with exit code $LASTEXITCODE for $Method $Url"
+    $statusCode = $null
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+      $statusCode = & curl.exe @args
+      if ($LASTEXITCODE -eq 0) {
+        break
+      }
+      if ($attempt -ge $maxAttempts) {
+        throw "curl.exe failed with exit code $LASTEXITCODE for $Method $Url"
+      }
+      Write-Host "Transient GitHub API failure for $Method $Url. Retry $attempt/$maxAttempts in $retryDelaySeconds second(s)."
+      Start-Sleep -Seconds $retryDelaySeconds
     }
 
     $responseText = ''
@@ -256,10 +269,14 @@ try {
       -Method 'DELETE' `
       -Url "https://api.github.com/repos/$RepoSlug/releases/assets/$($asset.id)" `
       -Token $token
-    if ($deleteResponse.StatusCode -ne 204) {
+    if ($deleteResponse.StatusCode -notin @(204, 404)) {
       throw "Failed to delete existing asset $($asset.name). Status=$($deleteResponse.StatusCode)"
     }
-    Write-Host "Deleted existing asset: $($asset.name)"
+    if ($deleteResponse.StatusCode -eq 404) {
+      Write-Host "Asset already absent: $($asset.name)"
+    } else {
+      Write-Host "Deleted existing asset: $($asset.name)"
+    }
   }
 
   foreach ($assetPath in $assetPaths) {

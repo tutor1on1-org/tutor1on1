@@ -142,10 +142,10 @@ try {
       '-SkipAnalyze',
       '-SkipTest'
     )
-    if (-not $SkipAndroid.IsPresent -or $SkipAndroidBuild.IsPresent) {
+    if ($SkipAndroid.IsPresent -or $SkipAndroidBuild.IsPresent) {
       $githubArgs += '-SkipAndroidBuild'
     }
-    if (-not $SkipWindows.IsPresent -or $SkipWindowsBuild.IsPresent) {
+    if ($SkipWindows.IsPresent -or $SkipWindowsBuild.IsPresent) {
       $githubArgs += '-SkipWindowsBuild'
     }
     Invoke-Checked -Label 'Publish GitHub release assets' -Action {

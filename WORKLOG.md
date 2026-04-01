@@ -19,6 +19,7 @@ Active remote runbook and host details only. Historical deployment timeline live
 - Env file: `/etc/family_teacher_remote/env`
 - Logs: `/var/log/family_teacher_remote/app.log`
 - Storage root: `/var/lib/family_teacher_remote/storage`
+- Student artifact root: `/var/lib/family_teacher_remote/storage/student_kp`
 - Public download root: `/var/lib/family_teacher_remote/public`
 - Website static root: `/var/www/tutor1on1_site`
 
@@ -28,14 +29,20 @@ Active remote runbook and host details only. Historical deployment timeline live
 
 ## Operational requirements
 - `STORAGE_ROOT` must be writable by `ftapp` (API user).
+- `student_kp` must stay owned by `ftapp:ftapp` so per-KP artifact writes do not fail during cutover or live sync.
 - Nginx worker (`nginx`) must be able to read and traverse storage paths.
 - API upload max size and Nginx `client_max_body_size` must match.
 
+## Current production sync state
+- Production runtime sync is artifact-manifest only; retired row-level routes `/api/session/sync`, `/api/progress/sync`, and `/api/sync/download` should stay `404`.
+- `/api/artifacts/sync/state2` is the active artifact route and should require auth (`401` when unauthenticated).
+- Latest pre-cutover backup: `/home/ecs-user/db_backups/family_teacher_20260401_195705_artifact_cutover_pre.sql.gz`
+
 ## Latest verified public artifacts
 - Android APK: `https://api.tutor1on1.org/downloads/Tutor1on1.apk`
-  - SHA-256: `b70c9337f25d586a109aba3e54a2f8aa33427ca6bba72957ca4634c6769f14fe`
+  - SHA-256: `7c76d548f3ced5b69f71a65ef9fe3bf5d3e7a831a635a62ba57122ef5cbe4f15`
 - Windows ZIP: `https://api.tutor1on1.org/downloads/Tutor1on1.zip`
-  - SHA-256: `aaa010f691d2d135b6f8826f2cc3e961bd92047b00ec44c98083190ee0fc60e1`
+  - SHA-256: `f355e03827c9f2112ec4fa905c83efc9f358832cd10419fa87061fa5d3864959`
 - GitHub Release: `https://github.com/tutor1on1-org/tutor1on1/releases/tag/v1.0.1`
 - Website root: `https://www.tutor1on1.org`
 

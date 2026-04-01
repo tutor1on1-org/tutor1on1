@@ -53,7 +53,7 @@ powershell -ExecutionPolicy Bypass -File skills/windows_release_publish/scripts/
   - `sudo` permission for install/delete under `/var/lib/family_teacher_remote/public`
 
 ## Notes
-- The script is intentionally fail-fast. It throws on any mismatch or non-200 link check.
+- The script is intentionally fail-fast after a short retry window. It throws on any mismatch or candidate/canonical URL check that still is not `200 OK` after the retries.
 - It uses absolute command paths on remote host because remote `PATH` may be empty.
 - Candidate-first promotion avoids publishing a broken canonical ZIP when upload content is malformed.
 - A Windows server publish is incomplete if the local `build/windows/x64/runner/Release` output is stale. The local Release tree must match the uploaded ZIP for the same commit.
