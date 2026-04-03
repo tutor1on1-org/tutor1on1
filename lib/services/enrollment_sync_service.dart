@@ -1048,20 +1048,14 @@ class EnrollmentSyncService {
     final bundleService = CourseBundleService();
     final artifactId = 'course_bundle:$remoteCourseId';
     final downloaded = await _artifactApi.downloadArtifact(artifactId);
-    if (downloaded.artifactId.trim() != artifactId) {
+    final echoedArtifactId = downloaded.artifactId.trim();
+    if (echoedArtifactId.isNotEmpty && echoedArtifactId != artifactId) {
       throw StateError(
         'Downloaded course artifact id mismatch. expected=$artifactId '
         'actual=${downloaded.artifactId}',
       );
     }
     final expectedHash = expectedSha256.trim();
-    final actualHash = downloaded.sha256.trim();
-    if (expectedHash.isNotEmpty && actualHash != expectedHash) {
-      throw StateError(
-        'Downloaded course artifact sha256 mismatch for $artifactId. '
-        'expected=$expectedHash actual=$actualHash',
-      );
-    }
     final targetPath = await bundleService.createTempBundlePath(
       label: courseSubject,
     );
@@ -1069,11 +1063,19 @@ class EnrollmentSyncService {
     await bundleFile.parent.create(recursive: true);
     await bundleFile.writeAsBytes(downloaded.bytes, flush: true);
     final computedHash = await bundleService.computeBundleByteHash(bundleFile);
-    if (computedHash != actualHash) {
+    if (expectedHash.isNotEmpty && computedHash != expectedHash) {
+      await bundleFile.delete();
+      throw StateError(
+        'Downloaded course artifact sha256 mismatch for $artifactId. '
+        'expected=$expectedHash actual=$computedHash',
+      );
+    }
+    final echoedHash = downloaded.sha256.trim();
+    if (echoedHash.isNotEmpty && echoedHash != computedHash) {
       await bundleFile.delete();
       throw StateError(
         'Downloaded course artifact file sha256 mismatch for $artifactId. '
-        'header=$actualHash computed=$computedHash',
+        'header=$echoedHash computed=$computedHash',
       );
     }
     return bundleFile;

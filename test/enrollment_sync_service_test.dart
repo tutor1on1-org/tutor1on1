@@ -329,6 +329,7 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
     required this.server,
     required this.currentRemoteUserId,
     required this.currentRole,
+    this.omitDownloadHeaders = false,
   }) : super(
           secureStorage: _MemorySecureStorage(),
           baseUrl: 'https://example.com',
@@ -338,6 +339,7 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
   final _FakeCourseBundleServer server;
   final int currentRemoteUserId;
   final String currentRole;
+  final bool omitDownloadHeaders;
 
   int downloadCalls = 0;
   int uploadCalls = 0;
@@ -388,9 +390,9 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
       throw StateError('Missing server artifact $artifactId.');
     }
     return DownloadedArtifact(
-      artifactId: artifactId,
-      artifactClass: 'course_bundle',
-      sha256: course.bundleSha256,
+      artifactId: omitDownloadHeaders ? '' : artifactId,
+      artifactClass: omitDownloadHeaders ? '' : 'course_bundle',
+      sha256: omitDownloadHeaders ? '' : course.bundleSha256,
       lastModified: course.lastModified,
       bytes: Uint8List.fromList(course.bundleBytes),
     );
@@ -653,6 +655,59 @@ void main() {
     expect(second.downloadedCount, 0);
     expect(second.uploadedCount, 0);
     expect(artifactApi.downloadCalls, 1);
+  });
+
+  test('student sync accepts missing artifact download headers', () async {
+    final studentId = await db.createUser(
+      username: 'albert',
+      pinHash: 'pin',
+      role: 'student',
+      remoteUserId: 3001,
+    );
+    final student = (await db.getUserById(studentId))!;
+
+    final seeded = await _createSeededBundle(
+      root: rootDir,
+      folderName: 'remote_headerless_course',
+      rootTitle: 'Headerless Math',
+    );
+    final server = _FakeCourseBundleServer()
+      ..seedCourse(
+        courseId: 510,
+        teacherUserId: 9001,
+        teacherName: 'dennis',
+        subject: 'Headerless Math',
+        bundleVersionId: 4,
+        bundleBytes: seeded.bytes,
+        bundleSha256: seeded.sha256,
+      )
+      ..setStudentCourses(3001, const <int>[510]);
+    final artifactApi = _FakeArtifactSyncApiService(
+      server: server,
+      currentRemoteUserId: 3001,
+      currentRole: 'student',
+      omitDownloadHeaders: true,
+    );
+    final marketplaceApi = _FakeMarketplaceApiService(
+      server: server,
+      currentRemoteUserId: 3001,
+      currentRole: 'student',
+    );
+    final service = EnrollmentSyncService(
+      db: db,
+      secureStorage: secureStorage,
+      courseService: courseService,
+      marketplaceApi: marketplaceApi,
+      artifactApi: artifactApi,
+      promptRepository: promptRepository,
+      courseArtifactService: courseArtifactService,
+    );
+
+    final result = await service.syncIfReady(currentUser: student);
+    expect(result.downloadedCount, 1);
+    expect(artifactApi.downloadCalls, 1);
+    expect(await db.getCourseVersionIdForRemoteCourse(510), isNotNull);
+    expect(await db.getAssignedCoursesForStudent(student.id), hasLength(1));
   });
 
   test('teacher sync uploads one changed course bundle artifact', () async {
