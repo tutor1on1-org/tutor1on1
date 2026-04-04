@@ -887,6 +887,13 @@ class _MarketplacePageState extends State<MarketplacePage> {
         bundleVersionId: bundleVersionId,
         bundleHash: downloadedBundleHash,
       );
+      try {
+        await services.sessionSyncService.syncIfReady(currentUser: user);
+      } catch (error) {
+        throw StateError(
+          'Course downloaded, but student session/progress sync failed: $error',
+        );
+      }
       if (!mounted) {
         return;
       }
