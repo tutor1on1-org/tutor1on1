@@ -12,6 +12,12 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$versionUtilsScript = Join-Path $PSScriptRoot 'public_release_version_utils.ps1'
+if (-not (Test-Path -LiteralPath $versionUtilsScript)) {
+  throw "Public release version utils not found: $versionUtilsScript"
+}
+. $versionUtilsScript
+
 function Invoke-Checked {
   param(
     [Parameter(Mandatory = $true)]
@@ -66,14 +72,17 @@ if (-not (Test-Path -LiteralPath $KeyPath)) {
   throw "SSH key file not found: $KeyPath"
 }
 
+$versionInfo = Get-PublicReleaseVersionInfo -RepoRoot $repoRoot
 $releaseApkPath = Join-Path $repoRoot 'build\app\outputs\flutter-apk\app-release.apk'
 $canonicalLocalApkPath = Join-Path $repoRoot ("build\" + $ApkName)
 $downloadUrl = "$($DownloadBaseUrl.TrimEnd('/'))/$ApkName"
 $tmpRemoteApk = "/tmp/$ApkName"
 $apkBaseName = [System.IO.Path]::GetFileNameWithoutExtension($ApkName)
+$versionedApkName = "${apkBaseName}-$($versionInfo.DisplayVersion).apk"
+$versionedDownloadUrl = "$($DownloadBaseUrl.TrimEnd('/'))/$versionedApkName"
 $candidateApkName = "${apkBaseName}_candidate.apk"
 $candidateDownloadUrl = "$($DownloadBaseUrl.TrimEnd('/'))/$candidateApkName"
-$cleanupPattern = "$apkBaseName*.apk"
+$versionedCleanupPattern = "$apkBaseName-*.apk"
 $legacyCleanupPattern = 'family_teacher*.apk'
 
 Push-Location $repoRoot
@@ -143,7 +152,8 @@ try {
 
   $remotePromoteCommand = @(
     "/usr/bin/sudo /usr/bin/install -m 0644 -o root -g root '$RemotePublicDir/$candidateApkName' '$RemotePublicDir/$ApkName'",
-    "/usr/bin/sudo /usr/bin/find '$RemotePublicDir' -maxdepth 1 -type f -name '$cleanupPattern' ! -name '$ApkName' ! -name '$candidateApkName' -print -delete",
+    "/usr/bin/sudo /usr/bin/install -m 0644 -o root -g root '$RemotePublicDir/$candidateApkName' '$RemotePublicDir/$versionedApkName'",
+    "/usr/bin/sudo /usr/bin/find '$RemotePublicDir' -maxdepth 1 -type f -name '$versionedCleanupPattern' ! -name '$versionedApkName' -print -delete",
     "/usr/bin/sudo /usr/bin/find '$RemotePublicDir' -maxdepth 1 -type f -name '$legacyCleanupPattern' -print -delete",
     "/usr/bin/sudo /usr/bin/rm -f '$RemotePublicDir/$candidateApkName'",
     "/usr/bin/sudo /usr/bin/sha256sum '$RemotePublicDir/$ApkName'",
@@ -170,9 +180,11 @@ try {
   Write-Host "Remote canonical SHA256 matches local: $remoteHash"
 
   Assert-Http200 -Url $downloadUrl -Label 'canonical'
+  Assert-Http200 -Url $versionedDownloadUrl -Label 'versioned'
 
   Write-Host '==> Publish completed'
   Write-Host "Download URL: $downloadUrl"
+  Write-Host "Versioned download URL: $versionedDownloadUrl"
   Write-Host "SHA256: $localHash"
 } finally {
   Pop-Location

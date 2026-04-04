@@ -108,6 +108,7 @@ Optional flags:
 Default safeguards:
 - Runs `flutter build apk --config-only` immediately before the release APK build to refresh Android plugin wiring when the Flutter toolchain regresses on `integration_test` dev dependencies.
 - Publishes candidate first as `Tutor1on1_candidate.apk`.
+- Publishes the canonical APK and a versioned alias such as `Tutor1on1-1.0.3.apk`, while deleting older versioned APK aliases so mobile download/install flows cannot reuse a stale same-name APK.
 - Verifies remote SHA-256 against the local APK before promotion.
 - Verifies both candidate and canonical public download URLs.
 - Cleans old `Tutor1on1*.apk` and legacy `family_teacher*.apk` artifacts after promotion.
