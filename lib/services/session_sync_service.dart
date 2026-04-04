@@ -30,6 +30,7 @@ class SessionSyncService {
   bool _syncing = false;
   bool _cutoverInitialized = false;
   int _localMutationSuppressionDepth = 0;
+  final Set<int> _pendingRefreshLocalUserIds = <int>{};
 
   static const String _artifactClass = 'student_kp';
   static const String _artifactSchema = 'student_kp_artifact_v1';
@@ -67,6 +68,7 @@ class SessionSyncService {
       return;
     }
     await ensureLocalCutoverInitialized();
+    final pendingStudents = <User>[];
     final seenRemoteUserIds = <int>{};
     for (final localUserId in change.localUserIds) {
       final user = await _db.getUserById(localUserId);
@@ -80,7 +82,16 @@ class SessionSyncService {
       if (!seenRemoteUserIds.add(remoteUserId)) {
         continue;
       }
-      await _refreshLocalArtifactsForStudent(user);
+      pendingStudents.add(user);
+    }
+    if (_syncing) {
+      for (final student in pendingStudents) {
+        _pendingRefreshLocalUserIds.add(student.id);
+      }
+      return;
+    }
+    for (final student in pendingStudents) {
+      await _refreshLocalArtifactsForStudent(student);
     }
   }
 
@@ -150,6 +161,8 @@ class SessionSyncService {
     }
     await ensureLocalCutoverInitialized();
     _syncing = true;
+    Object? syncError;
+    StackTrace? syncStackTrace;
     try {
       final initialManifest = await _artifactStore.loadManifest(remoteUserId);
       if (!force) {
@@ -219,9 +232,38 @@ class SessionSyncService {
         serverItems: serverState1.items,
       );
       await _artifactStore.saveManifest(manifest);
-      return stats;
+    } catch (error, stackTrace) {
+      syncError = error;
+      syncStackTrace = stackTrace;
     } finally {
       _syncing = false;
+      await _drainPendingRefreshes();
+    }
+    if (syncError != null) {
+      Error.throwWithStackTrace(syncError, syncStackTrace!);
+    }
+    return stats;
+  }
+
+  Future<void> _drainPendingRefreshes() async {
+    while (_pendingRefreshLocalUserIds.isNotEmpty) {
+      final pendingIds = _pendingRefreshLocalUserIds.toList(growable: false);
+      _pendingRefreshLocalUserIds.clear();
+      final seenRemoteUserIds = <int>{};
+      for (final localUserId in pendingIds) {
+        final user = await _db.getUserById(localUserId);
+        final remoteUserId = user?.remoteUserId;
+        if (user == null ||
+            user.role != 'student' ||
+            remoteUserId == null ||
+            remoteUserId <= 0) {
+          continue;
+        }
+        if (!seenRemoteUserIds.add(remoteUserId)) {
+          continue;
+        }
+        await _refreshLocalArtifactsForStudent(user);
+      }
     }
   }
 
