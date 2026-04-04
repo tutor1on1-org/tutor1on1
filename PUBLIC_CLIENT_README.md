@@ -97,8 +97,8 @@ flutter run --dart-define=AUTH_ALLOW_INSECURE_TLS=true
 
 The public release flow is versioned around Git tags and GitHub Release assets.
 
-- Current public release tag: `v1.0.1`
-- App version in `pubspec.yaml`: `1.0.1+7`
+- Current public release tag: `v1.0.2`
+- App version in `pubspec.yaml`: `1.0.2+8`
 - Standard asset names:
   - `Tutor1on1.apk`
   - `Tutor1on1.zip`
@@ -107,7 +107,7 @@ The public release flow is versioned around Git tags and GitHub Release assets.
 Build release assets from this snapshot with:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File public_release/package_github_release.ps1 -ReleaseTag v1.0.1
+powershell -ExecutionPolicy Bypass -File public_release/package_github_release.ps1 -ReleaseTag v1.0.2
 ```
 
 Or publish the GitHub Release assets directly:
