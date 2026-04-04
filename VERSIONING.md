@@ -3,7 +3,7 @@
 This public client snapshot uses a simple release scheme:
 
 - Git tags and GitHub Releases are derived from `pubspec.yaml` and use `vMAJOR.MINOR` or `vMAJOR.MINOR.PATCH`
-- The app version in `pubspec.yaml` uses semantic versioning such as `1.0.3`
+- The app version in `pubspec.yaml` uses semantic versioning such as `1.0.4`
 - The website download links must point at the same GitHub Release tag as the published assets
 - GitHub Release asset names stay stable:
   - `Tutor1on1.apk`
@@ -12,8 +12,8 @@ This public client snapshot uses a simple release scheme:
 
 ## Current Public Release
 
-- Git tag: `v1.0.3`
-- App version: `1.0.3`
+- Git tag: `v1.0.4`
+- App version: `1.0.4`
 
 ## Release Checklist
 
