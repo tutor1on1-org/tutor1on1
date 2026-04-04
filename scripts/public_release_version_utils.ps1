@@ -13,7 +13,7 @@ function Get-PublicReleaseVersionInfo {
 
   $versionLine = @(
     Get-Content -LiteralPath $pubspecPath |
-      Where-Object { $_ -match '^\s*version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+([0-9]+)\s*$' } |
+      Where-Object { $_ -match '^\s*version:\s*([0-9]+\.[0-9]+\.[0-9]+)(?:\+([0-9]+))?\s*$' } |
       Select-Object -First 1
   )
   if ($versionLine.Count -eq 0) {
@@ -22,7 +22,7 @@ function Get-PublicReleaseVersionInfo {
 
   $match = [regex]::Match(
     $versionLine[0],
-    '^\s*version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+([0-9]+)\s*$'
+    '^\s*version:\s*([0-9]+\.[0-9]+\.[0-9]+)(?:\+([0-9]+))?\s*$'
   )
   if (-not $match.Success) {
     throw "Could not parse semantic version from line: $($versionLine[0])"
@@ -30,8 +30,13 @@ function Get-PublicReleaseVersionInfo {
 
   $displayVersion = $match.Groups[1].Value
   $buildNumber = $match.Groups[2].Value
+  $appVersion = if ([string]::IsNullOrWhiteSpace($buildNumber)) {
+    $displayVersion
+  } else {
+    "$displayVersion+$buildNumber"
+  }
   return [pscustomobject]@{
-    AppVersion     = "$displayVersion+$buildNumber"
+    AppVersion     = $appVersion
     DisplayVersion = $displayVersion
     BuildNumber    = $buildNumber
     ReleaseTag     = "v$displayVersion"

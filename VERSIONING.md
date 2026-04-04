@@ -3,7 +3,7 @@
 This public client snapshot uses a simple release scheme:
 
 - Git tags and GitHub Releases are derived from `pubspec.yaml` and use `vMAJOR.MINOR` or `vMAJOR.MINOR.PATCH`
-- The app build version in `pubspec.yaml` uses semantic versioning such as `1.0.0+1`
+- The app version in `pubspec.yaml` uses semantic versioning such as `1.0.3`
 - The website download links must point at the same GitHub Release tag as the published assets
 - GitHub Release asset names stay stable:
   - `Tutor1on1.apk`
@@ -12,13 +12,13 @@ This public client snapshot uses a simple release scheme:
 
 ## Current Public Release
 
-- Git tag: `v1.0.2`
-- App version: `1.0.2+8`
+- Git tag: `v1.0.3`
+- App version: `1.0.3`
 
 ## Release Checklist
 
 1. Every shipped app update must increment the single `pubspec.yaml` version line before build/publish.
-2. Treat `pubspec.yaml` as the only version source. `scripts/release_public.ps1` and `scripts/publish_website_static.ps1` auto-sync `web/site.js` from it before publishing.
+2. Treat `pubspec.yaml` as the only version source. Derive Android `versionCode`, website metadata, and GitHub release tags from it instead of maintaining a separate build number.
 3. Build release assets with `public_release/package_github_release.ps1`, or publish them directly with `public_release/publish_github_release.ps1`. If no tag is passed, those scripts derive `vMAJOR.MINOR.PATCH` from `pubspec.yaml`.
 4. Ensure the GitHub Release for the same tag contains `Tutor1on1.apk`, `Tutor1on1.zip`, and `SHA256SUMS.txt`.
 5. Publish the static `web/` directory after the GitHub Release assets are live.

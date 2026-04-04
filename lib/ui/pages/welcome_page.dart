@@ -392,10 +392,6 @@ class _WelcomePageState extends State<WelcomePage> {
               '${l10n.appVersionLabel}: ${versionInfo.appVersion}',
               style: style,
             ),
-            Text(
-              '${l10n.publicReleaseTagLabel}: ${versionInfo.releaseTag}',
-              style: style,
-            ),
           ],
         );
       },

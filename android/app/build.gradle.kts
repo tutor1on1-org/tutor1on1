@@ -5,6 +5,15 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+fun semverVersionCode(versionName: String): Int {
+    val match = Regex("""^(\d+)\.(\d+)\.(\d+)$""").matchEntire(versionName.trim())
+        ?: error("pubspec version must use MAJOR.MINOR.PATCH: $versionName")
+    val major = match.groupValues[1].toInt()
+    val minor = match.groupValues[2].toInt()
+    val patch = match.groupValues[3].toInt()
+    return major * 10000 + minor * 100 + patch
+}
+
 android {
     namespace = "com.example.tutor1on1"
     compileSdk = flutter.compileSdkVersion
@@ -34,7 +43,7 @@ android {
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
-        versionCode = flutter.versionCode
+        versionCode = semverVersionCode(flutter.versionName)
         versionName = flutter.versionName
     }
 

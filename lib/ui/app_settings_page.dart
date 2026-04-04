@@ -1485,13 +1485,6 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
               child: SelectableText(versionInfo.appVersion),
             ),
-            const SizedBox(height: 8),
-            InputDecorator(
-              decoration: InputDecoration(
-                labelText: l10n.publicReleaseTagLabel,
-              ),
-              child: SelectableText(versionInfo.releaseTag),
-            ),
           ],
         );
       },
