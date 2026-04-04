@@ -1,8 +1,11 @@
 package handlers
 
 import (
+	"archive/zip"
 	"bytes"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -31,6 +34,18 @@ type artifactState1ItemResponse struct {
 	BundleVersionID int64  `json:"bundle_version_id,omitempty"`
 	SHA256          string `json:"sha256"`
 	LastModified    string `json:"last_modified"`
+}
+
+type artifactBatchDownloadRequest struct {
+	ArtifactIDs []string `json:"artifact_ids"`
+}
+
+type artifactBatchManifestItemResponse struct {
+	ArtifactID    string `json:"artifact_id"`
+	ArtifactClass string `json:"artifact_class"`
+	SHA256        string `json:"sha256"`
+	LastModified  string `json:"last_modified"`
+	EntryName     string `json:"entry_name"`
 }
 
 func NewArtifactSyncHandler(deps Dependencies) *ArtifactSyncHandler {
@@ -139,6 +154,90 @@ func (h *ArtifactSyncHandler) Download(c *fiber.Ctx) error {
 	c.Set("X-Artifact-Class", item.ArtifactClass)
 	c.Set("X-Artifact-Last-Modified", item.LastModified.UTC().Format(time.RFC3339))
 	return c.SendStatus(fiber.StatusOK)
+}
+
+func (h *ArtifactSyncHandler) DownloadBatch(c *fiber.Ctx) error {
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	}
+	if h.cfg.Storage == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "storage unavailable")
+	}
+	var request artifactBatchDownloadRequest
+	if err := c.BodyParser(&request); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "artifact_ids required")
+	}
+	artifactIDs := normalizeArtifactIDList(request.ArtifactIDs)
+	if len(artifactIDs) == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "artifact_ids required")
+	}
+
+	type batchItem struct {
+		item      artifactsync.VisibleArtifact
+		entryName string
+		bytes     []byte
+	}
+	batchItems := make([]batchItem, 0, len(artifactIDs))
+	manifestItems := make([]artifactBatchManifestItemResponse, 0, len(artifactIDs))
+	for _, artifactID := range artifactIDs {
+		item, err := artifactsync.ReadVisibleArtifact(h.cfg.Store.DB, userID, artifactID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return fiber.NewError(fiber.StatusNotFound, "artifact not found")
+			}
+			return fiber.NewError(fiber.StatusInternalServerError, "artifact download lookup failed")
+		}
+		absPath := h.cfg.Storage.AbsolutePath(item.StorageRelPath)
+		zipBytes, err := os.ReadFile(absPath)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return fiber.NewError(fiber.StatusNotFound, "artifact file not found")
+			}
+			return fiber.NewError(fiber.StatusInternalServerError, "artifact download failed")
+		}
+		entryName := batchArtifactEntryName(item.ArtifactID)
+		batchItems = append(batchItems, batchItem{
+			item:      item,
+			entryName: entryName,
+			bytes:     zipBytes,
+		})
+		manifestItems = append(manifestItems, artifactBatchManifestItemResponse{
+			ArtifactID:    item.ArtifactID,
+			ArtifactClass: item.ArtifactClass,
+			SHA256:        item.SHA256,
+			LastModified:  item.LastModified.UTC().Format(time.RFC3339),
+			EntryName:     entryName,
+		})
+	}
+
+	manifestBytes, err := json.Marshal(fiber.Map{
+		"schema": "artifact_batch_v1",
+		"items":  manifestItems,
+	})
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "artifact batch manifest failed")
+	}
+	var buffer bytes.Buffer
+	zipWriter := zip.NewWriter(&buffer)
+	if err := writeBatchZipEntry(zipWriter, "manifest.json", manifestBytes); err != nil {
+		_ = zipWriter.Close()
+		return fiber.NewError(fiber.StatusInternalServerError, "artifact batch build failed")
+	}
+	for _, batchItem := range batchItems {
+		if err := writeBatchZipEntry(zipWriter, batchItem.entryName, batchItem.bytes); err != nil {
+			_ = zipWriter.Close()
+			return fiber.NewError(fiber.StatusInternalServerError, "artifact batch build failed")
+		}
+	}
+	if err := zipWriter.Close(); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "artifact batch build failed")
+	}
+
+	c.Set("Content-Type", "application/zip")
+	c.Set("Content-Disposition", "attachment; filename=\"artifacts_batch.zip\"")
+	c.Set("X-Artifact-Batch-Count", fmt.Sprintf("%d", len(batchItems)))
+	return c.SendStream(bytes.NewReader(buffer.Bytes()))
 }
 
 func (h *ArtifactSyncHandler) Upload(c *fiber.Ctx) error {
@@ -477,6 +576,42 @@ func sanitizeArtifactFilename(artifactID string) string {
 		return "artifact"
 	}
 	return trimmed
+}
+
+func normalizeArtifactIDList(values []string) []string {
+	normalized := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		normalized = append(normalized, trimmed)
+	}
+	return normalized
+}
+
+func batchArtifactEntryName(artifactID string) string {
+	return "artifacts/" + base64.RawURLEncoding.EncodeToString([]byte(strings.TrimSpace(artifactID))) + ".zip"
+}
+
+func writeBatchZipEntry(writer *zip.Writer, name string, data []byte) error {
+	header := &zip.FileHeader{
+		Name:     name,
+		Method:   zip.Store,
+		Modified: time.Unix(0, 0).UTC(),
+	}
+	header.SetMode(0600)
+	entry, err := writer.CreateHeader(header)
+	if err != nil {
+		return err
+	}
+	_, err = entry.Write(data)
+	return err
 }
 
 func parseRFC3339OrNow(raw string) time.Time {

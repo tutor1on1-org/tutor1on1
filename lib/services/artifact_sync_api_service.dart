@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:archive/archive.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 
@@ -194,6 +195,42 @@ class ArtifactSyncApiService {
     );
   }
 
+  Future<List<DownloadedArtifact>> downloadArtifactBatch(
+    List<String> artifactIds,
+  ) async {
+    final normalizedArtifactIds = artifactIds
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (normalizedArtifactIds.isEmpty) {
+      return const <DownloadedArtifact>[];
+    }
+    Future<http.Response> send(String token) {
+      return _client.post(
+        Uri.parse('$_baseUrl/api/artifacts/download-batch'),
+        headers: _authHeaders(token),
+        body: jsonEncode(<String, dynamic>{
+          'artifact_ids': normalizedArtifactIds,
+        }),
+      );
+    }
+
+    var token = await _requireAccessToken();
+    var response = await send(token);
+    if (response.statusCode == 401 && await _refreshAccessToken()) {
+      token = await _requireAccessToken();
+      response = await send(token);
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ArtifactSyncApiException(
+        _extractError(response.body) ?? 'Artifact batch download failed.',
+        statusCode: response.statusCode,
+      );
+    }
+    return _decodeBatchDownload(response.bodyBytes);
+  }
+
   Future<UploadArtifactResult> uploadArtifact({
     required String artifactId,
     required String sha256,
@@ -353,6 +390,65 @@ class ArtifactSyncApiService {
 
   static String _artifactFilename(String artifactId) {
     return artifactId.replaceAll(RegExp(r'[^a-zA-Z0-9._-]+'), '_') + '.zip';
+  }
+
+  List<DownloadedArtifact> _decodeBatchDownload(Uint8List bytes) {
+    final archive = ZipDecoder().decodeBytes(bytes, verify: true);
+    Map<String, dynamic>? manifestJson;
+    final fileBytesByEntryName = <String, Uint8List>{};
+    for (final entry in archive) {
+      if (!entry.isFile) {
+        continue;
+      }
+      final name = entry.name.trim();
+      final content = entry.content;
+      if (content is! List<int>) {
+        throw ArtifactSyncApiException('Artifact batch entry is unreadable.');
+      }
+      if (name == 'manifest.json') {
+        final decoded = jsonDecode(utf8.decode(content));
+        if (decoded is! Map<String, dynamic>) {
+          throw ArtifactSyncApiException('Artifact batch manifest is invalid.');
+        }
+        manifestJson = decoded;
+        continue;
+      }
+      fileBytesByEntryName[name] = Uint8List.fromList(content);
+    }
+    if (manifestJson == null) {
+      throw ArtifactSyncApiException('Artifact batch manifest is missing.');
+    }
+    final items = (manifestJson['items'] as List? ?? const <dynamic>[])
+        .whereType<Map<String, dynamic>>()
+        .toList(growable: false);
+    final downloaded = <DownloadedArtifact>[];
+    for (final item in items) {
+      final artifactId = (item['artifact_id'] as String?)?.trim() ?? '';
+      final artifactClass = (item['artifact_class'] as String?)?.trim() ?? '';
+      final sha256 = (item['sha256'] as String?)?.trim() ?? '';
+      final lastModified = (item['last_modified'] as String?)?.trim() ?? '';
+      final entryName = (item['entry_name'] as String?)?.trim() ?? '';
+      if (artifactId.isEmpty || entryName.isEmpty) {
+        throw ArtifactSyncApiException(
+            'Artifact batch manifest item is invalid.');
+      }
+      final artifactBytes = fileBytesByEntryName[entryName];
+      if (artifactBytes == null) {
+        throw ArtifactSyncApiException(
+          'Artifact batch entry missing for $artifactId.',
+        );
+      }
+      downloaded.add(
+        DownloadedArtifact(
+          artifactId: artifactId,
+          artifactClass: artifactClass,
+          sha256: sha256,
+          lastModified: lastModified,
+          bytes: artifactBytes,
+        ),
+      );
+    }
+    return downloaded;
   }
 }
 

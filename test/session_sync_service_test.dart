@@ -48,6 +48,7 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
   final Map<String, Uint8List> _bytesByArtifactId = <String, Uint8List>{};
 
   int downloadCalls = 0;
+  int downloadBatchCalls = 0;
   int uploadCalls = 0;
   final List<String> uploadedArtifactIds = <String>[];
 
@@ -96,6 +97,31 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
       lastModified: item.lastModified,
       bytes: Uint8List.fromList(bytes),
     );
+  }
+
+  @override
+  Future<List<DownloadedArtifact>> downloadArtifactBatch(
+    List<String> artifactIds,
+  ) async {
+    downloadBatchCalls++;
+    final downloaded = <DownloadedArtifact>[];
+    for (final artifactId in artifactIds) {
+      final item = _items[artifactId];
+      final bytes = _bytesByArtifactId[artifactId];
+      if (item == null || bytes == null) {
+        throw StateError('Missing server artifact $artifactId.');
+      }
+      downloaded.add(
+        DownloadedArtifact(
+          artifactId: item.artifactId,
+          artifactClass: item.artifactClass,
+          sha256: item.sha256,
+          lastModified: item.lastModified,
+          bytes: Uint8List.fromList(bytes),
+        ),
+      );
+    }
+    return downloaded;
   }
 
   @override
@@ -560,5 +586,108 @@ void main() {
     final sessions = await db.getSessionsForStudent(localStudent.id);
     expect(sessions, hasLength(1));
     expect(sessions.single.sessionTitle, 'Student Session');
+  });
+
+  test('downloads batch zip when more than three artifacts are needed',
+      () async {
+    final teacherId = await db.createUser(
+      username: 'teacher',
+      pinHash: 'hash',
+      role: 'teacher',
+      remoteUserId: 901,
+    );
+    final studentId = await db.createUser(
+      username: 'student',
+      pinHash: 'hash',
+      role: 'student',
+      remoteUserId: 3001,
+    );
+    final courseVersionId = await db.createCourseVersion(
+      teacherId: teacherId,
+      subject: 'Science',
+      granularity: 1,
+      textbookText: '',
+    );
+    await db.upsertCourseRemoteLink(
+      courseVersionId: courseVersionId,
+      remoteCourseId: 200,
+    );
+    await db.assignStudent(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+    );
+    final api = _FakeArtifactSyncApiService();
+    for (final kp in const <String>['1.1', '1.2', '1.3', '1.4']) {
+      await db.into(db.courseNodes).insert(
+            CourseNodesCompanion.insert(
+              courseVersionId: courseVersionId,
+              kpKey: kp,
+              title: 'Node $kp',
+              description: '',
+              orderIndex: int.parse(kp.split('.').last),
+            ),
+          );
+      api.seedServerArtifact(
+        await _buildServerArtifact(
+          store: artifactStore,
+          remoteStudentUserId: 3001,
+          remoteCourseId: 200,
+          teacherRemoteUserId: 901,
+          courseSubject: 'Science',
+          kpKey: kp,
+          updatedAt: '2026-04-01T08:05:00Z',
+          progress: <String, dynamic>{
+            'course_id': 200,
+            'course_subject': 'Science',
+            'kp_key': kp,
+            'lit': true,
+            'lit_percent': 80,
+            'easy_passed_count': 1,
+            'medium_passed_count': 0,
+            'hard_passed_count': 0,
+            'teacher_remote_user_id': 901,
+            'student_remote_user_id': 3001,
+            'updated_at': '2026-04-01T08:05:00Z',
+          },
+          sessions: <Map<String, dynamic>>[
+            <String, dynamic>{
+              'session_sync_id': 'remote-session-$kp',
+              'course_id': 200,
+              'course_subject': 'Science',
+              'kp_key': kp,
+              'kp_title': 'Node $kp',
+              'session_title': 'Remote Session $kp',
+              'started_at': '2026-04-01T08:00:00Z',
+              'student_remote_user_id': 3001,
+              'student_username': 'student',
+              'teacher_remote_user_id': 901,
+              'updated_at': '2026-04-01T08:05:00Z',
+              'messages': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'role': 'assistant',
+                  'content': 'server message $kp',
+                  'created_at': '2026-04-01T08:00:10Z',
+                },
+              ],
+            },
+          ],
+        ),
+      );
+    }
+
+    final service = SessionSyncService(
+      db: db,
+      api: api,
+      artifactStore: artifactStore,
+    );
+    final student = (await db.getUserById(studentId))!;
+
+    final stats = await service.forcePullFromServer(
+      currentUser: student,
+      wipeLocalStudentData: true,
+    );
+    expect(stats.downloadedCount, 4);
+    expect(api.downloadBatchCalls, 1);
+    expect(api.downloadCalls, 0);
   });
 }

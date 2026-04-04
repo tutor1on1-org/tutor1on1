@@ -34,6 +34,7 @@ class SessionSyncService {
 
   static const String _artifactClass = 'student_kp';
   static const String _artifactSchema = 'student_kp_artifact_v1';
+  static const int _batchDownloadThreshold = 3;
 
   bool get _localMutationSuppressed => _localMutationSuppressionDepth > 0;
 
@@ -324,53 +325,65 @@ class SessionSyncService {
     var currentManifest = manifest;
     var completedCount = 0;
     var completedBytes = 0;
-    for (final candidate in downloadCandidates) {
-      final downloaded = await _api.downloadArtifact(candidate.artifactId);
-      final computedSha = sha256.convert(downloaded.bytes).toString();
-      if (computedSha != candidate.sha256.trim()) {
-        throw StateError(
-          'Downloaded artifact sha256 mismatch for ${candidate.artifactId}.',
+    if (downloadCandidates.length > _batchDownloadThreshold) {
+      final downloadedItems = await _api.downloadArtifactBatch(
+        downloadCandidates
+            .map((candidate) => candidate.artifactId)
+            .toList(growable: false),
+      );
+      final downloadedById = <String, DownloadedArtifact>{
+        for (final item in downloadedItems) item.artifactId.trim(): item,
+      };
+      for (final candidate in downloadCandidates) {
+        final downloaded = downloadedById[candidate.artifactId];
+        if (downloaded == null) {
+          throw StateError(
+            'Downloaded artifact batch is missing ${candidate.artifactId}.',
+          );
+        }
+        currentManifest = await _applyDownloadedArtifact(
+          currentUser: currentUser,
+          remoteUserId: remoteUserId,
+          manifest: currentManifest,
+          candidate: candidate,
+          downloaded: downloaded,
+        );
+        completedCount++;
+        completedBytes += downloaded.bytes.length;
+        stats.addDownloaded(count: 1, bytes: downloaded.bytes.length);
+        await _reportProgress(
+          onProgress,
+          SyncProgress(
+            message: 'Downloading student artifacts...',
+            completed: completedCount,
+            total: downloadCandidates.length,
+            completedBytes: completedBytes,
+          ),
         );
       }
-      await _runWithLocalMutationSuppressed(() async {
-        await _applyRemoteArtifactPayload(
+    } else {
+      for (final candidate in downloadCandidates) {
+        final downloaded = await _api.downloadArtifact(candidate.artifactId);
+        currentManifest = await _applyDownloadedArtifact(
           currentUser: currentUser,
-          artifactId: candidate.artifactId,
-          payload: _artifactStore.readPayload(downloaded.bytes),
+          remoteUserId: remoteUserId,
+          manifest: currentManifest,
+          candidate: candidate,
+          downloaded: downloaded,
         );
-      });
-      final storageFile = _artifactStore.storageFileNameForArtifact(
-        candidate.artifactId,
-      );
-      await _artifactStore.writeArtifactBytes(
-        remoteUserId: remoteUserId,
-        storageFile: storageFile,
-        bytes: downloaded.bytes,
-      );
-      final updatedItems = Map<String, StudentKpArtifactManifestItem>.from(
-          currentManifest.items);
-      updatedItems[candidate.artifactId] = StudentKpArtifactManifestItem(
-        artifactId: candidate.artifactId,
-        sha256: candidate.sha256.trim(),
-        baseSha256: candidate.sha256.trim(),
-        lastModified: candidate.lastModified.trim(),
-        storageFile: storageFile,
-        deleted: false,
-      );
-      currentManifest = currentManifest.copyWith(items: updatedItems);
-      await _artifactStore.saveManifest(currentManifest);
-      completedCount++;
-      completedBytes += downloaded.bytes.length;
-      stats.addDownloaded(count: 1, bytes: downloaded.bytes.length);
-      await _reportProgress(
-        onProgress,
-        SyncProgress(
-          message: 'Downloading student artifacts...',
-          completed: completedCount,
-          total: downloadCandidates.length,
-          completedBytes: completedBytes,
-        ),
-      );
+        completedCount++;
+        completedBytes += downloaded.bytes.length;
+        stats.addDownloaded(count: 1, bytes: downloaded.bytes.length);
+        await _reportProgress(
+          onProgress,
+          SyncProgress(
+            message: 'Downloading student artifacts...',
+            completed: completedCount,
+            total: downloadCandidates.length,
+            completedBytes: completedBytes,
+          ),
+        );
+      }
     }
 
     final localOnlyIds = currentManifest.items.keys
@@ -502,6 +515,49 @@ class SessionSyncService {
       );
     }
     return await _artifactStore.loadManifest(remoteUserId);
+  }
+
+  Future<StudentKpArtifactManifest> _applyDownloadedArtifact({
+    required User currentUser,
+    required int remoteUserId,
+    required StudentKpArtifactManifest manifest,
+    required ArtifactState1Item candidate,
+    required DownloadedArtifact downloaded,
+  }) async {
+    final computedSha = sha256.convert(downloaded.bytes).toString();
+    if (computedSha != candidate.sha256.trim()) {
+      throw StateError(
+        'Downloaded artifact sha256 mismatch for ${candidate.artifactId}.',
+      );
+    }
+    await _runWithLocalMutationSuppressed(() async {
+      await _applyRemoteArtifactPayload(
+        currentUser: currentUser,
+        artifactId: candidate.artifactId,
+        payload: _artifactStore.readPayload(downloaded.bytes),
+      );
+    });
+    final storageFile = _artifactStore.storageFileNameForArtifact(
+      candidate.artifactId,
+    );
+    await _artifactStore.writeArtifactBytes(
+      remoteUserId: remoteUserId,
+      storageFile: storageFile,
+      bytes: downloaded.bytes,
+    );
+    final updatedItems =
+        Map<String, StudentKpArtifactManifestItem>.from(manifest.items);
+    updatedItems[candidate.artifactId] = StudentKpArtifactManifestItem(
+      artifactId: candidate.artifactId,
+      sha256: candidate.sha256.trim(),
+      baseSha256: candidate.sha256.trim(),
+      lastModified: candidate.lastModified.trim(),
+      storageFile: storageFile,
+      deleted: false,
+    );
+    final updatedManifest = manifest.copyWith(items: updatedItems);
+    await _artifactStore.saveManifest(updatedManifest);
+    return updatedManifest;
   }
 
   bool _shouldUploadLocalArtifact({
