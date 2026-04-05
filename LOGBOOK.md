@@ -1,6 +1,12 @@
 # LOGBOOK
 Historical timeline. Keep active runbook details in `WORKLOG.md`. Entries that mention row-level session/progress/enrollment sync remain as historical delivery records only.
 
+## 2026-04-05
+- Fixed the client enrollment `state2` parity bug that could raise `Stored student enrollment sync state drifted from canonical local state1` on the next due sync after login / `Take server copy`: local enrollment sync state now uses the same manifest contract as the server (`artifact_state2_v1` over sorted `artifact_id|sha256` lines), while teacher-only pending uploads still use synthetic local-only artifact ids to force the intended upload path.
+- Added due-interval regression coverage so student and teacher clean-second-sync checks no longer pass trivially inside the 60-second cooldown window.
+- Revalidated the client with `flutter test test/enrollment_sync_service_test.dart`, `flutter analyze`, `flutter test`, and the full `scripts/release_public.ps1` release flow.
+- Published public client `v1.0.7` and verified live endpoints: Android APK SHA-256 `a4baa5d899b04ea216df91e2b0c3e92e62887b74b0c38a5b5d29c497857d07b0`, Windows ZIP SHA-256 `ad3f83187cb311d423dfab393003b1c164ebe6352a8048ca11f17fcda75fce21`, GitHub Release `https://github.com/tutor1on1-org/tutor1on1/releases/tag/v1.0.7`, `https://api.tutor1on1.org/downloads/Tutor1on1.apk`, `https://api.tutor1on1.org/downloads/Tutor1on1.zip`, and `https://www.tutor1on1.org/`.
+
 ## 2026-04-01
 - Completed the production hard cutover from legacy row-level sync to artifact-manifest sync. Created backup `/home/ecs-user/db_backups/family_teacher_20260401_195705_artifact_cutover_pre.sql.gz`, confirmed the legacy student credential set as `albert` and `charles` with real logins, then ran `artifact_cutover` to convert `39` legacy sessions plus `3127` progress rows into `3157` canonical artifacts across `2` students while dropping the retired sync tables.
 - During cutover, found `/var/lib/family_teacher_remote/storage/student_kp` owned by `root:root`; fixed ownership to `ftapp:ftapp`, reran the cutover, and verified the live artifact storage path is writable by the API user.

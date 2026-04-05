@@ -1,7 +1,9 @@
 # DONES
-Last updated: 2026-04-01
+Last updated: 2026-04-05
 
 - Historical scope note: entries below are delivery history. Some older entries reference the retired row-level sync model and should not be read as the current architecture contract.
+
+- Fixed false enrollment drift after student/teacher bundle sync: local enrollment `state2` now uses the same manifest contract as the server (`artifact_state2_v1` over sorted `artifact_id|sha256` lines) instead of hashing richer local `state1` fingerprints, while teacher-only pending uploads still use synthetic local-only artifact ids to force the intended mismatch. Tightened `test/enrollment_sync_service_test.dart` so clean-second-sync checks run after the due interval, updated `LESSONS.md`, bumped the public app version to `1.0.7`, and released/uploaded fresh public artifacts: Android APK `a4baa5d899b04ea216df91e2b0c3e92e62887b74b0c38a5b5d29c497857d07b0`, Windows ZIP `ad3f83187cb311d423dfab393003b1c164ebe6352a8048ca11f17fcda75fce21`, GitHub Release `https://github.com/tutor1on1-org/tutor1on1/releases/tag/v1.0.7`, plus website static sync.
 
 - Completed the production hard cutover to artifact-manifest sync end to end: created backup `/home/ecs-user/db_backups/family_teacher_20260401_195705_artifact_cutover_pre.sql.gz`, verified the exact legacy-student credential set (`albert`, `charles`) via live login, fixed `/var/lib/family_teacher_remote/storage/student_kp` ownership to `ftapp:ftapp`, ran `artifact_cutover` successfully (`students=2 sessions=39 progress=3127 artifacts=3157 users=6 dropped_legacy=true`), verified retired row-level routes now return `404` while `/api/artifacts/sync/state2` is live, updated moderated smoke automation to approve pending teacher/course requests when admin creds are supplied, and republished public `v1.0.1` artifacts plus website/GitHub release with Android APK `7c76d548f3ced5b69f71a65ef9fe3bf5d3e7a831a635a62ba57122ef5cbe4f15` and Windows ZIP `f355e03827c9f2112ec4fa905c83efc9f358832cd10419fa87061fa5d3864959`.
 
