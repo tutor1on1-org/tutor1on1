@@ -53,6 +53,7 @@ class EnrollmentSyncService {
   int _localState2RefreshSuppressionDepth = 0;
   static final RegExp _versionSuffixPattern = RegExp(r'_(\d{10,})$');
   static const String _artifactClassCourseBundle = 'course_bundle';
+  static const String _artifactState2Version = 'artifact_state2_v1';
   static const Duration _syncMinInterval = Duration(seconds: 60);
   static const String _syncDomainStudentEnrollments = 'enrollment_sync_student';
   static const String _syncDomainStudentCourseBundles =
@@ -156,12 +157,14 @@ class EnrollmentSyncService {
       domain: domain,
       fingerprintsByScope: state1FingerprintsByScope,
     );
+    final localState2 = await _buildCanonicalLocalState2(
+      currentUser: currentUser,
+      remoteUserId: remoteUserId,
+    );
     await _secureStorage.writeLocalSyncState2(
       remoteUserId: remoteUserId,
       domain: domain,
-      state2: _buildState2FromFingerprints(
-        state1FingerprintsByScope.values.toList(),
-      ),
+      state2: localState2,
     );
   }
 
@@ -1399,9 +1402,98 @@ class EnrollmentSyncService {
     ].join('|');
   }
 
-  String _buildState2FromFingerprints(List<String> fingerprints) {
-    final canonical = List<String>.from(fingerprints)..sort();
-    return sha256Hex(canonical.join('\n'));
+  Future<String> _buildCanonicalLocalState2({
+    required User currentUser,
+    required int remoteUserId,
+  }) async {
+    if (currentUser.role == 'teacher') {
+      return _buildTeacherLocalState2(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+      );
+    }
+    return _buildStudentEnrollmentLocalState2(
+      currentUser: currentUser,
+      remoteUserId: remoteUserId,
+    );
+  }
+
+  Future<String> _buildStudentEnrollmentLocalState2({
+    required User currentUser,
+    required int remoteUserId,
+  }) async {
+    final artifactHashesById = <String, String>{};
+    final assignedRemoteCourses =
+        await _db.getAssignedRemoteCoursesForStudent(currentUser.id);
+    for (final info in assignedRemoteCourses) {
+      if (info.remoteCourseId <= 0) {
+        continue;
+      }
+      final syncState = await _secureStorage.readSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainStudentCourseBundles,
+        scopeKey: _teacherCourseScopeKey(info.remoteCourseId),
+      );
+      final bundleHash = syncState?.contentHash.trim() ?? '';
+      if (bundleHash.isEmpty) {
+        continue;
+      }
+      artifactHashesById['$_artifactClassCourseBundle:${info.remoteCourseId}'] =
+          bundleHash;
+    }
+    return _buildState2FromArtifactHashes(artifactHashesById);
+  }
+
+  Future<String> _buildTeacherLocalState2({
+    required User currentUser,
+    required int remoteUserId,
+  }) async {
+    final artifactHashesById = <String, String>{};
+    final localCourses = await _db.getCourseVersionsForTeacher(currentUser.id);
+    for (final course in localCourses) {
+      final remoteCourseId = await _db.getRemoteCourseId(course.id);
+      final localHash = (await _resolveTeacherCourseLocalState1Hash(
+        teacher: currentUser,
+        remoteUserId: remoteUserId,
+        course: course,
+        remoteCourseId: remoteCourseId,
+      ))
+          .trim();
+      if (localHash.isEmpty) {
+        continue;
+      }
+      final artifactId = remoteCourseId != null && remoteCourseId > 0
+          ? '$_artifactClassCourseBundle:$remoteCourseId'
+          : 'local-course:${course.id}';
+      artifactHashesById[artifactId] = localHash;
+    }
+    return _buildState2FromArtifactHashes(artifactHashesById);
+  }
+
+  String _buildState2FromArtifactHashes(
+      Map<String, String> artifactHashesById) {
+    final canonical = artifactHashesById.entries
+        .where(
+          (entry) =>
+              entry.key.trim().isNotEmpty && entry.value.trim().isNotEmpty,
+        )
+        .toList(growable: false)
+      ..sort((left, right) {
+        final artifactCompare = left.key.compareTo(right.key);
+        if (artifactCompare != 0) {
+          return artifactCompare;
+        }
+        return left.value.compareTo(right.value);
+      });
+    final builder = StringBuffer();
+    for (final entry in canonical) {
+      builder
+        ..write(entry.key.trim())
+        ..write('|')
+        ..write(entry.value.trim())
+        ..write('\n');
+    }
+    return '$_artifactState2Version:${sha256Hex(builder.toString())}';
   }
 
   Future<void> _reconcileTeacherCourseMetadata({

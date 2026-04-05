@@ -593,7 +593,8 @@ void main() {
     }
   });
 
-  test('student sync downloads one course bundle and second sync is clean',
+  test(
+      'student sync stays clean after the next due interval when remote is unchanged',
       () async {
     final studentId = await db.createUser(
       username: 'albert',
@@ -649,6 +650,11 @@ void main() {
     expect(
       await db.getCourseVersionIdForRemoteCourse(501),
       isNotNull,
+    );
+    await secureStorage.writeSyncRunAt(
+      remoteUserId: 3001,
+      domain: 'enrollment_sync_student',
+      runAt: DateTime.now().toUtc().subtract(const Duration(minutes: 5)),
     );
 
     final second = await service.syncIfReady(currentUser: student);
@@ -784,6 +790,16 @@ void main() {
     final first = await service.syncIfReady(currentUser: teacher);
     expect(first.downloadedCount, 0);
     expect(first.uploadedCount, 0);
+    await secureStorage.writeSyncRunAt(
+      remoteUserId: 9001,
+      domain: 'enrollment_sync_teacher',
+      runAt: DateTime.now().toUtc().subtract(const Duration(minutes: 5)),
+    );
+
+    final cleanSecond = await service.syncIfReady(currentUser: teacher);
+    expect(cleanSecond.uploadedCount, 0);
+    expect(cleanSecond.downloadedCount, 0);
+    expect(artifactApi.uploadCalls, 0);
 
     await File(p.join(localCourseDir.path, '1_lecture.txt')).writeAsString(
       'Teacher changed lesson text',
@@ -805,6 +821,11 @@ void main() {
     expect(artifactApi.uploadCalls, 1);
     expect(artifactApi.uploadedArtifactIds,
         equals(const <String>['course_bundle:501']));
+    await secureStorage.writeSyncRunAt(
+      remoteUserId: 9001,
+      domain: 'enrollment_sync_teacher',
+      runAt: DateTime.now().toUtc().subtract(const Duration(minutes: 5)),
+    );
 
     final third = await service.syncIfReady(currentUser: teacher);
     expect(third.uploadedCount, 0);
