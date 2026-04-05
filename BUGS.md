@@ -1,5 +1,5 @@
 # BUGS
-Last updated: 2026-04-01
+Last updated: 2026-04-06
 
 ## Active watch
 - Student import race after bundle download (monitoring): fixed by awaiting archive extraction in client bundle service (`f77e7e0`); keep watching for recurrence in production-like flow.
@@ -118,6 +118,11 @@ Last updated: 2026-04-01
 - Root cause: `session_text_sync` and `progress_sync_chunks` upserts replaced existing rows without comparing `updated_at`.
 - Prevention: on the server, lock the existing row, and only update when incoming `updated_at` is strictly newer; stale uploads should be skipped silently so clients stay simple.
 
+23. Student artifact uploads must preserve JSON-text fields as strings
+- Symptom: session sync can fail with `Session sync failed: student artifact invalid` even though the local per-KP zip exists and its SHA-256 matches.
+- Root cause: the client artifact builder decoded valid JSON text from session/message fields such as `control_state_json`, `evidence_state_json`, and `parsed_json` into nested objects before zipping; the server upload contract unmarshaled those payload fields into Go `string` fields, so object-shaped JSON caused upload-time parse failure.
+- Prevention: keep those artifact payload fields as trimmed strings on the local upload/build path, and add regression coverage that rejects non-string JSON-text fields in the fake artifact API so the mismatch is caught before release.
+
 23. Tutor control/evidence must not be reconstructed from degraded chat history
 - Symptom: review answers can auto-switch to `New Learn` before the LLM reply arrives, and summary can claim "no new evidence" even after a correct answer on another device or after sync/import.
 - Root cause: the app inferred control flow (`new/continue`, mode, finished-turn choices) and evidence state by scanning `chat_messages` fields like `action`, `parsed_json`, `turn_state`, and review payload history; sync/import could strip or degrade those message fields, so the app silently rewrote the user's visible state and injected fake-zero summary evidence.
@@ -197,3 +202,8 @@ Last updated: 2026-04-01
 - Symptom: login-time or force-pull sync can appear stuck on one stage, and the blocking overlay may look unresponsive during large session/progress transfers.
 - Root cause: the UI only showed coarse stage text or item counts, while some heavy build/import loops could still spend too long in one isolate slice before yielding back to the event loop.
 - Prevention: report sync progress as counts plus transferred MB, force-paint stage-start updates once totals are known, and keep heavy session/progress build/import loops yielding so the overlay continues repainting during large sync runs.
+
+39. Sync UI can mislabel enrollment transport failures as session DNS failures
+- Symptom: student/teacher home screens can show errors like `Session sync failed: ClientException with SocketException: Failed host lookup...` even when the failing request was actually enrollment `course_bundle` sync and the raw transport text overstates the diagnosis.
+- Root cause: the home UI wrapped every home-sync failure with one generic `Session sync failed` prefix, and artifact sync surfaced raw `http` / `SocketException` text directly to the user instead of separating stable UI wording from raw log detail.
+- Prevention: keep business-layer stage labels in `HomeSyncCoordinator` (`Enrollment sync failed`, `Session sync failed`), normalize transport exceptions into neutral user messages such as `Could not contact ...`, and store the original transport detail only in logs/debug fields.

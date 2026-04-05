@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../services/app_services.dart';
 import '../../services/app_version_service.dart';
+import '../../services/home_sync_coordinator.dart';
 import '../../services/marketplace_api_service.dart';
 import '../../state/auth_controller.dart';
 import '../../state/settings_controller.dart';
@@ -456,7 +457,13 @@ class _WelcomePageState extends State<WelcomePage> {
       if (!mounted) {
         return;
       }
-      _showMessage(context, l10n.sessionSyncFailed('$error'));
+      _showMessage(
+        context,
+        describeSyncFailure(
+          stage: 'Sync setup',
+          error: error,
+        ).userMessage,
+      );
     }
   }
 
@@ -504,7 +511,13 @@ class _WelcomePageState extends State<WelcomePage> {
       if (!mounted) {
         return;
       }
-      _showMessage(context, l10n.sessionSyncFailed('$error'));
+      _showMessage(
+        context,
+        describeSyncFailure(
+          stage: 'Sync setup',
+          error: error,
+        ).userMessage,
+      );
     }
   }
 
@@ -541,7 +554,13 @@ class _WelcomePageState extends State<WelcomePage> {
       if (!mounted) {
         return;
       }
-      _showMessage(context, l10n.sessionSyncFailed('$error'));
+      _showMessage(
+        context,
+        describeSyncFailure(
+          stage: 'Sync setup',
+          error: error,
+        ).userMessage,
+      );
     }
   }
 

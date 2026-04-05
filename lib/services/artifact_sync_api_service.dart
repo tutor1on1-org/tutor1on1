@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -113,10 +114,15 @@ class ArtifactConflictException implements Exception {
 }
 
 class ArtifactSyncApiException implements Exception {
-  ArtifactSyncApiException(this.message, {this.statusCode});
+  ArtifactSyncApiException(
+    this.message, {
+    this.statusCode,
+    String? debugMessage,
+  }) : debugMessage = (debugMessage ?? message).trim();
 
   final String message;
   final int? statusCode;
+  final String debugMessage;
 
   @override
   String toString() => message;
@@ -171,7 +177,10 @@ class ArtifactSyncApiService {
       },
     );
     Future<http.Response> send(String token) {
-      return _client.get(uri, headers: _authHeaders(token));
+      return _runRequest(
+        uri: uri,
+        action: () => _client.get(uri, headers: _authHeaders(token)),
+      );
     }
 
     var token = await _requireAccessToken();
@@ -206,13 +215,17 @@ class ArtifactSyncApiService {
     if (normalizedArtifactIds.isEmpty) {
       return const <DownloadedArtifact>[];
     }
+    final uri = Uri.parse('$_baseUrl/api/artifacts/download-batch');
     Future<http.Response> send(String token) {
-      return _client.post(
-        Uri.parse('$_baseUrl/api/artifacts/download-batch'),
-        headers: _authHeaders(token),
-        body: jsonEncode(<String, dynamic>{
-          'artifact_ids': normalizedArtifactIds,
-        }),
+      return _runRequest(
+        uri: uri,
+        action: () => _client.post(
+          uri,
+          headers: _authHeaders(token),
+          body: jsonEncode(<String, dynamic>{
+            'artifact_ids': normalizedArtifactIds,
+          }),
+        ),
       );
     }
 
@@ -238,23 +251,30 @@ class ArtifactSyncApiService {
     required String baseSha256,
     required bool overwriteServer,
   }) async {
+    final uri = Uri.parse('$_baseUrl/api/artifacts/upload');
     Future<http.Response> send(String token) async {
-      final request = http.MultipartRequest(
-          'POST', Uri.parse('$_baseUrl/api/artifacts/upload'));
-      request.headers.addAll(_authHeaders(token, includeContentType: false));
-      request.fields['artifact_id'] = artifactId.trim();
-      request.fields['sha256'] = sha256.trim();
-      request.fields['base_sha256'] = baseSha256.trim();
-      request.fields['overwrite_server'] = overwriteServer ? 'true' : 'false';
-      request.files.add(
-        http.MultipartFile.fromBytes(
-          'artifact',
-          bytes,
-          filename: _artifactFilename(artifactId),
-        ),
+      return _runRequest(
+        uri: uri,
+        action: () async {
+          final request = http.MultipartRequest('POST', uri);
+          request.headers
+              .addAll(_authHeaders(token, includeContentType: false));
+          request.fields['artifact_id'] = artifactId.trim();
+          request.fields['sha256'] = sha256.trim();
+          request.fields['base_sha256'] = baseSha256.trim();
+          request.fields['overwrite_server'] =
+              overwriteServer ? 'true' : 'false';
+          request.files.add(
+            http.MultipartFile.fromBytes(
+              'artifact',
+              bytes,
+              filename: _artifactFilename(artifactId),
+            ),
+          );
+          final streamed = await _client.send(request);
+          return http.Response.fromStream(streamed);
+        },
       );
-      final streamed = await _client.send(request);
-      return http.Response.fromStream(streamed);
     }
 
     var token = await _requireAccessToken();
@@ -295,7 +315,10 @@ class ArtifactSyncApiService {
       queryParameters: params == null || params.isEmpty ? null : params,
     );
     Future<http.Response> send(String token) {
-      return _client.get(uri, headers: _authHeaders(token));
+      return _runRequest(
+        uri: uri,
+        action: () => _client.get(uri, headers: _authHeaders(token)),
+      );
     }
 
     var token = await _requireAccessToken();
@@ -450,6 +473,24 @@ class ArtifactSyncApiService {
     }
     return downloaded;
   }
+
+  Future<T> _runRequest<T>({
+    required Uri uri,
+    required Future<T> Function() action,
+  }) async {
+    try {
+      return await action();
+    } on ArtifactSyncApiException {
+      rethrow;
+    } on ArtifactConflictException {
+      rethrow;
+    } catch (error) {
+      throw ArtifactSyncApiException(
+        _describeTransportError(uri: uri, error: error),
+        debugMessage: 'Transport request to $uri failed: $error',
+      );
+    }
+  }
 }
 
 String _normalizeBaseUrl(String baseUrl) {
@@ -467,4 +508,28 @@ http.Client _buildClient(bool allowInsecureTls) {
   final httpClient = HttpClient()
     ..badCertificateCallback = (cert, host, port) => true;
   return IOClient(httpClient);
+}
+
+String _describeTransportError({
+  required Uri uri,
+  required Object error,
+}) {
+  final message = error.toString();
+  if (error is TimeoutException ||
+      message.toLowerCase().contains('timed out')) {
+    return 'Request to ${uri.host} timed out. Retry.';
+  }
+  if (error is HandshakeException || message.contains('HandshakeException')) {
+    return 'Secure connection to ${uri.host} failed. Check system time, proxy, VPN, or certificate settings and retry.';
+  }
+  if (message.contains('Failed host lookup') ||
+      message.contains('No address associated with hostname')) {
+    return 'Could not contact ${uri.host} from this device. Check DNS, proxy, VPN, or firewall settings and retry.';
+  }
+  if (error is SocketException ||
+      error is HttpException ||
+      error is http.ClientException) {
+    return 'Could not contact ${uri.host}. Check network, proxy, VPN, or firewall settings and retry.';
+  }
+  return 'Request to ${uri.host} failed: $error';
 }

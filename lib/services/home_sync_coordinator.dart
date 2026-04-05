@@ -1,6 +1,7 @@
 import '../db/app_database.dart';
 import 'enrollment_sync_service.dart';
 import 'session_sync_service.dart';
+import 'artifact_sync_api_service.dart';
 import 'sync_log_repository.dart';
 import 'sync_progress.dart';
 
@@ -23,7 +24,6 @@ class HomeSyncCoordinator {
     required SyncProgressCallback? onProgress,
   }) async {
     final stats = SyncRunStats();
-    Object? syncError;
     try {
       onProgress?.call(
         const SyncProgress(
@@ -31,40 +31,57 @@ class HomeSyncCoordinator {
           forcePaint: true,
         ),
       );
-      stats.absorb(
-        await _enrollmentSyncService.syncIfReady(currentUser: user),
-      );
+      try {
+        stats.absorb(
+          await _enrollmentSyncService.syncIfReady(currentUser: user),
+        );
+      } catch (error) {
+        final failure = describeSyncFailure(
+          stage: 'Enrollment sync',
+          error: error,
+        );
+        await _recordFailure(
+          trigger: trigger,
+          user: user,
+          stats: stats,
+          failure: failure,
+        );
+        throw HomeSyncException(
+          failure.userMessage,
+          logMessage: failure.logMessage,
+        );
+      }
       onProgress?.call(
         const SyncProgress(
           message: 'Syncing sessions/progress from server...',
           forcePaint: true,
         ),
       );
-      stats.absorb(
-        await _sessionSyncService.syncIfReady(
-          currentUser: user,
-          onProgress: onProgress,
-        ),
-      );
-    } catch (error) {
-      syncError = error;
-    }
-
-    if (syncError != null) {
-      var reportedError = '$syncError';
       try {
-        await _syncLogRepository.appendRunEvent(
-          trigger: trigger,
-          actorRole: user.role,
-          actorUserId: user.id,
-          stats: stats,
-          success: false,
-          error: reportedError,
+        stats.absorb(
+          await _sessionSyncService.syncIfReady(
+            currentUser: user,
+            onProgress: onProgress,
+          ),
         );
-      } catch (logError) {
-        reportedError = '$reportedError; sync log write failed: $logError';
+      } catch (error) {
+        final failure = describeSyncFailure(
+          stage: 'Session sync',
+          error: error,
+        );
+        await _recordFailure(
+          trigger: trigger,
+          user: user,
+          stats: stats,
+          failure: failure,
+        );
+        throw HomeSyncException(
+          failure.userMessage,
+          logMessage: failure.logMessage,
+        );
       }
-      throw HomeSyncException(reportedError);
+    } on HomeSyncException {
+      rethrow;
     }
 
     try {
@@ -80,13 +97,87 @@ class HomeSyncCoordinator {
     }
     return stats;
   }
+
+  Future<void> _recordFailure({
+    required String trigger,
+    required User user,
+    required SyncRunStats stats,
+    required SyncFailurePresentation failure,
+  }) async {
+    try {
+      await _syncLogRepository.appendRunEvent(
+        trigger: trigger,
+        actorRole: user.role,
+        actorUserId: user.id,
+        stats: stats,
+        success: false,
+        error: failure.logMessage,
+      );
+    } catch (logError) {
+      throw HomeSyncException(
+        failure.userMessage,
+        logMessage: '${failure.logMessage}; sync log write failed: $logError',
+      );
+    }
+  }
 }
 
 class HomeSyncException implements Exception {
-  HomeSyncException(this.message);
+  HomeSyncException(this.message, {String? logMessage})
+      : logMessage = (logMessage ?? message).trim();
 
   final String message;
+  final String logMessage;
 
   @override
   String toString() => message;
+}
+
+class SyncFailurePresentation {
+  const SyncFailurePresentation({
+    required this.userMessage,
+    required this.logMessage,
+  });
+
+  final String userMessage;
+  final String logMessage;
+}
+
+SyncFailurePresentation describeSyncFailure({
+  required String stage,
+  required Object error,
+}) {
+  final normalizedStage = stage.trim().isEmpty ? 'Sync' : stage.trim();
+  return SyncFailurePresentation(
+    userMessage: '$normalizedStage failed: ${_describeSyncErrorForUser(error)}',
+    logMessage: '$normalizedStage failed: ${_describeSyncErrorForLog(error)}',
+  );
+}
+
+String _describeSyncErrorForUser(Object error) {
+  if (error is HomeSyncException) {
+    return error.message;
+  }
+  if (error is ArtifactSyncApiException) {
+    return error.message;
+  }
+  final message = '$error'.trim();
+  if (message.isNotEmpty) {
+    return message;
+  }
+  return 'Unexpected error.';
+}
+
+String _describeSyncErrorForLog(Object error) {
+  if (error is HomeSyncException) {
+    return error.logMessage;
+  }
+  if (error is ArtifactSyncApiException) {
+    return error.debugMessage;
+  }
+  final message = '$error'.trim();
+  if (message.isNotEmpty) {
+    return '${error.runtimeType}: $message';
+  }
+  return error.runtimeType.toString();
 }

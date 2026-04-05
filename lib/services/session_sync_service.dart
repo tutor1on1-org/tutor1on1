@@ -839,7 +839,7 @@ class SessionSyncService {
               if ((message.rawContent ?? '').trim().isNotEmpty)
                 'raw_content': message.rawContent,
               if ((message.parsedJson ?? '').trim().isNotEmpty)
-                'parsed_json': _decodeMaybeJson(message.parsedJson!),
+                'parsed_json': message.parsedJson!.trim(),
               if ((message.action ?? '').trim().isNotEmpty)
                 'action': message.action!.trim(),
               'created_at': message.createdAt.toUtc().toIso8601String(),
@@ -862,12 +862,12 @@ class SessionSyncService {
         if ((session.summaryText ?? '').trim().isNotEmpty)
           'summary_text': session.summaryText!.trim(),
         if ((session.controlStateJson ?? '').trim().isNotEmpty)
-          'control_state_json': _decodeMaybeJson(session.controlStateJson!),
+          'control_state_json': session.controlStateJson!.trim(),
         if (session.controlStateUpdatedAt != null)
           'control_state_updated_at':
               session.controlStateUpdatedAt!.toUtc().toIso8601String(),
         if ((session.evidenceStateJson ?? '').trim().isNotEmpty)
-          'evidence_state_json': _decodeMaybeJson(session.evidenceStateJson!),
+          'evidence_state_json': session.evidenceStateJson!.trim(),
         if (session.evidenceStateUpdatedAt != null)
           'evidence_state_updated_at':
               session.evidenceStateUpdatedAt!.toUtc().toIso8601String(),
@@ -1343,18 +1343,6 @@ class SessionSyncService {
       return parsed.toUtc();
     }
     throw StateError('Unsupported timestamp value: $raw');
-  }
-
-  dynamic _decodeMaybeJson(String raw) {
-    final trimmed = raw.trim();
-    if (trimmed.isEmpty) {
-      return null;
-    }
-    try {
-      return jsonDecode(trimmed);
-    } catch (_) {
-      return trimmed;
-    }
   }
 
   String? _encodeCanonicalJson(dynamic value) {

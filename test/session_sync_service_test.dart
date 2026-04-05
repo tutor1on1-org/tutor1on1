@@ -151,6 +151,7 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
       }
     }
     final payload = _zipStore.readPayload(bytes);
+    _assertServerCompatiblePayload(payload);
     final item = ArtifactState1Item(
       artifactId: artifactId,
       artifactClass: 'student_kp',
@@ -180,6 +181,39 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
         .toList(growable: false)
       ..sort((left, right) => left.artifactId.compareTo(right.artifactId));
     return items;
+  }
+
+  void _assertServerCompatiblePayload(Map<String, dynamic> payload) {
+    final sessions = payload['sessions'];
+    if (sessions is! List) {
+      throw StateError('student artifact invalid');
+    }
+    for (final rawSession in sessions) {
+      if (rawSession is! Map<String, dynamic>) {
+        throw StateError('student artifact invalid');
+      }
+      final control = rawSession['control_state_json'];
+      if (control != null && control is! String) {
+        throw StateError('student artifact invalid');
+      }
+      final evidence = rawSession['evidence_state_json'];
+      if (evidence != null && evidence is! String) {
+        throw StateError('student artifact invalid');
+      }
+      final messages = rawSession['messages'];
+      if (messages is! List) {
+        throw StateError('student artifact invalid');
+      }
+      for (final rawMessage in messages) {
+        if (rawMessage is! Map<String, dynamic>) {
+          throw StateError('student artifact invalid');
+        }
+        final parsed = rawMessage['parsed_json'];
+        if (parsed != null && parsed is! String) {
+          throw StateError('student artifact invalid');
+        }
+      }
+    }
   }
 }
 
@@ -488,6 +522,105 @@ void main() {
     final secondStats = await uploadService.syncIfReady(currentUser: student);
     expect(secondStats.uploadedCount, 0);
     expect(api.uploadCalls, 1);
+  });
+
+  test('local json text fields upload as server-compatible strings', () async {
+    final teacherId = await db.createUser(
+      username: 'teacher',
+      pinHash: 'hash',
+      role: 'teacher',
+      remoteUserId: 901,
+    );
+    final studentId = await db.createUser(
+      username: 'student',
+      pinHash: 'hash',
+      role: 'student',
+      remoteUserId: 3001,
+    );
+    final courseVersionId = await db.createCourseVersion(
+      teacherId: teacherId,
+      subject: 'Physics',
+      granularity: 1,
+      textbookText: '',
+    );
+    await db.upsertCourseRemoteLink(
+      courseVersionId: courseVersionId,
+      remoteCourseId: 200,
+    );
+    await db.assignStudent(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+    );
+    await db.into(db.courseNodes).insert(
+          CourseNodesCompanion.insert(
+            courseVersionId: courseVersionId,
+            kpKey: '1.1',
+            title: 'Motion',
+            description: '',
+            orderIndex: 1,
+          ),
+        );
+
+    final service = SessionSyncService(
+      db: db,
+      api: _FakeArtifactSyncApiService(),
+      artifactStore: artifactStore,
+    );
+    await service.ensureLocalCutoverInitialized();
+
+    final sessionId = await db.into(db.chatSessions).insert(
+          ChatSessionsCompanion.insert(
+            studentId: studentId,
+            courseVersionId: courseVersionId,
+            kpKey: '1.1',
+            title: const Value('Local JSON'),
+            startedAt: Value(DateTime.parse('2026-04-06T09:00:00Z')),
+            syncId: const Value('local-session-json'),
+            syncUpdatedAt: Value(DateTime.parse('2026-04-06T09:05:00Z')),
+            controlStateJson: const Value('{"step":2,"mode":"review"}'),
+            controlStateUpdatedAt:
+                Value(DateTime.parse('2026-04-06T09:05:00Z')),
+            evidenceStateJson:
+                const Value('{"mistakes":["units"],"score":0.5}'),
+            evidenceStateUpdatedAt:
+                Value(DateTime.parse('2026-04-06T09:05:30Z')),
+          ),
+        );
+    await db.into(db.chatMessages).insert(
+          ChatMessagesCompanion.insert(
+            sessionId: sessionId,
+            role: 'assistant',
+            content: 'structured reply',
+            parsedJson: const Value('{"hint":"draw a free-body diagram"}'),
+            createdAt: Value(DateTime.parse('2026-04-06T09:00:10Z')),
+          ),
+        );
+
+    await service.handleLocalSyncRelevantChange(
+      SyncRelevantChange(localUserIds: <int>{studentId}),
+    );
+
+    final api = _FakeArtifactSyncApiService();
+    final uploadService = SessionSyncService(
+      db: db,
+      api: api,
+      artifactStore: artifactStore,
+    );
+    final student = (await db.getUserById(studentId))!;
+
+    final stats = await uploadService.syncIfReady(currentUser: student);
+    expect(stats.uploadedCount, 1);
+    expect(api.uploadCalls, 1);
+
+    final uploaded = await api.downloadArtifact('student_kp:3001:200:1.1');
+    final payload = artifactStore.readPayload(uploaded.bytes);
+    final sessions = payload['sessions'] as List<dynamic>;
+    final uploadedSession = sessions.single as Map<String, dynamic>;
+    expect(uploadedSession['control_state_json'], isA<String>());
+    expect(uploadedSession['evidence_state_json'], isA<String>());
+    final messages = uploadedSession['messages'] as List<dynamic>;
+    final uploadedMessage = messages.single as Map<String, dynamic>;
+    expect(uploadedMessage['parsed_json'], isA<String>());
   });
 
   test('teacher sync downloads student artifact and creates local student copy',

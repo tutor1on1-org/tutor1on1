@@ -111,7 +111,6 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     if (showOverlay) {
       await Future<void>.delayed(Duration.zero);
     }
-    final l10n = AppLocalizations.of(context)!;
     final auth = context.read<AuthController>();
     final user = auth.currentUser;
     if (user == null) {
@@ -139,7 +138,10 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     } on HomeSyncException catch (error) {
       syncError = error.message;
     } on Object catch (error) {
-      syncError = '$error';
+      syncError = describeSyncFailure(
+        stage: 'Sync',
+        error: error,
+      ).userMessage;
     } finally {
       _setSyncState(syncing: false, message: '');
       _syncInProgress = false;
@@ -148,10 +150,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       if (!mounted) {
         return;
       }
-      _setPersistentMessage(
-        l10n.sessionSyncFailed(syncError),
-        isError: true,
-      );
+      _setPersistentMessage(syncError, isError: true);
     }
   }
 
