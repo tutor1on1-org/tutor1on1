@@ -88,12 +88,20 @@ function Ensure-LocalReleaseTagAtHead {
     throw "git rev-parse HEAD failed with exit code $LASTEXITCODE."
   }
 
-  $tagCommitLines = @(& git -C $RepoRoot rev-list -n 1 $ReleaseTag 2>$null)
-  if ($LASTEXITCODE -ne 0 -or $tagCommitLines.Count -eq 0 -or [string]::IsNullOrWhiteSpace("$($tagCommitLines[0])")) {
+  $tagList = @(& git -C $RepoRoot tag --list $ReleaseTag)
+  if ($LASTEXITCODE -ne 0) {
+    throw "git tag --list $ReleaseTag failed with exit code $LASTEXITCODE."
+  }
+  if ($tagList.Count -eq 0 -or [string]::IsNullOrWhiteSpace("$($tagList[0])")) {
     Invoke-Checked -Label "git tag $ReleaseTag" -Action {
       git -C $RepoRoot tag $ReleaseTag
     }
     return
+  }
+
+  $tagCommitLines = @(& git -C $RepoRoot rev-list -n 1 "refs/tags/$ReleaseTag")
+  if ($LASTEXITCODE -ne 0 -or $tagCommitLines.Count -eq 0 -or [string]::IsNullOrWhiteSpace("$($tagCommitLines[0])")) {
+    throw "git rev-list refs/tags/$ReleaseTag failed with exit code $LASTEXITCODE."
   }
 
   $tagCommit = "$($tagCommitLines[0])".Trim()
