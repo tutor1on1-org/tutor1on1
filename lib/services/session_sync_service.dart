@@ -35,6 +35,7 @@ class SessionSyncService {
   static const String _artifactClass = 'student_kp';
   static const String _artifactSchema = 'student_kp_artifact_v1';
   static const int _batchDownloadThreshold = 3;
+  static const int _downloadApplyCheckpointInterval = 64;
 
   bool get _localMutationSuppressed => _localMutationSuppressionDepth > 0;
 
@@ -334,56 +335,68 @@ class SessionSyncService {
       final downloadedById = <String, DownloadedArtifact>{
         for (final item in downloadedItems) item.artifactId.trim(): item,
       };
-      for (final candidate in downloadCandidates) {
+      final downloads = downloadCandidates.map((candidate) {
         final downloaded = downloadedById[candidate.artifactId];
         if (downloaded == null) {
           throw StateError(
             'Downloaded artifact batch is missing ${candidate.artifactId}.',
           );
         }
-        currentManifest = await _applyDownloadedArtifact(
-          currentUser: currentUser,
-          remoteUserId: remoteUserId,
-          manifest: currentManifest,
+        return _DownloadedArtifactCandidate(
           candidate: candidate,
           downloaded: downloaded,
         );
-        completedCount++;
-        completedBytes += downloaded.bytes.length;
-        stats.addDownloaded(count: 1, bytes: downloaded.bytes.length);
-        await _reportProgress(
-          onProgress,
-          SyncProgress(
-            message: 'Downloading student artifacts...',
-            completed: completedCount,
-            total: downloadCandidates.length,
-            completedBytes: completedBytes,
-          ),
-        );
-      }
+      }).toList(growable: false);
+      currentManifest = await _applyDownloadedArtifactInChunks(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+        manifest: currentManifest,
+        downloads: downloads,
+        onApplied: (downloaded) async {
+          completedCount++;
+          completedBytes += downloaded.bytes.length;
+          stats.addDownloaded(count: 1, bytes: downloaded.bytes.length);
+          await _reportProgress(
+            onProgress,
+            SyncProgress(
+              message: 'Downloading student artifacts...',
+              completed: completedCount,
+              total: downloadCandidates.length,
+              completedBytes: completedBytes,
+            ),
+          );
+        },
+      );
     } else {
+      final downloads = <_DownloadedArtifactCandidate>[];
       for (final candidate in downloadCandidates) {
-        final downloaded = await _api.downloadArtifact(candidate.artifactId);
-        currentManifest = await _applyDownloadedArtifact(
-          currentUser: currentUser,
-          remoteUserId: remoteUserId,
-          manifest: currentManifest,
-          candidate: candidate,
-          downloaded: downloaded,
-        );
-        completedCount++;
-        completedBytes += downloaded.bytes.length;
-        stats.addDownloaded(count: 1, bytes: downloaded.bytes.length);
-        await _reportProgress(
-          onProgress,
-          SyncProgress(
-            message: 'Downloading student artifacts...',
-            completed: completedCount,
-            total: downloadCandidates.length,
-            completedBytes: completedBytes,
+        downloads.add(
+          _DownloadedArtifactCandidate(
+            candidate: candidate,
+            downloaded: await _api.downloadArtifact(candidate.artifactId),
           ),
         );
       }
+      currentManifest = await _applyDownloadedArtifactInChunks(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+        manifest: currentManifest,
+        downloads: downloads,
+        onApplied: (downloaded) async {
+          completedCount++;
+          completedBytes += downloaded.bytes.length;
+          stats.addDownloaded(count: 1, bytes: downloaded.bytes.length);
+          await _reportProgress(
+            onProgress,
+            SyncProgress(
+              message: 'Downloading student artifacts...',
+              completed: completedCount,
+              total: downloadCandidates.length,
+              completedBytes: completedBytes,
+            ),
+          );
+        },
+      );
     }
 
     final localOnlyIds = currentManifest.items.keys
@@ -414,6 +427,45 @@ class SessionSyncService {
       }
     }
     return await _artifactStore.loadManifest(remoteUserId);
+  }
+
+  Future<StudentKpArtifactManifest> _applyDownloadedArtifactInChunks({
+    required User currentUser,
+    required int remoteUserId,
+    required StudentKpArtifactManifest manifest,
+    required List<_DownloadedArtifactCandidate> downloads,
+    required Future<void> Function(DownloadedArtifact downloaded) onApplied,
+  }) async {
+    var currentManifest = manifest;
+    for (var start = 0;
+        start < downloads.length;
+        start += _downloadApplyCheckpointInterval) {
+      final end = (start + _downloadApplyCheckpointInterval < downloads.length)
+          ? start + _downloadApplyCheckpointInterval
+          : downloads.length;
+      final chunk = downloads.sublist(start, end);
+      await _runWithLocalMutationSuppressed(() async {
+        await _db.transaction(() async {
+          for (final entry in chunk) {
+            currentManifest = await _applyDownloadedArtifact(
+              currentUser: currentUser,
+              remoteUserId: remoteUserId,
+              manifest: currentManifest,
+              candidate: entry.candidate,
+              downloaded: entry.downloaded,
+              persistManifest: false,
+              wrapLocalMutationSuppression: false,
+              wrapLocalScopeTransaction: false,
+            );
+          }
+        });
+      });
+      await _artifactStore.saveManifest(currentManifest);
+      for (final entry in chunk) {
+        await onApplied(entry.downloaded);
+      }
+    }
+    return currentManifest;
   }
 
   bool _shouldDownloadServerArtifact({
@@ -523,6 +575,9 @@ class SessionSyncService {
     required StudentKpArtifactManifest manifest,
     required ArtifactState1Item candidate,
     required DownloadedArtifact downloaded,
+    bool persistManifest = true,
+    bool wrapLocalMutationSuppression = true,
+    bool wrapLocalScopeTransaction = true,
   }) async {
     final computedSha = sha256.convert(downloaded.bytes).toString();
     if (computedSha != candidate.sha256.trim()) {
@@ -530,13 +585,24 @@ class SessionSyncService {
         'Downloaded artifact sha256 mismatch for ${candidate.artifactId}.',
       );
     }
-    await _runWithLocalMutationSuppressed(() async {
+    final payload = _artifactStore.readPayload(downloaded.bytes);
+    if (wrapLocalMutationSuppression) {
+      await _runWithLocalMutationSuppressed(() async {
+        await _applyRemoteArtifactPayload(
+          currentUser: currentUser,
+          artifactId: candidate.artifactId,
+          payload: payload,
+          wrapReplaceTransaction: wrapLocalScopeTransaction,
+        );
+      });
+    } else {
       await _applyRemoteArtifactPayload(
         currentUser: currentUser,
         artifactId: candidate.artifactId,
-        payload: _artifactStore.readPayload(downloaded.bytes),
+        payload: payload,
+        wrapReplaceTransaction: wrapLocalScopeTransaction,
       );
-    });
+    }
     final storageFile = _artifactStore.storageFileNameForArtifact(
       candidate.artifactId,
     );
@@ -556,7 +622,9 @@ class SessionSyncService {
       deleted: false,
     );
     final updatedManifest = manifest.copyWith(items: updatedItems);
-    await _artifactStore.saveManifest(updatedManifest);
+    if (persistManifest) {
+      await _artifactStore.saveManifest(updatedManifest);
+    }
     return updatedManifest;
   }
 
@@ -955,6 +1023,7 @@ class SessionSyncService {
     required User currentUser,
     required String artifactId,
     required Map<String, dynamic> payload,
+    bool wrapReplaceTransaction = true,
   }) async {
     final identity = _parseArtifactIdentity(artifactId, payload);
     final localCourseVersionId = await _resolveCourseVersionId(
@@ -971,6 +1040,7 @@ class SessionSyncService {
       localCourseVersionId: localCourseVersionId,
       kpKey: identity.kpKey,
       payload: payload,
+      wrapTransaction: wrapReplaceTransaction,
     );
   }
 
@@ -1023,134 +1093,154 @@ class SessionSyncService {
     required int localCourseVersionId,
     required String kpKey,
     required Map<String, dynamic> payload,
+    bool wrapTransaction = true,
   }) async {
     await _db.assignStudent(
       studentId: localStudentId,
       courseVersionId: localCourseVersionId,
     );
-    await _db.transaction(() async {
-      await _deleteLocalArtifactScope(
-        localStudentId: localStudentId,
-        localCourseVersionId: localCourseVersionId,
-        kpKey: kpKey,
-      );
-
-      final progressPayload = payload['progress'];
-      if (progressPayload is Map<String, dynamic>) {
-        await _db.upsertProgressFromSync(
-          studentId: localStudentId,
-          courseVersionId: localCourseVersionId,
+    if (wrapTransaction) {
+      await _db.transaction(() async {
+        await _replaceLocalArtifactScopeBody(
+          localStudentId: localStudentId,
+          localCourseVersionId: localCourseVersionId,
           kpKey: kpKey,
-          lit: progressPayload['lit'] == true,
-          litPercent: (progressPayload['lit_percent'] as num?)?.toInt() ?? 0,
-          questionLevel: (progressPayload['question_level'] as String?)?.trim(),
-          easyPassedCount:
-              (progressPayload['easy_passed_count'] as num?)?.toInt() ?? 0,
-          mediumPassedCount:
-              (progressPayload['medium_passed_count'] as num?)?.toInt() ?? 0,
-          hardPassedCount:
-              (progressPayload['hard_passed_count'] as num?)?.toInt() ?? 0,
-          summaryText: (progressPayload['summary_text'] as String?)?.trim(),
-          summaryRawResponse:
-              (progressPayload['summary_raw_response'] as String?)?.trim(),
-          summaryValid: progressPayload['summary_valid'] as bool?,
-          updatedAt: _parseIsoTime(progressPayload['updated_at']) ??
-              DateTime.now().toUtc(),
-          mergeWithLocal: false,
+          payload: payload,
         );
-      }
+      });
+      return;
+    }
+    await _replaceLocalArtifactScopeBody(
+      localStudentId: localStudentId,
+      localCourseVersionId: localCourseVersionId,
+      kpKey: kpKey,
+      payload: payload,
+    );
+  }
 
-      final sessions = payload['sessions'];
-      if (sessions is! List) {
-        return;
+  Future<void> _replaceLocalArtifactScopeBody({
+    required int localStudentId,
+    required int localCourseVersionId,
+    required String kpKey,
+    required Map<String, dynamic> payload,
+  }) async {
+    await _deleteLocalArtifactScope(
+      localStudentId: localStudentId,
+      localCourseVersionId: localCourseVersionId,
+      kpKey: kpKey,
+    );
+
+    final progressPayload = payload['progress'];
+    if (progressPayload is Map<String, dynamic>) {
+      await _db.upsertProgressFromSync(
+        studentId: localStudentId,
+        courseVersionId: localCourseVersionId,
+        kpKey: kpKey,
+        lit: progressPayload['lit'] == true,
+        litPercent: (progressPayload['lit_percent'] as num?)?.toInt() ?? 0,
+        questionLevel: (progressPayload['question_level'] as String?)?.trim(),
+        easyPassedCount:
+            (progressPayload['easy_passed_count'] as num?)?.toInt() ?? 0,
+        mediumPassedCount:
+            (progressPayload['medium_passed_count'] as num?)?.toInt() ?? 0,
+        hardPassedCount:
+            (progressPayload['hard_passed_count'] as num?)?.toInt() ?? 0,
+        summaryText: (progressPayload['summary_text'] as String?)?.trim(),
+        summaryRawResponse:
+            (progressPayload['summary_raw_response'] as String?)?.trim(),
+        summaryValid: progressPayload['summary_valid'] as bool?,
+        updatedAt: _parseIsoTime(progressPayload['updated_at']) ??
+            DateTime.now().toUtc(),
+        mergeWithLocal: false,
+      );
+    }
+
+    final sessions = payload['sessions'];
+    if (sessions is! List) {
+      return;
+    }
+    for (final rawSession in sessions) {
+      if (rawSession is! Map<String, dynamic>) {
+        throw StateError('Student artifact session entry must be an object.');
       }
-      for (final rawSession in sessions) {
-        if (rawSession is! Map<String, dynamic>) {
-          throw StateError('Student artifact session entry must be an object.');
+      final syncId = (rawSession['session_sync_id'] as String?)?.trim() ?? '';
+      if (syncId.isEmpty) {
+        throw StateError('Student artifact session_sync_id missing.');
+      }
+      final startedAt =
+          _parseIsoTime(rawSession['started_at']) ?? DateTime.now().toUtc();
+      final updatedAt = _parseIsoTime(rawSession['updated_at']) ?? startedAt;
+      final sessionId = await _db.into(_db.chatSessions).insert(
+            ChatSessionsCompanion.insert(
+              studentId: localStudentId,
+              courseVersionId: localCourseVersionId,
+              kpKey: kpKey,
+              title: Value(
+                ((rawSession['session_title'] as String?)?.trim() ?? '').isEmpty
+                    ? null
+                    : (rawSession['session_title'] as String).trim(),
+              ),
+              startedAt: Value(startedAt),
+              endedAt: Value(_parseIsoTime(rawSession['ended_at'])),
+              status: const Value('active'),
+              summaryText: Value(
+                ((rawSession['summary_text'] as String?)?.trim() ?? '').isEmpty
+                    ? null
+                    : (rawSession['summary_text'] as String).trim(),
+              ),
+              controlStateJson: Value(
+                _encodeCanonicalJson(rawSession['control_state_json']),
+              ),
+              controlStateUpdatedAt:
+                  Value(_parseIsoTime(rawSession['control_state_updated_at'])),
+              evidenceStateJson: Value(
+                _encodeCanonicalJson(rawSession['evidence_state_json']),
+              ),
+              evidenceStateUpdatedAt:
+                  Value(_parseIsoTime(rawSession['evidence_state_updated_at'])),
+              syncId: Value(syncId),
+              syncUpdatedAt: Value(updatedAt),
+              syncUploadedAt: Value(updatedAt),
+            ),
+          );
+      final rawMessages = rawSession['messages'];
+      if (rawMessages is! List) {
+        continue;
+      }
+      for (final rawMessage in rawMessages) {
+        if (rawMessage is! Map<String, dynamic>) {
+          throw StateError('Student artifact message entry must be an object.');
         }
-        final syncId = (rawSession['session_sync_id'] as String?)?.trim() ?? '';
-        if (syncId.isEmpty) {
-          throw StateError('Student artifact session_sync_id missing.');
+        final role = (rawMessage['role'] as String?)?.trim() ?? '';
+        final content = (rawMessage['content'] as String?) ?? '';
+        if (role.isEmpty) {
+          throw StateError('Student artifact message role missing.');
         }
-        final startedAt =
-            _parseIsoTime(rawSession['started_at']) ?? DateTime.now().toUtc();
-        final updatedAt = _parseIsoTime(rawSession['updated_at']) ?? startedAt;
-        final sessionId = await _db.into(_db.chatSessions).insert(
-              ChatSessionsCompanion.insert(
-                studentId: localStudentId,
-                courseVersionId: localCourseVersionId,
-                kpKey: kpKey,
-                title: Value(
-                  ((rawSession['session_title'] as String?)?.trim() ?? '')
-                          .isEmpty
+        await _db.into(_db.chatMessages).insert(
+              ChatMessagesCompanion.insert(
+                sessionId: sessionId,
+                role: role,
+                content: content,
+                rawContent: Value(
+                  ((rawMessage['raw_content'] as String?)?.trim() ?? '').isEmpty
                       ? null
-                      : (rawSession['session_title'] as String).trim(),
+                      : (rawMessage['raw_content'] as String),
                 ),
-                startedAt: Value(startedAt),
-                endedAt: Value(_parseIsoTime(rawSession['ended_at'])),
-                status: const Value('active'),
-                summaryText: Value(
-                  ((rawSession['summary_text'] as String?)?.trim() ?? '')
-                          .isEmpty
+                parsedJson: Value(
+                  _encodeCanonicalJson(rawMessage['parsed_json']),
+                ),
+                action: Value(
+                  ((rawMessage['action'] as String?)?.trim() ?? '').isEmpty
                       ? null
-                      : (rawSession['summary_text'] as String).trim(),
+                      : (rawMessage['action'] as String).trim(),
                 ),
-                controlStateJson: Value(
-                  _encodeCanonicalJson(rawSession['control_state_json']),
+                createdAt: Value(
+                  _parseIsoTime(rawMessage['created_at']) ?? updatedAt,
                 ),
-                controlStateUpdatedAt: Value(
-                    _parseIsoTime(rawSession['control_state_updated_at'])),
-                evidenceStateJson: Value(
-                  _encodeCanonicalJson(rawSession['evidence_state_json']),
-                ),
-                evidenceStateUpdatedAt: Value(
-                    _parseIsoTime(rawSession['evidence_state_updated_at'])),
-                syncId: Value(syncId),
-                syncUpdatedAt: Value(updatedAt),
-                syncUploadedAt: Value(updatedAt),
               ),
             );
-        final rawMessages = rawSession['messages'];
-        if (rawMessages is! List) {
-          continue;
-        }
-        for (final rawMessage in rawMessages) {
-          if (rawMessage is! Map<String, dynamic>) {
-            throw StateError(
-                'Student artifact message entry must be an object.');
-          }
-          final role = (rawMessage['role'] as String?)?.trim() ?? '';
-          final content = (rawMessage['content'] as String?) ?? '';
-          if (role.isEmpty) {
-            throw StateError('Student artifact message role missing.');
-          }
-          await _db.into(_db.chatMessages).insert(
-                ChatMessagesCompanion.insert(
-                  sessionId: sessionId,
-                  role: role,
-                  content: content,
-                  rawContent: Value(
-                    ((rawMessage['raw_content'] as String?)?.trim() ?? '')
-                            .isEmpty
-                        ? null
-                        : (rawMessage['raw_content'] as String),
-                  ),
-                  parsedJson: Value(
-                    _encodeCanonicalJson(rawMessage['parsed_json']),
-                  ),
-                  action: Value(
-                    ((rawMessage['action'] as String?)?.trim() ?? '').isEmpty
-                        ? null
-                        : (rawMessage['action'] as String).trim(),
-                  ),
-                  createdAt: Value(
-                    _parseIsoTime(rawMessage['created_at']) ?? updatedAt,
-                  ),
-                ),
-              );
-        }
       }
-    });
+    }
   }
 
   Future<void> _deleteLocalArtifactScopeById({
@@ -1422,4 +1512,14 @@ class _ArtifactIdentity {
   final int remoteStudentUserId;
   final int remoteCourseId;
   final String kpKey;
+}
+
+class _DownloadedArtifactCandidate {
+  const _DownloadedArtifactCandidate({
+    required this.candidate,
+    required this.downloaded,
+  });
+
+  final ArtifactState1Item candidate;
+  final DownloadedArtifact downloaded;
 }
