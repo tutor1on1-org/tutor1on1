@@ -70,6 +70,10 @@ function Sync-WebsiteReleaseConfig {
   if (-not (Test-Path -LiteralPath $siteJsPath)) {
     throw "Website release config not found: $siteJsPath"
   }
+  $webRoot = Join-Path $RepoRoot 'web'
+  if (-not (Test-Path -LiteralPath $webRoot)) {
+    throw "Website root not found: $webRoot"
+  }
 
   $assetNames = Get-PublicReleaseAssetNames -RepoRoot $RepoRoot
   $versionInfo = $assetNames.VersionInfo
@@ -134,6 +138,58 @@ function Sync-WebsiteReleaseConfig {
     [System.StringComparison]::Ordinal
   )
 
+  $downloadReferenceChanged = $false
+  $htmlFiles = Get-ChildItem -LiteralPath $webRoot -Recurse -File -Filter 'index.html'
+  foreach ($htmlFile in $htmlFiles) {
+    $htmlOriginal = [System.IO.File]::ReadAllText($htmlFile.FullName)
+    $htmlNormalized = $htmlOriginal.Replace("`r`n", "`n")
+    $htmlUpdated = $htmlNormalized
+    $htmlUpdated = $htmlUpdated.Replace(
+      'https://api.tutor1on1.org/downloads/Tutor1on1.apk',
+      "$($assetNames.DownloadBaseUrl)/$($assetNames.AndroidFileName)"
+    )
+    $htmlUpdated = $htmlUpdated.Replace(
+      'https://api.tutor1on1.org/downloads/Tutor1on1.zip',
+      "$($assetNames.DownloadBaseUrl)/$($assetNames.WindowsFileName)"
+    )
+    $htmlUpdated = $htmlUpdated.Replace(
+      'Tutor1on1.apk',
+      $assetNames.AndroidFileName
+    )
+    $htmlUpdated = $htmlUpdated.Replace(
+      'Tutor1on1.zip',
+      $assetNames.WindowsFileName
+    )
+    $htmlUpdated = [regex]::Replace(
+      $htmlUpdated,
+      'https://api\.tutor1on1\.org/downloads/Tutor1on1(?:-[0-9]+\.[0-9]+\.[0-9]+)?\.apk',
+      "$($assetNames.DownloadBaseUrl)/$($assetNames.AndroidFileName)"
+    )
+    $htmlUpdated = [regex]::Replace(
+      $htmlUpdated,
+      'https://api\.tutor1on1\.org/downloads/Tutor1on1(?:-[0-9]+\.[0-9]+\.[0-9]+)?\.zip',
+      "$($assetNames.DownloadBaseUrl)/$($assetNames.WindowsFileName)"
+    )
+    $htmlUpdated = [regex]::Replace(
+      $htmlUpdated,
+      '\bTutor1on1(?:-[0-9]+\.[0-9]+\.[0-9]+)?\.apk\b',
+      $assetNames.AndroidFileName
+    )
+    $htmlUpdated = [regex]::Replace(
+      $htmlUpdated,
+      '\bTutor1on1(?:-[0-9]+\.[0-9]+\.[0-9]+)?\.zip\b',
+      $assetNames.WindowsFileName
+    )
+
+    if (-not [string]::Equals($htmlNormalized, $htmlUpdated, [System.StringComparison]::Ordinal)) {
+      $downloadReferenceChanged = $true
+      $lineEnding = if ($htmlOriginal.Contains("`r`n")) { "`r`n" } else { "`n" }
+      $normalizedUpdatedHtml = $htmlUpdated.Replace("`n", $lineEnding)
+      $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+      [System.IO.File]::WriteAllText($htmlFile.FullName, $normalizedUpdatedHtml, $utf8NoBom)
+    }
+  }
+
   if ($changed) {
     $lineEnding = if ($originalText.Contains("`r`n")) { "`r`n" } else { "`n" }
     $normalizedUpdated = $updatedText.Replace("`n", $lineEnding)
@@ -142,7 +198,7 @@ function Sync-WebsiteReleaseConfig {
   }
 
   return [pscustomobject]@{
-    Changed     = $changed
+    Changed     = ($changed -or $downloadReferenceChanged)
     SiteJsPath  = $siteJsPath
     VersionInfo = $versionInfo
   }

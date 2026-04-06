@@ -320,19 +320,33 @@
       ''
     )
 
-    const assetUrls = new Map([
-      [releaseConfig.assets.android, `${downloadBaseUrl}/${releaseConfig.assets.android}`],
-      [releaseConfig.assets.windows, `${downloadBaseUrl}/${releaseConfig.assets.windows}`],
+    const assetAliases = new Map([
+      [
+        'android',
+        {
+          currentName: releaseConfig.assets.android,
+          legacyNames: ['Tutor1on1.apk'],
+        },
+      ],
+      [
+        'windows',
+        {
+          currentName: releaseConfig.assets.windows,
+          legacyNames: ['Tutor1on1.zip'],
+        },
+      ],
     ])
 
     document.querySelectorAll('a[href]').forEach((link) => {
       const rawHref = String(link.getAttribute('href') || '')
 
-      for (const [assetName, assetUrl] of assetUrls.entries()) {
-        if (!rawHref.includes(assetName)) {
+      for (const asset of assetAliases.values()) {
+        const candidateNames = [asset.currentName, ...asset.legacyNames]
+        const matchedName = candidateNames.find((name) => rawHref.includes(name))
+        if (!matchedName) {
           continue
         }
-        link.setAttribute('href', assetUrl)
+        link.setAttribute('href', `${downloadBaseUrl}/${asset.currentName}`)
         break
       }
     })
