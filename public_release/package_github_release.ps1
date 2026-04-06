@@ -99,13 +99,14 @@ if (-not (Test-Path -LiteralPath $versionUtilsScript)) {
 if ([string]::IsNullOrWhiteSpace($ReleaseTag)) {
   $ReleaseTag = (Get-PublicReleaseVersionInfo -RepoRoot $repoRoot).ReleaseTag
 }
+$assetNames = Get-PublicReleaseAssetNames -RepoRoot $repoRoot
 $distRoot = Join-Path $repoRoot "public_release\dist\$ReleaseTag"
 $apkSource = Join-Path $repoRoot 'build\app\outputs\flutter-apk\app-release.apk'
 $windowsReleaseDir = Join-Path $repoRoot 'build\windows\x64\runner\Release'
 $windowsBuildRoot = Join-Path $repoRoot 'build\windows'
-$apkTarget = Join-Path $distRoot 'Tutor1on1.apk'
-$zipTarget = Join-Path $distRoot 'Tutor1on1.zip'
-$checksumsPath = Join-Path $distRoot 'SHA256SUMS.txt'
+$apkTarget = Join-Path $distRoot $assetNames.AndroidFileName
+$zipTarget = Join-Path $distRoot $assetNames.WindowsFileName
+$checksumsPath = Join-Path $distRoot $assetNames.ChecksumsFileName
 $expectedExePath = Join-Path $windowsReleaseDir 'tutor1on1.exe'
 $legacyExePaths = @(
   (Join-Path $windowsReleaseDir 'family_teacher.exe'),
@@ -189,7 +190,7 @@ try {
   Set-Content -Path $checksumsPath -Value $hashLines
 
   Write-Host "Created release artifacts in $distRoot"
-  Write-Host 'Files: Tutor1on1.apk, Tutor1on1.zip, SHA256SUMS.txt'
+  Write-Host "Files: $($assetNames.AndroidFileName), $($assetNames.WindowsFileName), $($assetNames.ChecksumsFileName)"
 } finally {
   Pop-Location
 }

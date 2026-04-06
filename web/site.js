@@ -54,9 +54,10 @@
     githubRepo: 'tutor1on1-org/tutor1on1',
     appVersion: '1.0.8',
     releaseTag: 'v1.0.8',
+    downloadBaseUrl: 'https://api.tutor1on1.org/downloads',
     assets: Object.freeze({
-      android: 'Tutor1on1.apk',
-      windows: 'Tutor1on1.zip',
+      android: 'Tutor1on1-1.0.8.apk',
+      windows: 'Tutor1on1-1.0.8.zip',
     }),
   })
   const languagesByCode = new Map(
@@ -314,17 +315,14 @@
   }
 
   function applyReleaseLinks() {
-    const releaseBaseUrl = [
-      'https://github.com',
-      releaseConfig.githubRepo,
-      'releases',
-      'download',
-      releaseConfig.releaseTag,
-    ].join('/')
+    const downloadBaseUrl = String(releaseConfig.downloadBaseUrl || '').replace(
+      /\/+$/,
+      ''
+    )
 
     const assetUrls = new Map([
-      [releaseConfig.assets.android, `${releaseBaseUrl}/${releaseConfig.assets.android}`],
-      [releaseConfig.assets.windows, `${releaseBaseUrl}/${releaseConfig.assets.windows}`],
+      [releaseConfig.assets.android, `${downloadBaseUrl}/${releaseConfig.assets.android}`],
+      [releaseConfig.assets.windows, `${downloadBaseUrl}/${releaseConfig.assets.windows}`],
     ])
 
     document.querySelectorAll('a[href]').forEach((link) => {
@@ -339,7 +337,8 @@
       }
     })
 
-    replaceVisibleText('api.tutor1on1.org/downloads/', `${releaseBaseUrl}/`)
+    replaceVisibleText('Tutor1on1.apk', releaseConfig.assets.android)
+    replaceVisibleText('Tutor1on1.zip', releaseConfig.assets.windows)
   }
 
   function replaceVisibleText(searchValue, replaceValue) {

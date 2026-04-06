@@ -44,6 +44,22 @@ function Get-PublicReleaseVersionInfo {
   }
 }
 
+function Get-PublicReleaseAssetNames {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$RepoRoot
+  )
+
+  $versionInfo = Get-PublicReleaseVersionInfo -RepoRoot $RepoRoot
+  return [pscustomobject]@{
+    VersionInfo        = $versionInfo
+    AndroidFileName    = "Tutor1on1-$($versionInfo.DisplayVersion).apk"
+    WindowsFileName    = "Tutor1on1-$($versionInfo.DisplayVersion).zip"
+    ChecksumsFileName  = 'SHA256SUMS.txt'
+    DownloadBaseUrl    = 'https://api.tutor1on1.org/downloads'
+  }
+}
+
 function Sync-WebsiteReleaseConfig {
   param(
     [Parameter(Mandatory = $true)]
@@ -55,7 +71,8 @@ function Sync-WebsiteReleaseConfig {
     throw "Website release config not found: $siteJsPath"
   }
 
-  $versionInfo = Get-PublicReleaseVersionInfo -RepoRoot $RepoRoot
+  $assetNames = Get-PublicReleaseAssetNames -RepoRoot $RepoRoot
+  $versionInfo = $assetNames.VersionInfo
   $originalText = [System.IO.File]::ReadAllText($siteJsPath)
   $normalizedOriginal = $originalText.Replace("`r`n", "`n")
   $updatedText = $normalizedOriginal
@@ -82,6 +99,32 @@ function Sync-WebsiteReleaseConfig {
     $updatedText,
     "(?m)^(\s*releaseTag:\s*')[^']+(',\s*)$",
     "`${1}$($versionInfo.ReleaseTag)`${2}",
+    1
+  )
+  if ($updatedText -notmatch "(?m)^\s*downloadBaseUrl:\s*'[^']+',\s*$") {
+    $updatedText = [regex]::Replace(
+      $updatedText,
+      "(?m)^(\s*releaseTag:\s*'[^']+',\s*)$",
+      "`${1}`n    downloadBaseUrl: '$($assetNames.DownloadBaseUrl)',",
+      1
+    )
+  }
+  $updatedText = [regex]::Replace(
+    $updatedText,
+    "(?m)^(\s*downloadBaseUrl:\s*')[^']+(',\s*)$",
+    "`${1}$($assetNames.DownloadBaseUrl)`${2}",
+    1
+  )
+  $updatedText = [regex]::Replace(
+    $updatedText,
+    "(?m)^(\s*android:\s*')[^']+(',\s*)$",
+    "`${1}$($assetNames.AndroidFileName)`${2}",
+    1
+  )
+  $updatedText = [regex]::Replace(
+    $updatedText,
+    "(?m)^(\s*windows:\s*')[^']+(',\s*)$",
+    "`${1}$($assetNames.WindowsFileName)`${2}",
     1
   )
 

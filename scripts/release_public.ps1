@@ -42,6 +42,66 @@ function Get-GitStatusLines {
   return ,@($statusLines | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 }
 
+function Get-RequiredGitHubRemote {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$RepoRoot
+  )
+
+  $remoteLines = @(& git -C $RepoRoot remote)
+  if ($LASTEXITCODE -ne 0) {
+    throw "git remote failed with exit code $LASTEXITCODE."
+  }
+  if ($remoteLines -notcontains 'github') {
+    throw "Required GitHub remote 'github' is missing."
+  }
+  return 'github'
+}
+
+function Get-CurrentBranchName {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$RepoRoot
+  )
+
+  $branchName = ((& git -C $RepoRoot rev-parse --abbrev-ref HEAD) | Select-Object -First 1)
+  if ($LASTEXITCODE -ne 0) {
+    throw "git rev-parse --abbrev-ref HEAD failed with exit code $LASTEXITCODE."
+  }
+  $normalized = "$branchName".Trim()
+  if ([string]::IsNullOrWhiteSpace($normalized) -or $normalized -eq 'HEAD') {
+    throw 'Release push requires a named local branch, not a detached HEAD.'
+  }
+  return $normalized
+}
+
+function Ensure-LocalReleaseTagAtHead {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$RepoRoot,
+    [Parameter(Mandatory = $true)]
+    [string]$ReleaseTag
+  )
+
+  $headCommit = ((& git -C $RepoRoot rev-parse HEAD) | Select-Object -First 1).Trim()
+  if ($LASTEXITCODE -ne 0) {
+    throw "git rev-parse HEAD failed with exit code $LASTEXITCODE."
+  }
+
+  $tagCommitLines = @(& git -C $RepoRoot rev-list -n 1 $ReleaseTag 2>$null)
+  if ($LASTEXITCODE -ne 0 -or $tagCommitLines.Count -eq 0 -or [string]::IsNullOrWhiteSpace("$($tagCommitLines[0])")) {
+    Invoke-Checked -Label "git tag $ReleaseTag" -Action {
+      git -C $RepoRoot tag $ReleaseTag
+    }
+    return
+  }
+
+  $tagCommit = "$($tagCommitLines[0])".Trim()
+  if ($tagCommit -ne $headCommit) {
+    throw "Local tag $ReleaseTag points to $tagCommit instead of HEAD $headCommit."
+  }
+}
+
 $repoRoot = (Resolve-Path $ProjectRoot).Path
 if (-not (Test-Path -LiteralPath $repoRoot)) {
   throw "Project root not found: $ProjectRoot"
@@ -62,6 +122,7 @@ try {
   . $versionUtilsScript
 
   $syncResult = Sync-WebsiteReleaseConfig -RepoRoot $repoRoot
+  $versionInfo = $syncResult.VersionInfo
   if ($syncResult.Changed) {
     Write-Host "==> Synced website release config to $($syncResult.VersionInfo.ReleaseTag) ($($syncResult.VersionInfo.AppVersion))"
   } else {
@@ -77,6 +138,8 @@ try {
   }
 
   if (-not $SkipGit.IsPresent) {
+    $gitRemote = Get-RequiredGitHubRemote -RepoRoot $repoRoot
+    $branchName = Get-CurrentBranchName -RepoRoot $repoRoot
     $statusLines = Get-GitStatusLines -RepoRoot $repoRoot
     if ($statusLines.Count -gt 0) {
       Write-Host '==> Git changes detected'
@@ -88,11 +151,17 @@ try {
       Invoke-Checked -Label "git commit -m `"$CommitMessage`"" -Action {
         git -C $repoRoot commit -m $CommitMessage
       }
-      Invoke-Checked -Label 'git push' -Action {
-        git -C $repoRoot push
-      }
     } else {
-      Write-Host '==> Git worktree already clean; skip commit/push'
+      Write-Host '==> Git worktree already clean; skip commit'
+    }
+
+    Ensure-LocalReleaseTagAtHead -RepoRoot $repoRoot -ReleaseTag $versionInfo.ReleaseTag
+
+    Invoke-Checked -Label "git push $gitRemote $branchName" -Action {
+      git -C $repoRoot push $gitRemote "HEAD:refs/heads/$branchName"
+    }
+    Invoke-Checked -Label "git push $gitRemote $($versionInfo.ReleaseTag)" -Action {
+      git -C $repoRoot push $gitRemote "refs/tags/$($versionInfo.ReleaseTag)"
     }
   } else {
     Write-Host '==> Skip git requested'

@@ -79,11 +79,11 @@ Required workflow gate: run release build before updating `DONEs.md` after code 
 powershell -ExecutionPolicy Bypass -File scripts/release_public.ps1
 ```
 Default behavior:
-- Syncs `web/site.js` release metadata from `pubspec.yaml` before validation/git/publish so website download links stay aligned with the GitHub Release tag.
+- Syncs `web/site.js` release metadata from `pubspec.yaml` before validation/git/publish so website download links stay aligned with the current versioned asset names.
 - Runs `scripts/validate_project.ps1 -NoPostHook` first.
-- Runs `git add -A`, `git commit`, and `git push` if the worktree is dirty.
-- Publishes Android as `Tutor1on1.apk`.
-- Publishes Windows as `Tutor1on1.zip`.
+- Runs `git add -A`, `git commit`, and pushes the current branch plus release tag to the `github` remote.
+- Publishes Android as `Tutor1on1-<version>.apk`.
+- Publishes Windows as `Tutor1on1-<version>.zip`.
 - Publishes GitHub Release assets for the configured public tag.
 - Republishes the static website after artifacts are live.
 Useful flags:
@@ -104,14 +104,15 @@ powershell -ExecutionPolicy Bypass -File scripts/publish_android_release.ps1
 ```
 Optional flags:
 - `-SkipBuild` (reuse existing `build/app/outputs/flutter-apk/app-release.apk`)
+- `-SkipUpload` (build/copy/hash only, no remote publish)
 
 Default safeguards:
 - Runs `flutter build apk --config-only` immediately before the release APK build to refresh Android plugin wiring when the Flutter toolchain regresses on `integration_test` dev dependencies.
 - Publishes candidate first as `Tutor1on1_candidate.apk`.
-- Publishes the canonical APK and a versioned alias such as `Tutor1on1-1.0.3.apk`, while deleting older versioned APK aliases so mobile download/install flows cannot reuse a stale same-name APK.
+- Publishes only the versioned APK such as `Tutor1on1-1.0.8.apk`, deletes older versioned APK aliases, and removes any stale unversioned `Tutor1on1.apk`.
 - Verifies remote SHA-256 against the local APK before promotion.
-- Verifies both candidate and canonical public download URLs.
-- Cleans old `Tutor1on1*.apk` and legacy `family_teacher*.apk` artifacts after promotion.
+- Verifies both candidate and published public download URLs.
+- Cleans old versioned `Tutor1on1-*.apk` and legacy `family_teacher*.apk` artifacts after promotion.
 
 ### Windows release publish (build + zip + upload)
 ```powershell
@@ -128,8 +129,8 @@ Default safeguards:
 - Clears stale `build/windows` output before rebuild so renamed executables do not inherit the old CMake target name.
 - ZIP validator checks required runtime files and prompt asset UTF-8 readability.
 - ZIP packaging uses `System.IO.Compression` for Windows Explorer compatibility.
-- Remote publish uses candidate-first promotion before replacing canonical `Tutor1on1.zip`.
-- Cleans the stale Windows candidate ZIP and legacy `family_teacher*.zip` artifacts, without glob-deleting other `Tutor1on1*.zip` packages.
+- Remote publish uses candidate-first promotion before publishing the versioned ZIP such as `Tutor1on1-1.0.8.zip`.
+- Cleans stale versioned `Tutor1on1-*.zip`, the stale Windows candidate ZIP, legacy `family_teacher*.zip`, and any stale unversioned `Tutor1on1.zip`.
 
 ### GitHub Release publish
 ```powershell
@@ -145,7 +146,7 @@ Optional flags:
 - `-SkipWindowsBuild`
 
 Default safeguards:
-- Builds or reuses `Tutor1on1.apk`, `Tutor1on1.zip`, and `SHA256SUMS.txt` under `public_release/dist/<tag>/`.
+- Builds or reuses `Tutor1on1-<version>.apk`, `Tutor1on1-<version>.zip`, and `SHA256SUMS.txt` under `public_release/dist/<tag>/`.
 - Defaults the release tag/name from `pubspec.yaml` when not explicitly provided.
 - Validates the packaged Windows ZIP with the same ZIP checker used by the server publish flow.
 - Resolves a GitHub token from `GITHUB_TOKEN`/`GH_TOKEN` or `git credential fill`.
@@ -159,7 +160,7 @@ Default safeguards:
 - Re-syncs `web/site.js` release metadata from `pubspec.yaml` before upload so standalone website publishes cannot drift from the public release tag.
 - Clears the remote website root before syncing `web/` so deleted public pages are actually removed.
 - Verifies the remote website tree after upload.
-- Verifies localized home/help/install pages return HTTP 200, install pages reference `Tutor1on1.apk` / `Tutor1on1.zip`, and removed macOS install pages no longer return HTTP 200.
+- Verifies localized home/help/install pages return HTTP 200, install pages still reference the download host, `site.js` advertises the current versioned APK/ZIP names, and removed macOS install pages no longer return HTTP 200.
 
 ### Future macOS notarized release package
 Do not publish or relink macOS on the website until the app is runnable.

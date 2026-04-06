@@ -5,8 +5,8 @@ param(
   [string]$KeyPath = 'C:\Users\kl\.ssh\id_rsa',
   [string]$RemotePublicDir = '/var/lib/family_teacher_remote/public',
   [string]$DownloadBaseUrl = 'https://api.tutor1on1.org/downloads',
-  [string]$ApkName = 'Tutor1on1.apk',
-  [switch]$SkipBuild
+  [switch]$SkipBuild,
+  [switch]$SkipUpload
 )
 
 Set-StrictMode -Version Latest
@@ -72,14 +72,14 @@ if (-not (Test-Path -LiteralPath $KeyPath)) {
   throw "SSH key file not found: $KeyPath"
 }
 
-$versionInfo = Get-PublicReleaseVersionInfo -RepoRoot $repoRoot
+$assetNames = Get-PublicReleaseAssetNames -RepoRoot $repoRoot
+$versionInfo = $assetNames.VersionInfo
 $releaseApkPath = Join-Path $repoRoot 'build\app\outputs\flutter-apk\app-release.apk'
-$canonicalLocalApkPath = Join-Path $repoRoot ("build\" + $ApkName)
-$downloadUrl = "$($DownloadBaseUrl.TrimEnd('/'))/$ApkName"
-$tmpRemoteApk = "/tmp/$ApkName"
-$apkBaseName = [System.IO.Path]::GetFileNameWithoutExtension($ApkName)
-$versionedApkName = "${apkBaseName}-$($versionInfo.DisplayVersion).apk"
-$versionedDownloadUrl = "$($DownloadBaseUrl.TrimEnd('/'))/$versionedApkName"
+$publishedApkName = $assetNames.AndroidFileName
+$localPublishedApkPath = Join-Path $repoRoot ("build\" + $publishedApkName)
+$downloadUrl = "$($DownloadBaseUrl.TrimEnd('/'))/$publishedApkName"
+$tmpRemoteApk = "/tmp/$publishedApkName"
+$apkBaseName = [System.IO.Path]::GetFileNameWithoutExtension($publishedApkName) -replace "-$([regex]::Escape($versionInfo.DisplayVersion))$", ''
 $candidateApkName = "${apkBaseName}_candidate.apk"
 $candidateDownloadUrl = "$($DownloadBaseUrl.TrimEnd('/'))/$candidateApkName"
 $versionedCleanupPattern = "$apkBaseName-*.apk"
@@ -102,14 +102,21 @@ try {
     throw "Release APK not found: $releaseApkPath"
   }
 
-  Copy-Item -LiteralPath $releaseApkPath -Destination $canonicalLocalApkPath -Force
-  $apkItem = Get-Item -LiteralPath $canonicalLocalApkPath
+  Copy-Item -LiteralPath $releaseApkPath -Destination $localPublishedApkPath -Force
+  $apkItem = Get-Item -LiteralPath $localPublishedApkPath
   if ($apkItem.Length -le 0) {
-    throw "APK file is empty: $canonicalLocalApkPath"
+    throw "APK file is empty: $localPublishedApkPath"
   }
-  $localHash = (Get-FileHash -LiteralPath $canonicalLocalApkPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  $localHash = (Get-FileHash -LiteralPath $localPublishedApkPath -Algorithm SHA256).Hash.ToLowerInvariant()
   Write-Host "Local APK size: $($apkItem.Length) bytes"
   Write-Host "Local SHA256: $localHash"
+
+  if ($SkipUpload.IsPresent) {
+    Write-Host '==> Skip upload requested'
+    Write-Host "APK ready: $localPublishedApkPath"
+    Write-Host "Download URL: $downloadUrl"
+    return
+  }
 
   Invoke-Checked -Label 'Upload APK to remote /tmp' -Action {
     scp `
@@ -117,7 +124,7 @@ try {
       -o 'IdentitiesOnly=yes' `
       -o 'BatchMode=yes' `
       -o 'StrictHostKeyChecking=accept-new' `
-      $canonicalLocalApkPath `
+      $localPublishedApkPath `
       "${RemoteUser}@${RemoteHost}:$tmpRemoteApk"
   }
 
@@ -151,12 +158,12 @@ try {
   Assert-Http200 -Url $candidateDownloadUrl -Label 'candidate'
 
   $remotePromoteCommand = @(
-    "/usr/bin/sudo /usr/bin/install -m 0644 -o root -g root '$RemotePublicDir/$candidateApkName' '$RemotePublicDir/$ApkName'",
-    "/usr/bin/sudo /usr/bin/install -m 0644 -o root -g root '$RemotePublicDir/$candidateApkName' '$RemotePublicDir/$versionedApkName'",
-    "/usr/bin/sudo /usr/bin/find '$RemotePublicDir' -maxdepth 1 -type f -name '$versionedCleanupPattern' ! -name '$versionedApkName' -print -delete",
+    "/usr/bin/sudo /usr/bin/install -m 0644 -o root -g root '$RemotePublicDir/$candidateApkName' '$RemotePublicDir/$publishedApkName'",
+    "/usr/bin/sudo /usr/bin/find '$RemotePublicDir' -maxdepth 1 -type f -name '$versionedCleanupPattern' ! -name '$publishedApkName' -print -delete",
     "/usr/bin/sudo /usr/bin/find '$RemotePublicDir' -maxdepth 1 -type f -name '$legacyCleanupPattern' -print -delete",
+    "/usr/bin/sudo /usr/bin/rm -f '$RemotePublicDir/Tutor1on1.apk'",
     "/usr/bin/sudo /usr/bin/rm -f '$RemotePublicDir/$candidateApkName'",
-    "/usr/bin/sudo /usr/bin/sha256sum '$RemotePublicDir/$ApkName'",
+    "/usr/bin/sudo /usr/bin/sha256sum '$RemotePublicDir/$publishedApkName'",
     "/usr/bin/sudo /usr/bin/ls -la '$RemotePublicDir'"
   ) -join '; '
 
@@ -173,18 +180,16 @@ try {
   }
   $remotePromoteOutput | ForEach-Object { Write-Host $_ }
 
-  $remoteHash = Get-FirstSha256FromOutput -Lines $remotePromoteOutput -Context 'remote canonical'
+  $remoteHash = Get-FirstSha256FromOutput -Lines $remotePromoteOutput -Context 'remote published'
   if ($remoteHash -ne $localHash) {
-    throw "Remote canonical SHA256 mismatch. local=$localHash remote=$remoteHash"
+    throw "Remote published SHA256 mismatch. local=$localHash remote=$remoteHash"
   }
-  Write-Host "Remote canonical SHA256 matches local: $remoteHash"
+  Write-Host "Remote published SHA256 matches local: $remoteHash"
 
-  Assert-Http200 -Url $downloadUrl -Label 'canonical'
-  Assert-Http200 -Url $versionedDownloadUrl -Label 'versioned'
+  Assert-Http200 -Url $downloadUrl -Label 'versioned'
 
   Write-Host '==> Publish completed'
   Write-Host "Download URL: $downloadUrl"
-  Write-Host "Versioned download URL: $versionedDownloadUrl"
   Write-Host "SHA256: $localHash"
 } finally {
   Pop-Location

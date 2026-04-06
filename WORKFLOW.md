@@ -2,20 +2,20 @@
 Last updated: 2026-03-25
 
 ## Standard workflow
-For app changes, the default same-turn handoff is: validate, build, git, and publish unless the user explicitly skips a step. For public app releases, the default entry point is `scripts/release_public.ps1`, which first syncs the website release tag from `pubspec.yaml`, then publishes Android APK, Windows ZIP, GitHub Release assets, and website static files.
+For app changes, the default same-turn handoff is: validate, build, git, and publish unless the user explicitly skips a step. For public app releases, the default entry point is `scripts/release_public.ps1`, which first syncs website release metadata from `pubspec.yaml`, then pushes the current branch/tag to the `github` remote, publishes versioned Android APK and Windows ZIP artifacts, refreshes GitHub Release assets, and republishes website static files.
 
 1. Understand scope and locate the true failing/target layer.
 2. For bugs, reproduce with evidence first (logs, repro script, or minimal failing test).
 3. Implement the minimal correct root-cause change.
 4. Run a self-battle before handoff: summarize the conclusion, criticize it, then refine the answer or fix.
 5. Validate changed path first, then adjacent regressions, then end-to-end path when feasible.
-6. Run concrete builds before reporting done (`flutter build apk --config-only` then `flutter build apk --release`, plus `flutter build windows --release` for public app releases; `go build -o family-teacher-api ./cmd/server` for backend changes). For Windows publishes, the uploaded ZIP must come from the freshly updated local `build/windows/x64/runner/Release` output for the same commit; do not server-upload a stale local Release directory.
+6. Run concrete builds before reporting done (`flutter build apk --config-only` then `flutter build apk --release`, plus `flutter build windows --release` for public app releases; `go build -o family-teacher-api ./cmd/server` for backend changes). For Windows publishes, the uploaded versioned ZIP must come from the freshly updated local `build/windows/x64/runner/Release` output for the same commit; do not server-upload a stale local Release directory.
 7. Update memory docs intentionally; the memory hook auto-consolidates only memory markdown files whose line-count delta is `>10` from `scripts/memory_line_snapshot.json`.
 8. Update docs (`BUGS.md`, `LOGBOOK.md`, `TODOS.md`, `DONEs.md`) as applicable.
 9. Run `powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1 -NoPostHook`.
 10. Stage changes with `git add -A` before commit unless a file is clearly temporary/log-only and should stay untracked; in that case add/update `.gitignore` instead of relying on selective staging.
-11. Commit and push in the same turn after validation unless the user explicitly says not to do one of them.
-12. For app changes, publish/upload the remote Android APK, remote Windows release, GitHub Release assets, and website static files in the same turn unless the user explicitly says to skip one. Prefer `scripts/release_public.ps1` over manual per-step release commands.
+11. Commit and push in the same turn after validation unless the user explicitly says not to do one of them. Public release flow pushes only the `github` remote; do not depend on the private GitLab remote for shipping.
+12. For app changes, publish/upload the remote versioned Android APK, remote versioned Windows ZIP, GitHub Release assets, and website static files in the same turn unless the user explicitly says to skip one. Prefer `scripts/release_public.ps1` over manual per-step release commands.
 13. Do not hand off app changes as "done" before commit + push + publish complete; if one step is blocked, report the blocker explicitly instead of silently stopping early.
 14. If backend under `remote/` changed, rebuild/deploy/restart per the remote ops workflow before reporting done.
 
@@ -24,7 +24,7 @@ For app changes, the default same-turn handoff is: validate, build, git, and pub
 2. Run the changed-path test first, then `powershell -ExecutionPolicy Bypass -File scripts/validate_project.ps1 -NoPostHook`.
 3. Refresh the local desktop release first with `flutter build windows --release`, or verify the existing local `build/windows/x64/runner/Release` was already rebuilt for the exact commit being published.
 4. Publish the desktop artifact with `powershell -ExecutionPolicy Bypass -File skills/windows_release_publish/scripts/publish_windows_release.ps1`.
-5. After upload, treat the refreshed local `build/windows/x64/runner/Release` tree as the canonical local copy of the published desktop release; if it is stale, the release is incomplete.
+5. After upload, treat the refreshed local `build/windows/x64/runner/Release` tree as the canonical local copy of the published versioned desktop release; if it is stale, the release is incomplete.
 6. If the worktree is already dirty, review unrelated paths and stage only the intended release scope; report excluded sibling-repo or preexisting changes explicitly.
 7. Commit and push after validation evidence is collected, then report the public artifact verification result.
 

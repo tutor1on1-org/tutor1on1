@@ -5,7 +5,6 @@ param(
   [string]$KeyPath = 'C:\Users\kl\.ssh\id_rsa',
   [string]$RemotePublicDir = '/var/lib/family_teacher_remote/public',
   [string]$DownloadBaseUrl = 'https://api.tutor1on1.org/downloads',
-  [string]$ZipName = 'Tutor1on1.zip',
   [switch]$SkipBuild,
   [switch]$SkipUpload,
   [switch]$SkipPromptAssetTests,
@@ -26,8 +25,9 @@ function Invoke-Checked {
     [scriptblock]$Action
   )
   Write-Host "==> $Label"
+  Remove-Variable -Name LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue
   & $Action
-  if ($LASTEXITCODE -ne 0) {
+  if ((Test-Path -LiteralPath variable:global:LASTEXITCODE) -and $global:LASTEXITCODE -ne 0) {
     throw "$Label failed with exit code $LASTEXITCODE."
   }
 }
@@ -144,11 +144,20 @@ if (-not (Test-Path -LiteralPath $KeyPath)) {
   throw "SSH key file not found: $KeyPath"
 }
 
+$versionUtilsScript = Join-Path $repoRoot 'scripts\public_release_version_utils.ps1'
+if (-not (Test-Path -LiteralPath $versionUtilsScript)) {
+  throw "Public release version utils not found: $versionUtilsScript"
+}
+. $versionUtilsScript
+$assetNames = Get-PublicReleaseAssetNames -RepoRoot $repoRoot
+$versionInfo = $assetNames.VersionInfo
+$publishedZipName = $assetNames.WindowsFileName
 $releaseDir = Join-Path $repoRoot 'build\windows\x64\runner\Release'
-$zipPath = Join-Path $repoRoot ("build\" + $ZipName)
-$downloadUrl = "$($DownloadBaseUrl.TrimEnd('/'))/$ZipName"
-$tmpRemoteZip = "/tmp/$ZipName"
-$zipBaseName = [System.IO.Path]::GetFileNameWithoutExtension($ZipName)
+$zipPath = Join-Path $repoRoot ("build\" + $publishedZipName)
+$downloadUrl = "$($DownloadBaseUrl.TrimEnd('/'))/$publishedZipName"
+$tmpRemoteZip = "/tmp/$publishedZipName"
+$zipBaseName = [System.IO.Path]::GetFileNameWithoutExtension($publishedZipName) -replace "-$([regex]::Escape($versionInfo.DisplayVersion))$", ''
+$versionedCleanupPattern = "$zipBaseName-*.zip"
 $candidateZipName = "${zipBaseName}_candidate.zip"
 $candidateDownloadUrl = "$($DownloadBaseUrl.TrimEnd('/'))/$candidateZipName"
 $legacyCleanupPattern = 'family_teacher*.zip'
@@ -267,10 +276,12 @@ try {
   Assert-Http200 -Url $candidateDownloadUrl -Label 'candidate'
 
   $remotePromoteCommand = @(
-    "/usr/bin/sudo /usr/bin/install -m 0644 -o root -g root '$RemotePublicDir/$candidateZipName' '$RemotePublicDir/$ZipName'",
+    "/usr/bin/sudo /usr/bin/install -m 0644 -o root -g root '$RemotePublicDir/$candidateZipName' '$RemotePublicDir/$publishedZipName'",
+    "/usr/bin/sudo /usr/bin/find '$RemotePublicDir' -maxdepth 1 -type f -name '$versionedCleanupPattern' ! -name '$publishedZipName' -print -delete",
     "/usr/bin/sudo /usr/bin/find '$RemotePublicDir' -maxdepth 1 -type f -name '$legacyCleanupPattern' -print -delete",
+    "/usr/bin/sudo /usr/bin/rm -f '$RemotePublicDir/Tutor1on1.zip'",
     "/usr/bin/sudo /usr/bin/rm -f '$RemotePublicDir/$candidateZipName'",
-    "/usr/bin/sudo /usr/bin/sha256sum '$RemotePublicDir/$ZipName'",
+    "/usr/bin/sudo /usr/bin/sha256sum '$RemotePublicDir/$publishedZipName'",
     "/usr/bin/sudo /usr/bin/ls -la '$RemotePublicDir'"
   ) -join '; '
 
@@ -287,13 +298,13 @@ try {
   }
   $remotePromoteOutput | ForEach-Object { Write-Host $_ }
 
-  $remoteHash = Get-FirstSha256FromOutput -Lines $remotePromoteOutput -Context 'remote canonical'
+  $remoteHash = Get-FirstSha256FromOutput -Lines $remotePromoteOutput -Context 'remote published'
   if ($remoteHash -ne $localHash) {
-    throw "Remote canonical SHA256 mismatch. local=$localHash remote=$remoteHash"
+    throw "Remote published SHA256 mismatch. local=$localHash remote=$remoteHash"
   }
-  Write-Host "Remote canonical SHA256 matches local: $remoteHash"
+  Write-Host "Remote published SHA256 matches local: $remoteHash"
 
-  Assert-Http200 -Url $downloadUrl -Label 'canonical'
+  Assert-Http200 -Url $downloadUrl -Label 'versioned'
 
   Write-Host '==> Publish completed'
   Write-Host "Download URL: $downloadUrl"

@@ -110,6 +110,7 @@ if (-not (Test-Path -LiteralPath $versionUtilsScript)) {
 }
 . $versionUtilsScript
 $syncResult = Sync-WebsiteReleaseConfig -RepoRoot $repoRoot
+$assetNames = Get-PublicReleaseAssetNames -RepoRoot $repoRoot
 if ($syncResult.Changed) {
   Write-Host "==> Synced website release config to $($syncResult.VersionInfo.ReleaseTag) ($($syncResult.VersionInfo.AppVersion))"
 } else {
@@ -218,16 +219,22 @@ try {
 
   $bodyChecks = @(
     @{ Path = '/install/'; LiteralText = 'api.tutor1on1.org/downloads/' },
-    @{ Path = '/install/android/'; LiteralText = 'Tutor1on1.apk' },
-    @{ Path = '/install/windows/'; LiteralText = 'Tutor1on1.zip' },
-    @{ Path = '/zh/install/'; LiteralText = 'api.tutor1on1.org/downloads/' },
-    @{ Path = '/zh/install/android/'; LiteralText = 'Tutor1on1.apk' },
-    @{ Path = '/zh/install/windows/'; LiteralText = 'Tutor1on1.zip' }
+    @{ Path = '/zh/install/'; LiteralText = 'api.tutor1on1.org/downloads/' }
   )
   foreach ($check in $bodyChecks) {
     $url = "$($SiteBaseUrl.TrimEnd('/'))$($check.Path)"
     Write-Host "==> Verify page content: $url"
     Assert-BodyContains -Url $url -LiteralText $check.LiteralText
+  }
+
+  $siteScriptChecks = @(
+    $assetNames.AndroidFileName,
+    $assetNames.WindowsFileName
+  )
+  foreach ($literalText in $siteScriptChecks) {
+    $url = "$($SiteBaseUrl.TrimEnd('/'))/site.js"
+    Write-Host "==> Verify site.js content: $url"
+    Assert-BodyContains -Url $url -LiteralText $literalText
   }
 
   $bodyAbsenceChecks = @(

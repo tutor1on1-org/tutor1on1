@@ -209,9 +209,14 @@ if ([string]::IsNullOrWhiteSpace($ReleaseTag) -or [string]::IsNullOrWhiteSpace($
     $ReleaseName = $versionInfo.ReleaseName
   }
 }
+$assetNamesInfo = Get-PublicReleaseAssetNames -RepoRoot $repoRoot
 $packageScript = Join-Path $repoRoot 'public_release\package_github_release.ps1'
 $distRoot = Join-Path $repoRoot "public_release\dist\$ReleaseTag"
-$assetNames = @('Tutor1on1.apk', 'Tutor1on1.zip', 'SHA256SUMS.txt')
+$assetNames = @(
+  $assetNamesInfo.AndroidFileName,
+  $assetNamesInfo.WindowsFileName,
+  $assetNamesInfo.ChecksumsFileName
+)
 
 Push-Location $repoRoot
 try {
