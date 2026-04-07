@@ -143,6 +143,27 @@ void main() {
     expect(preview.normalizedPath, scaffoldDir.path);
   });
 
+  test('previewCourseLoad reports a synced scaffold as one concise reload error',
+      () async {
+    final scaffoldDir = Directory(
+      p.join(tempRoot.path, 'downloaded_courses', 'bundle_scaffold'),
+    );
+    await scaffoldDir.create(recursive: true);
+    await File(p.join(scaffoldDir.path, 'contents.txt')).writeAsString('''
+1 Unit
+1.1 (Add numbers, Y1)
+''');
+
+    final preview = await service.previewCourseLoad(
+      folderPath: scaffoldDir.path,
+    );
+
+    expect(preview.success, isFalse);
+    expect(preview.message, contains('not a reloadable source folder'));
+    expect(preview.message, contains('Choose the original local course folder'));
+    expect(preview.message, isNot(contains('Missing file:')));
+  });
+
   test('override reload deletes sessions for removed nodes and keeps subject',
       () async {
     final base = await _createCourseFolder(

@@ -1,7 +1,7 @@
 name: tutor1on1
 description: Tutor1on1 client with LLM-backed tutoring and skill trees.
 publish_to: "none"
-version: 1.0.11
+version: 1.0.12
 
 environment:
   sdk: ">=3.4.0 <4.0.0"

@@ -45,7 +45,7 @@ class _CourseVersionPageState extends State<CourseVersionPage> {
     if (widget.courseVersionId != null) {
       _course = await db.getCourseVersionById(widget.courseVersionId!);
       if (_course != null) {
-        _folderController.text = _course!.sourcePath ?? '';
+        _folderController.text = _initialReloadFolderPath(_course!);
         _courseName = _course!.subject;
       }
     }
@@ -411,32 +411,36 @@ class _CourseVersionPageState extends State<CourseVersionPage> {
     if (!mounted) {
       return;
     }
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.clearMaterialBanners();
-    messenger.showMaterialBanner(
-      MaterialBanner(
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
         content: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 640),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                title,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              SelectableText(message),
-            ],
+          constraints: const BoxConstraints(maxWidth: 720, maxHeight: 480),
+          child: SingleChildScrollView(
+            child: SelectableText(message),
           ),
         ),
         actions: [
           TextButton(
-            onPressed: messenger.hideCurrentMaterialBanner,
+            onPressed: () => Navigator.of(dialogContext).pop(),
             child: Text(AppLocalizations.of(context)!.closeButton),
           ),
         ],
       ),
     );
+  }
+
+  String _initialReloadFolderPath(CourseVersion course) {
+    final sourcePath = (course.sourcePath ?? '').trim();
+    if (sourcePath.isEmpty) {
+      return '';
+    }
+    final normalizedPath = p.normalize(sourcePath);
+    if (normalizedPath.contains('downloaded_courses')) {
+      return '';
+    }
+    return sourcePath;
   }
 }

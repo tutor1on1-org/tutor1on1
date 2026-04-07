@@ -572,20 +572,45 @@ GROUP BY kp_key
     }
 
     if (validateLectureFiles) {
+      final missingLecturePaths = <String>[];
+      var expectedLectureCount = 0;
       for (final node in parseResult.nodes.values) {
         if (node.isPlaceholder) {
           continue;
         }
+        expectedLectureCount += 1;
         final lecturePath = p.join(basePath, '${node.id}_lecture.txt');
         final legacyLecturePath = p.join(basePath, node.id, 'lecture.txt');
         if (!File(lecturePath).existsSync() &&
             !File(legacyLecturePath).existsSync()) {
-          errors.add('Missing file: $lecturePath');
+          missingLecturePaths.add(lecturePath);
+        }
+      }
+      if (missingLecturePaths.isNotEmpty) {
+        final allLecturesMissing =
+            expectedLectureCount > 0 &&
+            missingLecturePaths.length == expectedLectureCount;
+        if (allLecturesMissing) {
+          errors.add(_describeMissingLectureRoot(basePath));
+        } else {
+          errors.addAll(
+            missingLecturePaths.map((lecturePath) => 'Missing file: $lecturePath'),
+          );
         }
       }
     }
 
     return errors;
+  }
+
+  String _describeMissingLectureRoot(String basePath) {
+    final normalizedBasePath = p.normalize(basePath);
+    if (normalizedBasePath.contains('downloaded_courses')) {
+      return 'Course folder is not a reloadable source folder: '
+          '$normalizedBasePath. This synced scaffold only contains contents.txt. '
+          'Choose the original local course folder.';
+    }
+    return 'Course folder is missing all lecture files: $normalizedBasePath';
   }
 
   String _signatureFromLine(String line) {

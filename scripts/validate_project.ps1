@@ -38,8 +38,13 @@ function Resolve-GoExe {
 Push-Location $repoRoot
 try {
   if (-not $SkipFlutter) {
-    Invoke-Step -Name "flutter analyze" -Action { & flutter analyze }
-    Invoke-Step -Name "flutter test" -Action { & flutter test }
+    Invoke-Step -Name "flutter pub get" -Action { & flutter pub get }
+    Invoke-Step -Name "flutter analyze --no-pub" -Action {
+      & flutter analyze --no-pub
+    }
+    Invoke-Step -Name "flutter test --no-pub" -Action {
+      & flutter test --no-pub
+    }
   }
 
   if (-not $SkipGo) {
