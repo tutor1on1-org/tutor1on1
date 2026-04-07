@@ -15,6 +15,7 @@ import '../llm/prompt_renderer.dart';
 import '../models/tutor_action.dart';
 import '../models/tutor_contract.dart';
 import '../llm/prompt_repository.dart';
+import 'course_artifact_service.dart';
 import 'llm_log_repository.dart';
 import 'session_upload_cache_service.dart';
 import 'settings_repository.dart';
@@ -126,14 +127,17 @@ class SessionService {
     this._promptRepository,
     this._settingsRepository,
     this._llmLogRepository, {
+    CourseArtifactService? courseArtifactService,
     SessionUploadCacheService? sessionUploadCacheService,
-  }) : _sessionUploadCacheService = sessionUploadCacheService;
+  })  : _courseArtifactService = courseArtifactService,
+        _sessionUploadCacheService = sessionUploadCacheService;
 
   final AppDatabase _db;
   final LlmService _llmService;
   final PromptRepository _promptRepository;
   final SettingsRepository _settingsRepository;
   final LlmLogRepository _llmLogRepository;
+  final CourseArtifactService? _courseArtifactService;
   final SessionUploadCacheService? _sessionUploadCacheService;
   final PromptRenderer _renderer = PromptRenderer();
   final Map<String, LlmRequestHandle> _inflightTutorByKey = {};
@@ -1080,14 +1084,26 @@ class SessionService {
     required CourseVersion courseVersion,
     required String kpKey,
   }) async {
-    final basePath = _requireCourseBasePath(courseVersion);
-    final path = p.join(basePath, '${kpKey}_lecture.txt');
-    final legacy = p.join(basePath, kpKey, 'lecture.txt');
-    final file = File(path).existsSync() ? File(path) : File(legacy);
-    if (!file.existsSync()) {
-      throw StateError('Missing lecture file: $path');
+    final basePath = courseVersion.sourcePath?.trim() ?? '';
+    if (basePath.isNotEmpty) {
+      final path = p.join(basePath, '${kpKey}_lecture.txt');
+      final legacy = p.join(basePath, kpKey, 'lecture.txt');
+      final file = File(path).existsSync() ? File(path) : File(legacy);
+      if (file.existsSync()) {
+        return file.readAsString(encoding: utf8);
+      }
     }
-    return file.readAsString(encoding: utf8);
+    final fallback = await _readTextFromStoredBundle(
+      courseVersionId: courseVersion.id,
+      candidateRelativePaths: <String>[
+        '${kpKey}_lecture.txt',
+        p.join(kpKey, 'lecture.txt'),
+      ],
+    );
+    if (fallback != null) {
+      return fallback;
+    }
+    throw StateError('Missing lecture file for course ${courseVersion.id}: $kpKey');
   }
 
   Future<String> _loadQuestionsText({
@@ -1095,22 +1111,37 @@ class SessionService {
     required String kpKey,
     required String level,
   }) async {
-    final basePath = _requireCourseBasePath(courseVersion);
-    final path = p.join(basePath, '${kpKey}_$level.txt');
-    final legacy = p.join(basePath, kpKey, level, 'questions.txt');
-    final file = File(path).existsSync() ? File(path) : File(legacy);
-    if (!file.existsSync()) {
-      return '';
+    final basePath = courseVersion.sourcePath?.trim() ?? '';
+    if (basePath.isNotEmpty) {
+      final path = p.join(basePath, '${kpKey}_$level.txt');
+      final legacy = p.join(basePath, kpKey, level, 'questions.txt');
+      final file = File(path).existsSync() ? File(path) : File(legacy);
+      if (file.existsSync()) {
+        return file.readAsString(encoding: utf8);
+      }
     }
-    return file.readAsString(encoding: utf8);
+    return await _readTextFromStoredBundle(
+          courseVersionId: courseVersion.id,
+          candidateRelativePaths: <String>[
+            '${kpKey}_$level.txt',
+            p.join(kpKey, level, 'questions.txt'),
+          ],
+        ) ??
+        '';
   }
 
-  String _requireCourseBasePath(CourseVersion courseVersion) {
-    final basePath = courseVersion.sourcePath;
-    if (basePath == null || basePath.trim().isEmpty) {
-      throw StateError('Course not loaded. Load the folder first.');
+  Future<String?> _readTextFromStoredBundle({
+    required int courseVersionId,
+    required List<String> candidateRelativePaths,
+  }) async {
+    final artifactService = _courseArtifactService;
+    if (artifactService == null) {
+      return null;
     }
-    return basePath;
+    return artifactService.readStoredTextEntry(
+      courseVersionId: courseVersionId,
+      candidateRelativePaths: candidateRelativePaths,
+    );
   }
 
   String _resolveActionMode(String mode) {

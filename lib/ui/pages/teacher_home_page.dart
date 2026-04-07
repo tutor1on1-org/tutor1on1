@@ -545,8 +545,8 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     CourseVersion course,
   ) async {
     final l10n = AppLocalizations.of(context)!;
-    final sourcePath = (course.sourcePath ?? '').trim();
-    if (sourcePath.isEmpty) {
+    final initialSourcePath = (course.sourcePath ?? '').trim();
+    if (initialSourcePath.isEmpty) {
       _setPersistentMessage(
         l10n.courseFolderRequired,
         isError: true,
@@ -558,6 +558,10 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     }
 
     final services = context.read<AppServices>();
+    final sourcePath = await _resolveUploadSourcePath(
+      services: services,
+      course: course,
+    );
 
     final preview = await services.courseService.previewCourseLoad(
       folderPath: sourcePath,
@@ -631,8 +635,9 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       }
       if (latestRemoteVersion != null) {
         final kpDiff = await _buildKpDiffAgainstLatestBundle(
+          services: services,
           bundleService: bundleService,
-          sourcePath: sourcePath,
+          course: course,
           latestBundleVersionId: latestRemoteVersion.bundleVersionId,
           courseSubject: course.subject,
         );
@@ -739,6 +744,32 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         });
       }
     }
+  }
+
+  Future<String> _resolveUploadSourcePath({
+    required AppServices services,
+    required CourseVersion course,
+  }) async {
+    final sourcePath = (course.sourcePath ?? '').trim();
+    if (sourcePath.isEmpty) {
+      return '';
+    }
+    final preview = await services.courseService.previewCourseLoad(
+      folderPath: sourcePath,
+      courseVersionId: course.id,
+    );
+    if (preview.success) {
+      return sourcePath;
+    }
+    final cachedArtifacts =
+        await services.courseArtifactService.readCourseArtifacts(course.id);
+    if (cachedArtifacts == null) {
+      return sourcePath;
+    }
+    return services.courseArtifactService.materializeStoredContentBundle(
+      courseVersionId: course.id,
+      courseName: course.subject,
+    );
   }
 
   TeacherCourseSummary? _findRemoteCourse(String subject) {
@@ -853,11 +884,16 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
   }
 
   Future<CourseKpDiffSummary> _buildKpDiffAgainstLatestBundle({
+    required AppServices services,
     required CourseBundleService bundleService,
-    required String sourcePath,
+    required CourseVersion course,
     required int latestBundleVersionId,
     required String courseSubject,
   }) async {
+    final sourcePath = await _resolveUploadSourcePath(
+      services: services,
+      course: course,
+    );
     final targetPath = await bundleService.createTempBundlePath(
       label: 'latest_$courseSubject',
     );

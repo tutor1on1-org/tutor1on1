@@ -120,6 +120,29 @@ void main() {
     expect(deleted.first.sessionCount, 1);
   });
 
+  test('previewCourseLoadFromContents skips lecture file checks for bundle scaffolds',
+      () async {
+    final scaffoldDir = Directory(p.join(tempRoot.path, 'bundle_scaffold'));
+    await scaffoldDir.create(recursive: true);
+    await File(p.join(scaffoldDir.path, 'contents.txt')).writeAsString('''
+1 Unit
+1.1 (Add numbers, Y1)
+''');
+
+    final preview = await service.previewCourseLoadFromContents(
+      sourcePath: scaffoldDir.path,
+      contents: '''
+1 Unit
+1.1 (Add numbers, Y1)
+''',
+      courseNameOverride: 'Scaffold Course',
+    );
+
+    expect(preview.success, isTrue);
+    expect(preview.courseName, 'Scaffold Course');
+    expect(preview.normalizedPath, scaffoldDir.path);
+  });
+
   test('override reload deletes sessions for removed nodes and keeps subject',
       () async {
     final base = await _createCourseFolder(

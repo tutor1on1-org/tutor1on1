@@ -111,6 +111,42 @@ class CourseBundleService {
     return _resolveExtractedCourseRoot(targetPath);
   }
 
+  Future<String> extractBundleScaffoldFromFile({
+    required File bundleFile,
+    required String courseName,
+  }) async {
+    if (!bundleFile.existsSync()) {
+      throw StateError('Bundle file not found: ${bundleFile.path}');
+    }
+    final root = await _ensureDownloadRoot();
+    final safeName = _sanitizeName(courseName);
+    final targetPath = p.join(
+      root.path,
+      '${safeName}_${DateTime.now().millisecondsSinceEpoch}',
+    );
+    final targetDir = Directory(targetPath);
+    targetDir.createSync(recursive: true);
+    final indexed = _indexBundleArchive(bundleFile.path);
+    final contentsEntry = indexed.entryByName[indexed.selectedContentsName];
+    if (contentsEntry == null) {
+      throw StateError('Bundle is missing contents.txt or context.txt.');
+    }
+    await File(p.join(targetPath, 'contents.txt')).writeAsBytes(
+      _entryBytes(contentsEntry),
+      flush: true,
+    );
+    if (indexed.selectedContextName.isNotEmpty) {
+      final contextEntry = indexed.entryByName[indexed.selectedContextName];
+      if (contextEntry != null) {
+        await File(p.join(targetPath, 'context.txt')).writeAsBytes(
+          _entryBytes(contextEntry),
+          flush: true,
+        );
+      }
+    }
+    return targetPath;
+  }
+
   Future<Map<String, dynamic>?> readPromptMetadataFromBundleFile(
     File bundleFile,
   ) async {
@@ -195,6 +231,37 @@ class CourseBundleService {
         promptMetadataOverride: normalizedOverride,
       );
     });
+  }
+
+  Future<String?> readTextEntryFromBundleFile({
+    required File bundleFile,
+    required List<String> candidateRelativePaths,
+  }) async {
+    if (!bundleFile.existsSync()) {
+      throw StateError('Bundle file not found: ${bundleFile.path}');
+    }
+    final normalizedCandidates = candidateRelativePaths
+        .map(_normalizeArchivePath)
+        .where((value) => value.isNotEmpty)
+        .toList(growable: false);
+    if (normalizedCandidates.isEmpty) {
+      return null;
+    }
+    final indexed = _indexBundleArchive(bundleFile.path);
+    final candidateNames = <String>{
+      ...normalizedCandidates,
+      if (indexed.selectedRoot.isNotEmpty)
+        ...normalizedCandidates
+            .map((value) => _normalizeArchivePath('${indexed.selectedRoot}/$value')),
+    };
+    for (final name in candidateNames) {
+      final entry = indexed.entryByName[name];
+      if (entry == null) {
+        continue;
+      }
+      return utf8.decode(_entryBytes(entry));
+    }
+    return null;
   }
 
   Map<String, dynamic>? _readPromptMetadataFromPath(String bundlePath) {
@@ -524,12 +591,80 @@ class CourseBundleService {
   }
 
   Future<Directory> _ensureDownloadRoot() async {
-    final docs = await getApplicationDocumentsDirectory();
-    final root = Directory(p.join(docs.path, 'downloaded_courses'));
+    final support = await getApplicationSupportDirectory();
+    final root = Directory(p.join(support.path, 'downloaded_courses'));
     if (!root.existsSync()) {
       root.createSync(recursive: true);
     }
     return root;
+  }
+
+  _IndexedBundleArchive _indexBundleArchive(String bundlePath) {
+    final input = InputFileStream(bundlePath);
+    try {
+      final archive = ZipDecoder().decodeBuffer(input);
+      _validateArchivePaths(archive);
+      final entryByName = <String, ArchiveFile>{};
+      for (final entry in archive.files) {
+        if (!entry.isFile) {
+          continue;
+        }
+        final name = _normalizeArchivePath(entry.name);
+        if (name.isEmpty) {
+          continue;
+        }
+        if (name.startsWith('__MACOSX/')) {
+          continue;
+        }
+        if (_hasAppleDoubleSegment(name)) {
+          continue;
+        }
+        entryByName[name] = entry;
+      }
+      if (entryByName.isEmpty) {
+        throw StateError('Bundle is empty or contains only metadata files.');
+      }
+      final roots = _candidateRoots(
+        entryByName.keys
+            .where((name) => !isSupportedPromptMetadataEntryPath(name))
+            .toSet(),
+      );
+      if (roots.isEmpty) {
+        throw StateError('Bundle is missing contents.txt or context.txt.');
+      }
+      var selectedRoot = '';
+      var selectedContentsName = '';
+      var selectedContextName = '';
+      for (final root in roots) {
+        final contentsName =
+            root.isEmpty ? 'contents.txt' : '$root/contents.txt';
+        final contextName = root.isEmpty ? 'context.txt' : '$root/context.txt';
+        if (entryByName.containsKey(contentsName)) {
+          selectedRoot = root;
+          selectedContentsName = contentsName;
+          selectedContextName =
+              entryByName.containsKey(contextName) ? contextName : '';
+          break;
+        }
+        if (entryByName.containsKey(contextName)) {
+          selectedRoot = root;
+          selectedContentsName = contextName;
+          selectedContextName = contextName;
+          break;
+        }
+      }
+      if (selectedContentsName.isEmpty) {
+        throw StateError('Bundle is missing contents.txt or context.txt.');
+      }
+      return _IndexedBundleArchive(
+        entryByName: entryByName,
+        selectedRoot: selectedRoot,
+        selectedContentsName: selectedContentsName,
+        selectedContextName: selectedContextName,
+      );
+    } finally {
+      input.close();
+    }
   }
 
   void _validateArchivePaths(Archive archive) {
@@ -1249,6 +1384,20 @@ class _BundleFolderEntry {
 
   final File file;
   final String archivePath;
+}
+
+class _IndexedBundleArchive {
+  _IndexedBundleArchive({
+    required this.entryByName,
+    required this.selectedRoot,
+    required this.selectedContentsName,
+    required this.selectedContextName,
+  });
+
+  final Map<String, ArchiveFile> entryByName;
+  final String selectedRoot;
+  final String selectedContentsName;
+  final String selectedContextName;
 }
 
 class _CourseKpSnapshot {

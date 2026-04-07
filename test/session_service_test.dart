@@ -1,15 +1,18 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:archive/archive.dart';
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 
 import 'package:tutor1on1/db/app_database.dart';
 import 'package:tutor1on1/llm/llm_models.dart';
 import 'package:tutor1on1/llm/llm_service.dart';
 import 'package:tutor1on1/llm/prompt_repository.dart';
 import 'package:tutor1on1/models/tutor_contract.dart';
+import 'package:tutor1on1/services/course_artifact_service.dart';
 import 'package:tutor1on1/services/llm_log_repository.dart' as llm_logs;
 import 'package:tutor1on1/services/session_service.dart';
 import 'package:tutor1on1/services/settings_repository.dart';
@@ -378,6 +381,160 @@ void main() {
 
   tearDown(() async {
     await db.close();
+  });
+
+  test('learn turn falls back to cached bundle when scaffold misses lecture files',
+      () async {
+    final artifactRoot =
+        await Directory.systemTemp.createTemp('session_bundle_artifacts_');
+    final sourceRoot = await Directory.systemTemp.createTemp(
+      'session_bundle_source_',
+    );
+    final scaffoldRoot = await Directory.systemTemp.createTemp(
+      'session_bundle_scaffold_',
+    );
+    final courseArtifactService = CourseArtifactService(
+      artifactsRootProvider: () async => artifactRoot,
+    );
+    File? bundleFile;
+    final bundleBackedService = SessionService(
+      db,
+      llmService,
+      promptRepository,
+      settingsRepository,
+      llmLogRepository,
+      courseArtifactService: courseArtifactService,
+    );
+    try {
+      final teacherId = await db.createUser(
+        username: 'teacher_bundle_session',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 2001,
+      );
+      final studentId = await db.createUser(
+        username: 'student_bundle_session',
+        pinHash: 'hash',
+        role: 'student',
+        teacherId: teacherId,
+        remoteUserId: 2002,
+      );
+
+      await File(p.join(sourceRoot.path, 'contents.txt')).writeAsString('''
+1 Unit
+1.1 Integers
+''');
+      await File(p.join(sourceRoot.path, '1_lecture.txt'))
+          .writeAsString('Root lecture');
+      await File(p.join(sourceRoot.path, '1.1_lecture.txt')).writeAsString(
+        'Integers can be positive, negative, or zero.',
+      );
+      await File(p.join(sourceRoot.path, '1.1_easy.txt'))
+          .writeAsString('Question bank');
+      await File(p.join(scaffoldRoot.path, 'contents.txt')).writeAsString('''
+1 Unit
+1.1 Integers
+''');
+
+      final archive = Archive();
+      final contentsBytes = utf8.encode('''
+1 Unit
+1.1 Integers
+''');
+      final rootLectureBytes = utf8.encode('Root lecture');
+      final lectureBytes = utf8.encode(
+        'Integers can be positive, negative, or zero.',
+      );
+      final questionBytes = utf8.encode('Question bank');
+      archive.addFile(
+        ArchiveFile('contents.txt', contentsBytes.length, contentsBytes),
+      );
+      archive.addFile(
+        ArchiveFile('1_lecture.txt', rootLectureBytes.length, rootLectureBytes),
+      );
+      archive.addFile(
+        ArchiveFile('1.1_lecture.txt', lectureBytes.length, lectureBytes),
+      );
+      archive.addFile(
+        ArchiveFile('1.1_easy.txt', questionBytes.length, questionBytes),
+      );
+      bundleFile = File(p.join(sourceRoot.path, 'bundle.zip'));
+      final encoded = ZipEncoder().encode(archive);
+      expect(encoded, isNotNull);
+      await bundleFile.writeAsBytes(encoded!, flush: true);
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Bundle Course',
+        granularity: 1,
+        textbookText: '''
+1 Unit
+1.1 Integers
+''',
+        sourcePath: scaffoldRoot.path,
+      );
+      await courseArtifactService.storeImportedContentBundle(
+        courseVersionId: courseVersionId,
+        folderPath: scaffoldRoot.path,
+        bundleFile: bundleFile,
+        buildChapterArtifacts: false,
+      );
+      await db.into(db.courseNodes).insert(
+            CourseNodesCompanion.insert(
+              courseVersionId: courseVersionId,
+              kpKey: '1.1',
+              title: 'Integers',
+              description: '1.1 Integers',
+              orderIndex: 0,
+            ),
+          );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+      );
+      final sessionId = await bundleBackedService.startSession(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+        kpKey: '1.1',
+      );
+      final courseVersion = await db.getCourseVersionById(courseVersionId);
+      final node = await db.getCourseNodeByKey(courseVersionId, '1.1');
+      expect(courseVersion, isNotNull);
+      expect(node, isNotNull);
+
+      llmService.queueCall(
+        Future<LlmCallResult>.value(
+          _llmOk(
+            responseText: jsonEncode(<String, Object?>{
+              'text': 'Bundle-backed response.',
+              'difficulty': 'easy',
+              'mistakes': <String>[],
+              'next_action': 'review',
+            }),
+          ),
+        ),
+      );
+
+      final handle = await bundleBackedService.startTutorAction(
+        sessionId: sessionId,
+        mode: 'learn',
+        studentInput: 'Teach me simply.',
+        courseVersion: courseVersion!,
+        node: node!,
+      );
+      await handle.future;
+
+      expect(
+        llmService.callInvocations.single.renderedPrompt,
+        contains('Integers can be positive, negative, or zero.'),
+      );
+    } finally {
+      if (bundleFile != null && bundleFile.existsSync()) {
+        await bundleFile.delete();
+      }
+      await artifactRoot.delete(recursive: true);
+      await sourceRoot.delete(recursive: true);
+      await scaffoldRoot.delete(recursive: true);
+    }
   });
 
   test('learn turn persists visible text and recommended next action',

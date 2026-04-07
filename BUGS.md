@@ -237,3 +237,13 @@ Last updated: 2026-04-06
 - Symptom: on a desktop launched from a shell with ambient proxy vars, Dennis's `student_kp` sync could take tens of seconds or fail with TLS/handshake truncation even though the same 3.9 MB batch downloaded from the server in about a second when fetched directly on the host.
 - Root cause: the app's first-party API clients (`AuthApiService`, `MarketplaceApiService`, `ArtifactSyncApiService`) used default `HttpClient` proxy discovery, so `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` such as `http://10.211.55.2:7890` silently tunneled `api.tutor1on1.org` traffic through a slow local proxy.
 - Prevention: build first-party API `HttpClient`s with `findProxy = (_) => 'DIRECT'` so app login/sync traffic does not inherit launcher-shell proxy env, and verify suspiciously slow downloads by comparing proxied vs `--noproxy '*'` timings on the same machine.
+
+46. Teacher login course sync blocked on full bundle extraction of thousands of small files
+- Symptom: Dennis teacher login on Windows could spend minutes in enrollment sync even though the downloaded `course_bundle` zip itself was only a few MB and network transfer was fast.
+- Root cause: login-time remote course import fully extracted large bundles like `MATH` into `getApplicationDocumentsDirectory()` before home render, paying huge small-file I/O cost on the redirected `C:\Mac\Home\Documents` path. The hot path only needed `contents.txt` and metadata, but it still materialized every lecture/question file eagerly.
+- Prevention: keep login-time course import scaffold-only (`contents.txt` / `context.txt`), cache the canonical bundle zip, and lazily read or materialize lesson/question files only for later actions that truly need them.
+
+46. Login-time remote course import fully extracted large bundles on the hot path
+- Symptom: Dennis teacher login could spend roughly three minutes in enrollment sync on a fresh machine even though only three course bundles were downloaded and the later `student_kp` sync was already down to a few seconds.
+- Root cause: remote `course_bundle` import extracted the whole bundle to disk and rebuilt all lecture/question files before preview/import, so the `MATH` bundle's roughly 3900 small files dominated login. On this host that was amplified because `getApplicationDocumentsDirectory()` points at `C:\Mac\Home\Documents`, where small-file extraction is especially slow.
+- Prevention: login/import from a lightweight scaffold (`contents.txt` / optional `context.txt`), cache the canonical bundle, and lazily read lecture/question text from the bundle when the scaffold folder lacks those files. Only full materialization for explicit teacher actions that need a writable source folder.

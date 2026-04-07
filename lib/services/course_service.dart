@@ -130,13 +130,49 @@ class CourseService {
     }
 
     final contents = await contentsSource.readAsString(encoding: utf8);
+    return _previewCourseLoadCore(
+      normalizedPath: normalizedPath,
+      contents: contents,
+      contentsLabel: p.basename(contentsSource.path),
+      courseVersionId: courseVersionId,
+      courseNameOverride: courseNameOverride,
+      validateLectureFiles: true,
+    );
+  }
+
+  Future<CourseLoadPreview> previewCourseLoadFromContents({
+    required String sourcePath,
+    required String contents,
+    int? courseVersionId,
+    String? courseNameOverride,
+    String contentsLabel = 'contents.txt',
+  }) {
+    return _previewCourseLoadCore(
+      normalizedPath: p.normalize(sourcePath),
+      contents: contents,
+      contentsLabel: contentsLabel,
+      courseVersionId: courseVersionId,
+      courseNameOverride: courseNameOverride,
+      validateLectureFiles: false,
+    );
+  }
+
+  Future<CourseLoadPreview> _previewCourseLoadCore({
+    required String normalizedPath,
+    required String contents,
+    required String contentsLabel,
+    required int? courseVersionId,
+    required String? courseNameOverride,
+    required bool validateLectureFiles,
+  }) async {
     final parser = SkillTreeParser();
     final parseResult = parser.parse(contents);
     final errors = _validateContents(
       contents: contents,
       parseResult: parseResult,
       basePath: normalizedPath,
-      contentsLabel: p.basename(contentsSource.path),
+      contentsLabel: contentsLabel,
+      validateLectureFiles: validateLectureFiles,
     );
     if (errors.isNotEmpty) {
       return CourseLoadPreview(
@@ -497,6 +533,7 @@ GROUP BY kp_key
     required SkillTreeParseResult parseResult,
     required String basePath,
     required String contentsLabel,
+    bool validateLectureFiles = true,
   }) {
     final errors = <String>[];
     if (parseResult.nodes.isEmpty) {
@@ -534,15 +571,17 @@ GROUP BY kp_key
       }
     }
 
-    for (final node in parseResult.nodes.values) {
-      if (node.isPlaceholder) {
-        continue;
-      }
-      final lecturePath = p.join(basePath, '${node.id}_lecture.txt');
-      final legacyLecturePath = p.join(basePath, node.id, 'lecture.txt');
-      if (!File(lecturePath).existsSync() &&
-          !File(legacyLecturePath).existsSync()) {
-        errors.add('Missing file: $lecturePath');
+    if (validateLectureFiles) {
+      for (final node in parseResult.nodes.values) {
+        if (node.isPlaceholder) {
+          continue;
+        }
+        final lecturePath = p.join(basePath, '${node.id}_lecture.txt');
+        final legacyLecturePath = p.join(basePath, node.id, 'lecture.txt');
+        if (!File(lecturePath).existsSync() &&
+            !File(legacyLecturePath).existsSync()) {
+          errors.add('Missing file: $lecturePath');
+        }
       }
     }
 

@@ -230,6 +230,47 @@ class CourseArtifactService {
     return manifest;
   }
 
+  Future<String> materializeStoredContentBundle({
+    required int courseVersionId,
+    required String courseName,
+  }) async {
+    final manifest = await readCourseArtifacts(courseVersionId);
+    if (manifest == null) {
+      throw StateError(
+        'Cached course artifacts are missing for course version '
+        '$courseVersionId.',
+      );
+    }
+    final contentBundle = File(manifest.contentBundlePath);
+    if (!contentBundle.existsSync()) {
+      throw StateError(
+        'Cached course content bundle is missing: ${contentBundle.path}',
+      );
+    }
+    return _bundleService.extractBundleFromFile(
+      bundleFile: contentBundle,
+      courseName: courseName,
+    );
+  }
+
+  Future<String?> readStoredTextEntry({
+    required int courseVersionId,
+    required List<String> candidateRelativePaths,
+  }) async {
+    final manifest = await readCourseArtifacts(courseVersionId);
+    if (manifest == null) {
+      return null;
+    }
+    final contentBundle = File(manifest.contentBundlePath);
+    if (!contentBundle.existsSync()) {
+      return null;
+    }
+    return _bundleService.readTextEntryFromBundleFile(
+      bundleFile: contentBundle,
+      candidateRelativePaths: candidateRelativePaths,
+    );
+  }
+
   Future<PreparedCourseUploadBundle> prepareUploadBundle({
     required int courseVersionId,
     required Map<String, dynamic>? promptMetadata,

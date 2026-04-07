@@ -158,6 +158,13 @@ class _TestPathProviderPlatform extends PathProviderPlatform {
     await dir.create(recursive: true);
     return dir.path;
   }
+
+  @override
+  Future<String?> getApplicationSupportPath() async {
+    final dir = Directory(p.join(rootPath, 'support'));
+    await dir.create(recursive: true);
+    return dir.path;
+  }
 }
 
 class _ServerCourse {

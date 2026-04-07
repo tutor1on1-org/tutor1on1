@@ -20,7 +20,8 @@ Future<void> _withMockTempDir(
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   messenger.setMockMethodCallHandler(_pathProviderChannel, (call) async {
     if (call.method == 'getTemporaryDirectory' ||
-        call.method == 'getApplicationDocumentsDirectory') {
+        call.method == 'getApplicationDocumentsDirectory' ||
+        call.method == 'getApplicationSupportDirectory') {
       return tempDirPath;
     }
     return null;
@@ -166,6 +167,166 @@ void main() {
           expect(diff.addedCount, equals(0));
           expect(diff.removedCount, equals(0));
           expect(diff.updatedCount, equals(0));
+        });
+      } finally {
+        await tempDir.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'extractBundleScaffoldFromFile only materializes scaffold files',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'course_bundle_scaffold_test_',
+      );
+      try {
+        await _withMockTempDir(tempDir.path, () async {
+          final zipFile = File(p.join(tempDir.path, 'scaffold_bundle.zip'));
+          final archive = Archive();
+
+          final contentsBytes = Uint8List.fromList(
+            utf8.encode('1 Root branch\n1.1 Intro lesson\n'),
+          );
+          final lectureBytes = Uint8List.fromList(
+            utf8.encode('Lecture body'),
+          );
+          archive.addFile(
+            ArchiveFile(
+              'nested_course/contents.txt',
+              contentsBytes.length,
+              contentsBytes,
+            ),
+          );
+          archive.addFile(
+            ArchiveFile(
+              'nested_course/1_lecture.txt',
+              lectureBytes.length,
+              lectureBytes,
+            ),
+          );
+          archive.addFile(
+            ArchiveFile(
+              'nested_course/1.1_lecture.txt',
+              lectureBytes.length,
+              lectureBytes,
+            ),
+          );
+          final encoded = ZipEncoder().encode(archive);
+          expect(encoded, isNotNull);
+          await zipFile.writeAsBytes(encoded!, flush: true);
+
+          final service = CourseBundleService();
+          final scaffoldPath = await service.extractBundleScaffoldFromFile(
+            bundleFile: zipFile,
+            courseName: 'Scaffold Course',
+          );
+
+          expect(
+            File(p.join(scaffoldPath, 'contents.txt')).existsSync(),
+            isTrue,
+          );
+          expect(
+            File(p.join(scaffoldPath, '1_lecture.txt')).existsSync(),
+            isFalse,
+          );
+          expect(
+            File(p.join(scaffoldPath, '1.1_lecture.txt')).existsSync(),
+            isFalse,
+          );
+        });
+      } finally {
+        await tempDir.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'extractBundleScaffoldFromFile writes lightweight scaffold and bundle entry reads stay available',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'course_bundle_scaffold_test_',
+      );
+      try {
+        await _withMockTempDir(tempDir.path, () async {
+          final zipFile = File(p.join(tempDir.path, 'scaffold_bundle.zip'));
+          final archive = Archive();
+          final contentsBytes = Uint8List.fromList(
+            utf8.encode('1 Root branch\n1.1 Intro lesson\n'),
+          );
+          final contextBytes = Uint8List.fromList(
+            utf8.encode('Context body'),
+          );
+          final lectureBytes = Uint8List.fromList(
+            utf8.encode('Lecture body'),
+          );
+          final questionBytes = Uint8List.fromList(
+            utf8.encode('Question body'),
+          );
+          archive.addFile(
+            ArchiveFile(
+              'nested_course/contents.txt',
+              contentsBytes.length,
+              contentsBytes,
+            ),
+          );
+          archive.addFile(
+            ArchiveFile(
+              'nested_course/context.txt',
+              contextBytes.length,
+              contextBytes,
+            ),
+          );
+          archive.addFile(
+            ArchiveFile(
+              'nested_course/1.1_lecture.txt',
+              lectureBytes.length,
+              lectureBytes,
+            ),
+          );
+          archive.addFile(
+            ArchiveFile(
+              'nested_course/1.1_easy.txt',
+              questionBytes.length,
+              questionBytes,
+            ),
+          );
+          final encoded = ZipEncoder().encode(archive);
+          expect(encoded, isNotNull);
+          await zipFile.writeAsBytes(encoded!, flush: true);
+
+          final service = CourseBundleService();
+          final scaffoldPath = await service.extractBundleScaffoldFromFile(
+            bundleFile: zipFile,
+            courseName: 'Algebra',
+          );
+
+          expect(File(p.join(scaffoldPath, 'contents.txt')).existsSync(), isTrue);
+          expect(File(p.join(scaffoldPath, 'context.txt')).existsSync(), isTrue);
+          expect(
+            File(p.join(scaffoldPath, '1.1_lecture.txt')).existsSync(),
+            isFalse,
+          );
+          expect(
+            await service.readTextEntryFromBundleFile(
+              bundleFile: zipFile,
+              candidateRelativePaths: const <String>[
+                '1.1_lecture.txt',
+                '1.1/lecture.txt',
+              ],
+            ),
+            'Lecture body',
+          );
+          expect(
+            await service.readTextEntryFromBundleFile(
+              bundleFile: zipFile,
+              candidateRelativePaths: const <String>[
+                '1.1_easy.txt',
+                '1.1/easy/questions.txt',
+              ],
+            ),
+            'Question body',
+          );
         });
       } finally {
         await tempDir.delete(recursive: true);

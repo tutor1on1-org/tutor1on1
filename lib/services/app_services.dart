@@ -118,6 +118,7 @@ class AppServices {
       promptRepository,
       settingsRepository,
       llmLogRepository,
+      courseArtifactService: courseArtifactService,
       sessionUploadCacheService: sessionUploadCacheService,
     );
     final artifactStore = StudentKpArtifactStoreService();

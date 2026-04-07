@@ -1116,12 +1116,15 @@ class EnrollmentSyncService {
       await bundleService.validateBundleForImport(bundleFile);
       final promptMetadata =
           await bundleService.readPromptMetadataFromBundleFile(bundleFile);
-      final folderPath = await bundleService.extractBundleFromFile(
+      final folderPath = await bundleService.extractBundleScaffoldFromFile(
         bundleFile: bundleFile,
         courseName: enrollment.courseSubject,
       );
-      final preview = await _courseService.previewCourseLoad(
-        folderPath: folderPath,
+      final contents = await File(p.join(folderPath, 'contents.txt'))
+          .readAsString(encoding: utf8);
+      final preview = await _courseService.previewCourseLoadFromContents(
+        sourcePath: folderPath,
+        contents: contents,
         courseVersionId: existingCourseVersionId,
         courseNameOverride: enrollment.courseSubject,
       );
@@ -1147,8 +1150,6 @@ class EnrollmentSyncService {
           course: result.course!,
         );
       }
-      final remoteHash =
-          await bundleService.computeBundleSemanticHash(bundleFile);
       if (_courseArtifactService != null) {
         final artifactFolderPath =
             (result.course!.sourcePath ?? '').trim().isNotEmpty
@@ -1160,16 +1161,6 @@ class EnrollmentSyncService {
           bundleFile: bundleFile,
           buildChapterArtifacts: false,
         );
-        final localHash = await _courseArtifactService.computeUploadHash(
-          courseVersionId: result.course!.id,
-          promptMetadata: promptMetadata,
-        );
-        if (localHash.trim() != remoteHash.trim()) {
-          throw StateError(
-            'Imported student bundle fingerprint mismatch after local '
-            'materialization. remote=$remoteHash local=$localHash',
-          );
-        }
       }
       return result.course!;
     } finally {
@@ -2364,12 +2355,15 @@ class EnrollmentSyncService {
       await bundleService.validateBundleForImport(bundleFile);
       final promptMetadata =
           await bundleService.readPromptMetadataFromBundleFile(bundleFile);
-      final folderPath = await bundleService.extractBundleFromFile(
+      final folderPath = await bundleService.extractBundleScaffoldFromFile(
         bundleFile: bundleFile,
         courseName: courseSubject,
       );
-      final preview = await _courseService.previewCourseLoad(
-        folderPath: folderPath,
+      final contents = await File(p.join(folderPath, 'contents.txt'))
+          .readAsString(encoding: utf8);
+      final preview = await _courseService.previewCourseLoadFromContents(
+        sourcePath: folderPath,
+        contents: contents,
         courseVersionId: existingCourseVersionId,
         courseNameOverride: courseSubject,
       );
@@ -2410,30 +2404,6 @@ class EnrollmentSyncService {
           folderPath: artifactFolderPath,
           bundleFile: bundleFile,
           buildChapterArtifacts: false,
-        );
-      }
-      final remoteHash =
-          await bundleService.computeBundleSemanticHash(bundleFile);
-      final localPromptMetadata = await _buildPromptBundleMetadata(
-        teacher: currentUser,
-        course: result.course!,
-        remoteCourseId: remoteCourseId,
-      );
-      final localHash = await _requireCourseArtifactService().computeUploadHash(
-        courseVersionId: result.course!.id,
-        promptMetadata: localPromptMetadata,
-      );
-      if (localHash.trim() != remoteHash.trim()) {
-        final remoteContentWithLocalMetadataHash =
-            await bundleService.computeBundleSemanticHashFromBundle(
-          bundleFile,
-          promptMetadataOverride: localPromptMetadata,
-        );
-        throw StateError(
-          'Imported teacher bundle fingerprint mismatch after local '
-          'materialization. remote=$remoteHash local=$localHash '
-          'remote_content_local_metadata='
-          '$remoteContentWithLocalMetadataHash',
         );
       }
       summary.downloaded.add(
