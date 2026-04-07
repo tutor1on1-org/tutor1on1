@@ -4,6 +4,7 @@ param(
   [switch]$SkipPubGet,
   [switch]$SkipAnalyze,
   [switch]$SkipTest,
+  [switch]$CleanWindowsBuild,
   [switch]$SkipAndroidBuild,
   [switch]$SkipWindowsBuild
 )
@@ -141,9 +142,13 @@ try {
   }
 
   if (-not $SkipWindowsBuild.IsPresent) {
-    if (Test-Path -LiteralPath $windowsBuildRoot) {
+    if ($CleanWindowsBuild.IsPresent -and (Test-Path -LiteralPath $windowsBuildRoot)) {
       Write-Host "==> Remove stale Windows build tree: $windowsBuildRoot"
       Remove-Item -LiteralPath $windowsBuildRoot -Recurse -Force
+    } elseif ($CleanWindowsBuild.IsPresent) {
+      Write-Host "==> Clean Windows build requested, but build tree is already absent: $windowsBuildRoot"
+    } else {
+      Write-Host "==> Reuse existing Windows build tree when possible: $windowsBuildRoot"
     }
     Invoke-Checked -Label 'flutter build windows --release' -Action {
       flutter build windows --release

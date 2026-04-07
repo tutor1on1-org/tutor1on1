@@ -12,7 +12,7 @@ Build the Windows app, package it as a versioned ZIP such as `Tutor1on1-1.0.8.zi
 
 ## Default behavior
 1. Run prompt-asset gate: `flutter test test/prompt_assets_integrity_test.dart`.
-2. Run `flutter build windows --release` so the local `build/windows/x64/runner/Release` tree is refreshed before packaging/upload.
+2. Run `flutter build windows --release` so the local `build/windows/x64/runner/Release` tree is refreshed before packaging/upload. By default this reuses the existing `build/windows` tree for an incremental build; pass `-CleanBuild` only when you explicitly need a full rebuild.
 3. Package `build/windows/x64/runner/Release` into `build/Tutor1on1-<version>.zip`.
 4. Validate ZIP artifact entries and prompt asset decoding using `scripts/validate_windows_release_zip.ps1`.
 5. Upload ZIP to remote `/tmp/Tutor1on1-<version>.zip`.
@@ -36,6 +36,9 @@ powershell -ExecutionPolicy Bypass -File skills/windows_release_publish/scripts/
 # Build + zip only (no upload)
 powershell -ExecutionPolicy Bypass -File skills/windows_release_publish/scripts/publish_windows_release.ps1 -SkipUpload
 
+# Force a full clean Windows rebuild before packaging/upload
+powershell -ExecutionPolicy Bypass -File skills/windows_release_publish/scripts/publish_windows_release.ps1 -CleanBuild
+
 # Skip prompt-asset gate (only for emergency diagnostics)
 powershell -ExecutionPolicy Bypass -File skills/windows_release_publish/scripts/publish_windows_release.ps1 -SkipPromptAssetTests
 
@@ -57,3 +60,4 @@ powershell -ExecutionPolicy Bypass -File skills/windows_release_publish/scripts/
 - It uses absolute command paths on remote host because remote `PATH` may be empty.
 - Candidate-first promotion avoids publishing a broken canonical ZIP when upload content is malformed.
 - A Windows server publish is incomplete if the local `build/windows/x64/runner/Release` output is stale. The local Release tree must match the uploaded ZIP for the same commit.
+- `flutter build apk` and `flutter build windows` write to different subtrees under `build/`; they can coexist. A full Windows rebuild only happens when the script is told to clean or Flutter itself decides an incremental rebuild is impossible.

@@ -6,6 +6,7 @@ param(
   [string]$RemotePublicDir = '/var/lib/family_teacher_remote/public',
   [string]$DownloadBaseUrl = 'https://api.tutor1on1.org/downloads',
   [switch]$SkipBuild,
+  [switch]$CleanBuild,
   [switch]$SkipUpload,
   [switch]$SkipPromptAssetTests,
   [switch]$SkipZipValidation
@@ -177,9 +178,13 @@ try {
   }
 
   if (-not $SkipBuild.IsPresent) {
-    if (Test-Path -LiteralPath $windowsBuildRoot) {
+    if ($CleanBuild.IsPresent -and (Test-Path -LiteralPath $windowsBuildRoot)) {
       Write-Host "==> Remove stale Windows build tree: $windowsBuildRoot"
       Remove-Item -LiteralPath $windowsBuildRoot -Recurse -Force
+    } elseif ($CleanBuild.IsPresent) {
+      Write-Host "==> Clean build requested, but Windows build tree is already absent: $windowsBuildRoot"
+    } else {
+      Write-Host "==> Reuse existing Windows build tree when possible: $windowsBuildRoot"
     }
     Invoke-Checked -Label 'flutter build windows --release' -Action {
       flutter build windows --release
