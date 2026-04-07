@@ -185,6 +185,7 @@ class CourseArtifactService {
     required int courseVersionId,
     required String folderPath,
     required File bundleFile,
+    bool buildChapterArtifacts = true,
   }) async {
     if (courseVersionId <= 0) {
       throw StateError('Course version id must be positive.');
@@ -208,12 +209,15 @@ class CourseArtifactService {
     final contentBundle = File(contentBundlePath);
     await bundleFile.copy(contentBundle.path);
 
-    final chaptersDir = Directory(p.join(courseDir.path, 'chapters'));
-    await chaptersDir.create(recursive: true);
-    final chapterArtifacts = await _buildChapterArchives(
-      folderPath: normalizedFolderPath,
-      outputDirectory: chaptersDir,
-    );
+    var chapterArtifacts = const <CourseChapterArtifact>[];
+    if (buildChapterArtifacts) {
+      final chaptersDir = Directory(p.join(courseDir.path, 'chapters'));
+      await chaptersDir.create(recursive: true);
+      chapterArtifacts = await _buildChapterArchives(
+        folderPath: normalizedFolderPath,
+        outputDirectory: chaptersDir,
+      );
+    }
 
     final manifest = CourseArtifactManifest(
       courseVersionId: courseVersionId,

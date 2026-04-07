@@ -22,63 +22,70 @@ class HomeSyncCoordinator {
     required User user,
     required String trigger,
     required SyncProgressCallback? onProgress,
+    bool includeEnrollmentSync = true,
+    bool includeSessionSync = true,
   }) async {
     final stats = SyncRunStats();
     try {
-      onProgress?.call(
-        const SyncProgress(
-          message: 'Syncing enrollments from server...',
-          forcePaint: true,
-        ),
-      );
-      try {
-        stats.absorb(
-          await _enrollmentSyncService.syncIfReady(currentUser: user),
-        );
-      } catch (error) {
-        final failure = describeSyncFailure(
-          stage: 'Enrollment sync',
-          error: error,
-        );
-        await _recordFailure(
-          trigger: trigger,
-          user: user,
-          stats: stats,
-          failure: failure,
-        );
-        throw HomeSyncException(
-          failure.userMessage,
-          logMessage: failure.logMessage,
-        );
-      }
-      onProgress?.call(
-        const SyncProgress(
-          message: 'Syncing sessions/progress from server...',
-          forcePaint: true,
-        ),
-      );
-      try {
-        stats.absorb(
-          await _sessionSyncService.syncIfReady(
-            currentUser: user,
-            onProgress: onProgress,
+      if (includeEnrollmentSync) {
+        onProgress?.call(
+          const SyncProgress(
+            message: 'Syncing enrollments from server...',
+            forcePaint: true,
           ),
         );
-      } catch (error) {
-        final failure = describeSyncFailure(
-          stage: 'Session sync',
-          error: error,
+        try {
+          stats.absorb(
+            await _enrollmentSyncService.syncIfReady(currentUser: user),
+          );
+        } catch (error) {
+          final failure = describeSyncFailure(
+            stage: 'Enrollment sync',
+            error: error,
+          );
+          await _recordFailure(
+            trigger: trigger,
+            user: user,
+            stats: stats,
+            failure: failure,
+          );
+          throw HomeSyncException(
+            failure.userMessage,
+            logMessage: failure.logMessage,
+          );
+        }
+      }
+
+      if (includeSessionSync) {
+        onProgress?.call(
+          const SyncProgress(
+            message: 'Syncing sessions/progress from server...',
+            forcePaint: true,
+          ),
         );
-        await _recordFailure(
-          trigger: trigger,
-          user: user,
-          stats: stats,
-          failure: failure,
-        );
-        throw HomeSyncException(
-          failure.userMessage,
-          logMessage: failure.logMessage,
-        );
+        try {
+          stats.absorb(
+            await _sessionSyncService.syncIfReady(
+              currentUser: user,
+              onProgress: onProgress,
+            ),
+          );
+        } catch (error) {
+          final failure = describeSyncFailure(
+            stage: 'Session sync',
+            error: error,
+          );
+          await _recordFailure(
+            trigger: trigger,
+            user: user,
+            stats: stats,
+            failure: failure,
+          );
+          throw HomeSyncException(
+            failure.userMessage,
+            logMessage: failure.logMessage,
+          );
+        }
       }
     } on HomeSyncException {
       rethrow;

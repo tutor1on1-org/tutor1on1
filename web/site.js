@@ -52,12 +52,12 @@
   ]
   const releaseConfig = Object.freeze({
     githubRepo: 'tutor1on1-org/tutor1on1',
-    appVersion: '1.0.9',
-    releaseTag: 'v1.0.9',
+    appVersion: '1.0.10',
+    releaseTag: 'v1.0.10',
     downloadBaseUrl: 'https://api.tutor1on1.org/downloads',
     assets: Object.freeze({
-      android: 'Tutor1on1-1.0.9.apk',
-      windows: 'Tutor1on1-1.0.9.zip',
+      android: 'Tutor1on1-1.0.10.apk',
+      windows: 'Tutor1on1-1.0.10.zip',
     }),
   })
   const languagesByCode = new Map(

@@ -207,3 +207,33 @@ Last updated: 2026-04-06
 - Symptom: student/teacher home screens can show errors like `Session sync failed: ClientException with SocketException: Failed host lookup...` even when the failing request was actually enrollment `course_bundle` sync and the raw transport text overstates the diagnosis.
 - Root cause: the home UI wrapped every home-sync failure with one generic `Session sync failed` prefix, and artifact sync surfaced raw `http` / `SocketException` text directly to the user instead of separating stable UI wording from raw log detail.
 - Prevention: keep business-layer stage labels in `HomeSyncCoordinator` (`Enrollment sync failed`, `Session sync failed`), normalize transport exceptions into neutral user messages such as `Could not contact ...`, and store the original transport detail only in logs/debug fields.
+
+40. Teacher login course sync can spend minutes in redundant local bundle preparation
+- Symptom: a teacher's login-time enrollment sync can feel extremely slow on Windows even when the network is healthy, especially when multiple remote courses are pulled on a fresh device.
+- Root cause: after each downloaded teacher `course_bundle` was already validated, extracted, imported, and semantically verified, the client immediately prepared a fresh upload bundle again just to seed sync state; that forced extra bundle clone/hash I/O on the same hot path on top of the import work.
+- Prevention: after a successful teacher download/import, mark sync state with the downloaded remote bundle hash and defer upload-bundle preparation until a later local-change or upload path actually needs it. Keep the semantic post-import materialization check, but do not eagerly build `sync_upload_bundle.zip` during login sync.
+
+41. Startup loading scaffolds can crash before localizations are mounted
+- Symptom: app startup can show a blank/white pre-login screen on Windows and Android, especially when cold-start initialization is slow enough to keep the bootstrap loading screen visible.
+- Root cause: the bootstrap loading/error scaffolds built their AppBar close action with an outer `BuildContext` that sat above the temporary `MaterialApp`, so `AppLocalizations.of(context)!` was null and threw during the loading frame.
+- Prevention: shared UI helpers used in bootstrap/loading/error shells must tolerate missing localizations and provide a safe fallback string. Keep a widget test that builds the startup shell before localizations are mounted and asserts no exception is thrown.
+
+42. Remote course imports rebuilt course artifacts twice on the login hot path
+- Symptom: teacher or student login sync could spend excessive time importing remote `course_bundle` artifacts, especially for large courses with many extracted files.
+- Root cause: `applyCourseLoad()` already rebuilt cached course artifacts from the extracted folder, but the remote import path immediately called `storeImportedContentBundle()` and rebuilt the same derived artifacts again before computing parity hashes.
+- Prevention: remote bundle import should materialize derived course artifacts at most once. When the downloaded canonical bundle just needs to seed cached upload/hash state, copy the bundle into cache and defer chapter/archive derivation instead of rebuilding the same artifact tree twice.
+
+43. Teacher login blocked on full student artifact backfill
+- Symptom: teacher login could remain under the sync overlay for many extra minutes after enrollments finished because thousands of `student_kp` artifacts were still being downloaded and applied before the home page became usable.
+- Root cause: the blocking login path treated teacher `student_kp` backfill as a required pre-render stage even though the teacher home surface only needed enrollment/course state to render.
+- Prevention: keep teacher login's blocking sync limited to the data required for the first home render, and move teacher `student_kp` backfill to an immediate background stage that reuses the same session sync implementation and failure handling.
+
+44. Artifact batch download did one visible-artifact lookup per item before sending any bytes
+- Symptom: teacher `student_kp` batch sync could spend an unreasonable amount of time before the first download progress update, even though the total payload size was only a few MB.
+- Root cause: server `download-batch` looped over `ReadVisibleArtifact(user_id, artifact_id)` for every artifact and buffered the whole outer ZIP in memory before responding, turning one logical batch into thousands of DB round-trips and a long pre-first-byte stall.
+- Prevention: resolve batch visibility with one bulk `artifact_state1_items` query, preserve request order from that result set, and return one stable ZIP response with a known length; do not keep the old per-artifact visibility lookup loop.
+
+45. Desktop first-party API traffic inherited launcher proxy settings
+- Symptom: on a desktop launched from a shell with ambient proxy vars, Dennis's `student_kp` sync could take tens of seconds or fail with TLS/handshake truncation even though the same 3.9 MB batch downloaded from the server in about a second when fetched directly on the host.
+- Root cause: the app's first-party API clients (`AuthApiService`, `MarketplaceApiService`, `ArtifactSyncApiService`) used default `HttpClient` proxy discovery, so `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` such as `http://10.211.55.2:7890` silently tunneled `api.tutor1on1.org` traffic through a slow local proxy.
+- Prevention: build first-party API `HttpClient`s with `findProxy = (_) => 'DIRECT'` so app login/sync traffic does not inherit launcher-shell proxy env, and verify suspiciously slow downloads by comparing proxied vs `--noproxy '*'` timings on the same machine.

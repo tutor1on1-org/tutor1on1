@@ -3,6 +3,8 @@ import 'package:tutor1on1/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
 import '../../db/app_database.dart';
+import '../../services/app_services.dart';
+import '../../state/auth_controller.dart';
 import '../app_close_button.dart';
 
 class StudentSessionsPage extends StatefulWidget {
@@ -31,8 +33,20 @@ class _StudentSessionsPageState extends State<StudentSessionsPage> {
   }
 
   Future<List<StudentSessionInfo>> _loadSessions() {
+    final auth = context.read<AuthController>();
+    final currentUser = auth.currentUser;
+    final services = context.read<AppServices>();
     final db = context.read<AppDatabase>();
-    return db.getSessionsForStudent(widget.student.id);
+    return () async {
+      if (currentUser != null && currentUser.role == 'teacher') {
+        await services.sessionSyncService.materializeTeacherArtifactsForView(
+          currentUser: currentUser,
+          localStudentId: widget.student.id,
+          courseVersionId: widget.initialCourseVersionId,
+        );
+      }
+      return db.getSessionsForStudent(widget.student.id);
+    }();
   }
 
   @override

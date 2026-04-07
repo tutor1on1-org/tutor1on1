@@ -716,6 +716,94 @@ void main() {
     expect(await db.getAssignedCoursesForStudent(student.id), hasLength(1));
   });
 
+  test(
+      'teacher sync downloads remote course without eagerly preparing upload bundle',
+      () async {
+    final teacherId = await db.createUser(
+      username: 'dennis',
+      pinHash: 'pin',
+      role: 'teacher',
+      remoteUserId: 9001,
+    );
+    final teacher = (await db.getUserById(teacherId))!;
+
+    final seeded = await _createSeededBundle(
+      root: rootDir,
+      folderName: 'remote_teacher_course',
+      rootTitle: 'Remote Math',
+    );
+    final server = _FakeCourseBundleServer()
+      ..seedCourse(
+        courseId: 501,
+        teacherUserId: 9001,
+        teacherName: 'dennis',
+        subject: 'Remote Math',
+        bundleVersionId: 3,
+        bundleBytes: seeded.bytes,
+        bundleSha256: seeded.sha256,
+      );
+    final artifactApi = _FakeArtifactSyncApiService(
+      server: server,
+      currentRemoteUserId: 9001,
+      currentRole: 'teacher',
+    );
+    final marketplaceApi = _FakeMarketplaceApiService(
+      server: server,
+      currentRemoteUserId: 9001,
+      currentRole: 'teacher',
+    );
+    final service = EnrollmentSyncService(
+      db: db,
+      secureStorage: secureStorage,
+      courseService: courseService,
+      marketplaceApi: marketplaceApi,
+      artifactApi: artifactApi,
+      promptRepository: promptRepository,
+      courseArtifactService: courseArtifactService,
+    );
+
+    final first = await service.syncIfReady(currentUser: teacher);
+    expect(first.downloadedCount, 1);
+    expect(first.uploadedCount, 0);
+
+    final localCourseVersionId =
+        await db.getCourseVersionIdForRemoteCourse(501);
+    expect(localCourseVersionId, isNotNull);
+    final importedManifest =
+        await courseArtifactService.readCourseArtifacts(localCourseVersionId!);
+    expect(importedManifest, isNotNull);
+    expect(importedManifest!.chapters, isEmpty);
+    expect(
+      await courseArtifactService
+          .readPreparedUploadBundle(localCourseVersionId),
+      isNull,
+    );
+    final prepared = await courseArtifactService.prepareUploadBundle(
+      courseVersionId: localCourseVersionId,
+      promptMetadata: <String, dynamic>{
+        'schema': kCurrentPromptBundleSchema,
+        'remote_course_id': 501,
+        'teacher_username': 'dennis',
+        'prompt_templates': const <Map<String, dynamic>>[],
+        'student_prompt_profiles': const <Map<String, dynamic>>[],
+        'student_pass_configs': const <Map<String, dynamic>>[],
+      },
+      bundleLabel: 'Remote Math',
+    );
+    expect(prepared.hash, isNotEmpty);
+
+    await secureStorage.writeSyncRunAt(
+      remoteUserId: 9001,
+      domain: 'enrollment_sync_teacher',
+      runAt: DateTime.now().toUtc().subtract(const Duration(minutes: 5)),
+    );
+
+    final second = await service.syncIfReady(currentUser: teacher);
+    expect(second.downloadedCount, 0);
+    expect(second.uploadedCount, 0);
+    expect(artifactApi.uploadCalls, 0);
+  });
+
   test('teacher sync uploads one changed course bundle artifact', () async {
     final teacherId = await db.createUser(
       username: 'dennis',

@@ -2,9 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
-import 'package:http/io_client.dart';
 
 import '../constants.dart';
+import 'api_http_client.dart';
 import 'auth_token_refresh_coordinator.dart';
 import 'secure_storage_service.dart';
 
@@ -1676,12 +1676,9 @@ class MarketplaceApiService {
   }
 
   static http.Client _buildClient(bool allowInsecureTls) {
-    if (!allowInsecureTls) {
-      return http.Client();
-    }
-    final httpClient = HttpClient()
-      ..badCertificateCallback = (cert, host, port) => true;
-    return IOClient(httpClient);
+    return buildFirstPartyApiHttpClient(
+      allowInsecureTls: allowInsecureTls,
+    );
   }
 
   static String _normalizeBaseUrl(String value) {

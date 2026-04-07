@@ -1135,6 +1135,7 @@ class EnrollmentSyncService {
         teacherId: localTeacherId,
         preview: preview,
         mode: mode,
+        rebuildCourseArtifacts: _courseArtifactService == null,
       );
       if (!result.success || result.course == null) {
         throw StateError(result.message);
@@ -1157,6 +1158,7 @@ class EnrollmentSyncService {
           courseVersionId: result.course!.id,
           folderPath: artifactFolderPath,
           bundleFile: bundleFile,
+          buildChapterArtifacts: false,
         );
         final localHash = await _courseArtifactService.computeUploadHash(
           courseVersionId: result.course!.id,
@@ -2353,6 +2355,7 @@ class EnrollmentSyncService {
     final bundleService = CourseBundleService();
     File? bundleFile;
     try {
+      final normalizedBundleHash = bundleHash.trim();
       bundleFile = await _downloadCourseBundleArtifactToFile(
         remoteCourseId: remoteCourseId,
         courseSubject: courseSubject,
@@ -2380,6 +2383,7 @@ class EnrollmentSyncService {
         teacherId: currentUser.id,
         preview: preview,
         mode: mode,
+        rebuildCourseArtifacts: _courseArtifactService == null,
       );
       if (!result.success || result.course == null) {
         throw StateError(result.message);
@@ -2405,6 +2409,7 @@ class EnrollmentSyncService {
           courseVersionId: result.course!.id,
           folderPath: artifactFolderPath,
           bundleFile: bundleFile,
+          buildChapterArtifacts: false,
         );
       }
       final remoteHash =
@@ -2431,11 +2436,6 @@ class EnrollmentSyncService {
           '$remoteContentWithLocalMetadataHash',
         );
       }
-      final preparedBundle = await _prepareTeacherCourseBundle(
-        teacher: currentUser,
-        course: result.course!,
-        remoteCourseId: remoteCourseId,
-      );
       summary.downloaded.add(
         SyncTransferLogItem(
           direction: 'download',
@@ -2454,7 +2454,9 @@ class EnrollmentSyncService {
         domain: _syncDomainTeacherCourseUpload,
         remoteCourseId: remoteCourseId,
         bundleVersionId: bundleVersionId,
-        contentHash: preparedBundle.hash,
+        contentHash: normalizedBundleHash.isNotEmpty
+            ? normalizedBundleHash
+            : await bundleService.computeBundleByteHash(bundleFile),
         lastChangedAt: now,
         lastSyncedAt: now,
       );

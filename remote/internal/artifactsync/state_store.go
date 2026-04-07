@@ -113,6 +113,79 @@ func ReadVisibleArtifact(db *sql.DB, userID int64, artifactID string) (VisibleAr
 	return item, nil
 }
 
+func ReadVisibleArtifactsByIDs(db *sql.DB, userID int64, artifactIDs []string) ([]VisibleArtifact, error) {
+	if db == nil {
+		return nil, errors.New("database required")
+	}
+	normalizedIDs := make([]string, 0, len(artifactIDs))
+	seen := make(map[string]struct{}, len(artifactIDs))
+	for _, artifactID := range artifactIDs {
+		trimmed := strings.TrimSpace(artifactID)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		normalizedIDs = append(normalizedIDs, trimmed)
+	}
+	if len(normalizedIDs) == 0 {
+		return nil, nil
+	}
+
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(normalizedIDs)), ",")
+	query := fmt.Sprintf(
+		`SELECT artifact_id, artifact_class, course_id, teacher_user_id, COALESCE(student_user_id, 0), COALESCE(kp_key, ''), COALESCE(bundle_version_id, 0), storage_rel_path, sha256, last_modified
+		 FROM artifact_state1_items
+		 WHERE user_id = ? AND artifact_id IN (%s)`,
+		placeholders,
+	)
+	args := make([]interface{}, 0, len(normalizedIDs)+1)
+	args = append(args, userID)
+	for _, artifactID := range normalizedIDs {
+		args = append(args, artifactID)
+	}
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	itemsByID := make(map[string]VisibleArtifact, len(normalizedIDs))
+	for rows.Next() {
+		var item VisibleArtifact
+		if err := rows.Scan(
+			&item.ArtifactID,
+			&item.ArtifactClass,
+			&item.CourseID,
+			&item.TeacherUserID,
+			&item.StudentUserID,
+			&item.KpKey,
+			&item.BundleVersionID,
+			&item.StorageRelPath,
+			&item.SHA256,
+			&item.LastModified,
+		); err != nil {
+			return nil, err
+		}
+		itemsByID[item.ArtifactID] = item
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	orderedItems := make([]VisibleArtifact, 0, len(normalizedIDs))
+	for _, artifactID := range normalizedIDs {
+		item, ok := itemsByID[artifactID]
+		if !ok {
+			return nil, sql.ErrNoRows
+		}
+		orderedItems = append(orderedItems, item)
+	}
+	return orderedItems, nil
+}
+
 func RefreshUserState(db *sql.DB, userID int64) error {
 	if db == nil {
 		return errors.New("database required")

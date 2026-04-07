@@ -117,7 +117,17 @@ class _SkillTreePageState extends State<SkillTreePage> {
   }
 
   Future<void> _loadTeacherAssignment() async {
+    final auth = context.read<AuthController>();
+    final currentUser = auth.currentUser;
     if (widget.teacherStudentId != null) {
+      if (currentUser != null && currentUser.role == 'teacher') {
+        final services = context.read<AppServices>();
+        await services.sessionSyncService.materializeTeacherArtifactsForView(
+          currentUser: currentUser,
+          localStudentId: widget.teacherStudentId!,
+          courseVersionId: widget.courseVersionId,
+        );
+      }
       if (!mounted) {
         return;
       }
@@ -128,12 +138,23 @@ class _SkillTreePageState extends State<SkillTreePage> {
     }
     final assignments =
         await _db.getAssignmentsForCourse(widget.courseVersionId);
+    final selectedStudentId =
+        assignments.isNotEmpty ? assignments.first.studentId : null;
+    if (selectedStudentId != null &&
+        currentUser != null &&
+        currentUser.role == 'teacher') {
+      final services = context.read<AppServices>();
+      await services.sessionSyncService.materializeTeacherArtifactsForView(
+        currentUser: currentUser,
+        localStudentId: selectedStudentId,
+        courseVersionId: widget.courseVersionId,
+      );
+    }
     if (!mounted) {
       return;
     }
     setState(() {
-      _teacherStudentId =
-          assignments.isNotEmpty ? assignments.first.studentId : null;
+      _teacherStudentId = selectedStudentId;
     });
   }
 

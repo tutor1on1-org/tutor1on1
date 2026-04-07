@@ -295,6 +295,7 @@ GROUP BY kp_key
     required int teacherId,
     required CourseLoadPreview preview,
     required CourseReloadMode mode,
+    bool rebuildCourseArtifacts = true,
   }) async {
     if (!preview.success ||
         preview.parseResult == null ||
@@ -476,7 +477,7 @@ GROUP BY kp_key
       }
     });
 
-    if (_courseArtifactService != null) {
+    if (rebuildCourseArtifacts && _courseArtifactService != null) {
       await _courseArtifactService.rebuildCourseArtifacts(
         courseVersionId: courseId,
         folderPath: preview.normalizedPath!,

@@ -7,10 +7,11 @@ List<Widget> buildAppBarActionsWithClose(
   BuildContext context, {
   Iterable<Widget> actions = const <Widget>[],
 }) {
+  final closeTooltip = AppLocalizations.of(context)?.closeButton ?? 'Close';
   return <Widget>[
     ...actions,
     IconButton(
-      tooltip: AppLocalizations.of(context)!.closeButton,
+      tooltip: closeTooltip,
       icon: const Icon(Icons.close),
       onPressed: () => AppQuitFlow.handleQuit(context),
     ),

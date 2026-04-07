@@ -5,9 +5,9 @@ import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:http/http.dart' as http;
-import 'package:http/io_client.dart';
 
 import '../constants.dart';
+import 'api_http_client.dart';
 import 'auth_token_refresh_coordinator.dart';
 import 'secure_storage_service.dart';
 
@@ -135,7 +135,10 @@ class ArtifactSyncApiService {
     http.Client? client,
   })  : _secureStorage = secureStorage,
         _baseUrl = _normalizeBaseUrl(baseUrl ?? kAuthBaseUrl),
-        _client = client ?? _buildClient(kAuthAllowInsecureTls);
+        _client = client ??
+            buildFirstPartyApiHttpClient(
+              allowInsecureTls: kAuthAllowInsecureTls,
+            );
 
   final SecureStorageService _secureStorage;
   final String _baseUrl;
@@ -499,15 +502,6 @@ String _normalizeBaseUrl(String baseUrl) {
     return trimmed.substring(0, trimmed.length - 1);
   }
   return trimmed;
-}
-
-http.Client _buildClient(bool allowInsecureTls) {
-  if (!allowInsecureTls) {
-    return http.Client();
-  }
-  final httpClient = HttpClient()
-    ..badCertificateCallback = (cert, host, port) => true;
-  return IOClient(httpClient);
 }
 
 String _describeTransportError({

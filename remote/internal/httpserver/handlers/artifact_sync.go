@@ -176,20 +176,25 @@ func (h *ArtifactSyncHandler) DownloadBatch(c *fiber.Ctx) error {
 	type batchItem struct {
 		item      artifactsync.VisibleArtifact
 		entryName string
-		bytes     []byte
+		absPath   string
+		sizeBytes int64
 	}
-	batchItems := make([]batchItem, 0, len(artifactIDs))
-	manifestItems := make([]artifactBatchManifestItemResponse, 0, len(artifactIDs))
-	for _, artifactID := range artifactIDs {
-		item, err := artifactsync.ReadVisibleArtifact(h.cfg.Store.DB, userID, artifactID)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return fiber.NewError(fiber.StatusNotFound, "artifact not found")
-			}
-			return fiber.NewError(fiber.StatusInternalServerError, "artifact download lookup failed")
+	items, err := artifactsync.ReadVisibleArtifactsByIDs(
+		h.cfg.Store.DB,
+		userID,
+		artifactIDs,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "artifact not found")
 		}
+		return fiber.NewError(fiber.StatusInternalServerError, "artifact download lookup failed")
+	}
+	batchItems := make([]batchItem, 0, len(items))
+	manifestItems := make([]artifactBatchManifestItemResponse, 0, len(artifactIDs))
+	for _, item := range items {
 		absPath := h.cfg.Storage.AbsolutePath(item.StorageRelPath)
-		zipBytes, err := os.ReadFile(absPath)
+		info, err := os.Stat(absPath)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				return fiber.NewError(fiber.StatusNotFound, "artifact file not found")
@@ -200,7 +205,8 @@ func (h *ArtifactSyncHandler) DownloadBatch(c *fiber.Ctx) error {
 		batchItems = append(batchItems, batchItem{
 			item:      item,
 			entryName: entryName,
-			bytes:     zipBytes,
+			absPath:   absPath,
+			sizeBytes: info.Size(),
 		})
 		manifestItems = append(manifestItems, artifactBatchManifestItemResponse{
 			ArtifactID:    item.ArtifactID,
@@ -218,14 +224,22 @@ func (h *ArtifactSyncHandler) DownloadBatch(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "artifact batch manifest failed")
 	}
+
+	c.Set("Content-Type", "application/zip")
+	c.Set("Content-Disposition", "attachment; filename=\"artifacts_batch.zip\"")
+	c.Set("X-Artifact-Batch-Count", fmt.Sprintf("%d", len(batchItems)))
 	var buffer bytes.Buffer
 	zipWriter := zip.NewWriter(&buffer)
 	if err := writeBatchZipEntry(zipWriter, "manifest.json", manifestBytes); err != nil {
-		_ = zipWriter.Close()
 		return fiber.NewError(fiber.StatusInternalServerError, "artifact batch build failed")
 	}
 	for _, batchItem := range batchItems {
-		if err := writeBatchZipEntry(zipWriter, batchItem.entryName, batchItem.bytes); err != nil {
+		if err := writeBatchZipFileEntry(
+			zipWriter,
+			batchItem.entryName,
+			batchItem.absPath,
+			batchItem.sizeBytes,
+		); err != nil {
 			_ = zipWriter.Close()
 			return fiber.NewError(fiber.StatusInternalServerError, "artifact batch build failed")
 		}
@@ -233,11 +247,7 @@ func (h *ArtifactSyncHandler) DownloadBatch(c *fiber.Ctx) error {
 	if err := zipWriter.Close(); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "artifact batch build failed")
 	}
-
-	c.Set("Content-Type", "application/zip")
-	c.Set("Content-Disposition", "attachment; filename=\"artifacts_batch.zip\"")
-	c.Set("X-Artifact-Batch-Count", fmt.Sprintf("%d", len(batchItems)))
-	return c.SendStream(bytes.NewReader(buffer.Bytes()))
+	return c.SendStream(bytes.NewReader(buffer.Bytes()), buffer.Len())
 }
 
 func (h *ArtifactSyncHandler) Upload(c *fiber.Ctx) error {
@@ -611,6 +621,33 @@ func writeBatchZipEntry(writer *zip.Writer, name string, data []byte) error {
 		return err
 	}
 	_, err = entry.Write(data)
+	return err
+}
+
+func writeBatchZipFileEntry(
+	writer *zip.Writer,
+	name string,
+	absPath string,
+	sizeBytes int64,
+) error {
+	file, err := os.Open(absPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	header := &zip.FileHeader{
+		Name:               name,
+		Method:             zip.Store,
+		Modified:           time.Unix(0, 0).UTC(),
+		UncompressedSize64: uint64(sizeBytes),
+	}
+	header.SetMode(0600)
+	entry, err := writer.CreateHeader(header)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(entry, file)
 	return err
 }
 

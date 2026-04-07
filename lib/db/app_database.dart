@@ -865,6 +865,7 @@ ORDER BY id
   Future<void> assignStudent({
     required int studentId,
     required int courseVersionId,
+    bool notifySyncUsers = true,
   }) async {
     await into(studentCourseAssignments).insert(
       StudentCourseAssignmentsCompanion.insert(
@@ -873,9 +874,11 @@ ORDER BY id
       ),
       mode: InsertMode.insertOrIgnore,
     );
-    await _notifySyncRelevantUsers(
-      await _syncAffectedUsersForCourseVersion(courseVersionId),
-    );
+    if (notifySyncUsers) {
+      await _notifySyncRelevantUsers(
+        await _syncAffectedUsersForCourseVersion(courseVersionId),
+      );
+    }
   }
 
   Stream<List<CourseVersion>> watchAssignedCourses(int studentId) {
@@ -1504,11 +1507,6 @@ WHERE p.student_id = ? AND p.kp_key <> ?
     required DateTime updatedAt,
     bool mergeWithLocal = true,
   }) async {
-    final existing = await getProgress(
-      studentId: studentId,
-      courseVersionId: courseVersionId,
-      kpKey: kpKey,
-    );
     final normalizedCounts = _normalizePassedCounts(
       lit: lit,
       litPercent: litPercent,
@@ -1524,8 +1522,35 @@ WHERE p.student_id = ? AND p.kp_key <> ?
       hardPassedCount: normalizedCounts.hardPassedCount,
       fallbackPercent: litPercent.clamp(0, 100),
     );
-    final normalizedQuestionLevel =
-        _normalizeLevel(questionLevel) == null ? null : _normalizeLevel(questionLevel);
+    final normalizedQuestionLevel = _normalizeLevel(questionLevel) == null
+        ? null
+        : _normalizeLevel(questionLevel);
+    if (!mergeWithLocal) {
+      await into(progressEntries).insert(
+        ProgressEntriesCompanion.insert(
+          studentId: studentId,
+          courseVersionId: courseVersionId,
+          kpKey: kpKey,
+          lit: Value(lit),
+          litPercent: Value(clampedPercent),
+          questionLevel: Value(normalizedQuestionLevel),
+          easyPassedCount: Value(normalizedCounts.easyPassedCount),
+          mediumPassedCount: Value(normalizedCounts.mediumPassedCount),
+          hardPassedCount: Value(normalizedCounts.hardPassedCount),
+          summaryText: Value(summaryText),
+          summaryRawResponse: Value(summaryRawResponse),
+          summaryValid: Value(summaryValid),
+          updatedAt: Value(updatedAt),
+        ),
+        mode: InsertMode.insertOrReplace,
+      );
+      return;
+    }
+    final existing = await getProgress(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+      kpKey: kpKey,
+    );
     if (existing == null) {
       await into(progressEntries).insert(
         ProgressEntriesCompanion.insert(
@@ -1547,7 +1572,8 @@ WHERE p.student_id = ? AND p.kp_key <> ?
       return;
     }
     if (!mergeWithLocal) {
-      await (update(progressEntries)..where((tbl) => tbl.id.equals(existing.id)))
+      await (update(progressEntries)
+            ..where((tbl) => tbl.id.equals(existing.id)))
           .write(
         ProgressEntriesCompanion(
           lit: Value(lit),
@@ -2151,6 +2177,13 @@ HAVING COUNT(*) > 1
           ..where((tbl) => tbl.remoteCourseId.equals(remoteCourseId)))
         .getSingleOrNull();
     return row?.courseVersionId;
+  }
+
+  Future<int?> getRemoteCourseIdForCourseVersion(int courseVersionId) async {
+    final row = await (select(courseRemoteLinks)
+          ..where((tbl) => tbl.courseVersionId.equals(courseVersionId)))
+        .getSingleOrNull();
+    return row?.remoteCourseId;
   }
 
   String _normalizeBaseUrl(String value) {

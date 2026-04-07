@@ -1,8 +1,7 @@
 import 'dart:convert';
-import 'dart:io';
-
 import 'package:http/http.dart' as http;
-import 'package:http/io_client.dart';
+
+import 'api_http_client.dart';
 
 class AuthApiException implements Exception {
   AuthApiException(this.message, {this.statusCode});
@@ -83,7 +82,10 @@ class AuthApiService {
     required bool allowInsecureTls,
     http.Client? client,
   })  : _baseUrl = _normalizeBaseUrl(baseUrl),
-        _client = client ?? _buildClient(allowInsecureTls);
+        _client = client ??
+            buildFirstPartyApiHttpClient(
+              allowInsecureTls: allowInsecureTls,
+            );
 
   final String _baseUrl;
   final http.Client _client;
@@ -244,15 +246,6 @@ class AuthApiService {
       'timezone_offset_minutes': timezoneOffsetMinutes,
       'app_version': appVersion.trim(),
     };
-  }
-
-  static http.Client _buildClient(bool allowInsecureTls) {
-    if (!allowInsecureTls) {
-      return http.Client();
-    }
-    final httpClient = HttpClient()
-      ..badCertificateCallback = (cert, host, port) => true;
-    return IOClient(httpClient);
   }
 
   static String _normalizeBaseUrl(String value) {

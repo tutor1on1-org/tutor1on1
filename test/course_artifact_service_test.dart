@@ -97,6 +97,45 @@ void main() {
     expect(preparedAgain.hash, equals(prepared.hash));
     expect(preparedAgain.bundleFile.path, equals(prepared.bundleFile.path));
   });
+
+  test('imported bundle caching can defer chapter archives', () async {
+    final courseDir = await _createCourseFolder(
+      root: tempRoot,
+      folderName: 'imported_math_course',
+      contents: '''
+1 Number
+1.1 Integers
+2 Algebra
+2.1 Expressions
+''',
+      lectureIds: const <String>['1', '1.1', '2', '2.1'],
+    );
+    final bundleFile =
+        await bundleService.createBundleFromFolder(courseDir.path);
+
+    final manifest = await artifactService.storeImportedContentBundle(
+      courseVersionId: 23,
+      folderPath: courseDir.path,
+      bundleFile: bundleFile,
+      buildChapterArtifacts: false,
+    );
+    expect(manifest.chapters, isEmpty);
+
+    await courseDir.delete(recursive: true);
+
+    final prepared = await artifactService.prepareUploadBundle(
+      courseVersionId: 23,
+      promptMetadata: <String, dynamic>{
+        'schema': kCurrentPromptBundleSchema,
+        'teacher_username': 'dennis',
+        'prompt_templates': const <Map<String, dynamic>>[],
+        'student_prompt_profiles': const <Map<String, dynamic>>[],
+      },
+      bundleLabel: 'math',
+    );
+    expect(await prepared.bundleFile.exists(), isTrue);
+    expect(prepared.hash, isNotEmpty);
+  });
 }
 
 Future<Directory> _createCourseFolder({

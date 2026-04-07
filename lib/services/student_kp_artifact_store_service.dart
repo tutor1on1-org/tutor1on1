@@ -170,6 +170,7 @@ class StudentKpArtifactStoreService {
   static const String artifactState2Version = 'artifact_state2_v1';
   static const String payloadEntryName = 'payload.json';
   static const String _cutoverMarkerFileName = 'cutover_initialized.json';
+  static const String _packedStoragePrefix = '@pack:';
   static final DateTime _zipModifiedAt = DateTime.utc(1980, 1, 1);
 
   Future<StudentKpArtifactManifest> loadManifest(int remoteUserId) async {
@@ -201,6 +202,10 @@ class StudentKpArtifactStoreService {
       },
     );
     await file.writeAsString(jsonEncode(normalized.toJson()), flush: true);
+    await _cleanupUnreferencedPackedFiles(
+      remoteUserId: manifest.remoteUserId,
+      items: normalized.items.values,
+    );
   }
 
   Future<Uint8List?> readArtifactBytes({
@@ -209,6 +214,14 @@ class StudentKpArtifactStoreService {
   }) async {
     if (item.storageFile.trim().isEmpty || item.deleted) {
       return null;
+    }
+    final packedReference = _tryParsePackedStorageReference(item.storageFile);
+    if (packedReference != null) {
+      final packed = await readPackedArtifactBytes(
+        remoteUserId: remoteUserId,
+        items: <StudentKpArtifactManifestItem>[item],
+      );
+      return packed[item.artifactId];
     }
     final file = await _artifactFile(
       remoteUserId: remoteUserId,
@@ -237,6 +250,9 @@ class StudentKpArtifactStoreService {
     required int remoteUserId,
     required String storageFile,
   }) async {
+    if (_tryParsePackedStorageReference(storageFile) != null) {
+      return;
+    }
     final file = await _artifactFile(
       remoteUserId: remoteUserId,
       storageFile: storageFile,
@@ -251,6 +267,122 @@ class StudentKpArtifactStoreService {
     if (dir.existsSync()) {
       await dir.delete(recursive: true);
     }
+  }
+
+  Future<Map<String, String>> writeArtifactPack({
+    required int remoteUserId,
+    required Map<String, Uint8List> bytesByArtifactId,
+  }) async {
+    if (bytesByArtifactId.isEmpty) {
+      return const <String, String>{};
+    }
+    final userDir = await _userRoot(remoteUserId);
+    final artifactsDir = Directory(p.join(userDir.path, 'artifacts'));
+    if (!artifactsDir.existsSync()) {
+      artifactsDir.createSync(recursive: true);
+    }
+    final packName =
+        'batch_${DateTime.now().toUtc().microsecondsSinceEpoch}.pack.zip';
+    final packFile = File(p.join(artifactsDir.path, packName));
+    final archive = Archive();
+    final storageRefs = <String, String>{};
+    final sortedArtifactIds = bytesByArtifactId.keys.toList(growable: false)
+      ..sort();
+    for (var index = 0; index < sortedArtifactIds.length; index++) {
+      final artifactId = sortedArtifactIds[index];
+      final bytes = bytesByArtifactId[artifactId];
+      if (bytes == null) {
+        continue;
+      }
+      final entryName = '$index.zip';
+      archive.addFile(
+        ArchiveFile.noCompress(entryName, bytes.length, bytes)
+          ..mode = 0x180
+          ..lastModTime = _zipModifiedAt.millisecondsSinceEpoch ~/ 1000
+          ..crc32 = getCrc32(bytes),
+      );
+      storageRefs[artifactId] = '$_packedStoragePrefix$packName:$entryName';
+    }
+    final encoded = ZipEncoder().encode(
+      archive,
+      level: 0,
+      modified: _zipModifiedAt,
+    );
+    if (encoded == null || encoded.isEmpty) {
+      throw StateError('Failed to encode student artifact pack.');
+    }
+    await packFile.writeAsBytes(encoded, flush: true);
+    return storageRefs;
+  }
+
+  Future<Map<String, Uint8List>> readPackedArtifactBytes({
+    required int remoteUserId,
+    required Iterable<StudentKpArtifactManifestItem> items,
+  }) async {
+    final requestedItems = items
+        .where((item) => !item.deleted && item.storageFile.trim().isNotEmpty)
+        .toList(growable: false);
+    final packedItemsByFile = <String,
+        List<({String entryName, StudentKpArtifactManifestItem item})>>{};
+    final directItems = <StudentKpArtifactManifestItem>[];
+    for (final item in requestedItems) {
+      final packedReference = _tryParsePackedStorageReference(item.storageFile);
+      if (packedReference == null) {
+        directItems.add(item);
+        continue;
+      }
+      packedItemsByFile.putIfAbsent(packedReference.packFile, () => []).add(
+        (entryName: packedReference.entryName, item: item),
+      );
+    }
+    final result = <String, Uint8List>{};
+    for (final item in directItems) {
+      final file = await _artifactFile(
+        remoteUserId: remoteUserId,
+        storageFile: item.storageFile,
+      );
+      if (!file.existsSync()) {
+        continue;
+      }
+      result[item.artifactId] = Uint8List.fromList(await file.readAsBytes());
+    }
+    for (final entry in packedItemsByFile.entries) {
+      final packFile = await _artifactFile(
+        remoteUserId: remoteUserId,
+        storageFile: entry.key,
+      );
+      if (!packFile.existsSync()) {
+        continue;
+      }
+      final archive = ZipDecoder().decodeBytes(
+        await packFile.readAsBytes(),
+        verify: true,
+      );
+      final contentByEntryName = <String, Uint8List>{};
+      for (final archiveEntry in archive) {
+        if (!archiveEntry.isFile) {
+          continue;
+        }
+        final content = archiveEntry.content;
+        if (content is! List<int>) {
+          throw StateError(
+            'Packed student artifact entry is unreadable: ${archiveEntry.name}',
+          );
+        }
+        contentByEntryName[archiveEntry.name] = Uint8List.fromList(content);
+      }
+      for (final packedItem in entry.value) {
+        final bytes = contentByEntryName[packedItem.entryName];
+        if (bytes == null) {
+          throw StateError(
+            'Packed student artifact entry missing for '
+            '${packedItem.item.artifactId}.',
+          );
+        }
+        result[packedItem.item.artifactId] = bytes;
+      }
+    }
+    return result;
   }
 
   Future<bool> isCutoverInitialized() async {
@@ -396,6 +528,54 @@ class StudentKpArtifactStoreService {
     return File(p.join(dir.path, 'artifacts', storageFile));
   }
 
+  Future<void> _cleanupUnreferencedPackedFiles({
+    required int remoteUserId,
+    required Iterable<StudentKpArtifactManifestItem> items,
+  }) async {
+    final artifactsDir =
+        Directory(p.join((await _userRoot(remoteUserId)).path, 'artifacts'));
+    if (!artifactsDir.existsSync()) {
+      return;
+    }
+    final referencedPackFiles = items
+        .map((item) =>
+            _tryParsePackedStorageReference(item.storageFile)?.packFile)
+        .whereType<String>()
+        .toSet();
+    final entries = artifactsDir.listSync(followLinks: false).whereType<File>();
+    for (final file in entries) {
+      if (!file.path.toLowerCase().endsWith('.pack.zip')) {
+        continue;
+      }
+      final fileName = p.basename(file.path);
+      if (referencedPackFiles.contains(fileName)) {
+        continue;
+      }
+      await file.delete();
+    }
+  }
+
+  _PackedStorageReference? _tryParsePackedStorageReference(String storageFile) {
+    final trimmed = storageFile.trim();
+    if (!trimmed.startsWith(_packedStoragePrefix)) {
+      return null;
+    }
+    final remainder = trimmed.substring(_packedStoragePrefix.length);
+    final separatorIndex = remainder.indexOf(':');
+    if (separatorIndex <= 0 || separatorIndex >= remainder.length - 1) {
+      throw StateError('Packed student artifact storage reference is invalid.');
+    }
+    final packFile = remainder.substring(0, separatorIndex).trim();
+    final entryName = remainder.substring(separatorIndex + 1).trim();
+    if (packFile.isEmpty || entryName.isEmpty) {
+      throw StateError('Packed student artifact storage reference is invalid.');
+    }
+    return _PackedStorageReference(
+      packFile: packFile,
+      entryName: entryName,
+    );
+  }
+
   Future<Directory> _userRoot(int remoteUserId) async {
     final root = await _rootDirectory();
     return Directory(p.join(root.path, '$remoteUserId'));
@@ -426,4 +606,14 @@ class StudentKpArtifactStoreService {
   String _normalizeArchivePath(String input) {
     return input.replaceAll('\\', '/').trim();
   }
+}
+
+class _PackedStorageReference {
+  const _PackedStorageReference({
+    required this.packFile,
+    required this.entryName,
+  });
+
+  final String packFile;
+  final String entryName;
 }

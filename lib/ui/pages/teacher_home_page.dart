@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' show log;
 import 'dart:io';
 
 import 'package:drift/drift.dart' hide Column;
@@ -40,6 +41,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
   static const Duration _autoSyncInterval = Duration(seconds: 60);
   bool _syncStarted = false;
   bool _syncInProgress = false;
+  bool _backgroundSessionSyncInProgress = false;
   bool _syncingFromServer = false;
   String _syncProgressMessage = '';
   double? _syncProgressValue;
@@ -100,7 +102,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
   }
 
   Future<void> _runSyncCycle({required bool showOverlay}) async {
-    if (!mounted || _syncInProgress) {
+    if (!mounted || _syncInProgress || _backgroundSessionSyncInProgress) {
       return;
     }
     _syncInProgress = true;
@@ -120,11 +122,14 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     }
     final trigger = showOverlay ? 'login' : 'timer';
     String? syncError;
+    final deferTeacherSessionSync = showOverlay && user.role == 'teacher';
+    var queueBackgroundTeacherSessionSync = false;
     try {
       await _syncCoordinator.runCoreSync(
         user: user,
         trigger: trigger,
         onProgress: showOverlay ? _applySyncProgress : null,
+        includeSessionSync: !deferTeacherSessionSync,
       );
       if (showOverlay) {
         _applySyncProgress(
@@ -135,6 +140,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         );
       }
       await _refreshMarketplaceState();
+      queueBackgroundTeacherSessionSync = deferTeacherSessionSync;
     } on HomeSyncException catch (error) {
       syncError = error.message;
     } on Object catch (error) {
@@ -151,6 +157,48 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         return;
       }
       _setPersistentMessage(syncError, isError: true);
+    }
+    if (queueBackgroundTeacherSessionSync) {
+      unawaited(_runTeacherBackgroundSessionSync(user));
+    }
+  }
+
+  Future<void> _runTeacherBackgroundSessionSync(User user) async {
+    if (!mounted || _backgroundSessionSyncInProgress) {
+      return;
+    }
+    _backgroundSessionSyncInProgress = true;
+    try {
+      await _syncCoordinator.runCoreSync(
+        user: user,
+        trigger: 'teacher_login_background',
+        onProgress: null,
+        includeEnrollmentSync: false,
+      );
+    } on HomeSyncException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _setPersistentMessage(error.message, isError: true);
+    } on Object catch (error, stackTrace) {
+      log(
+        'Background teacher session sync failed.',
+        error: error,
+        stackTrace: stackTrace,
+        name: 'TeacherHomePage',
+      );
+      if (!mounted) {
+        return;
+      }
+      _setPersistentMessage(
+        describeSyncFailure(
+          stage: 'Session sync',
+          error: error,
+        ).userMessage,
+        isError: true,
+      );
+    } finally {
+      _backgroundSessionSyncInProgress = false;
     }
   }
 

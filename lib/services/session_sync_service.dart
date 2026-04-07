@@ -148,6 +148,159 @@ class SessionSyncService {
     );
   }
 
+  Future<void> materializeTeacherArtifactsForView({
+    required User currentUser,
+    required int localStudentId,
+    int? courseVersionId,
+  }) async {
+    if (currentUser.role != 'teacher') {
+      return;
+    }
+    final remoteTeacherUserId = _requireRemoteUserId(currentUser);
+    final student = await _db.getUserById(localStudentId);
+    final remoteStudentUserId = student?.remoteUserId;
+    if (student == null ||
+        student.role != 'student' ||
+        remoteStudentUserId == null ||
+        remoteStudentUserId <= 0) {
+      throw StateError(
+        'Teacher artifact materialization requires a synced local student.',
+      );
+    }
+    int? remoteCourseId;
+    if (courseVersionId != null) {
+      remoteCourseId =
+          await _db.getRemoteCourseIdForCourseVersion(courseVersionId);
+      if (remoteCourseId == null || remoteCourseId <= 0) {
+        throw StateError(
+          'Course version $courseVersionId is missing its remote course link.',
+        );
+      }
+    }
+    final manifest = await _artifactStore.loadManifest(remoteTeacherUserId);
+    final matchingItems = manifest.items.values.where((item) {
+      if (item.deleted) {
+        return false;
+      }
+      final identity = _parseArtifactIdentity(item.artifactId, null);
+      if (identity.remoteStudentUserId != remoteStudentUserId) {
+        return false;
+      }
+      if (remoteCourseId != null && identity.remoteCourseId != remoteCourseId) {
+        return false;
+      }
+      return true;
+    }).toList(growable: false)
+      ..sort((left, right) => left.artifactId.compareTo(right.artifactId));
+    if (matchingItems.isEmpty) {
+      return;
+    }
+    final bytesByArtifactId = await _ensureTeacherArtifactBytesAvailable(
+      currentUser: currentUser,
+      remoteTeacherUserId: remoteTeacherUserId,
+      manifest: manifest,
+      items: matchingItems,
+    );
+    final applyContext = _ArtifactApplyContext(
+      initialManifest: manifest,
+    );
+    await _runWithLocalMutationSuppressed(() async {
+      await _db.transaction(() async {
+        for (final item in matchingItems) {
+          final bytes = bytesByArtifactId[item.artifactId];
+          if (bytes == null) {
+            throw StateError(
+              'Stored teacher artifact bytes missing for ${item.artifactId}.',
+            );
+          }
+          final payload = _artifactStore.readPayload(bytes);
+          await _applyRemoteArtifactPayload(
+            currentUser: currentUser,
+            artifactId: item.artifactId,
+            payload: payload,
+            applyContext: applyContext,
+            replaceExistingLocalScope: true,
+            wrapReplaceTransaction: false,
+          );
+        }
+      });
+    });
+  }
+
+  Future<Map<String, Uint8List>> _ensureTeacherArtifactBytesAvailable({
+    required User currentUser,
+    required int remoteTeacherUserId,
+    required StudentKpArtifactManifest manifest,
+    required List<StudentKpArtifactManifestItem> items,
+  }) async {
+    var bytesByArtifactId = await _artifactStore.readPackedArtifactBytes(
+      remoteUserId: remoteTeacherUserId,
+      items: items.where((item) => item.storageFile.trim().isNotEmpty),
+    );
+    final missingItems = items.where((item) {
+      return item.storageFile.trim().isEmpty ||
+          !bytesByArtifactId.containsKey(item.artifactId);
+    }).toList(growable: false);
+    if (missingItems.isEmpty) {
+      return bytesByArtifactId;
+    }
+
+    final downloadedItems = missingItems.length > _batchDownloadThreshold
+        ? await _api.downloadArtifactBatch(
+            missingItems.map((item) => item.artifactId).toList(growable: false),
+          )
+        : <DownloadedArtifact>[
+            for (final item in missingItems)
+              await _api.downloadArtifact(item.artifactId),
+          ];
+    final downloadedByArtifactId = <String, DownloadedArtifact>{
+      for (final item in downloadedItems) item.artifactId.trim(): item,
+    };
+    Map<String, String> storageRefs = const <String, String>{};
+    if (downloadedItems.length > _batchDownloadThreshold) {
+      storageRefs = await _artifactStore.writeArtifactPack(
+        remoteUserId: remoteTeacherUserId,
+        bytesByArtifactId: <String, Uint8List>{
+          for (final item in downloadedItems)
+            item.artifactId.trim(): item.bytes,
+        },
+      );
+    }
+    final nextItems =
+        Map<String, StudentKpArtifactManifestItem>.from(manifest.items);
+    for (final item in missingItems) {
+      final downloaded = downloadedByArtifactId[item.artifactId];
+      if (downloaded == null) {
+        throw StateError(
+          'Teacher artifact materialization download missing ${item.artifactId}.',
+        );
+      }
+      final storageFile = downloadedItems.length > _batchDownloadThreshold
+          ? storageRefs[item.artifactId]
+          : _artifactStore.storageFileNameForArtifact(item.artifactId);
+      if ((storageFile ?? '').trim().isEmpty) {
+        throw StateError(
+          'Teacher artifact storage reference missing for ${item.artifactId}.',
+        );
+      }
+      if (downloadedItems.length <= _batchDownloadThreshold) {
+        await _artifactStore.writeArtifactBytes(
+          remoteUserId: remoteTeacherUserId,
+          storageFile: storageFile!,
+          bytes: downloaded.bytes,
+        );
+      }
+      nextItems[item.artifactId] = item.copyWith(
+        storageFile: storageFile,
+      );
+      bytesByArtifactId[item.artifactId] = downloaded.bytes;
+    }
+    await _artifactStore.saveManifest(
+      manifest.copyWith(items: nextItems),
+    );
+    return bytesByArtifactId;
+  }
+
   Future<SyncRunStats> _syncInternal({
     required User currentUser,
     required bool force,
@@ -347,11 +500,21 @@ class SessionSyncService {
           downloaded: downloaded,
         );
       }).toList(growable: false);
+      final storageFileOverrides = currentUser.role == 'teacher'
+          ? await _artifactStore.writeArtifactPack(
+              remoteUserId: remoteUserId,
+              bytesByArtifactId: <String, Uint8List>{
+                for (final entry in downloads)
+                  entry.candidate.artifactId: entry.downloaded.bytes,
+              },
+            )
+          : null;
       currentManifest = await _applyDownloadedArtifactInChunks(
         currentUser: currentUser,
         remoteUserId: remoteUserId,
         manifest: currentManifest,
         downloads: downloads,
+        storageFileOverrides: storageFileOverrides,
         onApplied: (downloaded) async {
           completedCount++;
           completedBytes += downloaded.bytes.length;
@@ -434,25 +597,39 @@ class SessionSyncService {
     required int remoteUserId,
     required StudentKpArtifactManifest manifest,
     required List<_DownloadedArtifactCandidate> downloads,
+    Map<String, String>? storageFileOverrides,
     required Future<void> Function(DownloadedArtifact downloaded) onApplied,
   }) async {
     var currentManifest = manifest;
-    for (var start = 0;
-        start < downloads.length;
-        start += _downloadApplyCheckpointInterval) {
-      final end = (start + _downloadApplyCheckpointInterval < downloads.length)
-          ? start + _downloadApplyCheckpointInterval
+    final applyContext = _ArtifactApplyContext(
+      initialManifest: manifest,
+    );
+    final deferManifestCheckpoint =
+        currentUser.role == 'teacher' && storageFileOverrides != null;
+    final checkpointInterval = currentUser.role == 'teacher'
+        ? downloads.length
+        : _downloadApplyCheckpointInterval;
+    for (var start = 0; start < downloads.length; start += checkpointInterval) {
+      final end = (start + checkpointInterval < downloads.length)
+          ? start + checkpointInterval
           : downloads.length;
       final chunk = downloads.sublist(start, end);
+      final nextItems = Map<String, StudentKpArtifactManifestItem>.from(
+        currentManifest.items,
+      );
       await _runWithLocalMutationSuppressed(() async {
         await _db.transaction(() async {
           for (final entry in chunk) {
-            currentManifest = await _applyDownloadedArtifact(
+            await _applyDownloadedArtifact(
               currentUser: currentUser,
               remoteUserId: remoteUserId,
               manifest: currentManifest,
               candidate: entry.candidate,
               downloaded: entry.downloaded,
+              applyContext: applyContext,
+              storageFileOverride:
+                  storageFileOverrides?[entry.candidate.artifactId],
+              nextItems: nextItems,
               persistManifest: false,
               wrapLocalMutationSuppression: false,
               wrapLocalScopeTransaction: false,
@@ -460,10 +637,16 @@ class SessionSyncService {
           }
         });
       });
-      await _artifactStore.saveManifest(currentManifest);
+      currentManifest = currentManifest.copyWith(items: nextItems);
+      if (!deferManifestCheckpoint) {
+        await _artifactStore.saveManifest(currentManifest);
+      }
       for (final entry in chunk) {
         await onApplied(entry.downloaded);
       }
+    }
+    if (deferManifestCheckpoint) {
+      await _artifactStore.saveManifest(currentManifest);
     }
     return currentManifest;
   }
@@ -575,6 +758,9 @@ class SessionSyncService {
     required StudentKpArtifactManifest manifest,
     required ArtifactState1Item candidate,
     required DownloadedArtifact downloaded,
+    required _ArtifactApplyContext applyContext,
+    String? storageFileOverride,
+    Map<String, StudentKpArtifactManifestItem>? nextItems,
     bool persistManifest = true,
     bool wrapLocalMutationSuppression = true,
     bool wrapLocalScopeTransaction = true,
@@ -585,33 +771,52 @@ class SessionSyncService {
         'Downloaded artifact sha256 mismatch for ${candidate.artifactId}.',
       );
     }
-    final payload = _artifactStore.readPayload(downloaded.bytes);
-    if (wrapLocalMutationSuppression) {
-      await _runWithLocalMutationSuppressed(() async {
+    if (currentUser.role == 'teacher') {
+      await _ensureTeacherArtifactScaffold(
+        currentUser: currentUser,
+        candidate: candidate,
+        downloaded: downloaded,
+        applyContext: applyContext,
+      );
+    } else {
+      final payload = _artifactStore.readPayload(downloaded.bytes);
+      if (wrapLocalMutationSuppression) {
+        await _runWithLocalMutationSuppressed(() async {
+          await _applyRemoteArtifactPayload(
+            currentUser: currentUser,
+            artifactId: candidate.artifactId,
+            payload: payload,
+            applyContext: applyContext,
+            replaceExistingLocalScope:
+                applyContext.hasExistingArtifact(candidate.artifactId),
+            wrapReplaceTransaction: wrapLocalScopeTransaction,
+          );
+        });
+      } else {
         await _applyRemoteArtifactPayload(
           currentUser: currentUser,
           artifactId: candidate.artifactId,
           payload: payload,
+          applyContext: applyContext,
+          replaceExistingLocalScope:
+              applyContext.hasExistingArtifact(candidate.artifactId),
           wrapReplaceTransaction: wrapLocalScopeTransaction,
         );
-      });
-    } else {
-      await _applyRemoteArtifactPayload(
-        currentUser: currentUser,
-        artifactId: candidate.artifactId,
-        payload: payload,
-        wrapReplaceTransaction: wrapLocalScopeTransaction,
+      }
+    }
+    final storageFile = (storageFileOverride ?? '').trim().isNotEmpty
+        ? storageFileOverride!.trim()
+        : _artifactStore.storageFileNameForArtifact(
+            candidate.artifactId,
+          );
+    if ((storageFileOverride ?? '').trim().isEmpty) {
+      await _artifactStore.writeArtifactBytes(
+        remoteUserId: remoteUserId,
+        storageFile: storageFile,
+        bytes: downloaded.bytes,
       );
     }
-    final storageFile = _artifactStore.storageFileNameForArtifact(
-      candidate.artifactId,
-    );
-    await _artifactStore.writeArtifactBytes(
-      remoteUserId: remoteUserId,
-      storageFile: storageFile,
-      bytes: downloaded.bytes,
-    );
-    final updatedItems =
+    final updatedItems = nextItems ??
         Map<String, StudentKpArtifactManifestItem>.from(manifest.items);
     updatedItems[candidate.artifactId] = StudentKpArtifactManifestItem(
       artifactId: candidate.artifactId,
@@ -626,6 +831,31 @@ class SessionSyncService {
       await _artifactStore.saveManifest(updatedManifest);
     }
     return updatedManifest;
+  }
+
+  Future<void> _ensureTeacherArtifactScaffold({
+    required User currentUser,
+    required ArtifactState1Item candidate,
+    required DownloadedArtifact downloaded,
+    required _ArtifactApplyContext applyContext,
+  }) async {
+    final localCourseVersionId = await _resolveCourseVersionId(
+      candidate.courseId,
+      applyContext: applyContext,
+    );
+    String? usernameHint;
+    if (!applyContext.localStudentIdByRemoteStudentId
+        .containsKey(candidate.studentUserId)) {
+      final payload = _artifactStore.readPayload(downloaded.bytes);
+      usernameHint = (payload['student_username'] as String?)?.trim();
+    }
+    await _resolveLocalStudentId(
+      currentUser: currentUser,
+      remoteStudentUserId: candidate.studentUserId,
+      usernameHint: usernameHint,
+      courseVersionId: localCourseVersionId,
+      applyContext: applyContext,
+    );
   }
 
   bool _shouldUploadLocalArtifact({
@@ -1023,23 +1253,29 @@ class SessionSyncService {
     required User currentUser,
     required String artifactId,
     required Map<String, dynamic> payload,
+    required _ArtifactApplyContext applyContext,
+    required bool replaceExistingLocalScope,
     bool wrapReplaceTransaction = true,
   }) async {
     final identity = _parseArtifactIdentity(artifactId, payload);
     final localCourseVersionId = await _resolveCourseVersionId(
       identity.remoteCourseId,
+      applyContext: applyContext,
     );
     final localStudentId = await _resolveLocalStudentId(
       currentUser: currentUser,
       remoteStudentUserId: identity.remoteStudentUserId,
       usernameHint: (payload['student_username'] as String?)?.trim(),
       courseVersionId: localCourseVersionId,
+      applyContext: applyContext,
     );
     await _replaceLocalArtifactScope(
       localStudentId: localStudentId,
       localCourseVersionId: localCourseVersionId,
       kpKey: identity.kpKey,
       payload: payload,
+      applyContext: applyContext,
+      replaceExistingLocalScope: replaceExistingLocalScope,
       wrapTransaction: wrapReplaceTransaction,
     );
   }
@@ -1049,6 +1285,7 @@ class SessionSyncService {
     required int remoteStudentUserId,
     required String? usernameHint,
     required int courseVersionId,
+    required _ArtifactApplyContext applyContext,
   }) async {
     if (currentUser.role == 'student') {
       if (_requireRemoteUserId(currentUser) != remoteStudentUserId) {
@@ -1058,6 +1295,11 @@ class SessionSyncService {
         );
       }
       return currentUser.id;
+    }
+    final cachedLocalStudentId =
+        applyContext.localStudentIdByRemoteStudentId[remoteStudentUserId];
+    if (cachedLocalStudentId != null && cachedLocalStudentId > 0) {
+      return cachedLocalStudentId;
     }
     final localCourse = await _db.getCourseVersionById(courseVersionId);
     if (localCourse == null) {
@@ -1070,21 +1312,36 @@ class SessionSyncService {
       usernameHint: usernameHint,
       teacherId: localCourse.teacherId,
     );
+    applyContext.localStudentIdByRemoteStudentId[remoteStudentUserId] =
+        studentId;
     await _db.assignStudent(
       studentId: studentId,
       courseVersionId: courseVersionId,
+      notifySyncUsers: false,
+    );
+    applyContext.assignedStudentCoursePairs.add(
+      '$studentId:$courseVersionId',
     );
     return studentId;
   }
 
-  Future<int> _resolveCourseVersionId(int remoteCourseId) async {
-    final courseVersionId = await _db.getCourseVersionIdForRemoteCourse(
-      remoteCourseId,
-    );
+  Future<int> _resolveCourseVersionId(
+    int remoteCourseId, {
+    required _ArtifactApplyContext applyContext,
+  }) async {
+    final cachedCourseVersionId =
+        applyContext.localCourseVersionIdByRemoteCourseId[remoteCourseId];
+    if (cachedCourseVersionId != null && cachedCourseVersionId > 0) {
+      return cachedCourseVersionId;
+    }
+    final courseVersionId =
+        await _db.getCourseVersionIdForRemoteCourse(remoteCourseId);
     if (courseVersionId == null || courseVersionId <= 0) {
       throw StateError(
           'Remote course $remoteCourseId is not installed locally.');
     }
+    applyContext.localCourseVersionIdByRemoteCourseId[remoteCourseId] =
+        courseVersionId;
     return courseVersionId;
   }
 
@@ -1093,12 +1350,19 @@ class SessionSyncService {
     required int localCourseVersionId,
     required String kpKey,
     required Map<String, dynamic> payload,
+    required _ArtifactApplyContext applyContext,
+    required bool replaceExistingLocalScope,
     bool wrapTransaction = true,
   }) async {
-    await _db.assignStudent(
-      studentId: localStudentId,
-      courseVersionId: localCourseVersionId,
-    );
+    final assignmentKey = '$localStudentId:$localCourseVersionId';
+    if (!applyContext.assignedStudentCoursePairs.contains(assignmentKey)) {
+      await _db.assignStudent(
+        studentId: localStudentId,
+        courseVersionId: localCourseVersionId,
+        notifySyncUsers: false,
+      );
+      applyContext.assignedStudentCoursePairs.add(assignmentKey);
+    }
     if (wrapTransaction) {
       await _db.transaction(() async {
         await _replaceLocalArtifactScopeBody(
@@ -1106,6 +1370,7 @@ class SessionSyncService {
           localCourseVersionId: localCourseVersionId,
           kpKey: kpKey,
           payload: payload,
+          replaceExistingLocalScope: replaceExistingLocalScope,
         );
       });
       return;
@@ -1115,6 +1380,7 @@ class SessionSyncService {
       localCourseVersionId: localCourseVersionId,
       kpKey: kpKey,
       payload: payload,
+      replaceExistingLocalScope: replaceExistingLocalScope,
     );
   }
 
@@ -1123,12 +1389,15 @@ class SessionSyncService {
     required int localCourseVersionId,
     required String kpKey,
     required Map<String, dynamic> payload,
+    required bool replaceExistingLocalScope,
   }) async {
-    await _deleteLocalArtifactScope(
-      localStudentId: localStudentId,
-      localCourseVersionId: localCourseVersionId,
-      kpKey: kpKey,
-    );
+    if (replaceExistingLocalScope) {
+      await _deleteLocalArtifactScope(
+        localStudentId: localStudentId,
+        localCourseVersionId: localCourseVersionId,
+        kpKey: kpKey,
+      );
+    }
 
     final progressPayload = payload['progress'];
     if (progressPayload is Map<String, dynamic>) {
@@ -1522,4 +1791,22 @@ class _DownloadedArtifactCandidate {
 
   final ArtifactState1Item candidate;
   final DownloadedArtifact downloaded;
+}
+
+class _ArtifactApplyContext {
+  _ArtifactApplyContext({
+    required StudentKpArtifactManifest initialManifest,
+  }) : _existingArtifactIds = initialManifest.items.keys.toSet();
+
+  final Set<String> _existingArtifactIds;
+  final Map<int, int> localCourseVersionIdByRemoteCourseId = <int, int>{};
+  final Map<int, int> localStudentIdByRemoteStudentId = <int, int>{};
+  final Set<String> assignedStudentCoursePairs = <String>{};
+
+  bool hasExistingArtifact(String artifactId) {
+    if (artifactId.trim().isEmpty) {
+      return false;
+    }
+    return _existingArtifactIds.contains(artifactId);
+  }
 }
