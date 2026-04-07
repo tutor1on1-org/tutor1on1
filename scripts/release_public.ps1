@@ -217,14 +217,10 @@ try {
       '-File', $githubReleaseScript,
       '-SkipPubGet',
       '-SkipAnalyze',
-      '-SkipTest'
+      '-SkipTest',
+      '-SkipAndroidBuild',
+      '-SkipWindowsBuild'
     )
-    if ($SkipAndroid.IsPresent -or $SkipAndroidBuild.IsPresent) {
-      $githubArgs += '-SkipAndroidBuild'
-    }
-    if ($SkipWindows.IsPresent -or $SkipWindowsBuild.IsPresent) {
-      $githubArgs += '-SkipWindowsBuild'
-    }
     Invoke-Checked -Label 'Publish GitHub release assets' -Action {
       powershell @githubArgs
     }
