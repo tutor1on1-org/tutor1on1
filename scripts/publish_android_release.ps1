@@ -5,6 +5,7 @@ param(
   [string]$KeyPath = 'C:\Users\kl\.ssh\id_rsa',
   [string]$RemotePublicDir = '/var/lib/family_teacher_remote/public',
   [string]$DownloadBaseUrl = 'https://api.tutor1on1.org/downloads',
+  [switch]$SkipPubGet,
   [switch]$SkipBuild,
   [switch]$SkipUpload
 )
@@ -88,11 +89,19 @@ $legacyCleanupPattern = 'family_teacher*.apk'
 Push-Location $repoRoot
 try {
   if (-not $SkipBuild.IsPresent) {
+    if (-not $SkipPubGet.IsPresent) {
+      Invoke-Checked -Label 'flutter pub get' -Action {
+        flutter pub get
+      }
+    } else {
+      Write-Host '==> Skip flutter pub get requested'
+    }
+
     Invoke-Checked -Label 'flutter build apk --config-only' -Action {
-      flutter build apk --config-only
+      flutter build apk --config-only --no-pub
     }
     Invoke-Checked -Label 'flutter build apk --release' -Action {
-      flutter build apk --release
+      flutter build apk --release --no-pub
     }
   } else {
     Write-Host '==> Skip build requested'

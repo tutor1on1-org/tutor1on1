@@ -180,6 +180,9 @@ try {
       '-ExecutionPolicy', 'Bypass',
       '-File', $androidPublishScript
     )
+    if (-not $SkipValidation.IsPresent) {
+      $androidArgs += '-SkipPubGet'
+    }
     if ($SkipAndroidBuild.IsPresent) {
       $androidArgs += '-SkipBuild'
     }

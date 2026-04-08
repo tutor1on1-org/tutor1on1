@@ -124,20 +124,20 @@ try {
   }
 
   if (-not $SkipAnalyze.IsPresent) {
-    Invoke-Checked -Label 'flutter analyze' -Action {
-      flutter analyze
+    Invoke-Checked -Label 'flutter analyze --no-pub' -Action {
+      flutter analyze --no-pub
     }
   }
 
   if (-not $SkipTest.IsPresent) {
-    Invoke-Checked -Label 'flutter test' -Action {
-      flutter test
+    Invoke-Checked -Label 'flutter test --no-pub' -Action {
+      flutter test --no-pub
     }
   }
 
   if (-not $SkipAndroidBuild.IsPresent) {
-    Invoke-Checked -Label 'flutter build apk --release' -Action {
-      flutter build apk --release
+    Invoke-Checked -Label 'flutter build apk --release --no-pub' -Action {
+      flutter build apk --release --no-pub
     }
   }
 
@@ -150,8 +150,8 @@ try {
     } else {
       Write-Host "==> Reuse existing Windows build tree when possible: $windowsBuildRoot"
     }
-    Invoke-Checked -Label 'flutter build windows --release' -Action {
-      flutter build windows --release
+    Invoke-Checked -Label 'flutter build windows --release --no-pub' -Action {
+      flutter build windows --release --no-pub
     }
   }
 
