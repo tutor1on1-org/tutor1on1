@@ -360,8 +360,9 @@ class SessionService {
       progress: progress,
       evidenceState: evidenceState,
     );
-    final currentDifficultyLevel =
-        _reviewDifficultyLevelFromPassedCounts(passedCounts);
+    final failedCounts = _resolveFailedCounts(
+      evidenceState: evidenceState,
+    );
     final errorBookSummary = _buildErrorBookSummary(
       messages: messages,
       progress: progress,
@@ -403,10 +404,8 @@ class SessionService {
       'active_review_question_json': controlState.activeReviewQuestion == null
           ? 'null'
           : jsonEncode(controlState.activeReviewQuestion),
-      'target_difficulty': _resolveTargetDifficulty(
-        controlState: controlState,
-        fallbackDifficulty: currentDifficultyLevel,
-      ),
+      'review_pass_counts': jsonEncode(passedCounts),
+      'review_fail_counts': jsonEncode(failedCounts),
       'review_correct_total': evidenceState.reviewCorrectTotal.toString(),
       'review_attempt_total': evidenceState.reviewAttemptTotal.toString(),
       'conversation_history': history,
@@ -423,10 +422,6 @@ class SessionService {
       values['presented_questions'] = await _loadQuestionsText(
         courseVersion: courseVersion,
         kpKey: node.kpKey,
-        level: _resolveTargetDifficulty(
-          controlState: controlState,
-          fallbackDifficulty: currentDifficultyLevel,
-        ),
       );
     }
     final renderResult = _renderWithHistoryLimit(
@@ -466,7 +461,6 @@ class SessionService {
       isStructuredPrompt: _isStructuredPrompt(promptName),
       reviewPassedLevel: _reviewPassedLevelForPrompt(
         promptName: promptName,
-        currentDifficultyLevel: currentDifficultyLevel,
         previousAssistantJson: promptResolution.prevJson,
       ),
     );
@@ -686,6 +680,7 @@ class SessionService {
       current: currentEvidence,
       actionMode: request.actionMode,
       parsed: parsed,
+      hadActiveReviewQuestion: currentControl.activeReviewQuestion != null,
       passedLevel: request.reviewPassedLevel,
     );
     final studentId = request.llmContext.studentId;
@@ -1057,27 +1052,24 @@ class SessionService {
     };
   }
 
+  Map<String, int> _resolveFailedCounts({
+    required TutorEvidenceState evidenceState,
+  }) {
+    return <String, int>{
+      'easy': evidenceState.easyFailedCount,
+      'medium': evidenceState.mediumFailedCount,
+      'hard': evidenceState.hardFailedCount,
+    };
+  }
+
   String? _reviewPassedLevelForPrompt({
     required String promptName,
-    required String currentDifficultyLevel,
     required Map<String, dynamic>? previousAssistantJson,
   }) {
     if (promptName == 'review') {
-      final level = _normalizeLevel(previousAssistantJson?['difficulty']) ??
-          _normalizeLevel(currentDifficultyLevel);
-      return level;
+      return _normalizeLevel(previousAssistantJson?['difficulty']);
     }
     return null;
-  }
-
-  String _reviewDifficultyLevelFromPassedCounts(Map<String, int> counts) {
-    if ((counts['medium'] ?? 0) > 0 || (counts['hard'] ?? 0) > 0) {
-      return 'hard';
-    }
-    if ((counts['easy'] ?? 0) > 0) {
-      return 'medium';
-    }
-    return 'easy';
   }
 
   Future<String> _loadLectureText({
@@ -1107,6 +1099,26 @@ class SessionService {
   }
 
   Future<String> _loadQuestionsText({
+    required CourseVersion courseVersion,
+    required String kpKey,
+  }) async {
+    final sections = <String>[];
+    for (final level in const <String>['easy', 'medium', 'hard']) {
+      final text = await _loadQuestionTextForLevel(
+        courseVersion: courseVersion,
+        kpKey: kpKey,
+        level: level,
+      );
+      final trimmed = text.trim();
+      if (trimmed.isEmpty) {
+        continue;
+      }
+      sections.add('[$level]\n$trimmed');
+    }
+    return sections.join('\n\n');
+  }
+
+  Future<String> _loadQuestionTextForLevel({
     required CourseVersion courseVersion,
     required String kpKey,
     required String level,
@@ -1218,16 +1230,6 @@ class SessionService {
     final start =
         messages.length > maxMessages ? messages.length - maxMessages : 0;
     return _buildHistory(messages.sublist(start));
-  }
-
-  String _resolveTargetDifficulty({
-    required TutorControlState controlState,
-    required String fallbackDifficulty,
-  }) {
-    final activeDifficulty = _normalizeLevel(
-      controlState.activeReviewQuestion?['difficulty'],
-    );
-    return activeDifficulty ?? fallbackDifficulty;
   }
 
   TutorControlState _deriveNextControlState({

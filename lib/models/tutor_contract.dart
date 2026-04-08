@@ -373,6 +373,9 @@ class TutorEvidenceState {
     required this.easyPassedCount,
     required this.mediumPassedCount,
     required this.hardPassedCount,
+    required this.easyFailedCount,
+    required this.mediumFailedCount,
+    required this.hardFailedCount,
     required this.lastAssessedAction,
     required this.lastEvidence,
   });
@@ -389,6 +392,9 @@ class TutorEvidenceState {
   final int easyPassedCount;
   final int mediumPassedCount;
   final int hardPassedCount;
+  final int easyFailedCount;
+  final int mediumFailedCount;
+  final int hardFailedCount;
   final String? lastAssessedAction;
   final Map<String, dynamic>? lastEvidence;
 
@@ -404,6 +410,9 @@ class TutorEvidenceState {
     int? easyPassedCount,
     int? mediumPassedCount,
     int? hardPassedCount,
+    int? easyFailedCount,
+    int? mediumFailedCount,
+    int? hardFailedCount,
     String? lastAssessedAction,
     Map<String, dynamic>? lastEvidence,
   }) {
@@ -418,6 +427,9 @@ class TutorEvidenceState {
       easyPassedCount: easyPassedCount ?? this.easyPassedCount,
       mediumPassedCount: mediumPassedCount ?? this.mediumPassedCount,
       hardPassedCount: hardPassedCount ?? this.hardPassedCount,
+      easyFailedCount: easyFailedCount ?? this.easyFailedCount,
+      mediumFailedCount: mediumFailedCount ?? this.mediumFailedCount,
+      hardFailedCount: hardFailedCount ?? this.hardFailedCount,
       lastAssessedAction: lastAssessedAction ?? this.lastAssessedAction,
       lastEvidence: lastEvidence ?? this.lastEvidence,
     );
@@ -434,6 +446,9 @@ class TutorEvidenceState {
       'easy_passed_count': easyPassedCount,
       'medium_passed_count': mediumPassedCount,
       'hard_passed_count': hardPassedCount,
+      'easy_failed_count': easyFailedCount,
+      'medium_failed_count': mediumFailedCount,
+      'hard_failed_count': hardFailedCount,
       'last_assessed_action': lastAssessedAction,
       'last_evidence': lastEvidence,
     };
@@ -452,6 +467,9 @@ class TutorEvidenceState {
       easyPassedCount: 0,
       mediumPassedCount: 0,
       hardPassedCount: 0,
+      easyFailedCount: 0,
+      mediumFailedCount: 0,
+      hardFailedCount: 0,
       lastAssessedAction: null,
       lastEvidence: null,
     );
@@ -487,6 +505,9 @@ class TutorEvidenceState {
       easyPassedCount: (json['easy_passed_count'] as num?)?.toInt() ?? 0,
       mediumPassedCount: (json['medium_passed_count'] as num?)?.toInt() ?? 0,
       hardPassedCount: (json['hard_passed_count'] as num?)?.toInt() ?? 0,
+      easyFailedCount: (json['easy_failed_count'] as num?)?.toInt() ?? 0,
+      mediumFailedCount: (json['medium_failed_count'] as num?)?.toInt() ?? 0,
+      hardFailedCount: (json['hard_failed_count'] as num?)?.toInt() ?? 0,
       lastAssessedAction: (json['last_assessed_action'] as String?)?.trim(),
       lastEvidence: json['last_evidence'] is Map<String, dynamic>
           ? Map<String, dynamic>.from(json['last_evidence'] as Map)
@@ -498,28 +519,59 @@ class TutorEvidenceState {
     required TutorEvidenceState current,
     required String actionMode,
     required Map<String, dynamic>? parsed,
+    required bool hadActiveReviewQuestion,
     String? passedLevel,
   }) {
     final normalizedAction = actionMode.trim().toUpperCase();
     if (normalizedAction == 'REVIEW' && parsed != null) {
       final finished = parsed['finished'];
       if (finished is bool) {
-        final normalizedPassedLevel = _normalizeLevel(parsed['difficulty']) ??
+        final normalizedLevel = _normalizeLevel(parsed['difficulty']) ??
             _normalizeLevel(passedLevel);
         final mistakeTags = _stringListFromValue(parsed['mistakes']);
+        final shouldCountReviewAttempt = hadActiveReviewQuestion;
         return current.copyWith(
-          gradedReviewCount: current.gradedReviewCount + (finished ? 1 : 0),
-          reviewCorrectTotal: current.reviewCorrectTotal + (finished ? 1 : 0),
-          reviewAttemptTotal: current.reviewAttemptTotal + (finished ? 1 : 0),
+          gradedReviewCount:
+              current.gradedReviewCount + (shouldCountReviewAttempt ? 1 : 0),
+          reviewCorrectTotal: current.reviewCorrectTotal +
+              (shouldCountReviewAttempt && finished ? 1 : 0),
+          reviewAttemptTotal:
+              current.reviewAttemptTotal + (shouldCountReviewAttempt ? 1 : 0),
           easyPassedCount: current.easyPassedCount +
-              (finished && normalizedPassedLevel == 'easy' ? 1 : 0),
+              (shouldCountReviewAttempt && finished && normalizedLevel == 'easy'
+                  ? 1
+                  : 0),
           mediumPassedCount: current.mediumPassedCount +
-              (finished && normalizedPassedLevel == 'medium' ? 1 : 0),
+              (shouldCountReviewAttempt &&
+                      finished &&
+                      normalizedLevel == 'medium'
+                  ? 1
+                  : 0),
           hardPassedCount: current.hardPassedCount +
-              (finished && normalizedPassedLevel == 'hard' ? 1 : 0),
+              (shouldCountReviewAttempt && finished && normalizedLevel == 'hard'
+                  ? 1
+                  : 0),
+          easyFailedCount: current.easyFailedCount +
+              (shouldCountReviewAttempt &&
+                      !finished &&
+                      normalizedLevel == 'easy'
+                  ? 1
+                  : 0),
+          mediumFailedCount: current.mediumFailedCount +
+              (shouldCountReviewAttempt &&
+                      !finished &&
+                      normalizedLevel == 'medium'
+                  ? 1
+                  : 0),
+          hardFailedCount: current.hardFailedCount +
+              (shouldCountReviewAttempt &&
+                      !finished &&
+                      normalizedLevel == 'hard'
+                  ? 1
+                  : 0),
           lastAssessedAction: 'REVIEW',
           lastEvidence: <String, dynamic>{
-            'difficulty': normalizedPassedLevel,
+            'difficulty': normalizedLevel,
             'finished': finished,
             'mistakes': mistakeTags,
           },
@@ -553,15 +605,29 @@ class TutorEvidenceState {
       easyPassedCount: 0,
       mediumPassedCount: 0,
       hardPassedCount: 0,
+      easyFailedCount: 0,
+      mediumFailedCount: 0,
+      hardFailedCount: 0,
       lastAssessedAction: null,
       lastEvidence: null,
     );
+    var hasActiveReviewQuestion = false;
     for (final turn in turns) {
       rebuilt = TutorEvidenceState.updateFromAssistantPayload(
         current: rebuilt,
         actionMode: turn.actionMode,
         parsed: turn.parsed,
+        hadActiveReviewQuestion: hasActiveReviewQuestion,
       );
+      final normalizedAction = turn.actionMode.trim().toUpperCase();
+      if (normalizedAction == 'REVIEW' && turn.parsed != null) {
+        final finished = turn.parsed!['finished'];
+        if (finished is bool) {
+          hasActiveReviewQuestion = !finished;
+        }
+      } else if (normalizedAction != 'REVIEW') {
+        hasActiveReviewQuestion = false;
+      }
     }
     final cappedSummaryConsumed =
         seed.summaryConsumedReviewCount > rebuilt.gradedReviewCount

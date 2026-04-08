@@ -57,9 +57,10 @@ class PromptTemplateValidator {
           'kp_description',
           'student_input',
           'active_review_question_json',
-          'target_difficulty',
           'presented_questions',
           'error_book_summary',
+          'review_pass_counts',
+          'review_fail_counts',
         };
       default:
         return {};
@@ -85,7 +86,8 @@ class PromptTemplateValidator {
       'error_book_summary',
       'presented_questions',
       'active_review_question_json',
-      'target_difficulty',
+      'review_pass_counts',
+      'review_fail_counts',
       'review_correct_total',
       'review_attempt_total',
     };

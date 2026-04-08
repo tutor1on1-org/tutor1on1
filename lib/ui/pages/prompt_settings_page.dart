@@ -611,8 +611,10 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
           'Candidate question pool provided for review question selection.',
       'active_review_question_json':
           'JSON for the one active review question, or null when no review question is open.',
-      'target_difficulty':
-          'App-selected review difficulty level (easy/medium/hard).',
+      'review_pass_counts':
+          'JSON map with cumulative passed counts by difficulty (easy/medium/hard).',
+      'review_fail_counts':
+          'JSON map with cumulative failed counts by difficulty (easy/medium/hard).',
       'review_correct_total':
           'Number of closed review questions answered correctly in this session.',
       'review_attempt_total':
