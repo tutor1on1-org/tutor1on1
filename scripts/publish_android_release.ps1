@@ -65,6 +65,25 @@ function Assert-Http200 {
   }
 }
 
+function Remove-StaleGeneratedPluginRegistrant {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$RepoRoot
+  )
+
+  $staleRegistrantPaths = @(
+    (Join-Path $RepoRoot 'android\app\src\main\java\io\flutter\plugins\GeneratedPluginRegistrant.java'),
+    (Join-Path $RepoRoot 'android\app\src\main\kotlin\io\flutter\plugins\GeneratedPluginRegistrant.kt')
+  )
+
+  foreach ($path in $staleRegistrantPaths) {
+    if (Test-Path -LiteralPath $path) {
+      Write-Host "==> Remove stale Flutter registrant: $path"
+      Remove-Item -LiteralPath $path -Force
+    }
+  }
+}
+
 $repoRoot = (Resolve-Path $ProjectRoot).Path
 if (-not (Test-Path -LiteralPath $repoRoot)) {
   throw "Project root not found: $ProjectRoot"
@@ -96,6 +115,8 @@ try {
     } else {
       Write-Host '==> Skip flutter pub get requested'
     }
+
+    Remove-StaleGeneratedPluginRegistrant -RepoRoot $repoRoot
 
     Invoke-Checked -Label 'flutter build apk --config-only' -Action {
       flutter build apk --config-only --no-pub
