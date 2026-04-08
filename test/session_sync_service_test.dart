@@ -201,7 +201,9 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
       artifactId: artifactId,
       sha256: sha256.trim(),
       bundleVersionId: 0,
-      state2: await getState2(artifactClass: 'student_kp'),
+      state2: 'artifact_state2_v1:${sha256.convert(
+        utf8.encode(_state2DigestInput(_stateItems('student_kp'))),
+      )}',
     );
   }
 
