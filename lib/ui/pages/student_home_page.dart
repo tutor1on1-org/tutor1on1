@@ -166,6 +166,8 @@ class _StudentHomePageState extends State<StudentHomePage> {
         user: user,
         trigger: trigger,
         onProgress: showOverlay ? _applySyncProgress : null,
+        sessionSyncMode:
+            showOverlay ? SessionSyncMode.full : SessionSyncMode.uploadOnly,
       );
       if (showOverlay) {
         _applySyncProgress(

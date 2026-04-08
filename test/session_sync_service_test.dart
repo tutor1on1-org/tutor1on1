@@ -64,6 +64,8 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
   int downloadCalls = 0;
   int downloadBatchCalls = 0;
   int uploadCalls = 0;
+  int getState1Calls = 0;
+  int getState2Calls = 0;
   final List<String> uploadedArtifactIds = <String>[];
 
   void seedServerArtifact(_ServerArtifact artifact) {
@@ -74,6 +76,7 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
 
   @override
   Future<String> getState2({required String artifactClass}) async {
+    getState2Calls++;
     final items = _stateItems(artifactClass);
     final builder = StringBuffer();
     for (final item in items) {
@@ -89,6 +92,7 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
   @override
   Future<ArtifactState1Result> getState1(
       {required String artifactClass}) async {
+    getState1Calls++;
     final items = _stateItems(artifactClass);
     return ArtifactState1Result(
       state2: await getState2(artifactClass: artifactClass),
@@ -421,7 +425,7 @@ void main() {
     expect(api.uploadCalls, 0);
   });
 
-  test('single local kp change uploads exactly one per-kp artifact', () async {
+  test('upload-only session sync uploads local changes without downloads', () async {
     final teacherId = await db.createUser(
       username: 'teacher',
       pinHash: 'hash',
@@ -523,17 +527,27 @@ void main() {
     );
     final student = (await db.getUserById(studentId))!;
 
-    final stats = await uploadService.syncIfReady(currentUser: student);
+    final stats = await uploadService.syncIfReady(
+      currentUser: student,
+      mode: SessionSyncMode.uploadOnly,
+    );
     expect(stats.uploadedCount, 1);
     expect(stats.downloadedCount, 0);
     expect(api.uploadCalls, 1);
     expect(api.uploadedArtifactIds, <String>['student_kp:3001:200:1.1']);
+    expect(api.downloadCalls, 0);
+    expect(api.downloadBatchCalls, 0);
+    expect(api.getState2Calls, 0);
+    expect(api.getState1Calls, 1);
 
     final uploaded = await api.downloadArtifact('student_kp:3001:200:1.1');
     final payload = artifactStore.readPayload(uploaded.bytes);
     expect((payload['sessions'] as List), hasLength(2));
 
-    final secondStats = await uploadService.syncIfReady(currentUser: student);
+    final secondStats = await uploadService.syncIfReady(
+      currentUser: student,
+      mode: SessionSyncMode.uploadOnly,
+    );
     expect(secondStats.uploadedCount, 0);
     expect(api.uploadCalls, 1);
   });

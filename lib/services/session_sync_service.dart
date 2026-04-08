@@ -12,6 +12,12 @@ import 'student_kp_artifact_store_service.dart';
 import 'sync_log_repository.dart';
 import 'sync_progress.dart';
 
+enum SessionSyncMode {
+  full,
+  downloadOnly,
+  uploadOnly,
+}
+
 class SessionSyncService {
   SessionSyncService({
     required AppDatabase db,
@@ -108,22 +114,26 @@ class SessionSyncService {
     required User currentUser,
     required String password,
     SyncProgressCallback? onProgress,
+    SessionSyncMode mode = SessionSyncMode.full,
   }) {
     return _syncInternal(
       currentUser: currentUser,
       force: true,
       onProgress: onProgress,
+      mode: mode,
     );
   }
 
   Future<SyncRunStats> syncIfReady({
     required User currentUser,
     SyncProgressCallback? onProgress,
+    SessionSyncMode mode = SessionSyncMode.full,
   }) {
     return _syncInternal(
       currentUser: currentUser,
       force: false,
       onProgress: onProgress,
+      mode: mode,
     );
   }
 
@@ -131,6 +141,7 @@ class SessionSyncService {
     required User currentUser,
     bool wipeLocalStudentData = true,
     SyncProgressCallback? onProgress,
+    SessionSyncMode mode = SessionSyncMode.full,
   }) async {
     await ensureLocalCutoverInitialized();
     if (currentUser.role == 'student' && wipeLocalStudentData) {
@@ -145,6 +156,7 @@ class SessionSyncService {
       currentUser: currentUser,
       force: true,
       onProgress: onProgress,
+      mode: mode,
     );
   }
 
@@ -305,6 +317,7 @@ class SessionSyncService {
     required User currentUser,
     required bool force,
     required SyncProgressCallback? onProgress,
+    SessionSyncMode mode = SessionSyncMode.full,
   }) async {
     final stats = SyncRunStats();
     if (_syncing) {
@@ -320,6 +333,30 @@ class SessionSyncService {
     StackTrace? syncStackTrace;
     try {
       final initialManifest = await _artifactStore.loadManifest(remoteUserId);
+      if (mode == SessionSyncMode.uploadOnly) {
+        if (currentUser.role == 'student') {
+          await _reportProgress(
+            onProgress,
+            const SyncProgress(
+              message: 'Syncing student artifacts (upload only)...',
+              forcePaint: true,
+            ),
+          );
+          final serverState1 = await _api.getState1(
+            artifactClass: _artifactClass,
+          );
+          await _uploadLocalChanges(
+            currentUser: currentUser,
+            remoteUserId: remoteUserId,
+            manifest: initialManifest,
+            serverItems: serverState1.items,
+            stats: stats,
+            onProgress: onProgress,
+          );
+        }
+        return stats;
+      }
+
       if (!force) {
         await _reportProgress(
           onProgress,
@@ -361,7 +398,8 @@ class SessionSyncService {
         onProgress: onProgress,
       );
 
-      if (currentUser.role == 'student') {
+      if (currentUser.role == 'student' &&
+          mode == SessionSyncMode.full) {
         manifest = await _uploadLocalChanges(
           currentUser: currentUser,
           remoteUserId: remoteUserId,
@@ -372,20 +410,26 @@ class SessionSyncService {
         );
       }
 
-      serverState1 = await _api.getState1(artifactClass: _artifactClass);
-      manifest = await _applyServerDownloads(
-        currentUser: currentUser,
-        remoteUserId: remoteUserId,
-        manifest: manifest,
-        serverItems: serverState1.items,
-        stats: stats,
-        onProgress: onProgress,
-      );
-      await _assertNoPendingArtifactConflicts(
-        currentUser: currentUser,
-        manifest: manifest,
-        serverItems: serverState1.items,
-      );
+      if (currentUser.role == 'student' && mode == SessionSyncMode.full) {
+        serverState1 = await _api.getState1(artifactClass: _artifactClass);
+        manifest = await _applyServerDownloads(
+          currentUser: currentUser,
+          remoteUserId: remoteUserId,
+          manifest: manifest,
+          serverItems: serverState1.items,
+          stats: stats,
+          onProgress: onProgress,
+        );
+      }
+
+      if (currentUser.role == 'teacher' ||
+          mode == SessionSyncMode.full) {
+        await _assertNoPendingArtifactConflicts(
+          currentUser: currentUser,
+          manifest: manifest,
+          serverItems: serverState1.items,
+        );
+      }
       await _artifactStore.saveManifest(manifest);
     } catch (error, stackTrace) {
       syncError = error;

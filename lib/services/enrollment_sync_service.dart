@@ -559,6 +559,7 @@ class EnrollmentSyncService {
                 remoteCourses: remoteCourses,
                 changedRemoteCourses: remoteCourses,
                 removedRemoteCourseIds: removedRemoteCourseIds,
+                allowAutoUpload: false,
                 summary: summary,
               );
             },
@@ -628,13 +629,13 @@ class EnrollmentSyncService {
             await refreshStoredLocalState2(currentUser: currentUser);
           }
         }
-        if (currentUser.role == 'teacher') {
-          await _runCategoryIfDue(
-            remoteUserId: remoteUserId,
-            domain: _syncDomainTeacherCourses,
-            nowUtc: nowUtc,
-            force: false,
-            action: () => _syncIfState2Mismatch(
+    if (currentUser.role == 'teacher') {
+      await _runCategoryIfDue(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainTeacherCourses,
+        nowUtc: nowUtc,
+        force: false,
+        action: () => _syncIfState2Mismatch(
               remoteUserId: remoteUserId,
               domain: _syncDomainTeacherCourses,
               readRemoteState2: () => _artifactApi.getState2(
@@ -692,6 +693,7 @@ class EnrollmentSyncService {
                     remoteCourses: remoteCourses,
                   ),
                   removedRemoteCourseIds: removedRemoteCourseIds,
+                  allowAutoUpload: false,
                   summary: summary,
                 );
               },
@@ -1201,6 +1203,7 @@ class EnrollmentSyncService {
     required List<TeacherCourseSummary> remoteCourses,
     required List<TeacherCourseSummary> changedRemoteCourses,
     required Set<int> removedRemoteCourseIds,
+    required bool allowAutoUpload,
     required _SyncTransferSummary summary,
   }) async {
     final firstSync = await _secureStorage.readSyncRunAt(
@@ -1228,47 +1231,52 @@ class EnrollmentSyncService {
       await refreshStoredLocalState2(currentUser: currentUser);
       return;
     }
-    await _uploadLocalTeacherCourses(
-      currentUser: currentUser,
-      remoteUserId: remoteUserId,
-      remoteCourses: remoteCourses,
-      summary: summary,
-    );
-    final refreshedRemoteState1 = await _artifactApi.getState1(
-      artifactClass: _artifactClassCourseBundle,
-    );
-    final previousRemoteFingerprintsByScope =
-        _buildRemoteTeacherCoursePayloadFingerprints(remoteCourses);
-    final refreshedChangedRemoteCourses = _filterChangedState1Items(
-      remoteItems: refreshedRemoteState1.items,
-      localFingerprintsByScope: previousRemoteFingerprintsByScope,
-      scopeKeyOf: (item) => item.courseId > 0
-          ? _localState1ScopeKeyForRemoteCourse(item.courseId)
-          : null,
-      fingerprintOf: (item) => _buildTeacherCourseItemFingerprint(
-        remoteCourseId: item.courseId,
-        localCourseVersionId: null,
-        bundleHash: item.sha256,
-      ),
-    );
-    final refreshedRemoteCourses = _resolveTeacherCoursesFromArtifacts(
-      artifactItems: refreshedRemoteState1.items,
-      remoteCourses: await _api.listTeacherCourses(),
-    );
-    await _reconcileTeacherCourseMetadata(
-      currentUser: currentUser,
-      remoteCourses: refreshedRemoteCourses,
-    );
-    await _pullTeacherCoursesFromServer(
-      currentUser: currentUser,
-      remoteUserId: remoteUserId,
-      remoteCourses: _resolveTeacherCoursesFromArtifacts(
-        artifactItems: refreshedChangedRemoteCourses,
+    if (allowAutoUpload) {
+      await _uploadLocalTeacherCourses(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+        remoteCourses: remoteCourses,
+        summary: summary,
+      );
+      final refreshedRemoteState1 = await _artifactApi.getState1(
+        artifactClass: _artifactClassCourseBundle,
+      );
+      final previousRemoteFingerprintsByScope =
+          _buildRemoteTeacherCoursePayloadFingerprints(remoteCourses);
+      final refreshedChangedRemoteCourses = _filterChangedState1Items(
+        remoteItems: refreshedRemoteState1.items,
+        localFingerprintsByScope: previousRemoteFingerprintsByScope,
+        scopeKeyOf: (item) => item.courseId > 0
+            ? _localState1ScopeKeyForRemoteCourse(item.courseId)
+            : null,
+        fingerprintOf: (item) => _buildTeacherCourseItemFingerprint(
+          remoteCourseId: item.courseId,
+          localCourseVersionId: null,
+          bundleHash: item.sha256,
+        ),
+      );
+      final refreshedRemoteCourses = _resolveTeacherCoursesFromArtifacts(
+        artifactItems: refreshedRemoteState1.items,
+        remoteCourses: await _api.listTeacherCourses(),
+      );
+      await _reconcileTeacherCourseMetadata(
+        currentUser: currentUser,
         remoteCourses: refreshedRemoteCourses,
-      ),
-      initializeOnly: false,
-      summary: summary,
-    );
+      );
+      await _pullTeacherCoursesFromServer(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+        remoteCourses: _resolveTeacherCoursesFromArtifacts(
+          artifactItems: refreshedChangedRemoteCourses,
+          remoteCourses: refreshedRemoteCourses,
+        ),
+        initializeOnly: false,
+        summary: summary,
+      );
+    } else {
+      // Automatic sync intentionally avoids publishing local teacher edits.
+      // Manual upload actions are the supported path for course bundle updates.
+    }
     await _cleanupTeacherLocalDuplicates(currentUser.id);
     await refreshStoredLocalState2(currentUser: currentUser);
   }

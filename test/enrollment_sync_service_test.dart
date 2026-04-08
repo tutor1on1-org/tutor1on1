@@ -811,7 +811,7 @@ void main() {
     expect(artifactApi.uploadCalls, 0);
   });
 
-  test('teacher sync uploads one changed course bundle artifact', () async {
+  test('teacher sync does not auto-upload changed course bundle artifact', () async {
     final teacherId = await db.createUser(
       username: 'dennis',
       pinHash: 'pin',
@@ -911,11 +911,10 @@ void main() {
     );
 
     final second = await service.syncIfReady(currentUser: teacher);
-    expect(second.uploadedCount, 1);
+    expect(second.uploadedCount, 0);
     expect(second.downloadedCount, 0);
-    expect(artifactApi.uploadCalls, 1);
-    expect(artifactApi.uploadedArtifactIds,
-        equals(const <String>['course_bundle:501']));
+    expect(artifactApi.uploadCalls, 0);
+    expect(artifactApi.uploadedArtifactIds, isEmpty);
     await secureStorage.writeSyncRunAt(
       remoteUserId: 9001,
       domain: 'enrollment_sync_teacher',

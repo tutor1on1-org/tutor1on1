@@ -24,6 +24,7 @@ class HomeSyncCoordinator {
     required SyncProgressCallback? onProgress,
     bool includeEnrollmentSync = true,
     bool includeSessionSync = true,
+    SessionSyncMode sessionSyncMode = SessionSyncMode.full,
   }) async {
     final stats = SyncRunStats();
     try {
@@ -68,6 +69,7 @@ class HomeSyncCoordinator {
             await _sessionSyncService.syncIfReady(
               currentUser: user,
               onProgress: onProgress,
+              mode: sessionSyncMode,
             ),
           );
         } catch (error) {
