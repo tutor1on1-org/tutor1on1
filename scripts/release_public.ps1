@@ -2,6 +2,7 @@ param(
   [string]$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path,
   [string]$CommitMessage = 'Public release update',
   [switch]$SkipValidation,
+  [bool]$AutoBumpVersion = $true,
   [switch]$SkipGit,
   [switch]$SkipAndroid,
   [switch]$SkipAndroidBuild,
@@ -43,6 +44,66 @@ function Get-GitStatusLines {
     throw "git status failed with exit code $LASTEXITCODE."
   }
   return ,@($statusLines | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+}
+
+function Get-PubspecVersion {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$RepoRoot
+  )
+  $pubspecPath = Join-Path $RepoRoot 'pubspec.yaml'
+  if (-not (Test-Path -LiteralPath $pubspecPath)) {
+    throw "pubspec.yaml not found: $pubspecPath"
+  }
+  $versionLine = Get-Content -LiteralPath $pubspecPath |
+    Where-Object { $_ -match '^version:\s*[0-9]+\.[0-9]+\.[0-9]+' } |
+    Select-Object -First 1
+  if (-not $versionLine) {
+    throw 'Could not read version from pubspec.yaml'
+  }
+  return $versionLine.Replace('version:', '').Trim()
+}
+
+function Get-NextPatchVersion {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Version
+  )
+  $match = [regex]::Match($Version, '^([0-9]+)\.([0-9]+)\.([0-9]+)(\+[^ ]+)?$')
+  if (-not $match.Success) {
+    throw "Unsupported version format: $Version"
+  }
+  $major = [int]$match.Groups[1].Value
+  $minor = [int]$match.Groups[2].Value
+  $patch = [int]$match.Groups[3].Value + 1
+  $suffix = "$($match.Groups[4].Value)"
+  return "$major.$minor.$patch$suffix"
+}
+
+function Set-PubspecVersion {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$RepoRoot,
+    [Parameter(Mandatory = $true)]
+    [string]$Version
+  )
+  $pubspecPath = Join-Path $RepoRoot 'pubspec.yaml'
+  $updatedLines = @(
+    Get-Content -LiteralPath $pubspecPath |
+      ForEach-Object {
+        if ($_ -match '^\s*version:\s*[0-9]+\.[0-9]+\.[0-9]+(\+[^ ]+)?\s*$') {
+          "version: $Version"
+        } else {
+          $_
+        }
+      }
+  )
+  $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+  [System.IO.File]::WriteAllText(
+    $pubspecPath,
+    ($updatedLines -join [Environment]::NewLine),
+    $utf8NoBom,
+  )
 }
 
 function Get-RequiredGitHubRemote {
@@ -131,6 +192,13 @@ try {
     throw "Public release version utils not found: $versionUtilsScript"
   }
   . $versionUtilsScript
+
+  if (-not $SkipGit.IsPresent -and $AutoBumpVersion) {
+    $currentVersion = Get-PubspecVersion -RepoRoot $repoRoot
+    $nextVersion = Get-NextPatchVersion -Version $currentVersion
+    Set-PubspecVersion -RepoRoot $repoRoot -Version $nextVersion
+    Write-Host "==> Auto-bumped version from $currentVersion to $nextVersion"
+  }
 
   $syncResult = Sync-WebsiteReleaseConfig -RepoRoot $repoRoot
   $versionInfo = $syncResult.VersionInfo
