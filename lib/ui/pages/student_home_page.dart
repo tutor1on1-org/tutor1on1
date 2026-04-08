@@ -20,6 +20,7 @@ import '../progress_display.dart';
 import 'marketplace_page.dart';
 import 'skill_tree_page.dart';
 import '../widgets/server_sync_overlay.dart';
+import '../../services/session_sync_service.dart';
 
 class StudentHomePage extends StatefulWidget {
   const StudentHomePage({super.key});
