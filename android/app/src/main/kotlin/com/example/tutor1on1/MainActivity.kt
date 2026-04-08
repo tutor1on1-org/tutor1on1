@@ -8,7 +8,6 @@ import androidx.documentfile.provider.DocumentFile
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
-import io.flutter.plugins.GeneratedPluginRegistrant
 import java.io.File
 import java.io.FileOutputStream
 
@@ -21,8 +20,8 @@ class MainActivity : FlutterActivity() {
   }
 
   override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
-    // Explicitly register plugins to avoid missing platform channels on some builds.
-    GeneratedPluginRegistrant.registerWith(flutterEngine)
+    // Keep default plugin registration and only add app-specific channels.
+    super.configureFlutterEngine(flutterEngine)
     MethodChannel(
       flutterEngine.dartExecutor.binaryMessenger,
       "tutor1on1/course_import",

@@ -102,7 +102,7 @@ function Set-PubspecVersion {
   [System.IO.File]::WriteAllText(
     $pubspecPath,
     ($updatedLines -join [Environment]::NewLine),
-    $utf8NoBom,
+    $utf8NoBom
   )
 }
 
