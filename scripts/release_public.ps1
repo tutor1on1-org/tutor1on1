@@ -209,8 +209,16 @@ try {
   }
 
   if (-not $SkipValidation.IsPresent) {
+    $validateArgs = @('-NoPostHook')
+    if ($SkipAnalyze.IsPresent) {
+      $validateArgs += '-SkipAnalyze'
+    }
+    if ($SkipFlutterTests.IsPresent) {
+      $validateArgs += '-SkipFlutterTest'
+    }
+
     Invoke-Checked -Label 'Validate project' -Action {
-      powershell -ExecutionPolicy Bypass -File $validateScript -NoPostHook -SkipAnalyze:$SkipAnalyze -SkipFlutterTest:$SkipFlutterTests
+      powershell -ExecutionPolicy Bypass -File $validateScript @validateArgs
     }
   } else {
     Write-Host '==> Skip validation requested'
