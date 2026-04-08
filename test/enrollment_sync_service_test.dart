@@ -924,7 +924,8 @@ void main() {
     final third = await service.syncIfReady(currentUser: teacher);
     expect(third.uploadedCount, 0);
     expect(third.downloadedCount, 0);
-    expect(artifactApi.uploadCalls, 1);
+    expect(artifactApi.uploadCalls, 0);
+    expect(artifactApi.uploadedArtifactIds, isEmpty);
   });
 
   test('student sync deletes local course when remote artifact disappears',

@@ -95,9 +95,21 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
     getState1Calls++;
     final items = _stateItems(artifactClass);
     return ArtifactState1Result(
-      state2: await getState2(artifactClass: artifactClass),
+      state2: 'artifact_state2_v1:${sha256.convert(utf8.encode(_state2DigestInput(items)))}',
       items: items,
     );
+  }
+
+  String _state2DigestInput(List<ArtifactState1Item> items) {
+    final builder = StringBuffer();
+    for (final item in items) {
+      builder
+        ..write(item.artifactId)
+        ..write('|')
+        ..write(item.sha256)
+        ..write('\n');
+    }
+    return builder.toString();
   }
 
   @override
