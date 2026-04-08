@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:crypto/crypto.dart';
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -86,7 +86,9 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
         ..write(item.sha256)
         ..write('\n');
     }
-    return 'artifact_state2_v1:${sha256.convert(utf8.encode(builder.toString()))}';
+    return 'artifact_state2_v1:${crypto.sha256.convert(
+      utf8.encode(builder.toString()),
+    )}';
   }
 
   @override
@@ -95,7 +97,9 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
     getState1Calls++;
     final items = _stateItems(artifactClass);
     return ArtifactState1Result(
-      state2: 'artifact_state2_v1:${sha256.convert(utf8.encode(_state2DigestInput(items)))}',
+      state2: 'artifact_state2_v1:${crypto.sha256.convert(
+        utf8.encode(_state2DigestInput(items)),
+      )}',
       items: items,
     );
   }
@@ -201,7 +205,7 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
       artifactId: artifactId,
       sha256: sha256.trim(),
       bundleVersionId: 0,
-      state2: 'artifact_state2_v1:${sha256.convert(
+      state2: 'artifact_state2_v1:${crypto.sha256.convert(
         utf8.encode(_state2DigestInput(_stateItems('student_kp'))),
       )}',
     );
