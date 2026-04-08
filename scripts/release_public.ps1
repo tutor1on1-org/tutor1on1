@@ -8,6 +8,7 @@ param(
   [switch]$SkipWindows,
   [switch]$SkipWindowsBuild,
   [switch]$SkipGitHubRelease,
+  [switch]$SkipPush,
   [switch]$SkipPromptAssetTests,
   [switch]$SkipZipValidation,
   [switch]$SkipWebsite
@@ -165,11 +166,15 @@ try {
 
     Ensure-LocalReleaseTagAtHead -RepoRoot $repoRoot -ReleaseTag $versionInfo.ReleaseTag
 
-    Invoke-Checked -Label "git push $gitRemote $branchName" -Action {
-      git -C $repoRoot push $gitRemote "HEAD:refs/heads/$branchName"
-    }
-    Invoke-Checked -Label "git push $gitRemote $($versionInfo.ReleaseTag)" -Action {
-      git -C $repoRoot push $gitRemote "refs/tags/$($versionInfo.ReleaseTag)"
+    if (-not $SkipPush.IsPresent) {
+      Invoke-Checked -Label "git push $gitRemote $branchName" -Action {
+        git -C $repoRoot push $gitRemote "HEAD:refs/heads/$branchName"
+      }
+      Invoke-Checked -Label "git push $gitRemote $($versionInfo.ReleaseTag)" -Action {
+        git -C $repoRoot push $gitRemote "refs/tags/$($versionInfo.ReleaseTag)"
+      }
+    } else {
+      Write-Host '==> Skip git push requested'
     }
   } else {
     Write-Host '==> Skip git requested'
