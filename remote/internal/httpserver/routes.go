@@ -109,5 +109,6 @@ func registerRoutes(app *fiber.App, deps handlers.Dependencies) {
 	api.Get("/artifacts/sync/state1", syncLimiter.Handler(middleware.KeyByIP), artifactSync.State1)
 	api.Get("/artifacts/download", syncLimiter.Handler(middleware.KeyByIP), artifactSync.Download)
 	api.Post("/artifacts/download-batch", syncLimiter.Handler(middleware.KeyByIP), artifactSync.DownloadBatch)
+	api.Post("/artifacts/upload-batch", syncLimiter.Handler(middleware.KeyByIP), artifactSync.UploadBatch)
 	api.Post("/artifacts/upload", syncLimiter.Handler(middleware.KeyByIP), artifactSync.Upload)
 }

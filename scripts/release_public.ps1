@@ -14,6 +14,7 @@ param(
   [switch]$SkipPush,
   [switch]$SkipPromptAssetTests,
   [switch]$SkipZipValidation,
+  [switch]$PublishWebsite,
   [switch]$SkipWebsite
 )
 
@@ -200,12 +201,17 @@ try {
     Write-Host "==> Auto-bumped version from $currentVersion to $nextVersion"
   }
 
-  $syncResult = Sync-WebsiteReleaseConfig -RepoRoot $repoRoot
-  $versionInfo = $syncResult.VersionInfo
-  if ($syncResult.Changed) {
-    Write-Host "==> Synced website release config to $($syncResult.VersionInfo.ReleaseTag) ($($syncResult.VersionInfo.AppVersion))"
+  $versionInfo = Get-PublicReleaseVersionInfo -RepoRoot $repoRoot
+  if ($PublishWebsite.IsPresent -and -not $SkipWebsite.IsPresent) {
+    $syncResult = Sync-WebsiteReleaseConfig -RepoRoot $repoRoot
+    $versionInfo = $syncResult.VersionInfo
+    if ($syncResult.Changed) {
+      Write-Host "==> Synced website release config to $($syncResult.VersionInfo.ReleaseTag) ($($syncResult.VersionInfo.AppVersion))"
+    } else {
+      Write-Host "==> Website release config already matches $($syncResult.VersionInfo.ReleaseTag) ($($syncResult.VersionInfo.AppVersion))"
+    }
   } else {
-    Write-Host "==> Website release config already matches $($syncResult.VersionInfo.ReleaseTag) ($($syncResult.VersionInfo.AppVersion))"
+    Write-Host '==> Website publish disabled by default; use -PublishWebsite to sync web'
   }
 
   if (-not $SkipValidation.IsPresent) {
@@ -314,12 +320,12 @@ try {
     Write-Host '==> Skip GitHub release publish requested'
   }
 
-  if (-not $SkipWebsite.IsPresent) {
+  if ($PublishWebsite.IsPresent -and -not $SkipWebsite.IsPresent) {
     Invoke-Checked -Label 'Publish website static files' -Action {
       powershell -ExecutionPolicy Bypass -File $websitePublishScript
     }
   } else {
-    Write-Host '==> Skip website publish requested'
+    Write-Host '==> Skip website publish requested/default'
   }
 
   Write-Host '==> Public release flow completed'

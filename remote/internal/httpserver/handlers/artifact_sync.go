@@ -40,6 +40,31 @@ type artifactBatchDownloadRequest struct {
 	ArtifactIDs []string `json:"artifact_ids"`
 }
 
+type artifactBatchUploadRequest struct {
+	Items []artifactBatchUploadItemRequest `json:"items"`
+}
+
+type artifactBatchUploadItemRequest struct {
+	ArtifactID      string `json:"artifact_id"`
+	SHA256          string `json:"sha256"`
+	BaseSHA256      string `json:"base_sha256"`
+	OverwriteServer bool   `json:"overwrite_server"`
+	FileField       string `json:"file_field"`
+}
+
+type artifactBatchUploadItemResponse struct {
+	ArtifactID string `json:"artifact_id"`
+	SHA256     string `json:"sha256"`
+}
+
+type artifactUploadConflict struct {
+	payload fiber.Map
+}
+
+func (c artifactUploadConflict) Error() string {
+	return "artifact conflict"
+}
+
 type artifactBatchManifestItemResponse struct {
 	ArtifactID    string `json:"artifact_id"`
 	ArtifactClass string `json:"artifact_class"`
@@ -279,6 +304,85 @@ func (h *ArtifactSyncHandler) Upload(c *fiber.Ctx) error {
 	}
 }
 
+func (h *ArtifactSyncHandler) UploadBatch(c *fiber.Ctx) error {
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	}
+	if h.cfg.Storage == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "storage unavailable")
+	}
+
+	manifestRaw := strings.TrimSpace(c.FormValue("manifest"))
+	if manifestRaw == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "manifest required")
+	}
+	var request artifactBatchUploadRequest
+	if err := json.Unmarshal([]byte(manifestRaw), &request); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "manifest invalid")
+	}
+	if len(request.Items) == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "items required")
+	}
+
+	form, err := c.MultipartForm()
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "artifact files required")
+	}
+
+	affectedCourses := make(map[int64]struct{}, len(request.Items))
+	results := make([]artifactBatchUploadItemResponse, 0, len(request.Items))
+	for _, item := range request.Items {
+		artifactID := strings.TrimSpace(item.ArtifactID)
+		if !strings.HasPrefix(artifactID, "student_kp:") {
+			return fiber.NewError(fiber.StatusBadRequest, "student_kp artifacts required")
+		}
+		fileField := strings.TrimSpace(item.FileField)
+		if fileField == "" {
+			return fiber.NewError(fiber.StatusBadRequest, "file_field required")
+		}
+		fileHeaders := form.File[fileField]
+		if len(fileHeaders) == 0 || fileHeaders[0] == nil {
+			return fiber.NewError(fiber.StatusBadRequest, "artifact file required")
+		}
+		storedSHA, courseID, err := h.uploadStudentKpFileHeader(
+			userID,
+			artifactID,
+			strings.TrimSpace(item.BaseSHA256),
+			strings.TrimSpace(item.SHA256),
+			item.OverwriteServer,
+			fileHeaders[0],
+		)
+		if err != nil {
+			var conflict artifactUploadConflict
+			if errors.As(err, &conflict) {
+				return c.Status(fiber.StatusConflict).JSON(conflict.payload)
+			}
+			return err
+		}
+		affectedCourses[courseID] = struct{}{}
+		results = append(results, artifactBatchUploadItemResponse{
+			ArtifactID: artifactID,
+			SHA256:     storedSHA,
+		})
+	}
+
+	for courseID := range affectedCourses {
+		if err := artifactsync.RefreshUsersForCourse(h.cfg.Store.DB, courseID); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
+		}
+	}
+	state2, err := artifactsync.ReadState2(h.cfg.Store.DB, userID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
+	}
+	return c.JSON(fiber.Map{
+		"status": "uploaded",
+		"items":  results,
+		"state2": state2,
+	})
+}
+
 func (h *ArtifactSyncHandler) uploadCourseBundle(
 	c *fiber.Ctx,
 	userID int64,
@@ -371,70 +475,108 @@ func (h *ArtifactSyncHandler) uploadStudentKp(
 	overwriteServer bool,
 	fileHeader *multipart.FileHeader,
 ) error {
+	storedSHA, courseID, err := h.uploadStudentKpFileHeader(
+		userID,
+		artifactID,
+		baseSHA,
+		declaredSHA,
+		overwriteServer,
+		fileHeader,
+	)
+	if err != nil {
+		var conflict artifactUploadConflict
+		if errors.As(err, &conflict) {
+			return c.Status(fiber.StatusConflict).JSON(conflict.payload)
+		}
+		return err
+	}
+	if err := artifactsync.RefreshUsersForCourse(h.cfg.Store.DB, courseID); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
+	}
+	state2, err := artifactsync.ReadState2(h.cfg.Store.DB, userID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
+	}
+	return c.JSON(fiber.Map{
+		"status":      "uploaded",
+		"artifact_id": artifactID,
+		"sha256":      storedSHA,
+		"state2":      state2,
+	})
+}
+
+func (h *ArtifactSyncHandler) uploadStudentKpFileHeader(
+	userID int64,
+	artifactID string,
+	baseSHA string,
+	declaredSHA string,
+	overwriteServer bool,
+	fileHeader *multipart.FileHeader,
+) (string, int64, error) {
 	studentUserID, courseID, kpKey, err := artifactsync.ParseStudentKpArtifactID(artifactID)
 	if err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "artifact_id invalid")
+		return "", 0, fiber.NewError(fiber.StatusBadRequest, "artifact_id invalid")
 	}
 	if userID != studentUserID {
-		return fiber.NewError(fiber.StatusForbidden, "student artifact upload forbidden")
+		return "", 0, fiber.NewError(fiber.StatusForbidden, "student artifact upload forbidden")
 	}
 	enrolled, err := isEnrolled(h.cfg.Store.DB, userID, courseID)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "enrollment check failed")
+		return "", 0, fiber.NewError(fiber.StatusInternalServerError, "enrollment check failed")
 	}
 	if !enrolled {
-		return fiber.NewError(fiber.StatusForbidden, "student not enrolled")
+		return "", 0, fiber.NewError(fiber.StatusForbidden, "student not enrolled")
 	}
 	teacherUserID, err := getTeacherUserIDForCourse(h.cfg.Store.DB, courseID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "course not found")
+			return "", 0, fiber.NewError(fiber.StatusNotFound, "course not found")
 		}
-		return fiber.NewError(fiber.StatusInternalServerError, "course lookup failed")
+		return "", 0, fiber.NewError(fiber.StatusInternalServerError, "course lookup failed")
 	}
 	currentSHA, err := h.lookupStudentKpUploadState(artifactID)
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "student artifact lookup failed")
+		return "", 0, fiber.NewError(fiber.StatusInternalServerError, "student artifact lookup failed")
 	}
 	if conflict := uploadConflict(currentSHA, baseSHA, overwriteServer); conflict != nil {
-		return c.Status(fiber.StatusConflict).JSON(conflict)
+		return "", 0, artifactUploadConflict{payload: conflict}
 	}
 	file, err := fileHeader.Open()
 	if err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "artifact open failed")
+		return "", 0, fiber.NewError(fiber.StatusBadRequest, "artifact open failed")
 	}
 	defer file.Close()
 	zipBytes, err := io.ReadAll(file)
 	if err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "artifact read failed")
+		return "", 0, fiber.NewError(fiber.StatusBadRequest, "artifact read failed")
 	}
 	payload, computedSHA, err := artifactsync.ReadStudentKpArtifactPayload(zipBytes)
 	if err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "student artifact invalid")
+		return "", 0, fiber.NewError(fiber.StatusBadRequest, "student artifact invalid")
 	}
 	if computedSHA != declaredSHA {
-		return fiber.NewError(fiber.StatusBadRequest, "sha256 mismatch")
+		return "", 0, fiber.NewError(fiber.StatusBadRequest, "sha256 mismatch")
 	}
 	if payload.CourseID != courseID ||
 		payload.StudentRemoteUserID != studentUserID ||
 		strings.TrimSpace(payload.KpKey) != strings.TrimSpace(kpKey) ||
 		payload.TeacherRemoteUserID != teacherUserID {
-		return fiber.NewError(fiber.StatusBadRequest, "student artifact payload identity mismatch")
+		return "", 0, fiber.NewError(fiber.StatusBadRequest, "student artifact payload identity mismatch")
 	}
 	storageRelPath := artifactsync.StudentKpStorageRelPath(studentUserID, courseID, kpKey)
 	_, storedSHA, err := h.cfg.Storage.SaveRelativePath(storageRelPath, bytes.NewReader(zipBytes))
 	if err != nil {
 		if errors.Is(err, storage.ErrTooLarge) {
-			return fiber.NewError(fiber.StatusRequestEntityTooLarge, "artifact too large")
+			return "", 0, fiber.NewError(fiber.StatusRequestEntityTooLarge, "artifact too large")
 		}
-		return fiber.NewError(fiber.StatusInternalServerError, "artifact save failed")
+		return "", 0, fiber.NewError(fiber.StatusInternalServerError, "artifact save failed")
 	}
 	if storedSHA != declaredSHA {
-		return fiber.NewError(fiber.StatusBadRequest, "sha256 mismatch")
+		return "", 0, fiber.NewError(fiber.StatusBadRequest, "sha256 mismatch")
 	}
 	tx, err := h.cfg.Store.DB.Begin()
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
+		return "", 0, fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
 	}
 	committed := false
 	defer func() {
@@ -454,25 +596,13 @@ func (h *ArtifactSyncHandler) uploadStudentKp(
 		storedSHA,
 		lastModified,
 	); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "student artifact save failed")
+		return "", 0, fiber.NewError(fiber.StatusInternalServerError, "student artifact save failed")
 	}
 	if err := tx.Commit(); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
+		return "", 0, fiber.NewError(fiber.StatusInternalServerError, "commit failed")
 	}
 	committed = true
-	if err := artifactsync.RefreshUsersForCourse(h.cfg.Store.DB, courseID); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
-	}
-	state2, err := artifactsync.ReadState2(h.cfg.Store.DB, userID)
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
-	}
-	return c.JSON(fiber.Map{
-		"status":      "uploaded",
-		"artifact_id": artifactID,
-		"sha256":      storedSHA,
-		"state2":      state2,
-	})
+	return storedSHA, courseID, nil
 }
 
 func (h *ArtifactSyncHandler) lookupCourseBundleUploadState(

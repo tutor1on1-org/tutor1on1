@@ -53,8 +53,8 @@ function Get-PublicReleaseAssetNames {
   $versionInfo = Get-PublicReleaseVersionInfo -RepoRoot $RepoRoot
   return [pscustomobject]@{
     VersionInfo        = $versionInfo
-    AndroidFileName    = "Tutor1on1-$($versionInfo.DisplayVersion).apk"
-    WindowsFileName    = "Tutor1on1-$($versionInfo.DisplayVersion).zip"
+    AndroidFileName    = 'Tutor1on1.apk'
+    WindowsFileName    = 'Tutor1on1.zip'
     ChecksumsFileName  = 'SHA256SUMS.txt'
     DownloadBaseUrl    = 'https://api.tutor1on1.org/downloads'
   }

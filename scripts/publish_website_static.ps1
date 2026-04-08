@@ -25,26 +25,6 @@ function Invoke-Checked {
   }
 }
 
-function Resolve-RsyncExe {
-  $rsyncCommand = Get-Command rsync -ErrorAction SilentlyContinue
-  if ($rsyncCommand) {
-    return $rsyncCommand.Source
-  }
-
-  $fallbacks = @(
-    'C:\Program Files\Git\usr\bin\rsync.exe',
-    'C:\msys64\usr\bin\rsync.exe'
-  )
-
-  foreach ($candidate in $fallbacks) {
-    if (Test-Path -LiteralPath $candidate) {
-      return $candidate
-    }
-  }
-
-  throw 'rsync executable not found (tried PATH, Git for Windows, and MSYS2 defaults).'
-}
-
 function Assert-Http200 {
   param(
     [Parameter(Mandatory = $true)]
@@ -137,37 +117,37 @@ if ($syncResult.Changed) {
   Write-Host "==> Website release config already matches $($syncResult.VersionInfo.ReleaseTag) ($($syncResult.VersionInfo.AppVersion))"
 }
 
-$rsyncExe = Resolve-RsyncExe
-$webEntries = Get-ChildItem -LiteralPath $resolvedWebDir -Force
-if ($webEntries.Count -eq 0) {
+$sources = Get-ChildItem -LiteralPath $resolvedWebDir -Force | ForEach-Object {
+  $_.FullName
+}
+if ($sources.Count -eq 0) {
   throw "No website files found under: $resolvedWebDir"
 }
 
 Push-Location $repoRoot
 try {
-  $sshTransport = "ssh -i `"$KeyPath`" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
-  $remoteMkdirCommand = "/usr/bin/mkdir -p '$RemoteWebsiteDir'"
-  Write-Host '==> Ensure remote website root exists'
-  $remoteMkdirOutput = & ssh `
+  $remoteCleanupCommand = "/usr/bin/mkdir -p '$RemoteWebsiteDir'; /usr/bin/sudo /usr/bin/find '$RemoteWebsiteDir' -mindepth 1 -maxdepth 1 -exec /usr/bin/rm -rf {} +"
+  Write-Host '==> Clear remote website root before sync'
+  $remoteCleanupOutput = & ssh `
     -i $KeyPath `
     -o 'IdentitiesOnly=yes' `
     -o 'BatchMode=yes' `
     -o 'StrictHostKeyChecking=accept-new' `
     "$RemoteUser@$RemoteHost" `
-    $remoteMkdirCommand
+    $remoteCleanupCommand
   if ($LASTEXITCODE -ne 0) {
-    throw "Remote website mkdir failed with exit code $LASTEXITCODE."
+    throw "Remote website cleanup failed with exit code $LASTEXITCODE."
   }
-  $remoteMkdirOutput | ForEach-Object { Write-Host $_ }
+  $remoteCleanupOutput | ForEach-Object { Write-Host $_ }
 
-  Invoke-Checked -Label 'Sync local web directory to remote website root (rsync incremental)' -Action {
-    & $rsyncExe `
-      '--archive' `
-      '--delete' `
-      '--compress' `
-      '--itemize-changes' `
-      '-e' $sshTransport `
-      "$resolvedWebDir/" `
+  Invoke-Checked -Label 'Sync local web directory to remote website root' -Action {
+    scp `
+      -r `
+      -i $KeyPath `
+      -o 'IdentitiesOnly=yes' `
+      -o 'BatchMode=yes' `
+      -o 'StrictHostKeyChecking=accept-new' `
+      @sources `
       "${RemoteUser}@${RemoteHost}:$RemoteWebsiteDir/"
   }
 

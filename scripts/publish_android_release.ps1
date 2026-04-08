@@ -104,6 +104,11 @@ $candidateApkName = "${apkBaseName}_candidate.apk"
 $candidateDownloadUrl = "$($DownloadBaseUrl.TrimEnd('/'))/$candidateApkName"
 $versionedCleanupPattern = "$apkBaseName-*.apk"
 $legacyCleanupPattern = 'family_teacher*.apk'
+$removeCanonicalApkCommand = if ([string]::Equals($publishedApkName, 'Tutor1on1.apk', [System.StringComparison]::OrdinalIgnoreCase)) {
+  $null
+} else {
+  "/usr/bin/sudo /usr/bin/rm -f '$RemotePublicDir/Tutor1on1.apk'"
+}
 
 Push-Location $repoRoot
 try {
@@ -187,15 +192,18 @@ try {
 
   Assert-Http200 -Url $candidateDownloadUrl -Label 'candidate'
 
-  $remotePromoteCommand = @(
+  $remotePromoteCommands = @(
     "/usr/bin/sudo /usr/bin/install -m 0644 -o root -g root '$RemotePublicDir/$candidateApkName' '$RemotePublicDir/$publishedApkName'",
     "/usr/bin/sudo /usr/bin/find '$RemotePublicDir' -maxdepth 1 -type f -name '$versionedCleanupPattern' ! -name '$publishedApkName' -print -delete",
     "/usr/bin/sudo /usr/bin/find '$RemotePublicDir' -maxdepth 1 -type f -name '$legacyCleanupPattern' -print -delete",
-    "/usr/bin/sudo /usr/bin/rm -f '$RemotePublicDir/Tutor1on1.apk'",
     "/usr/bin/sudo /usr/bin/rm -f '$RemotePublicDir/$candidateApkName'",
     "/usr/bin/sudo /usr/bin/sha256sum '$RemotePublicDir/$publishedApkName'",
     "/usr/bin/sudo /usr/bin/ls -la '$RemotePublicDir'"
-  ) -join '; '
+  )
+  if ($removeCanonicalApkCommand) {
+    $remotePromoteCommands += $removeCanonicalApkCommand
+  }
+  $remotePromoteCommand = $remotePromoteCommands -join '; '
 
   Write-Host '==> Promote candidate to canonical APK + cleanup old APKs'
   $remotePromoteOutput = & ssh `
@@ -216,7 +224,7 @@ try {
   }
   Write-Host "Remote published SHA256 matches local: $remoteHash"
 
-  Assert-Http200 -Url $downloadUrl -Label 'versioned'
+  Assert-Http200 -Url $downloadUrl -Label 'published'
 
   Write-Host '==> Publish completed'
   Write-Host "Download URL: $downloadUrl"

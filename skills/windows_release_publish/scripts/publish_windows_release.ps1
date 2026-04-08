@@ -162,6 +162,11 @@ $versionedCleanupPattern = "$zipBaseName-*.zip"
 $candidateZipName = "${zipBaseName}_candidate.zip"
 $candidateDownloadUrl = "$($DownloadBaseUrl.TrimEnd('/'))/$candidateZipName"
 $legacyCleanupPattern = 'family_teacher*.zip'
+$removeCanonicalZipCommand = if ([string]::Equals($publishedZipName, 'Tutor1on1.zip', [System.StringComparison]::OrdinalIgnoreCase)) {
+  $null
+} else {
+  "/usr/bin/sudo /usr/bin/rm -f '$RemotePublicDir/Tutor1on1.zip'"
+}
 $zipValidatorScript = Join-Path $repoRoot 'skills\windows_release_publish\scripts\validate_windows_release_zip.ps1'
 $windowsBuildRoot = Join-Path $repoRoot 'build\windows'
 $expectedExeName = 'tutor1on1.exe'
@@ -280,15 +285,18 @@ try {
 
   Assert-Http200 -Url $candidateDownloadUrl -Label 'candidate'
 
-  $remotePromoteCommand = @(
+  $remotePromoteCommands = @(
     "/usr/bin/sudo /usr/bin/install -m 0644 -o root -g root '$RemotePublicDir/$candidateZipName' '$RemotePublicDir/$publishedZipName'",
     "/usr/bin/sudo /usr/bin/find '$RemotePublicDir' -maxdepth 1 -type f -name '$versionedCleanupPattern' ! -name '$publishedZipName' -print -delete",
     "/usr/bin/sudo /usr/bin/find '$RemotePublicDir' -maxdepth 1 -type f -name '$legacyCleanupPattern' -print -delete",
-    "/usr/bin/sudo /usr/bin/rm -f '$RemotePublicDir/Tutor1on1.zip'",
     "/usr/bin/sudo /usr/bin/rm -f '$RemotePublicDir/$candidateZipName'",
     "/usr/bin/sudo /usr/bin/sha256sum '$RemotePublicDir/$publishedZipName'",
     "/usr/bin/sudo /usr/bin/ls -la '$RemotePublicDir'"
-  ) -join '; '
+  )
+  if ($removeCanonicalZipCommand) {
+    $remotePromoteCommands += $removeCanonicalZipCommand
+  }
+  $remotePromoteCommand = $remotePromoteCommands -join '; '
 
   Write-Host '==> Promote candidate to canonical ZIP + cleanup old ZIPs'
   $remotePromoteOutput = & ssh `
@@ -309,7 +317,7 @@ try {
   }
   Write-Host "Remote published SHA256 matches local: $remoteHash"
 
-  Assert-Http200 -Url $downloadUrl -Label 'versioned'
+  Assert-Http200 -Url $downloadUrl -Label 'published'
 
   Write-Host '==> Publish completed'
   Write-Host "Download URL: $downloadUrl"

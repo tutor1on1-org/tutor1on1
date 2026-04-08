@@ -56,8 +56,8 @@
     releaseTag: 'v1.0.12',
     downloadBaseUrl: 'https://api.tutor1on1.org/downloads',
     assets: Object.freeze({
-      android: 'Tutor1on1-1.0.12.apk',
-      windows: 'Tutor1on1-1.0.12.zip',
+      android: 'Tutor1on1.apk',
+      windows: 'Tutor1on1.zip',
     }),
   })
   const languagesByCode = new Map(

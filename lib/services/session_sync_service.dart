@@ -41,6 +41,8 @@ class SessionSyncService {
   static const String _artifactClass = 'student_kp';
   static const String _artifactSchema = 'student_kp_artifact_v1';
   static const int _batchDownloadThreshold = 3;
+  static const int _batchUploadThreshold = 3;
+  static const int _batchUploadChunkSize = 16;
   static const int _downloadApplyCheckpointInterval = 64;
 
   bool get _localMutationSuppressed => _localMutationSuppressionDepth > 0;
@@ -750,48 +752,114 @@ class SessionSyncService {
     var currentManifest = manifest;
     var completedCount = 0;
     var completedBytes = 0;
-    for (final candidate in uploadCandidates) {
-      final bytes = await _artifactStore.readArtifactBytes(
-        remoteUserId: remoteUserId,
-        item: candidate,
-      );
-      if (bytes == null) {
-        throw StateError(
-          'Local artifact bytes missing for ${candidate.artifactId}.',
+    if (uploadCandidates.length > _batchUploadThreshold) {
+      for (
+        var start = 0;
+        start < uploadCandidates.length;
+        start += _batchUploadChunkSize
+      ) {
+        final end = (start + _batchUploadChunkSize < uploadCandidates.length)
+            ? start + _batchUploadChunkSize
+            : uploadCandidates.length;
+        final chunk = uploadCandidates.sublist(start, end);
+        final pendingUploads = <PendingArtifactUpload>[];
+        final bytesByArtifactId = <String, Uint8List>{};
+        for (final candidate in chunk) {
+          final bytes = await _artifactStore.readArtifactBytes(
+            remoteUserId: remoteUserId,
+            item: candidate,
+          );
+          if (bytes == null) {
+            throw StateError(
+              'Local artifact bytes missing for ${candidate.artifactId}.',
+            );
+          }
+          final computedSha = sha256.convert(bytes).toString();
+          if (computedSha != candidate.sha256.trim()) {
+            throw StateError(
+              'Local artifact sha256 mismatch for ${candidate.artifactId}.',
+            );
+          }
+          pendingUploads.add(
+            PendingArtifactUpload(
+              artifactId: candidate.artifactId,
+              sha256: candidate.sha256.trim(),
+              bytes: bytes,
+              baseSha256: candidate.baseSha256.trim(),
+              overwriteServer: false,
+            ),
+          );
+          bytesByArtifactId[candidate.artifactId] = bytes;
+        }
+        await _api.uploadArtifactBatch(pendingUploads);
+        final updatedItems = Map<String, StudentKpArtifactManifestItem>.from(
+          currentManifest.items,
+        );
+        for (final candidate in chunk) {
+          updatedItems[candidate.artifactId] = candidate.copyWith(
+            baseSha256: candidate.sha256.trim(),
+          );
+          final bytes = bytesByArtifactId[candidate.artifactId]!;
+          completedCount++;
+          completedBytes += bytes.length;
+          stats.addUploaded(count: 1, bytes: bytes.length);
+        }
+        currentManifest = currentManifest.copyWith(items: updatedItems);
+        await _artifactStore.saveManifest(currentManifest);
+        await _reportProgress(
+          onProgress,
+          SyncProgress(
+            message: 'Uploading student artifacts...',
+            completed: completedCount,
+            total: uploadCandidates.length,
+            completedBytes: completedBytes,
+          ),
         );
       }
-      final computedSha = sha256.convert(bytes).toString();
-      if (computedSha != candidate.sha256.trim()) {
-        throw StateError(
-          'Local artifact sha256 mismatch for ${candidate.artifactId}.',
+    } else {
+      for (final candidate in uploadCandidates) {
+        final bytes = await _artifactStore.readArtifactBytes(
+          remoteUserId: remoteUserId,
+          item: candidate,
+        );
+        if (bytes == null) {
+          throw StateError(
+            'Local artifact bytes missing for ${candidate.artifactId}.',
+          );
+        }
+        final computedSha = sha256.convert(bytes).toString();
+        if (computedSha != candidate.sha256.trim()) {
+          throw StateError(
+            'Local artifact sha256 mismatch for ${candidate.artifactId}.',
+          );
+        }
+        await _api.uploadArtifact(
+          artifactId: candidate.artifactId,
+          sha256: candidate.sha256.trim(),
+          bytes: bytes,
+          baseSha256: candidate.baseSha256.trim(),
+          overwriteServer: false,
+        );
+        final updatedItems = Map<String, StudentKpArtifactManifestItem>.from(
+            currentManifest.items);
+        updatedItems[candidate.artifactId] = candidate.copyWith(
+          baseSha256: candidate.sha256.trim(),
+        );
+        currentManifest = currentManifest.copyWith(items: updatedItems);
+        await _artifactStore.saveManifest(currentManifest);
+        completedCount++;
+        completedBytes += bytes.length;
+        stats.addUploaded(count: 1, bytes: bytes.length);
+        await _reportProgress(
+          onProgress,
+          SyncProgress(
+            message: 'Uploading student artifacts...',
+            completed: completedCount,
+            total: uploadCandidates.length,
+            completedBytes: completedBytes,
+          ),
         );
       }
-      await _api.uploadArtifact(
-        artifactId: candidate.artifactId,
-        sha256: candidate.sha256.trim(),
-        bytes: bytes,
-        baseSha256: candidate.baseSha256.trim(),
-        overwriteServer: false,
-      );
-      final updatedItems = Map<String, StudentKpArtifactManifestItem>.from(
-          currentManifest.items);
-      updatedItems[candidate.artifactId] = candidate.copyWith(
-        baseSha256: candidate.sha256.trim(),
-      );
-      currentManifest = currentManifest.copyWith(items: updatedItems);
-      await _artifactStore.saveManifest(currentManifest);
-      completedCount++;
-      completedBytes += bytes.length;
-      stats.addUploaded(count: 1, bytes: bytes.length);
-      await _reportProgress(
-        onProgress,
-        SyncProgress(
-          message: 'Uploading student artifacts...',
-          completed: completedCount,
-          total: uploadCandidates.length,
-          completedBytes: completedBytes,
-        ),
-      );
     }
     return await _artifactStore.loadManifest(remoteUserId);
   }

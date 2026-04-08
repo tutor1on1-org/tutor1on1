@@ -98,6 +98,22 @@ class UploadArtifactResult {
   }
 }
 
+class PendingArtifactUpload {
+  PendingArtifactUpload({
+    required this.artifactId,
+    required this.sha256,
+    required this.bytes,
+    required this.baseSha256,
+    required this.overwriteServer,
+  });
+
+  final String artifactId;
+  final String sha256;
+  final Uint8List bytes;
+  final String baseSha256;
+  final bool overwriteServer;
+}
+
 class ArtifactConflictException implements Exception {
   ArtifactConflictException({
     required this.message,
@@ -308,6 +324,58 @@ class ArtifactSyncApiService {
       throw ArtifactSyncApiException('Unexpected response format.');
     }
     return UploadArtifactResult.fromJson(decoded);
+  }
+
+  Future<void> uploadArtifactBatch(List<PendingArtifactUpload> uploads) async {
+    final normalizedUploads = uploads
+        .where((item) => item.artifactId.trim().isNotEmpty)
+        .toList(growable: false);
+    if (normalizedUploads.isEmpty) {
+      return;
+    }
+    final uri = Uri.parse('$_baseUrl/api/artifacts/upload-batch');
+    Future<http.StreamedResponse> send(String token) async {
+      return _runRequest(
+        uri: uri,
+        action: () async {
+          final request = http.MultipartRequest('POST', uri);
+          request.headers
+              .addAll(_authHeaders(token, includeContentType: false));
+          final manifestItems = <Map<String, dynamic>>[];
+          for (var index = 0; index < normalizedUploads.length; index++) {
+            final upload = normalizedUploads[index];
+            final fileField = 'artifact_$index';
+            manifestItems.add(<String, dynamic>{
+              'artifact_id': upload.artifactId.trim(),
+              'sha256': upload.sha256.trim(),
+              'base_sha256': upload.baseSha256.trim(),
+              'overwrite_server': upload.overwriteServer,
+              'file_field': fileField,
+            });
+            request.files.add(
+              http.MultipartFile.fromBytes(
+                fileField,
+                upload.bytes,
+                filename: _artifactFilename(upload.artifactId),
+              ),
+            );
+          }
+          request.fields['manifest'] = jsonEncode(<String, dynamic>{
+            'items': manifestItems,
+          });
+          return _client.send(request);
+        },
+      );
+    }
+
+    var token = await _requireAccessToken();
+    var streamed = await send(token);
+    if (streamed.statusCode == 401 && await _refreshAccessToken()) {
+      token = await _requireAccessToken();
+      streamed = await send(token);
+    }
+    final response = await http.Response.fromStream(streamed);
+    _decodeResponse(response);
   }
 
   Future<dynamic> _get(
