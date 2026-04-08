@@ -42,195 +42,7 @@ function Resolve-RsyncExe {
     }
   }
 
-  return $null
-}
-
-function Convert-ToShellLiteral {
-  param(
-    [Parameter(Mandatory = $true)]
-    [string]$Value
-  )
-
-  return "'" + ($Value -replace "'", "'\"'\"'") + "'"
-}
-
-function Get-RelativeUnixPath {
-  param(
-    [Parameter(Mandatory = $true)]
-    [string]$BaseDir,
-    [Parameter(Mandatory = $true)]
-    [string]$FullPath
-  )
-
-  return ([System.IO.Path]::GetRelativePath($BaseDir, $FullPath)).Replace('\', '/')
-}
-
-function Get-LocalWebsiteManifest {
-  param(
-    [Parameter(Mandatory = $true)]
-    [string]$RootDir
-  )
-
-  $manifest = @{}
-  $files = Get-ChildItem -LiteralPath $RootDir -Recurse -File
-  foreach ($file in $files) {
-    $relativePath = Get-RelativeUnixPath -BaseDir $RootDir -FullPath $file.FullName
-    $manifest[$relativePath] = @{
-      FullPath = $file.FullName
-      Hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-    }
-  }
-  return $manifest
-}
-
-function Get-RemoteWebsiteManifest {
-  param(
-    [Parameter(Mandatory = $true)]
-    [string]$RemoteUser,
-    [Parameter(Mandatory = $true)]
-    [string]$RemoteHost,
-    [Parameter(Mandatory = $true)]
-    [string]$KeyPath,
-    [Parameter(Mandatory = $true)]
-    [string]$RemoteRootDir
-  )
-
-  $manifest = @{}
-  $remoteRootLiteral = Convert-ToShellLiteral -Value $RemoteRootDir
-  $remoteManifestCommand = @(
-    "if [ -d $remoteRootLiteral ]; then",
-    "cd $remoteRootLiteral",
-    "/usr/bin/find . -type f -print0 | /usr/bin/xargs -0 -r /usr/bin/sha256sum",
-    "fi"
-  ) -join '; '
-
-  $remoteOutput = & ssh `
-    -i $KeyPath `
-    -o 'IdentitiesOnly=yes' `
-    -o 'BatchMode=yes' `
-    -o 'StrictHostKeyChecking=accept-new' `
-    "$RemoteUser@$RemoteHost" `
-    $remoteManifestCommand
-  if ($LASTEXITCODE -ne 0) {
-    throw "Remote website manifest failed with exit code $LASTEXITCODE."
-  }
-
-  foreach ($line in @($remoteOutput)) {
-    $text = "$line".Trim()
-    if ([string]::IsNullOrWhiteSpace($text)) {
-      continue
-    }
-    if ($text -match '^(?<hash>[0-9a-fA-F]{64})\s+\.\./') {
-      continue
-    }
-    if ($text -match '^(?<hash>[0-9a-fA-F]{64})\s+\./(?<path>.+)$') {
-      $manifest[$matches['path']] = $matches['hash'].ToLowerInvariant()
-    }
-  }
-
-  return $manifest
-}
-
-function Sync-WebsiteViaScpIncremental {
-  param(
-    [Parameter(Mandatory = $true)]
-    [string]$LocalRootDir,
-    [Parameter(Mandatory = $true)]
-    [string]$RemoteUser,
-    [Parameter(Mandatory = $true)]
-    [string]$RemoteHost,
-    [Parameter(Mandatory = $true)]
-    [string]$KeyPath,
-    [Parameter(Mandatory = $true)]
-    [string]$RemoteRootDir
-  )
-
-  $localManifest = Get-LocalWebsiteManifest -RootDir $LocalRootDir
-  $remoteManifest = Get-RemoteWebsiteManifest `
-    -RemoteUser $RemoteUser `
-    -RemoteHost $RemoteHost `
-    -KeyPath $KeyPath `
-    -RemoteRootDir $RemoteRootDir
-
-  $filesToUpload = @()
-  foreach ($relativePath in $localManifest.Keys) {
-    if (-not $remoteManifest.ContainsKey($relativePath) -or $remoteManifest[$relativePath] -ne $localManifest[$relativePath].Hash) {
-      $filesToUpload += $relativePath
-    }
-  }
-
-  $filesToDelete = @()
-  foreach ($relativePath in $remoteManifest.Keys) {
-    if (-not $localManifest.ContainsKey($relativePath)) {
-      $filesToDelete += $relativePath
-    }
-  }
-
-  Write-Host "==> Incremental website sync fallback: $($filesToUpload.Count) upload, $($filesToDelete.Count) delete"
-
-  if ($filesToUpload.Count -gt 0) {
-    $remoteDirs = $filesToUpload |
-      ForEach-Object { [System.IO.Path]::GetDirectoryName($_) } |
-      Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-      ForEach-Object { $_.Replace('\', '/') } |
-      Sort-Object -Unique
-
-    if ($remoteDirs.Count -gt 0) {
-      $mkdirCommands = $remoteDirs | ForEach-Object {
-        $remoteDir = "$RemoteRootDir/$_"
-        "/usr/bin/mkdir -p $(Convert-ToShellLiteral -Value $remoteDir)"
-      }
-      $remoteMkdirCommand = $mkdirCommands -join '; '
-      $mkdirOutput = & ssh `
-        -i $KeyPath `
-        -o 'IdentitiesOnly=yes' `
-        -o 'BatchMode=yes' `
-        -o 'StrictHostKeyChecking=accept-new' `
-        "$RemoteUser@$RemoteHost" `
-        $remoteMkdirCommand
-      if ($LASTEXITCODE -ne 0) {
-        throw "Remote website directory creation failed with exit code $LASTEXITCODE."
-      }
-      $mkdirOutput | ForEach-Object { Write-Host $_ }
-    }
-
-    foreach ($relativePath in ($filesToUpload | Sort-Object)) {
-      $localFile = $localManifest[$relativePath].FullPath
-      $remoteFile = "$RemoteRootDir/$relativePath"
-      Write-Host "Upload: $relativePath"
-      & scp `
-        -i $KeyPath `
-        -o 'IdentitiesOnly=yes' `
-        -o 'BatchMode=yes' `
-        -o 'StrictHostKeyChecking=accept-new' `
-        $localFile `
-        "${RemoteUser}@${RemoteHost}:$remoteFile"
-      if ($LASTEXITCODE -ne 0) {
-        throw "scp upload failed for $relativePath with exit code $LASTEXITCODE."
-      }
-    }
-  }
-
-  if ($filesToDelete.Count -gt 0) {
-    $deleteCommands = $filesToDelete | Sort-Object | ForEach-Object {
-      $remoteFile = "$RemoteRootDir/$_"
-      "/usr/bin/rm -f $(Convert-ToShellLiteral -Value $remoteFile)"
-    }
-    $deleteCommands += "/usr/bin/find $(Convert-ToShellLiteral -Value $RemoteRootDir) -depth -type d -empty -delete"
-    $remoteDeleteCommand = $deleteCommands -join '; '
-    Write-Host '==> Delete removed remote website files'
-    $deleteOutput = & ssh `
-      -i $KeyPath `
-      -o 'IdentitiesOnly=yes' `
-      -o 'BatchMode=yes' `
-      -o 'StrictHostKeyChecking=accept-new' `
-      "$RemoteUser@$RemoteHost" `
-      $remoteDeleteCommand
-    if ($LASTEXITCODE -ne 0) {
-      throw "Remote website delete failed with exit code $LASTEXITCODE."
-    }
-    $deleteOutput | ForEach-Object { Write-Host $_ }
-  }
+  throw 'rsync executable not found (tried PATH, Git for Windows, and MSYS2 defaults).'
 }
 
 function Assert-Http200 {
@@ -348,25 +160,15 @@ try {
   }
   $remoteMkdirOutput | ForEach-Object { Write-Host $_ }
 
-  if ($rsyncExe) {
-    Invoke-Checked -Label 'Sync local web directory to remote website root (rsync incremental)' -Action {
-      & $rsyncExe `
-        '--archive' `
-        '--delete' `
-        '--compress' `
-        '--itemize-changes' `
-        '-e' $sshTransport `
-        "$resolvedWebDir/" `
-        "${RemoteUser}@${RemoteHost}:$RemoteWebsiteDir/"
-    }
-  } else {
-    Write-Host '==> rsync not found; fallback to native SSH/SCP incremental sync'
-    Sync-WebsiteViaScpIncremental `
-      -LocalRootDir $resolvedWebDir `
-      -RemoteUser $RemoteUser `
-      -RemoteHost $RemoteHost `
-      -KeyPath $KeyPath `
-      -RemoteRootDir $RemoteWebsiteDir
+  Invoke-Checked -Label 'Sync local web directory to remote website root (rsync incremental)' -Action {
+    & $rsyncExe `
+      '--archive' `
+      '--delete' `
+      '--compress' `
+      '--itemize-changes' `
+      '-e' $sshTransport `
+      "$resolvedWebDir/" `
+      "${RemoteUser}@${RemoteHost}:$RemoteWebsiteDir/"
   }
 
   $remoteVerifyCommand = @(
