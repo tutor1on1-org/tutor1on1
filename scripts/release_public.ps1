@@ -8,6 +8,8 @@ param(
   [switch]$SkipWindows,
   [switch]$SkipWindowsBuild,
   [switch]$SkipGitHubRelease,
+  [switch]$SkipAnalyze,
+  [switch]$SkipFlutterTests,
   [switch]$SkipPush,
   [switch]$SkipPromptAssetTests,
   [switch]$SkipZipValidation,
@@ -140,7 +142,7 @@ try {
 
   if (-not $SkipValidation.IsPresent) {
     Invoke-Checked -Label 'Validate project' -Action {
-      powershell -ExecutionPolicy Bypass -File $validateScript -NoPostHook
+      powershell -ExecutionPolicy Bypass -File $validateScript -NoPostHook -SkipAnalyze:$SkipAnalyze -SkipFlutterTest:$SkipFlutterTests
     }
   } else {
     Write-Host '==> Skip validation requested'

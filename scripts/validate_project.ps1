@@ -1,6 +1,8 @@
 param(
   [switch]$SkipFlutter,
   [switch]$SkipGo,
+  [switch]$SkipAnalyze,
+  [switch]$SkipFlutterTest,
   [switch]$RunPostHook,
   [switch]$NoPostHook
 )
@@ -39,11 +41,15 @@ Push-Location $repoRoot
 try {
   if (-not $SkipFlutter) {
     Invoke-Step -Name "flutter pub get" -Action { & flutter pub get }
-    Invoke-Step -Name "flutter analyze --no-pub" -Action {
-      & flutter analyze --no-pub
+    if (-not $SkipAnalyze) {
+      Invoke-Step -Name "flutter analyze --no-pub" -Action {
+        & flutter analyze --no-pub
+      }
     }
-    Invoke-Step -Name "flutter test --no-pub" -Action {
-      & flutter test --no-pub
+    if (-not $SkipFlutterTest) {
+      Invoke-Step -Name "flutter test --no-pub" -Action {
+        & flutter test --no-pub
+      }
     }
   }
 
