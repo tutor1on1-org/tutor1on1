@@ -52,8 +52,8 @@
   ]
   const releaseConfig = Object.freeze({
     githubRepo: 'tutor1on1-org/tutor1on1',
-    appVersion: '1.0.12',
-    releaseTag: 'v1.0.12',
+    appVersion: '1.0.14',
+    releaseTag: 'v1.0.14',
     downloadBaseUrl: 'https://api.tutor1on1.org/downloads',
     assets: Object.freeze({
       android: 'Tutor1on1.apk',

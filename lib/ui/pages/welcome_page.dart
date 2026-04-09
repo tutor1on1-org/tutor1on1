@@ -91,72 +91,40 @@ class _WelcomePageState extends State<WelcomePage> {
     final l10n = AppLocalizations.of(context)!;
     return DefaultTabController(
       length: 3,
-      child: Stack(
-        children: [
-          Scaffold(
-            appBar: AppBar(
-              title: Text(l10n.appTitle),
-              actions: buildAppBarActionsWithClose(
-                context,
-                actions: [
-                  IconButton(
-                    key: const Key('open_settings'),
-                    icon: const Icon(Icons.settings),
-                    onPressed: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const SettingsPage(),
-                        ),
-                      );
-                    },
-                  ),
-                ],
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(l10n.appTitle),
+          actions: buildAppBarActionsWithClose(
+            context,
+            actions: [
+              IconButton(
+                key: const Key('open_settings'),
+                icon: const Icon(Icons.settings),
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const SettingsPage(),
+                    ),
+                  );
+                },
               ),
-              bottom: TabBar(
-                tabs: [
-                  Tab(text: l10n.loginTab),
-                  Tab(text: l10n.registerTeacherTab),
-                  Tab(text: l10n.registerStudentTab),
-                ],
-              ),
-            ),
-            body: TabBarView(
-              children: [
-                _buildLogin(context),
-                _buildRegisterTeacher(context),
-                _buildRegisterStudent(context),
-              ],
-            ),
+            ],
           ),
-          if (_loginInProgress) ...[
-            const ModalBarrier(
-              dismissible: false,
-              color: Colors.black38,
-            ),
-            Center(
-              child: Card(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 16,
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                      const SizedBox(width: 12),
-                      Text('${l10n.loginButton}...'),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+          bottom: TabBar(
+            tabs: [
+              Tab(text: l10n.loginTab),
+              Tab(text: l10n.registerTeacherTab),
+              Tab(text: l10n.registerStudentTab),
+            ],
+          ),
+        ),
+        body: TabBarView(
+          children: [
+            _buildLogin(context),
+            _buildRegisterTeacher(context),
+            _buildRegisterStudent(context),
           ],
-        ],
+        ),
       ),
     );
   }
@@ -216,8 +184,9 @@ class _WelcomePageState extends State<WelcomePage> {
           alignment: Alignment.centerRight,
           child: TextButton(
             key: const Key('forgot_password_button'),
-            onPressed:
-                _loginInProgress ? null : () => _openRequestRecoveryDialog(context),
+            onPressed: _loginInProgress
+                ? null
+                : () => _openRequestRecoveryDialog(context),
             child: Text(l10n.forgotPasswordButton),
           ),
         ),
