@@ -171,11 +171,23 @@ class ArtifactSyncApiService {
     return ((response['state2'] as String?) ?? '').trim();
   }
 
-  Future<ArtifactState1Result> getState1(
-      {required String artifactClass}) async {
+  Future<ArtifactState1Result> getState1({
+    required String artifactClass,
+    int? studentUserId,
+    int? courseId,
+  }) async {
+    final params = <String, String>{
+      'artifact_class': artifactClass,
+    };
+    if (studentUserId != null && studentUserId > 0) {
+      params['student_user_id'] = '$studentUserId';
+    }
+    if (courseId != null && courseId > 0) {
+      params['course_id'] = '$courseId';
+    }
     final response = await _get(
       '/api/artifacts/sync/state1',
-      params: {'artifact_class': artifactClass},
+      params: params,
     );
     if (response is! Map<String, dynamic>) {
       throw ArtifactSyncApiException('Unexpected response format.');

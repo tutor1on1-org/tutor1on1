@@ -347,6 +347,41 @@ class CourseArtifactService {
     );
   }
 
+  Future<bool> hasStoredContentBundle(int courseVersionId) async {
+    if (courseVersionId <= 0) {
+      throw StateError('Course version id must be positive.');
+    }
+    final manifest = await readCourseArtifacts(courseVersionId);
+    if (manifest == null) {
+      return false;
+    }
+    final contentBundlePath = manifest.contentBundlePath.trim();
+    if (contentBundlePath.isEmpty) {
+      return false;
+    }
+    return File(contentBundlePath).existsSync();
+  }
+
+  Future<String?> computeStoredContentBundleByteHash(
+      int courseVersionId) async {
+    if (courseVersionId <= 0) {
+      throw StateError('Course version id must be positive.');
+    }
+    final manifest = await readCourseArtifacts(courseVersionId);
+    if (manifest == null) {
+      return null;
+    }
+    final contentBundlePath = manifest.contentBundlePath.trim();
+    if (contentBundlePath.isEmpty) {
+      return null;
+    }
+    final contentBundle = File(contentBundlePath);
+    if (!contentBundle.existsSync()) {
+      return null;
+    }
+    return _bundleService.computeBundleByteHash(contentBundle);
+  }
+
   Future<PreparedCourseUploadBundle?> readPreparedUploadBundle(
     int courseVersionId,
   ) async {

@@ -378,8 +378,11 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
   }
 
   @override
-  Future<ArtifactState1Result> getState1(
-      {required String artifactClass}) async {
+  Future<ArtifactState1Result> getState1({
+    required String artifactClass,
+    int? studentUserId,
+    int? courseId,
+  }) async {
     final items = _visibleItems(artifactClass);
     return ArtifactState1Result(
       state2: await getState2(artifactClass: artifactClass),
@@ -403,6 +406,17 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
       lastModified: course.lastModified,
       bytes: Uint8List.fromList(course.bundleBytes),
     );
+  }
+
+  @override
+  Future<List<DownloadedArtifact>> downloadArtifactBatch(
+    List<String> artifactIds,
+  ) async {
+    final downloaded = <DownloadedArtifact>[];
+    for (final artifactId in artifactIds) {
+      downloaded.add(await downloadArtifact(artifactId));
+    }
+    return downloaded;
   }
 
   @override
@@ -724,6 +738,217 @@ void main() {
   });
 
   test(
+      'student sync skips invalid prompt template metadata but still imports course',
+      () async {
+    final studentId = await db.createUser(
+      username: 'charles',
+      pinHash: 'pin',
+      role: 'student',
+      remoteUserId: 3001,
+    );
+    final student = (await db.getUserById(studentId))!;
+    final teacherId = await db.createUser(
+      username: 'dennis',
+      pinHash: 'pin',
+      role: 'teacher',
+      remoteUserId: 9001,
+    );
+    final teacher = (await db.getUserById(teacherId))!;
+
+    final courseDir = await _createCourseFolder(
+      root: rootDir,
+      folderName: 'remote_invalid_prompt_bundle',
+      rootTitle: 'Prompt Compatibility',
+    );
+    final courseVersionId = await db.createCourseVersion(
+      teacherId: teacher.id,
+      subject: 'Prompt Compatibility',
+      granularity: 1,
+      textbookText: '',
+      sourcePath: courseDir.path,
+    );
+    await courseArtifactService.rebuildCourseArtifacts(
+      courseVersionId: courseVersionId,
+      folderPath: courseDir.path,
+    );
+    final prepared = await courseArtifactService.prepareUploadBundle(
+      courseVersionId: courseVersionId,
+      promptMetadata: <String, dynamic>{
+        'schema': kCurrentPromptBundleSchema,
+        'remote_course_id': 510,
+        'teacher_username': 'dennis',
+        'prompt_templates': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'prompt_name': 'learn',
+            'scope': 'teacher',
+            'content': '''
+{{kp_description}}
+{{student_input}}
+{{lesson_content}}
+''',
+          },
+          <String, dynamic>{
+            'prompt_name': 'review',
+            'scope': 'teacher',
+            'content': '''
+{{kp_description}}
+{{student_input}}
+{{active_review_question_json}}
+{{target_difficulty}}
+{{recent_chat}}
+{{help_bias}}
+''',
+          },
+        ],
+        'student_prompt_profiles': const <Map<String, dynamic>>[],
+        'student_pass_configs': const <Map<String, dynamic>>[],
+      },
+      bundleLabel: 'Prompt Compatibility',
+    );
+    final server = _FakeCourseBundleServer()
+      ..seedCourse(
+        courseId: 510,
+        teacherUserId: 9001,
+        teacherName: 'dennis',
+        subject: 'Prompt Compatibility',
+        bundleVersionId: 7,
+        bundleBytes: await prepared.bundleFile.readAsBytes(),
+        bundleSha256: prepared.hash,
+      )
+      ..setStudentCourses(3001, const <int>[510]);
+    final artifactApi = _FakeArtifactSyncApiService(
+      server: server,
+      currentRemoteUserId: 3001,
+      currentRole: 'student',
+    );
+    final marketplaceApi = _FakeMarketplaceApiService(
+      server: server,
+      currentRemoteUserId: 3001,
+      currentRole: 'student',
+    );
+    final service = EnrollmentSyncService(
+      db: db,
+      secureStorage: secureStorage,
+      courseService: courseService,
+      marketplaceApi: marketplaceApi,
+      artifactApi: artifactApi,
+      promptRepository: promptRepository,
+      courseArtifactService: courseArtifactService,
+    );
+
+    final result = await service.syncIfReady(currentUser: student);
+
+    expect(result.downloadedCount, 1);
+    expect(await db.getAssignedCoursesForStudent(student.id), hasLength(1));
+    final importedTeacher = await db.findUserByRemoteId(9001);
+    expect(importedTeacher, isNotNull);
+    final activeLearn = await db.getActivePromptTemplate(
+      teacherId: importedTeacher!.id,
+      promptName: 'learn',
+      courseKey: null,
+      studentId: null,
+    );
+    final activeReview = await db.getActivePromptTemplate(
+      teacherId: importedTeacher.id,
+      promptName: 'review',
+      courseKey: null,
+      studentId: null,
+    );
+    expect(activeLearn, isNotNull);
+    expect(activeLearn!.content, contains('{{lesson_content}}'));
+    expect(activeReview, isNull);
+  });
+
+  test(
+      'student sync reuses cached course bundle when secure storage state is missing',
+      () async {
+    final studentId = await db.createUser(
+      username: 'albert',
+      pinHash: 'pin',
+      role: 'student',
+      remoteUserId: 3001,
+    );
+    final student = (await db.getUserById(studentId))!;
+    final teacherId = await db.createUser(
+      username: 'dennis',
+      pinHash: 'pin',
+      role: 'teacher',
+      remoteUserId: 9001,
+    );
+    final teacher = (await db.getUserById(teacherId))!;
+
+    final seeded = await _createSeededBundle(
+      root: rootDir,
+      folderName: 'cached_student_course',
+      rootTitle: 'Cached Math',
+    );
+    final localCourseVersionId = await db.createCourseVersion(
+      teacherId: teacher.id,
+      subject: 'Cached Math',
+      granularity: 1,
+      textbookText: '',
+      sourcePath: seeded.courseDir.path,
+    );
+    await db.upsertCourseRemoteLink(
+      courseVersionId: localCourseVersionId,
+      remoteCourseId: 510,
+    );
+    await db.assignStudent(
+      studentId: student.id,
+      courseVersionId: localCourseVersionId,
+    );
+    final localBundleFile = File(
+      p.join(rootDir.path, 'cached_student_course_bundle.zip'),
+    );
+    await localBundleFile.writeAsBytes(seeded.bytes, flush: true);
+    await courseArtifactService.storeImportedContentBundle(
+      courseVersionId: localCourseVersionId,
+      folderPath: seeded.courseDir.path,
+      bundleFile: localBundleFile,
+      buildChapterArtifacts: false,
+    );
+
+    final server = _FakeCourseBundleServer()
+      ..seedCourse(
+        courseId: 510,
+        teacherUserId: 9001,
+        teacherName: 'dennis',
+        subject: 'Cached Math',
+        bundleVersionId: 7,
+        bundleBytes: seeded.bytes,
+        bundleSha256: seeded.sha256,
+      )
+      ..setStudentCourses(3001, const <int>[510]);
+    final artifactApi = _FakeArtifactSyncApiService(
+      server: server,
+      currentRemoteUserId: 3001,
+      currentRole: 'student',
+    );
+    final marketplaceApi = _FakeMarketplaceApiService(
+      server: server,
+      currentRemoteUserId: 3001,
+      currentRole: 'student',
+    );
+    final service = EnrollmentSyncService(
+      db: db,
+      secureStorage: secureStorage,
+      courseService: courseService,
+      marketplaceApi: marketplaceApi,
+      artifactApi: artifactApi,
+      promptRepository: promptRepository,
+      courseArtifactService: courseArtifactService,
+    );
+
+    final result = await service.syncIfReady(currentUser: student);
+
+    expect(result.downloadedCount, 0);
+    expect(artifactApi.downloadCalls, 0);
+    expect(await db.getAssignedCoursesForStudent(student.id), hasLength(1));
+    expect(
+        await db.getCourseVersionIdForRemoteCourse(510), localCourseVersionId);
+  });
+
+  test(
       'teacher sync downloads remote course without eagerly preparing upload bundle',
       () async {
     final teacherId = await db.createUser(
@@ -811,7 +1036,8 @@ void main() {
     expect(artifactApi.uploadCalls, 0);
   });
 
-  test('teacher sync does not auto-upload changed course bundle artifact', () async {
+  test('teacher sync does not auto-upload changed course bundle artifact',
+      () async {
     final teacherId = await db.createUser(
       username: 'dennis',
       pinHash: 'pin',

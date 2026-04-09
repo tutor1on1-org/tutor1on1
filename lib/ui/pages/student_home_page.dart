@@ -163,14 +163,24 @@ class _StudentHomePageState extends State<StudentHomePage> {
     final trigger = showOverlay ? 'login' : 'timer';
     String? syncError;
     try {
-      await _syncCoordinator.runCoreSync(
-        user: user,
-        trigger: trigger,
-        onProgress: showOverlay ? _applySyncProgress : null,
-        includeSessionSync: showOverlay,
-        sessionSyncMode:
-            showOverlay ? SessionSyncMode.full : SessionSyncMode.uploadOnly,
-      );
+      if (showOverlay) {
+        await _syncCoordinator.forcePullFromServer(
+          user: user,
+          trigger: trigger,
+          onProgress: _applySyncProgress,
+          includeSessionSync: true,
+          sessionSyncMode: SessionSyncMode.downloadOnly,
+          wipeLocalStudentData: true,
+        );
+      } else {
+        await _syncCoordinator.runCoreSync(
+          user: user,
+          trigger: trigger,
+          onProgress: null,
+          includeSessionSync: true,
+          sessionSyncMode: SessionSyncMode.uploadOnly,
+        );
+      }
       if (showOverlay) {
         _applySyncProgress(
           const SyncProgress(

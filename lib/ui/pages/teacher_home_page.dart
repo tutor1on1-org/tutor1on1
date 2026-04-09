@@ -122,15 +122,22 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     }
     final trigger = showOverlay ? 'login' : 'timer';
     String? syncError;
-    final deferTeacherSessionSync = showOverlay && user.role == 'teacher';
-    var queueBackgroundTeacherSessionSync = false;
     try {
-      await _syncCoordinator.runCoreSync(
-        user: user,
-        trigger: trigger,
-        onProgress: showOverlay ? _applySyncProgress : null,
-        includeSessionSync: !deferTeacherSessionSync,
-      );
+      if (showOverlay) {
+        await _syncCoordinator.forcePullFromServer(
+          user: user,
+          trigger: trigger,
+          onProgress: _applySyncProgress,
+          includeSessionSync: false,
+        );
+      } else {
+        await _syncCoordinator.runCoreSync(
+          user: user,
+          trigger: trigger,
+          onProgress: null,
+          includeSessionSync: true,
+        );
+      }
       if (showOverlay) {
         _applySyncProgress(
           const SyncProgress(
@@ -140,7 +147,6 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         );
       }
       await _refreshMarketplaceState();
-      queueBackgroundTeacherSessionSync = deferTeacherSessionSync;
     } on HomeSyncException catch (error) {
       syncError = error.message;
     } on Object catch (error) {
@@ -158,9 +164,6 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       }
       _setPersistentMessage(syncError, isError: true);
     }
-    if (queueBackgroundTeacherSessionSync) {
-      unawaited(_runTeacherBackgroundSessionSync(user));
-    }
   }
 
   Future<void> _runTeacherBackgroundSessionSync(User user) async {
@@ -169,7 +172,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     }
     _backgroundSessionSyncInProgress = true;
     try {
-      await _syncCoordinator.runCoreSync(
+      await _syncCoordinator.forcePullFromServer(
         user: user,
         trigger: 'teacher_login_background',
         onProgress: null,

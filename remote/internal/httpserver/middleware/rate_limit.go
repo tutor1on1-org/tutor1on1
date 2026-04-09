@@ -1,9 +1,12 @@
 package middleware
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"time"
+
+	"family_teacher_remote/internal/httpserver/handlers"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -87,3 +90,17 @@ func KeyByIP(c *fiber.Ctx) string {
 	return strings.TrimSpace(c.IP())
 }
 
+func KeyByAuthDeviceOrIP(c *fiber.Ctx) string {
+	if validated, ok := c.Locals(handlers.AuthLocalValidatedKey).(bool); ok && validated {
+		if deviceKey, ok := c.Locals(handlers.AuthLocalDeviceKeyKey).(string); ok {
+			normalizedDeviceKey := strings.TrimSpace(deviceKey)
+			if normalizedDeviceKey != "" {
+				return fmt.Sprintf("device:%s", normalizedDeviceKey)
+			}
+		}
+		if userID, ok := c.Locals(handlers.AuthLocalUserIDKey).(int64); ok && userID > 0 {
+			return fmt.Sprintf("user:%d", userID)
+		}
+	}
+	return KeyByIP(c)
+}

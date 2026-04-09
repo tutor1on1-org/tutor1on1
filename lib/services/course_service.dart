@@ -386,40 +386,46 @@ GROUP BY kp_key
             ..where((tbl) => tbl.courseVersionId.equals(courseId)))
           .go();
 
+      final nodeRows = <CourseNodesCompanion>[];
+      final edgeRows = <CourseEdgesCompanion>[];
       var orderIndex = 0;
       for (final node in preview.parseResult!.nodes.values) {
         if (node.isPlaceholder) {
           continue;
         }
-        await _db.into(_db.courseNodes).insert(
-              CourseNodesCompanion.insert(
-                courseVersionId: courseId,
-                kpKey: node.id,
-                title: node.title,
-                description:
-                    node.rawLine.isNotEmpty ? node.rawLine : node.title,
-                orderIndex: orderIndex++,
-              ),
-              mode: InsertMode.insertOrReplace,
-            );
-      }
-
-      for (final node in preview.parseResult!.nodes.values) {
-        if (node.isPlaceholder) {
-          continue;
-        }
+        nodeRows.add(
+          CourseNodesCompanion.insert(
+            courseVersionId: courseId,
+            kpKey: node.id,
+            title: node.title,
+            description: node.rawLine.isNotEmpty ? node.rawLine : node.title,
+            orderIndex: orderIndex++,
+          ),
+        );
         final parentId = node.parentId;
         if (parentId == null) {
           continue;
         }
-        await _db.into(_db.courseEdges).insert(
-              CourseEdgesCompanion.insert(
-                courseVersionId: courseId,
-                fromKpKey: parentId,
-                toKpKey: node.id,
-              ),
-            );
+        edgeRows.add(
+          CourseEdgesCompanion.insert(
+            courseVersionId: courseId,
+            fromKpKey: parentId,
+            toKpKey: node.id,
+          ),
+        );
       }
+      await _db.batch((batch) {
+        for (final row in nodeRows) {
+          batch.insert(
+            _db.courseNodes,
+            row,
+            mode: InsertMode.insertOrReplace,
+          );
+        }
+        for (final row in edgeRows) {
+          batch.insert(_db.courseEdges, row);
+        }
+      });
 
       await (_db.update(_db.courseVersions)
             ..where((tbl) => tbl.id.equals(courseId)))
@@ -469,43 +475,54 @@ GROUP BY kp_key
                   tbl.kpKey.isNotValue(kTreeViewStateKpKey)))
             .go();
 
-        for (final entry in merged.values) {
-          await _db.into(_db.progressEntries).insert(
-                ProgressEntriesCompanion.insert(
-                  studentId: entry.studentId,
-                  courseVersionId: courseId,
-                  kpKey: entry.kpKey,
-                  lit: Value(entry.lit),
-                  litPercent: Value(
-                    _deriveProgressPercent(
-                      easyPassedCount: entry.easyPassedCount,
-                      mediumPassedCount: entry.mediumPassedCount,
-                      hardPassedCount: entry.hardPassedCount,
-                      fallbackPercent: entry.litPercent,
-                    ),
+        final sessionUpdates = <({int sessionId, String kpKey})>[];
+        await _db.batch((batch) {
+          for (final entry in merged.values) {
+            batch.insert(
+              _db.progressEntries,
+              ProgressEntriesCompanion.insert(
+                studentId: entry.studentId,
+                courseVersionId: courseId,
+                kpKey: entry.kpKey,
+                lit: Value(entry.lit),
+                litPercent: Value(
+                  _deriveProgressPercent(
+                    easyPassedCount: entry.easyPassedCount,
+                    mediumPassedCount: entry.mediumPassedCount,
+                    hardPassedCount: entry.hardPassedCount,
+                    fallbackPercent: entry.litPercent,
                   ),
-                  questionLevel: const Value(null),
-                  easyPassedCount: Value(entry.easyPassedCount),
-                  mediumPassedCount: Value(entry.mediumPassedCount),
-                  hardPassedCount: Value(entry.hardPassedCount),
-                  summaryText: Value(entry.summaryText),
-                  summaryRawResponse: Value(entry.summaryRawResponse),
-                  summaryValid: Value(entry.summaryValid),
-                  updatedAt: Value(entry.updatedAt),
                 ),
-                mode: InsertMode.insertOrReplace,
-              );
-        }
+                questionLevel: const Value(null),
+                easyPassedCount: Value(entry.easyPassedCount),
+                mediumPassedCount: Value(entry.mediumPassedCount),
+                hardPassedCount: Value(entry.hardPassedCount),
+                summaryText: Value(entry.summaryText),
+                summaryRawResponse: Value(entry.summaryRawResponse),
+                summaryValid: Value(entry.summaryValid),
+                updatedAt: Value(entry.updatedAt),
+              ),
+              mode: InsertMode.insertOrReplace,
+            );
+          }
+        });
 
         for (final session in sessions) {
           final newId = preview.oldIdToNewId[session.kpKey];
           if (newId == null || newId == session.kpKey) {
             continue;
           }
-          await (_db.update(_db.chatSessions)
-                ..where((tbl) => tbl.id.equals(session.id)))
-              .write(ChatSessionsCompanion(kpKey: Value(newId)));
+          sessionUpdates.add((sessionId: session.id, kpKey: newId));
         }
+        await _db.batch((batch) {
+          for (final update in sessionUpdates) {
+            batch.update(
+              _db.chatSessions,
+              ChatSessionsCompanion(kpKey: Value(update.kpKey)),
+              where: (tbl) => tbl.id.equals(update.sessionId),
+            );
+          }
+        });
       } else if (mode == CourseReloadMode.wipe) {
         await (_db.delete(_db.progressEntries)
               ..where((tbl) => tbl.courseVersionId.equals(courseId)))

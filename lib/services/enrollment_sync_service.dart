@@ -100,7 +100,9 @@ class EnrollmentSyncService {
   Future<void> handleLocalSyncRelevantChange(
     SyncRelevantChange change,
   ) async {
-    if (_localState2RefreshSuppressed || change.isEmpty) {
+    if (_localState2RefreshSuppressed ||
+        change.isEmpty ||
+        !change.refreshEnrollmentState) {
       return;
     }
     await refreshStoredLocalState2ForLocalUsers(
@@ -250,6 +252,25 @@ class EnrollmentSyncService {
         remoteCourseId: remoteCourse.courseId,
         localCourseVersionId: null,
         bundleHash: remoteCourse.latestBundleHash,
+      );
+    }
+    return fingerprintsByScope;
+  }
+
+  Map<String, String> _buildRemoteStudentEnrollmentPayloadFingerprints(
+    List<EnrollmentSummary> enrollments,
+  ) {
+    final fingerprintsByScope = <String, String>{};
+    for (final enrollment in enrollments) {
+      if (enrollment.courseId <= 0) {
+        continue;
+      }
+      fingerprintsByScope[_localState1ScopeKeyForRemoteCourse(
+        enrollment.courseId,
+      )] = _buildStudentEnrollmentItemFingerprint(
+        remoteCourseId: enrollment.courseId,
+        teacherRemoteUserId: enrollment.teacherId,
+        bundleHash: enrollment.latestBundleHash,
       );
     }
     return fingerprintsByScope;
@@ -534,24 +555,18 @@ class EnrollmentSyncService {
             nowUtc: nowUtc,
             force: true,
             action: () async {
+              final remoteCourses = await _api.listTeacherCourses();
               final localFingerprintsByScope =
                   await _readStoredLocalState1Fingerprints(
                 remoteUserId: remoteUserId,
                 domain: _syncDomainTeacherCourses,
               );
-              final remoteState1 = await _artifactApi.getState1(
-                artifactClass: _artifactClassCourseBundle,
-              );
               final removedRemoteCourseIds = _extractRemovedRemoteCourseIds(
                 localFingerprintsByScope: localFingerprintsByScope,
                 remoteFingerprintsByScope:
-                    _buildRemoteTeacherCourseArtifactFingerprints(
-                  remoteState1.items,
+                    _buildRemoteTeacherCoursePayloadFingerprints(
+                  remoteCourses,
                 ),
-              );
-              final remoteCourses = _resolveTeacherCoursesFromArtifacts(
-                artifactItems: remoteState1.items,
-                remoteCourses: await _api.listTeacherCourses(),
               );
               await _syncTeacherCourses(
                 currentUser: currentUser,
@@ -561,6 +576,7 @@ class EnrollmentSyncService {
                 removedRemoteCourseIds: removedRemoteCourseIds,
                 allowAutoUpload: false,
                 summary: summary,
+                prefetchRemoteBundles: true,
               );
             },
           );
@@ -571,24 +587,18 @@ class EnrollmentSyncService {
             nowUtc: nowUtc,
             force: true,
             action: () async {
+              final remoteEnrollments = await _api.listEnrollments();
               final localFingerprintsByScope =
                   await _readStoredLocalState1Fingerprints(
                 remoteUserId: remoteUserId,
                 domain: _syncDomainStudentEnrollments,
               );
-              final remoteState1 = await _artifactApi.getState1(
-                artifactClass: _artifactClassCourseBundle,
-              );
               final removedRemoteCourseIds = _extractRemovedRemoteCourseIds(
                 localFingerprintsByScope: localFingerprintsByScope,
                 remoteFingerprintsByScope:
-                    _buildRemoteStudentEnrollmentArtifactFingerprints(
-                  remoteState1.items,
+                    _buildRemoteStudentEnrollmentPayloadFingerprints(
+                  remoteEnrollments,
                 ),
-              );
-              final remoteEnrollments = _resolveEnrollmentsFromArtifacts(
-                artifactItems: remoteState1.items,
-                enrollments: await _api.listEnrollments(),
               );
               await _syncStudentEnrollments(
                 currentUser: currentUser,
@@ -597,6 +607,7 @@ class EnrollmentSyncService {
                 allRemoteEnrollments: remoteEnrollments,
                 removedRemoteCourseIds: removedRemoteCourseIds,
                 summary: summary,
+                prefetchRemoteBundles: true,
               );
             },
           );
@@ -629,13 +640,13 @@ class EnrollmentSyncService {
             await refreshStoredLocalState2(currentUser: currentUser);
           }
         }
-    if (currentUser.role == 'teacher') {
-      await _runCategoryIfDue(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainTeacherCourses,
-        nowUtc: nowUtc,
-        force: false,
-        action: () => _syncIfState2Mismatch(
+        if (currentUser.role == 'teacher') {
+          await _runCategoryIfDue(
+            remoteUserId: remoteUserId,
+            domain: _syncDomainTeacherCourses,
+            nowUtc: nowUtc,
+            force: false,
+            action: () => _syncIfState2Mismatch(
               remoteUserId: remoteUserId,
               domain: _syncDomainTeacherCourses,
               readRemoteState2: () => _artifactApi.getState2(
@@ -923,7 +934,14 @@ class EnrollmentSyncService {
     required List<EnrollmentSummary> allRemoteEnrollments,
     required Set<int> removedRemoteCourseIds,
     required _SyncTransferSummary summary,
+    bool prefetchRemoteBundles = false,
   }) async {
+    final syncTargets = <({
+      EnrollmentSummary enrollment,
+      int localTeacherId,
+      int bundleVersionId,
+      String bundleHash,
+    })>[];
     for (final enrollment in enrollments) {
       if (enrollment.courseId <= 0) {
         continue;
@@ -946,32 +964,57 @@ class EnrollmentSyncService {
         }
         continue;
       }
-      var existingCourseVersionId =
-          await _db.getCourseVersionIdForRemoteCourse(enrollment.courseId);
-      if (existingCourseVersionId != null) {
-        await _ensureCourseTeacher(
-          courseVersionId: existingCourseVersionId,
-          expectedTeacherId: localTeacherId,
-        );
-      }
       final remoteBundle = await _resolveRemoteBundleInfo(
         remoteCourseId: enrollment.courseId,
         courseSubject: enrollment.courseSubject,
         latestBundleVersionId: latestBundleVersionId,
         latestBundleHash: enrollment.latestBundleHash,
       );
+      syncTargets.add((
+        enrollment: enrollment,
+        localTeacherId: localTeacherId,
+        bundleVersionId: remoteBundle.bundleVersionId,
+        bundleHash: remoteBundle.hash,
+      ));
+    }
+    final prefetchedBundles = prefetchRemoteBundles
+        ? await _downloadCourseBundleArtifacts(
+            requests: syncTargets.map(
+              (target) => (
+                remoteCourseId: target.enrollment.courseId,
+                courseSubject: target.enrollment.courseSubject,
+                expectedSha256: target.bundleHash,
+              ),
+            ),
+          )
+        : const <int, DownloadedArtifact>{};
+
+    for (final target in syncTargets) {
+      final enrollment = target.enrollment;
+      var existingCourseVersionId =
+          await _db.getCourseVersionIdForRemoteCourse(enrollment.courseId);
+      if (existingCourseVersionId != null) {
+        await _ensureCourseTeacher(
+          courseVersionId: existingCourseVersionId,
+          expectedTeacherId: target.localTeacherId,
+        );
+      }
       final syncResult = await _syncRemoteCourseFromServer(
         remoteUserId: remoteUserId,
         remoteCourseId: enrollment.courseId,
         courseSubject: enrollment.courseSubject,
-        latestBundleVersionId: remoteBundle.bundleVersionId,
-        latestBundleHash: remoteBundle.hash,
+        latestBundleVersionId: target.bundleVersionId,
+        latestBundleHash: target.bundleHash,
         syncStateDomain: _syncDomainStudentCourseBundles,
-        readLocalHash: (_, __, syncState) async =>
-            _readStudentCourseSyncHash(syncState),
+        readLocalHash: (localCourse, __, syncState) =>
+            _readStudentCourseSyncHash(
+          localCourse: localCourse,
+          syncState: syncState,
+        ),
         onHashesMatch: (_, __, ___, ____) async {},
-        shouldTrustLinkedCourse: (_, installedVersion, syncState) =>
+        shouldTrustLinkedCourse: (localCourse, installedVersion, syncState) =>
             _hasTrustedStudentBundleIdentity(
+          localCourse: localCourse,
           installedVersion: installedVersion,
           syncState: syncState,
         ),
@@ -979,28 +1022,30 @@ class EnrollmentSyncService {
             _downloadAndImportCourse(
           currentUser: currentUser,
           enrollment: enrollment,
-          bundleVersionId: remoteBundle.bundleVersionId,
+          bundleVersionId: target.bundleVersionId,
           existingCourseVersionId: resolvedCourseVersionId,
-          localTeacherId: localTeacherId,
-          bundleHash: remoteBundle.hash,
+          localTeacherId: target.localTeacherId,
+          bundleHash: target.bundleHash,
           summary: summary,
+          prefetchedArtifact: prefetchedBundles[enrollment.courseId],
         ),
         onHashesDiffer: (localCourse, __, ___, ____) =>
             _downloadAndImportCourse(
           currentUser: currentUser,
           enrollment: enrollment,
-          bundleVersionId: remoteBundle.bundleVersionId,
+          bundleVersionId: target.bundleVersionId,
           existingCourseVersionId: localCourse.id,
-          localTeacherId: localTeacherId,
-          bundleHash: remoteBundle.hash,
+          localTeacherId: target.localTeacherId,
+          bundleHash: target.bundleHash,
           summary: summary,
+          prefetchedArtifact: prefetchedBundles[enrollment.courseId],
         ),
       );
       final syncedCourse = syncResult.course;
       existingCourseVersionId = syncedCourse.id;
       await _ensureCourseTeacher(
         courseVersionId: existingCourseVersionId,
-        expectedTeacherId: localTeacherId,
+        expectedTeacherId: target.localTeacherId,
       );
       await _db.upsertCourseRemoteLink(
         courseVersionId: existingCourseVersionId,
@@ -1027,8 +1072,8 @@ class EnrollmentSyncService {
       await _writeStudentCourseSyncState(
         remoteUserId: remoteUserId,
         remoteCourseId: enrollment.courseId,
-        bundleVersionId: remoteBundle.bundleVersionId,
-        bundleHash: remoteBundle.hash,
+        bundleVersionId: target.bundleVersionId,
+        bundleHash: target.bundleHash,
       );
     }
 
@@ -1049,10 +1094,12 @@ class EnrollmentSyncService {
     required int remoteCourseId,
     required String courseSubject,
     required String expectedSha256,
+    DownloadedArtifact? prefetchedArtifact,
   }) async {
     final bundleService = CourseBundleService();
     final artifactId = 'course_bundle:$remoteCourseId';
-    final downloaded = await _artifactApi.downloadArtifact(artifactId);
+    final downloaded =
+        prefetchedArtifact ?? await _artifactApi.downloadArtifact(artifactId);
     final echoedArtifactId = downloaded.artifactId.trim();
     if (echoedArtifactId.isNotEmpty && echoedArtifactId != artifactId) {
       throw StateError(
@@ -1086,6 +1133,52 @@ class EnrollmentSyncService {
     return bundleFile;
   }
 
+  Future<Map<int, DownloadedArtifact>> _downloadCourseBundleArtifacts({
+    required Iterable<
+            ({
+              int remoteCourseId,
+              String courseSubject,
+              String expectedSha256,
+            })>
+        requests,
+  }) async {
+    final normalizedRequests = requests
+        .where((request) => request.remoteCourseId > 0)
+        .toList(growable: false);
+    if (normalizedRequests.isEmpty) {
+      return const <int, DownloadedArtifact>{};
+    }
+    final artifactIds = normalizedRequests
+        .map((request) => 'course_bundle:${request.remoteCourseId}')
+        .toList(growable: false);
+    final downloadedItems = artifactIds.length > 1
+        ? await _artifactApi.downloadArtifactBatch(artifactIds)
+        : <DownloadedArtifact>[
+            await _artifactApi.downloadArtifact(artifactIds.single),
+          ];
+    final downloadsById = <String, DownloadedArtifact>{};
+    for (var index = 0; index < downloadedItems.length; index++) {
+      final downloaded = downloadedItems[index];
+      final artifactId = downloaded.artifactId.trim().isNotEmpty
+          ? downloaded.artifactId.trim()
+          : (index < artifactIds.length ? artifactIds[index] : '');
+      if (artifactId.isEmpty) {
+        continue;
+      }
+      downloadsById[artifactId] = downloaded;
+    }
+    final downloadsByCourseId = <int, DownloadedArtifact>{};
+    for (final request in normalizedRequests) {
+      final artifactId = 'course_bundle:${request.remoteCourseId}';
+      final downloaded = downloadsById[artifactId];
+      if (downloaded == null) {
+        throw StateError('Downloaded course batch is missing $artifactId.');
+      }
+      downloadsByCourseId[request.remoteCourseId] = downloaded;
+    }
+    return downloadsByCourseId;
+  }
+
   Future<CourseVersion> _downloadAndImportCourse({
     required User currentUser,
     required EnrollmentSummary enrollment,
@@ -1094,6 +1187,7 @@ class EnrollmentSyncService {
     required int localTeacherId,
     required String bundleHash,
     required _SyncTransferSummary summary,
+    DownloadedArtifact? prefetchedArtifact,
   }) async {
     final bundleService = CourseBundleService();
     File? bundleFile;
@@ -1102,6 +1196,7 @@ class EnrollmentSyncService {
         remoteCourseId: enrollment.courseId,
         courseSubject: enrollment.courseSubject,
         expectedSha256: bundleHash,
+        prefetchedArtifact: prefetchedArtifact,
       );
       summary.downloaded.add(
         SyncTransferLogItem(
@@ -1205,6 +1300,7 @@ class EnrollmentSyncService {
     required Set<int> removedRemoteCourseIds,
     required bool allowAutoUpload,
     required _SyncTransferSummary summary,
+    bool prefetchRemoteBundles = false,
   }) async {
     final firstSync = await _secureStorage.readSyncRunAt(
           remoteUserId: remoteUserId,
@@ -1225,6 +1321,7 @@ class EnrollmentSyncService {
       remoteCourses: changedRemoteCourses,
       initializeOnly: firstSync,
       summary: summary,
+      prefetchRemoteBundles: prefetchRemoteBundles,
     );
     if (firstSync) {
       await _cleanupTeacherLocalDuplicates(currentUser.id);
@@ -1272,6 +1369,7 @@ class EnrollmentSyncService {
         ),
         initializeOnly: false,
         summary: summary,
+        prefetchRemoteBundles: prefetchRemoteBundles,
       );
     } else {
       // Automatic sync intentionally avoids publishing local teacher edits.
@@ -1560,7 +1658,13 @@ class EnrollmentSyncService {
     required List<TeacherCourseSummary> remoteCourses,
     required bool initializeOnly,
     required _SyncTransferSummary summary,
+    bool prefetchRemoteBundles = false,
   }) async {
+    final syncTargets = <({
+      TeacherCourseSummary remoteCourse,
+      int bundleVersionId,
+      String bundleHash,
+    })>[];
     for (final remoteCourse in remoteCourses) {
       final latestBundleVersionId = remoteCourse.latestBundleVersionId ?? 0;
       if (latestBundleVersionId <= 0) {
@@ -1572,12 +1676,32 @@ class EnrollmentSyncService {
         latestBundleVersionId: latestBundleVersionId,
         latestBundleHash: remoteCourse.latestBundleHash,
       );
+      syncTargets.add((
+        remoteCourse: remoteCourse,
+        bundleVersionId: remoteBundle.bundleVersionId,
+        bundleHash: remoteBundle.hash,
+      ));
+    }
+    final prefetchedBundles = prefetchRemoteBundles
+        ? await _downloadCourseBundleArtifacts(
+            requests: syncTargets.map(
+              (target) => (
+                remoteCourseId: target.remoteCourse.courseId,
+                courseSubject: target.remoteCourse.subject,
+                expectedSha256: target.bundleHash,
+              ),
+            ),
+          )
+        : const <int, DownloadedArtifact>{};
+
+    for (final target in syncTargets) {
+      final remoteCourse = target.remoteCourse;
       await _syncRemoteCourseFromServer(
         remoteUserId: remoteUserId,
         remoteCourseId: remoteCourse.courseId,
         courseSubject: remoteCourse.subject,
-        latestBundleVersionId: remoteBundle.bundleVersionId,
-        latestBundleHash: remoteBundle.hash,
+        latestBundleVersionId: target.bundleVersionId,
+        latestBundleHash: target.bundleHash,
         syncStateDomain: _syncDomainTeacherCourseUpload,
         readLocalHash: (localCourse, _, syncState) =>
             _readTeacherCourseSyncHash(
@@ -1592,7 +1716,7 @@ class EnrollmentSyncService {
             _markTeacherCourseSyncStateSynced(
           remoteUserId: remoteUserId,
           remoteCourseId: remoteCourse.courseId,
-          bundleVersionId: remoteBundle.bundleVersionId,
+          bundleVersionId: target.bundleVersionId,
           bundleHash: localHash,
           syncState: syncState,
         ),
@@ -1602,10 +1726,11 @@ class EnrollmentSyncService {
           remoteUserId: remoteUserId,
           remoteCourseId: remoteCourse.courseId,
           courseSubject: remoteCourse.subject,
-          bundleHash: remoteBundle.hash,
-          bundleVersionId: remoteBundle.bundleVersionId,
+          bundleHash: target.bundleHash,
+          bundleVersionId: target.bundleVersionId,
           existingCourseVersionId: resolvedCourseVersionId,
           summary: summary,
+          prefetchedArtifact: prefetchedBundles[remoteCourse.courseId],
         ),
         onHashesDiffer:
             (localCourse, localHash, installedVersion, syncState) async {
@@ -1615,10 +1740,11 @@ class EnrollmentSyncService {
               remoteUserId: remoteUserId,
               remoteCourseId: remoteCourse.courseId,
               courseSubject: remoteCourse.subject,
-              bundleHash: remoteBundle.hash,
-              bundleVersionId: remoteBundle.bundleVersionId,
+              bundleHash: target.bundleHash,
+              bundleVersionId: target.bundleVersionId,
               existingCourseVersionId: localCourse.id,
               summary: summary,
+              prefetchedArtifact: prefetchedBundles[remoteCourse.courseId],
             );
           }
           final hasUnsyncedLocalChanges = _hasUnsyncedLocalCourseChanges(
@@ -1626,7 +1752,7 @@ class EnrollmentSyncService {
             localHash: localHash,
           );
           final serverHasNewerBundle =
-              remoteBundle.bundleVersionId > installedVersion;
+              target.bundleVersionId > installedVersion;
           if (serverHasNewerBundle && hasUnsyncedLocalChanges) {
             throw StateError(
               'Teacher bundle sync conflict for "${remoteCourse.subject}". '
@@ -1643,10 +1769,11 @@ class EnrollmentSyncService {
             remoteUserId: remoteUserId,
             remoteCourseId: remoteCourse.courseId,
             courseSubject: remoteCourse.subject,
-            bundleHash: remoteBundle.hash,
-            bundleVersionId: remoteBundle.bundleVersionId,
+            bundleHash: target.bundleHash,
+            bundleVersionId: target.bundleVersionId,
             existingCourseVersionId: localCourse.id,
             summary: summary,
+            prefetchedArtifact: prefetchedBundles[remoteCourse.courseId],
           );
         },
       );
@@ -1694,7 +1821,7 @@ class EnrollmentSyncService {
     required int remoteUserId,
     required int remoteCourseId,
     required String syncStateDomain,
-    bool Function(
+    Future<bool> Function(
       CourseVersion localCourse,
       int? installedVersion,
       SyncItemState? syncState,
@@ -1725,7 +1852,11 @@ class EnrollmentSyncService {
       );
     }
     if (shouldTrustLinkedCourse != null &&
-        !shouldTrustLinkedCourse(localCourse, installedVersion, syncState)) {
+        !await shouldTrustLinkedCourse(
+          localCourse,
+          installedVersion,
+          syncState,
+        )) {
       return _ResolvedCourseSyncState(
         courseVersionId: null,
         installedVersion: installedVersion,
@@ -1769,7 +1900,7 @@ class EnrollmentSyncService {
       int? installedVersion,
       SyncItemState? syncState,
     ) onHashesDiffer,
-    bool Function(
+    Future<bool> Function(
       CourseVersion localCourse,
       int? installedVersion,
       SyncItemState? syncState,
@@ -1852,23 +1983,38 @@ class EnrollmentSyncService {
     return Directory(sourcePath).existsSync();
   }
 
-  bool _hasTrustedStudentBundleIdentity({
+  Future<bool> _hasTrustedStudentBundleIdentity({
+    required CourseVersion localCourse,
     required int? installedVersion,
     required SyncItemState? syncState,
-  }) {
+  }) async {
     if (installedVersion != null && installedVersion > 0) {
       return true;
     }
     final contentHash = syncState?.contentHash.trim() ?? '';
-    return contentHash.isNotEmpty;
+    if (contentHash.isNotEmpty) {
+      return true;
+    }
+    final artifactService = _courseArtifactService;
+    if (artifactService == null) {
+      return false;
+    }
+    return artifactService.hasStoredContentBundle(localCourse.id);
   }
 
-  String? _readStudentCourseSyncHash(SyncItemState? syncState) {
+  Future<String?> _readStudentCourseSyncHash({
+    required CourseVersion localCourse,
+    required SyncItemState? syncState,
+  }) async {
     final normalized = syncState?.contentHash.trim() ?? '';
-    if (normalized.isEmpty) {
+    if (normalized.isNotEmpty) {
+      return normalized;
+    }
+    final artifactService = _courseArtifactService;
+    if (artifactService == null) {
       return null;
     }
-    return normalized;
+    return artifactService.computeStoredContentBundleByteHash(localCourse.id);
   }
 
   Future<void> _writeStudentCourseSyncState({
@@ -2350,6 +2496,7 @@ class EnrollmentSyncService {
     required int bundleVersionId,
     required int? existingCourseVersionId,
     required _SyncTransferSummary summary,
+    DownloadedArtifact? prefetchedArtifact,
   }) async {
     final bundleService = CourseBundleService();
     File? bundleFile;
@@ -2359,6 +2506,7 @@ class EnrollmentSyncService {
         remoteCourseId: remoteCourseId,
         courseSubject: courseSubject,
         expectedSha256: bundleHash,
+        prefetchedArtifact: prefetchedArtifact,
       );
       await bundleService.validateBundleForImport(bundleFile);
       final promptMetadata =
@@ -2567,6 +2715,14 @@ class EnrollmentSyncService {
       } else if (template.courseKey != null && template.studentId != null) {
         scope = 'student_course';
       }
+      if (!_shouldIncludePromptTemplate(
+        promptName: template.promptName,
+        content: template.content,
+        scope: scope,
+        source: 'upload',
+      )) {
+        continue;
+      }
       final timestampKey = _teacherPromptTemplateTimestampKey(
         promptName: template.promptName,
         scope: scope,
@@ -2751,6 +2907,28 @@ class EnrollmentSyncService {
       'student_prompt_profiles': profilesPayload,
       'student_pass_configs': passConfigsPayload,
     };
+  }
+
+  bool _shouldIncludePromptTemplate({
+    required String promptName,
+    required String content,
+    required String scope,
+    required String source,
+  }) {
+    final validation = _promptValidator.validate(
+      promptName: promptName,
+      content: content,
+    );
+    if (validation.isValid) {
+      return true;
+    }
+    stderr.writeln(
+      'Skipping invalid $source prompt metadata for "$promptName" scope '
+      '"$scope". missing=${validation.missingVariables.join(',')} '
+      'unknown=${validation.unknownVariables.join(',')} '
+      'invalid=${validation.invalidVariables.join(',')}',
+    );
+    return false;
   }
 
   Map<String, dynamic> _profileToJson(
@@ -2957,17 +3135,13 @@ class EnrollmentSyncService {
         if (promptName.isEmpty || content.isEmpty) {
           continue;
         }
-        final validation = _promptValidator.validate(
+        if (!_shouldIncludePromptTemplate(
           promptName: promptName,
           content: content,
-        );
-        if (!validation.isValid) {
-          throw StateError(
-            'Synced prompt metadata is invalid for "$promptName" scope '
-            '"$scope". missing=${validation.missingVariables.join(',')} '
-            'unknown=${validation.unknownVariables.join(',')} '
-            'invalid=${validation.invalidVariables.join(',')}',
-          );
+          scope: scope,
+          source: 'download',
+        )) {
+          continue;
         }
 
         String? scopeCourseKey;
@@ -3275,17 +3449,13 @@ class EnrollmentSyncService {
         if (promptName.isEmpty || content.isEmpty) {
           continue;
         }
-        final validation = _promptValidator.validate(
+        if (!_shouldIncludePromptTemplate(
           promptName: promptName,
           content: content,
-        );
-        if (!validation.isValid) {
-          throw StateError(
-            'Synced prompt metadata is invalid for "$promptName" scope '
-            '"$scope". missing=${validation.missingVariables.join(',')} '
-            'unknown=${validation.unknownVariables.join(',')} '
-            'invalid=${validation.invalidVariables.join(',')}',
-          );
+          scope: scope,
+          source: 'download',
+        )) {
+          continue;
         }
 
         String? scopeCourseKey;

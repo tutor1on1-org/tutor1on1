@@ -11,6 +11,7 @@ import (
 	"io"
 	"mime/multipart"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -82,8 +83,11 @@ func (h *ArtifactSyncHandler) State2(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
-	filterClass := normalizeArtifactClassFilter(c.Query("artifact_class"))
-	state2, err := h.readFilteredState2(userID, filterClass)
+	filter, err := parseVisibleArtifactFilter(c)
+	if err != nil {
+		return err
+	}
+	state2, err := h.readFilteredState2(userID, filter)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "artifact state2 failed")
 	}
@@ -95,16 +99,14 @@ func (h *ArtifactSyncHandler) State1(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
-	filterClass := normalizeArtifactClassFilter(c.Query("artifact_class"))
-	state2, err := h.readFilteredState2(userID, filterClass)
+	filter, err := parseVisibleArtifactFilter(c)
+	if err != nil {
+		return err
+	}
+	items, err := artifactsync.ListState1Filtered(h.cfg.Store.DB, userID, filter)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "artifact state1 failed")
 	}
-	items, err := artifactsync.ListState1(h.cfg.Store.DB, userID)
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "artifact state1 failed")
-	}
-	items = filterVisibleArtifacts(items, filterClass)
 	responseItems := make([]artifactState1ItemResponse, 0, len(items))
 	for _, item := range items {
 		responseItems = append(responseItems, artifactState1ItemResponse{
@@ -120,20 +122,52 @@ func (h *ArtifactSyncHandler) State1(c *fiber.Ctx) error {
 		})
 	}
 	return c.JSON(fiber.Map{
-		"state2": state2,
+		"state2": buildState2FromVisibleArtifacts(items),
 		"items":  responseItems,
 	})
 }
 
-func (h *ArtifactSyncHandler) readFilteredState2(userID int64, artifactClass string) (string, error) {
-	if artifactClass == "" {
+func (h *ArtifactSyncHandler) readFilteredState2(userID int64, filter artifactsync.VisibleArtifactFilter) (string, error) {
+	if strings.TrimSpace(filter.ArtifactClass) == "" &&
+		filter.StudentUserID <= 0 &&
+		filter.CourseID <= 0 {
 		return artifactsync.ReadState2(h.cfg.Store.DB, userID)
 	}
-	items, err := artifactsync.ListState1(h.cfg.Store.DB, userID)
+	items, err := artifactsync.ListState1Filtered(h.cfg.Store.DB, userID, filter)
 	if err != nil {
 		return "", err
 	}
-	items = filterVisibleArtifacts(items, artifactClass)
+	return buildState2FromVisibleArtifacts(items), nil
+}
+
+func parseVisibleArtifactFilter(c *fiber.Ctx) (artifactsync.VisibleArtifactFilter, error) {
+	filter := artifactsync.VisibleArtifactFilter{
+		ArtifactClass: normalizeArtifactClassFilter(c.Query("artifact_class")),
+	}
+	if rawStudentUserID := strings.TrimSpace(c.Query("student_user_id")); rawStudentUserID != "" {
+		studentUserID, err := strconv.ParseInt(rawStudentUserID, 10, 64)
+		if err != nil || studentUserID <= 0 {
+			return artifactsync.VisibleArtifactFilter{}, fiber.NewError(
+				fiber.StatusBadRequest,
+				"student_user_id invalid",
+			)
+		}
+		filter.StudentUserID = studentUserID
+	}
+	if rawCourseID := strings.TrimSpace(c.Query("course_id")); rawCourseID != "" {
+		courseID, err := strconv.ParseInt(rawCourseID, 10, 64)
+		if err != nil || courseID <= 0 {
+			return artifactsync.VisibleArtifactFilter{}, fiber.NewError(
+				fiber.StatusBadRequest,
+				"course_id invalid",
+			)
+		}
+		filter.CourseID = courseID
+	}
+	return filter, nil
+}
+
+func buildState2FromVisibleArtifacts(items []artifactsync.VisibleArtifact) string {
 	stateItems := make([]artifactsync.State2Item, 0, len(items))
 	for _, item := range items {
 		stateItems = append(stateItems, artifactsync.State2Item{
@@ -141,7 +175,7 @@ func (h *ArtifactSyncHandler) readFilteredState2(userID int64, artifactClass str
 			SHA256:     item.SHA256,
 		})
 	}
-	return artifactsync.BuildState2(stateItems), nil
+	return artifactsync.BuildState2(stateItems)
 }
 
 func (h *ArtifactSyncHandler) Download(c *fiber.Ctx) error {

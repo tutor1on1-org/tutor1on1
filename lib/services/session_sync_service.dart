@@ -74,7 +74,9 @@ class SessionSyncService {
   }
 
   Future<void> handleLocalSyncRelevantChange(SyncRelevantChange change) async {
-    if (_localMutationSuppressed || change.isEmpty) {
+    if (_localMutationSuppressed ||
+        change.isEmpty ||
+        !change.refreshSessionArtifacts) {
       return;
     }
     await ensureLocalCutoverInitialized();
@@ -146,13 +148,14 @@ class SessionSyncService {
     SessionSyncMode mode = SessionSyncMode.full,
   }) async {
     await ensureLocalCutoverInitialized();
+    final remoteUserId = _requireRemoteUserId(currentUser);
     if (currentUser.role == 'student' && wipeLocalStudentData) {
       await _runWithLocalMutationSuppressed(() async {
         await _clearLocalStudentSessionAndProgressData(
-            studentId: currentUser.id);
+          studentId: currentUser.id,
+        );
       });
     }
-    final remoteUserId = _requireRemoteUserId(currentUser);
     await _artifactStore.clearUserArtifacts(remoteUserId);
     return _syncInternal(
       currentUser: currentUser,
@@ -191,6 +194,12 @@ class SessionSyncService {
         );
       }
     }
+    await _syncTeacherArtifactsForView(
+      currentUser: currentUser,
+      remoteTeacherUserId: remoteTeacherUserId,
+      remoteStudentUserId: remoteStudentUserId,
+      remoteCourseId: remoteCourseId,
+    );
     final manifest = await _artifactStore.loadManifest(remoteTeacherUserId);
     final matchingItems = manifest.items.values.where((item) {
       if (item.deleted) {
@@ -239,6 +248,87 @@ class SessionSyncService {
         }
       });
     });
+  }
+
+  Future<void> _syncTeacherArtifactsForView({
+    required User currentUser,
+    required int remoteTeacherUserId,
+    required int remoteStudentUserId,
+    required int? remoteCourseId,
+  }) async {
+    final manifest = await _artifactStore.loadManifest(remoteTeacherUserId);
+    final matchingLocalItems = manifest.items.values.where((item) {
+      return _artifactMatchesTeacherViewScope(
+        item.artifactId,
+        remoteStudentUserId: remoteStudentUserId,
+        remoteCourseId: remoteCourseId,
+      );
+    }).toList(growable: false)
+      ..sort((left, right) => left.artifactId.compareTo(right.artifactId));
+    final serverState1 = await _api.getState1(
+      artifactClass: _artifactClass,
+      studentUserId: remoteStudentUserId,
+      courseId: remoteCourseId,
+    );
+    final serverArtifactIds = serverState1.items
+        .map((item) => item.artifactId.trim())
+        .where((value) => value.isNotEmpty)
+        .toSet();
+    if (matchingLocalItems.isNotEmpty) {
+      final staleLocalItems = matchingLocalItems
+          .where((item) => !serverArtifactIds.contains(item.artifactId))
+          .toList(growable: false);
+      if (staleLocalItems.isNotEmpty) {
+        await _runWithLocalMutationSuppressed(() async {
+          await _db.transaction(() async {
+            for (final item in staleLocalItems) {
+              await _deleteLocalArtifactScopeById(
+                currentUser: currentUser,
+                artifactId: item.artifactId,
+              );
+            }
+          });
+        });
+        final updatedItems =
+            Map<String, StudentKpArtifactManifestItem>.from(manifest.items);
+        for (final item in staleLocalItems) {
+          await _artifactStore.deleteArtifactFile(
+            remoteUserId: remoteTeacherUserId,
+            storageFile: item.storageFile,
+          );
+          updatedItems.remove(item.artifactId);
+        }
+        await _artifactStore
+            .saveManifest(manifest.copyWith(items: updatedItems));
+      }
+    }
+    if (serverState1.items.isEmpty) {
+      return;
+    }
+    await _applyServerDownloads(
+      currentUser: currentUser,
+      remoteUserId: remoteTeacherUserId,
+      manifest: await _artifactStore.loadManifest(remoteTeacherUserId),
+      serverItems: serverState1.items,
+      stats: SyncRunStats(),
+      onProgress: null,
+      removeMissingLocalArtifacts: false,
+    );
+  }
+
+  bool _artifactMatchesTeacherViewScope(
+    String artifactId, {
+    required int remoteStudentUserId,
+    required int? remoteCourseId,
+  }) {
+    final identity = _parseArtifactIdentity(artifactId, null);
+    if (identity.remoteStudentUserId != remoteStudentUserId) {
+      return false;
+    }
+    if (remoteCourseId != null && identity.remoteCourseId != remoteCourseId) {
+      return false;
+    }
+    return true;
   }
 
   Future<Map<String, Uint8List>> _ensureTeacherArtifactBytesAvailable({
@@ -400,8 +490,7 @@ class SessionSyncService {
         onProgress: onProgress,
       );
 
-      if (currentUser.role == 'student' &&
-          mode == SessionSyncMode.full) {
+      if (currentUser.role == 'student' && mode == SessionSyncMode.full) {
         manifest = await _uploadLocalChanges(
           currentUser: currentUser,
           remoteUserId: remoteUserId,
@@ -424,8 +513,7 @@ class SessionSyncService {
         );
       }
 
-      if (currentUser.role == 'teacher' ||
-          mode == SessionSyncMode.full) {
+      if (currentUser.role == 'teacher' || mode == SessionSyncMode.full) {
         await _assertNoPendingArtifactConflicts(
           currentUser: currentUser,
           manifest: manifest,
@@ -502,6 +590,7 @@ class SessionSyncService {
     required List<ArtifactState1Item> serverItems,
     required SyncRunStats stats,
     required SyncProgressCallback? onProgress,
+    bool removeMissingLocalArtifacts = true,
   }) async {
     final serverById = <String, ArtifactState1Item>{
       for (final item in serverItems)
@@ -546,25 +635,30 @@ class SessionSyncService {
           downloaded: downloaded,
         );
       }).toList(growable: false);
-      final storageFileOverrides = currentUser.role == 'teacher'
-          ? await _artifactStore.writeArtifactPack(
-              remoteUserId: remoteUserId,
-              bytesByArtifactId: <String, Uint8List>{
-                for (final entry in downloads)
-                  entry.candidate.artifactId: entry.downloaded.bytes,
-              },
-            )
-          : null;
+      final storageFileOverrides =
+          currentUser.role == 'teacher' || currentUser.role == 'student'
+              ? await _artifactStore.writeArtifactPack(
+                  remoteUserId: remoteUserId,
+                  bytesByArtifactId: <String, Uint8List>{
+                    for (final entry in downloads)
+                      entry.candidate.artifactId: entry.downloaded.bytes,
+                  },
+                )
+              : null;
       currentManifest = await _applyDownloadedArtifactInChunks(
         currentUser: currentUser,
         remoteUserId: remoteUserId,
         manifest: currentManifest,
         downloads: downloads,
         storageFileOverrides: storageFileOverrides,
-        onApplied: (downloaded) async {
-          completedCount++;
-          completedBytes += downloaded.bytes.length;
-          stats.addDownloaded(count: 1, bytes: downloaded.bytes.length);
+        onAppliedChunk: (downloadedItems) async {
+          var chunkBytes = 0;
+          for (final downloaded in downloadedItems) {
+            chunkBytes += downloaded.bytes.length;
+          }
+          completedCount += downloadedItems.length;
+          completedBytes += chunkBytes;
+          stats.addDownloaded(count: downloadedItems.length, bytes: chunkBytes);
           await _reportProgress(
             onProgress,
             SyncProgress(
@@ -578,7 +672,12 @@ class SessionSyncService {
       );
     } else {
       final downloads = <_DownloadedArtifactCandidate>[];
+      final storageFileOverrides = <String, String>{};
       for (final candidate in downloadCandidates) {
+        if (currentUser.role == 'student') {
+          storageFileOverrides[candidate.artifactId] =
+              _artifactStore.storageFileNameForArtifact(candidate.artifactId);
+        }
         downloads.add(
           _DownloadedArtifactCandidate(
             candidate: candidate,
@@ -591,10 +690,16 @@ class SessionSyncService {
         remoteUserId: remoteUserId,
         manifest: currentManifest,
         downloads: downloads,
-        onApplied: (downloaded) async {
-          completedCount++;
-          completedBytes += downloaded.bytes.length;
-          stats.addDownloaded(count: 1, bytes: downloaded.bytes.length);
+        storageFileOverrides:
+            storageFileOverrides.isEmpty ? null : storageFileOverrides,
+        onAppliedChunk: (downloadedItems) async {
+          var chunkBytes = 0;
+          for (final downloaded in downloadedItems) {
+            chunkBytes += downloaded.bytes.length;
+          }
+          completedCount += downloadedItems.length;
+          completedBytes += chunkBytes;
+          stats.addDownloaded(count: downloadedItems.length, bytes: chunkBytes);
           await _reportProgress(
             onProgress,
             SyncProgress(
@@ -608,31 +713,33 @@ class SessionSyncService {
       );
     }
 
-    final localOnlyIds = currentManifest.items.keys
-        .where((artifactId) => !serverById.containsKey(artifactId))
-        .toList(growable: false)
-      ..sort();
-    for (final artifactId in localOnlyIds) {
-      final localItem = currentManifest.items[artifactId];
-      if (localItem == null || localItem.deleted) {
-        continue;
-      }
-      if (currentUser.role == 'teacher') {
-        await _runWithLocalMutationSuppressed(() async {
-          await _deleteLocalArtifactScopeById(
-            currentUser: currentUser,
-            artifactId: artifactId,
+    if (removeMissingLocalArtifacts) {
+      final localOnlyIds = currentManifest.items.keys
+          .where((artifactId) => !serverById.containsKey(artifactId))
+          .toList(growable: false)
+        ..sort();
+      for (final artifactId in localOnlyIds) {
+        final localItem = currentManifest.items[artifactId];
+        if (localItem == null || localItem.deleted) {
+          continue;
+        }
+        if (currentUser.role == 'teacher') {
+          await _runWithLocalMutationSuppressed(() async {
+            await _deleteLocalArtifactScopeById(
+              currentUser: currentUser,
+              artifactId: artifactId,
+            );
+          });
+          await _artifactStore.deleteArtifactFile(
+            remoteUserId: remoteUserId,
+            storageFile: localItem.storageFile,
           );
-        });
-        await _artifactStore.deleteArtifactFile(
-          remoteUserId: remoteUserId,
-          storageFile: localItem.storageFile,
-        );
-        final updatedItems = Map<String, StudentKpArtifactManifestItem>.from(
-            currentManifest.items)
-          ..remove(artifactId);
-        currentManifest = currentManifest.copyWith(items: updatedItems);
-        await _artifactStore.saveManifest(currentManifest);
+          final updatedItems = Map<String, StudentKpArtifactManifestItem>.from(
+              currentManifest.items)
+            ..remove(artifactId);
+          currentManifest = currentManifest.copyWith(items: updatedItems);
+          await _artifactStore.saveManifest(currentManifest);
+        }
       }
     }
     return await _artifactStore.loadManifest(remoteUserId);
@@ -644,17 +751,24 @@ class SessionSyncService {
     required StudentKpArtifactManifest manifest,
     required List<_DownloadedArtifactCandidate> downloads,
     Map<String, String>? storageFileOverrides,
-    required Future<void> Function(DownloadedArtifact downloaded) onApplied,
+    required Future<void> Function(List<DownloadedArtifact> downloaded)
+        onAppliedChunk,
+    bool preferFreshStudentImportFastPath = true,
   }) async {
     var currentManifest = manifest;
     final applyContext = _ArtifactApplyContext(
       initialManifest: manifest,
     );
+    final useFreshStudentImportFastPath = preferFreshStudentImportFastPath &&
+        currentUser.role == 'student' &&
+        manifest.items.isEmpty;
     final deferManifestCheckpoint =
-        currentUser.role == 'teacher' && storageFileOverrides != null;
-    final checkpointInterval = currentUser.role == 'teacher'
-        ? downloads.length
-        : _downloadApplyCheckpointInterval;
+        storageFileOverrides != null &&
+        (currentUser.role == 'teacher' || useFreshStudentImportFastPath);
+    final checkpointInterval =
+        currentUser.role == 'teacher' || useFreshStudentImportFastPath
+            ? downloads.length
+            : _downloadApplyCheckpointInterval;
     for (var start = 0; start < downloads.length; start += checkpointInterval) {
       final end = (start + checkpointInterval < downloads.length)
           ? start + checkpointInterval
@@ -665,21 +779,33 @@ class SessionSyncService {
       );
       await _runWithLocalMutationSuppressed(() async {
         await _db.transaction(() async {
-          for (final entry in chunk) {
-            await _applyDownloadedArtifact(
+          if (useFreshStudentImportFastPath) {
+            await _applyDownloadedStudentFreshImportChunk(
               currentUser: currentUser,
               remoteUserId: remoteUserId,
               manifest: currentManifest,
-              candidate: entry.candidate,
-              downloaded: entry.downloaded,
+              chunk: chunk,
               applyContext: applyContext,
-              storageFileOverride:
-                  storageFileOverrides?[entry.candidate.artifactId],
               nextItems: nextItems,
-              persistManifest: false,
-              wrapLocalMutationSuppression: false,
-              wrapLocalScopeTransaction: false,
+              storageFileOverrides: storageFileOverrides,
             );
+          } else {
+            for (final entry in chunk) {
+              await _applyDownloadedArtifact(
+                currentUser: currentUser,
+                remoteUserId: remoteUserId,
+                manifest: currentManifest,
+                candidate: entry.candidate,
+                downloaded: entry.downloaded,
+                applyContext: applyContext,
+                storageFileOverride:
+                    storageFileOverrides?[entry.candidate.artifactId],
+                nextItems: nextItems,
+                persistManifest: false,
+                wrapLocalMutationSuppression: false,
+                wrapLocalScopeTransaction: false,
+              );
+            }
           }
         });
       });
@@ -687,9 +813,9 @@ class SessionSyncService {
       if (!deferManifestCheckpoint) {
         await _artifactStore.saveManifest(currentManifest);
       }
-      for (final entry in chunk) {
-        await onApplied(entry.downloaded);
-      }
+      await onAppliedChunk(
+        chunk.map((entry) => entry.downloaded).toList(growable: false),
+      );
     }
     if (deferManifestCheckpoint) {
       await _artifactStore.saveManifest(currentManifest);
@@ -753,11 +879,9 @@ class SessionSyncService {
     var completedCount = 0;
     var completedBytes = 0;
     if (uploadCandidates.length > _batchUploadThreshold) {
-      for (
-        var start = 0;
-        start < uploadCandidates.length;
-        start += _batchUploadChunkSize
-      ) {
+      for (var start = 0;
+          start < uploadCandidates.length;
+          start += _batchUploadChunkSize) {
         final end = (start + _batchUploadChunkSize < uploadCandidates.length)
             ? start + _batchUploadChunkSize
             : uploadCandidates.length;
@@ -916,12 +1040,17 @@ class SessionSyncService {
         );
       }
     }
-    final storageFile = (storageFileOverride ?? '').trim().isNotEmpty
-        ? storageFileOverride!.trim()
-        : _artifactStore.storageFileNameForArtifact(
-            candidate.artifactId,
-          );
-    if ((storageFileOverride ?? '').trim().isEmpty) {
+    final shouldPersistDownloadedBytes = currentUser.role == 'teacher' ||
+        (storageFileOverride ?? '').trim().isNotEmpty;
+    final storageFile = shouldPersistDownloadedBytes
+        ? (storageFileOverride ?? '').trim().isNotEmpty
+            ? storageFileOverride!.trim()
+            : _artifactStore.storageFileNameForArtifact(
+                candidate.artifactId,
+              )
+        : '';
+    if (shouldPersistDownloadedBytes &&
+        (storageFileOverride ?? '').trim().isEmpty) {
       await _artifactStore.writeArtifactBytes(
         remoteUserId: remoteUserId,
         storageFile: storageFile,
@@ -1540,6 +1669,20 @@ class SessionSyncService {
     if (sessions is! List) {
       return;
     }
+    await _insertArtifactSessions(
+      localStudentId: localStudentId,
+      localCourseVersionId: localCourseVersionId,
+      kpKey: kpKey,
+      sessions: sessions,
+    );
+  }
+
+  Future<void> _insertArtifactSessions({
+    required int localStudentId,
+    required int localCourseVersionId,
+    required String kpKey,
+    required List sessions,
+  }) async {
     for (final rawSession in sessions) {
       if (rawSession is! Map<String, dynamic>) {
         throw StateError('Student artifact session entry must be an object.');
@@ -1621,6 +1764,113 @@ class SessionSyncService {
               ),
             );
       }
+    }
+  }
+
+  Future<void> _applyDownloadedStudentFreshImportChunk({
+    required User currentUser,
+    required int remoteUserId,
+    required StudentKpArtifactManifest manifest,
+    required List<_DownloadedArtifactCandidate> chunk,
+    required _ArtifactApplyContext applyContext,
+    required Map<String, StudentKpArtifactManifestItem> nextItems,
+    Map<String, String>? storageFileOverrides,
+  }) async {
+    final progressRows = <SyncedProgressUpsert>[];
+    final sessionImports = <_PendingArtifactSessionImport>[];
+    for (final entry in chunk) {
+      final candidate = entry.candidate;
+      final downloaded = entry.downloaded;
+      final computedSha = sha256.convert(downloaded.bytes).toString();
+      if (computedSha != candidate.sha256.trim()) {
+        throw StateError(
+          'Downloaded artifact sha256 mismatch for ${candidate.artifactId}.',
+        );
+      }
+      final payload = _artifactStore.readPayload(downloaded.bytes);
+      final identity = _parseArtifactIdentity(candidate.artifactId, payload);
+      final localCourseVersionId = await _resolveCourseVersionId(
+        identity.remoteCourseId,
+        applyContext: applyContext,
+      );
+      final assignmentKey = '${currentUser.id}:$localCourseVersionId';
+      if (!applyContext.assignedStudentCoursePairs.contains(assignmentKey)) {
+        await _db.assignStudent(
+          studentId: currentUser.id,
+          courseVersionId: localCourseVersionId,
+          notifySyncUsers: false,
+        );
+        applyContext.assignedStudentCoursePairs.add(assignmentKey);
+      }
+
+      final progressPayload = payload['progress'];
+      if (progressPayload is Map<String, dynamic>) {
+        progressRows.add(
+          SyncedProgressUpsert(
+            studentId: currentUser.id,
+            courseVersionId: localCourseVersionId,
+            kpKey: identity.kpKey,
+            lit: progressPayload['lit'] == true,
+            litPercent: (progressPayload['lit_percent'] as num?)?.toInt() ?? 0,
+            questionLevel:
+                (progressPayload['question_level'] as String?)?.trim(),
+            easyPassedCount:
+                (progressPayload['easy_passed_count'] as num?)?.toInt() ?? 0,
+            mediumPassedCount:
+                (progressPayload['medium_passed_count'] as num?)?.toInt() ?? 0,
+            hardPassedCount:
+                (progressPayload['hard_passed_count'] as num?)?.toInt() ?? 0,
+            summaryText: (progressPayload['summary_text'] as String?)?.trim(),
+            summaryRawResponse:
+                (progressPayload['summary_raw_response'] as String?)?.trim(),
+            summaryValid: progressPayload['summary_valid'] as bool?,
+            updatedAt: _parseIsoTime(progressPayload['updated_at']) ??
+                DateTime.now().toUtc(),
+          ),
+        );
+      }
+
+      final sessions = payload['sessions'];
+      if (sessions is List && sessions.isNotEmpty) {
+        sessionImports.add(
+          _PendingArtifactSessionImport(
+            localStudentId: currentUser.id,
+            localCourseVersionId: localCourseVersionId,
+            kpKey: identity.kpKey,
+            sessions: sessions,
+          ),
+        );
+      }
+
+      final storageFile =
+          (storageFileOverrides?[candidate.artifactId] ?? '').trim();
+      if (storageFile.isNotEmpty && !storageFile.startsWith('@pack:')) {
+        await _artifactStore.writeArtifactBytes(
+          remoteUserId: remoteUserId,
+          storageFile: storageFile,
+          bytes: downloaded.bytes,
+        );
+      }
+
+      nextItems[candidate.artifactId] = StudentKpArtifactManifestItem(
+        artifactId: candidate.artifactId,
+        sha256: candidate.sha256.trim(),
+        baseSha256: candidate.sha256.trim(),
+        lastModified: candidate.lastModified.trim(),
+        storageFile: storageFile,
+        deleted: false,
+      );
+      applyContext.markArtifactApplied(candidate.artifactId);
+    }
+
+    await _db.upsertProgressBatchFromSync(rows: progressRows);
+    for (final sessionImport in sessionImports) {
+      await _insertArtifactSessions(
+        localStudentId: sessionImport.localStudentId,
+        localCourseVersionId: sessionImport.localCourseVersionId,
+        kpKey: sessionImport.kpKey,
+        sessions: sessionImport.sessions,
+      );
     }
   }
 
@@ -1883,6 +2133,20 @@ class _LocalStudentKpScope {
   final String kpKey;
 }
 
+class _PendingArtifactSessionImport {
+  const _PendingArtifactSessionImport({
+    required this.localStudentId,
+    required this.localCourseVersionId,
+    required this.kpKey,
+    required this.sessions,
+  });
+
+  final int localStudentId;
+  final int localCourseVersionId;
+  final String kpKey;
+  final List sessions;
+}
+
 class _ArtifactIdentity {
   const _ArtifactIdentity({
     required this.remoteStudentUserId,
@@ -1920,5 +2184,12 @@ class _ArtifactApplyContext {
       return false;
     }
     return _existingArtifactIds.contains(artifactId);
+  }
+
+  void markArtifactApplied(String artifactId) {
+    if (artifactId.trim().isEmpty) {
+      return;
+    }
+    _existingArtifactIds.add(artifactId);
   }
 }

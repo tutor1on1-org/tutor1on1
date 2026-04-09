@@ -250,6 +250,9 @@ class StudentKpArtifactStoreService {
     required int remoteUserId,
     required String storageFile,
   }) async {
+    if (storageFile.trim().isEmpty) {
+      return;
+    }
     if (_tryParsePackedStorageReference(storageFile) != null) {
       return;
     }

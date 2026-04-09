@@ -107,6 +107,97 @@ class HomeSyncCoordinator {
     return stats;
   }
 
+  Future<SyncRunStats> forcePullFromServer({
+    required User user,
+    required String trigger,
+    required SyncProgressCallback? onProgress,
+    bool includeEnrollmentSync = true,
+    bool includeSessionSync = true,
+    SessionSyncMode sessionSyncMode = SessionSyncMode.downloadOnly,
+    bool wipeLocalStudentData = true,
+  }) async {
+    final stats = SyncRunStats();
+    try {
+      if (includeEnrollmentSync) {
+        onProgress?.call(
+          const SyncProgress(
+            message: 'Syncing enrollments from server...',
+            forcePaint: true,
+          ),
+        );
+        try {
+          stats.absorb(
+            await _enrollmentSyncService.forcePullFromServer(currentUser: user),
+          );
+        } catch (error) {
+          final failure = describeSyncFailure(
+            stage: 'Enrollment sync',
+            error: error,
+          );
+          await _recordFailure(
+            trigger: trigger,
+            user: user,
+            stats: stats,
+            failure: failure,
+          );
+          throw HomeSyncException(
+            failure.userMessage,
+            logMessage: failure.logMessage,
+          );
+        }
+      }
+
+      if (includeSessionSync) {
+        onProgress?.call(
+          const SyncProgress(
+            message: 'Syncing sessions/progress from server...',
+            forcePaint: true,
+          ),
+        );
+        try {
+          stats.absorb(
+            await _sessionSyncService.forcePullFromServer(
+              currentUser: user,
+              wipeLocalStudentData: wipeLocalStudentData,
+              onProgress: onProgress,
+              mode: sessionSyncMode,
+            ),
+          );
+        } catch (error) {
+          final failure = describeSyncFailure(
+            stage: 'Session sync',
+            error: error,
+          );
+          await _recordFailure(
+            trigger: trigger,
+            user: user,
+            stats: stats,
+            failure: failure,
+          );
+          throw HomeSyncException(
+            failure.userMessage,
+            logMessage: failure.logMessage,
+          );
+        }
+      }
+    } on HomeSyncException {
+      rethrow;
+    }
+
+    try {
+      await _syncLogRepository.appendRunEvent(
+        trigger: trigger,
+        actorRole: user.role,
+        actorUserId: user.id,
+        stats: stats,
+        success: true,
+      );
+    } catch (logError) {
+      throw HomeSyncException('Sync log write failed: $logError');
+    }
+    return stats;
+  }
+
   Future<void> _recordFailure({
     required String trigger,
     required User user,

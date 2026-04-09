@@ -20,6 +20,7 @@
 
 ## Experience updates
 - Canonical experience log moved to `LESSONS.md` to keep AGENTS concise and always-injected context small.
+- Sync policy reminder: no fallback during sync/error recovery, and the server copy is the only canonical version. If local sync data disagrees, wipe local state and rebuild from the server instead of trying to preserve both copies.
 - App-change handoff discipline is defined in `WORKFLOW.md` and `LESSONS.md`: self-battle, build, validate, update memory, push, and publish/upload the remote release unless the user explicitly skips a step.
 - Canonical public client release procedure: run `scripts/release_public.ps1`; it validates, stages/commits/pushes when needed, publishes `Tutor1on1.apk`, publishes `Tutor1on1.zip`, then syncs the website. Use that script instead of ad-hoc release steps.
 - After a sync-model pivot, treat `TODOS.md` as the roadmap source of truth and align or explicitly historical-mark the active reference docs (`README.md`, `PLANS.md`, `PUBLIC_CLIENT_README.md`, `LEGAL/*`, `WORKLOG.md`) in the same turn; do not leave retired architecture claims in active docs.

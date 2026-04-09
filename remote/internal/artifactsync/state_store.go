@@ -22,6 +22,12 @@ type VisibleArtifact struct {
 	LastModified    time.Time
 }
 
+type VisibleArtifactFilter struct {
+	ArtifactClass string
+	StudentUserID int64
+	CourseID      int64
+}
+
 func ReadState2(db *sql.DB, userID int64) (string, error) {
 	if db == nil {
 		return "", errors.New("database required")
@@ -43,16 +49,34 @@ func ReadState2(db *sql.DB, userID int64) (string, error) {
 }
 
 func ListState1(db *sql.DB, userID int64) ([]VisibleArtifact, error) {
+	return ListState1Filtered(db, userID, VisibleArtifactFilter{})
+}
+
+func ListState1Filtered(db *sql.DB, userID int64, filter VisibleArtifactFilter) ([]VisibleArtifact, error) {
 	if db == nil {
 		return nil, errors.New("database required")
 	}
-	rows, err := db.Query(
+	queryBuilder := strings.Builder{}
+	queryBuilder.WriteString(
 		`SELECT artifact_id, artifact_class, course_id, teacher_user_id, COALESCE(student_user_id, 0), COALESCE(kp_key, ''), COALESCE(bundle_version_id, 0), storage_rel_path, sha256, last_modified
 		 FROM artifact_state1_items
-		 WHERE user_id = ?
-		 ORDER BY artifact_id ASC`,
-		userID,
+		 WHERE user_id = ?`,
 	)
+	args := []interface{}{userID}
+	if strings.TrimSpace(filter.ArtifactClass) != "" {
+		queryBuilder.WriteString(` AND artifact_class = ?`)
+		args = append(args, strings.TrimSpace(filter.ArtifactClass))
+	}
+	if filter.StudentUserID > 0 {
+		queryBuilder.WriteString(` AND COALESCE(student_user_id, 0) = ?`)
+		args = append(args, filter.StudentUserID)
+	}
+	if filter.CourseID > 0 {
+		queryBuilder.WriteString(` AND course_id = ?`)
+		args = append(args, filter.CourseID)
+	}
+	queryBuilder.WriteString(` ORDER BY artifact_id ASC`)
+	rows, err := db.Query(queryBuilder.String(), args...)
 	if err != nil {
 		return nil, err
 	}

@@ -8,6 +8,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:path/path.dart' as p;
 
 import 'package:tutor1on1/db/app_database.dart';
 import 'package:tutor1on1/services/artifact_sync_api_service.dart';
@@ -64,6 +65,7 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
   int downloadCalls = 0;
   int downloadBatchCalls = 0;
   int uploadCalls = 0;
+  int uploadBatchCalls = 0;
   int getState1Calls = 0;
   int getState2Calls = 0;
   final List<String> uploadedArtifactIds = <String>[];
@@ -92,10 +94,17 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
   }
 
   @override
-  Future<ArtifactState1Result> getState1(
-      {required String artifactClass}) async {
+  Future<ArtifactState1Result> getState1({
+    required String artifactClass,
+    int? studentUserId,
+    int? courseId,
+  }) async {
     getState1Calls++;
-    final items = _stateItems(artifactClass);
+    final items = _stateItems(
+      artifactClass,
+      studentUserId: studentUserId,
+      courseId: courseId,
+    );
     return ArtifactState1Result(
       state2: 'artifact_state2_v1:${crypto.sha256.convert(
         utf8.encode(_state2DigestInput(items)),
@@ -184,36 +193,57 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
         );
       }
     }
-    final payload = _zipStore.readPayload(bytes);
-    _assertServerCompatiblePayload(payload);
-    final item = ArtifactState1Item(
+    final result = _storeUploadedArtifact(
       artifactId: artifactId,
-      artifactClass: 'student_kp',
-      courseId: (payload['course_id'] as num?)?.toInt() ?? 0,
-      teacherUserId: (payload['teacher_remote_user_id'] as num?)?.toInt() ?? 0,
-      studentUserId: (payload['student_remote_user_id'] as num?)?.toInt() ?? 0,
-      kpKey: (payload['kp_key'] as String?)?.trim() ?? '',
-      bundleVersionId: 0,
-      sha256: sha256.trim(),
-      lastModified: (payload['updated_at'] as String?)?.trim() ?? '',
+      sha256: sha256,
+      bytes: bytes,
     );
-    _items[artifactId] = item;
-    _bytesByArtifactId[artifactId] = Uint8List.fromList(bytes);
     uploadCalls++;
     uploadedArtifactIds.add(artifactId);
-    return UploadArtifactResult(
-      artifactId: artifactId,
-      sha256: sha256.trim(),
-      bundleVersionId: 0,
-      state2: 'artifact_state2_v1:${crypto.sha256.convert(
-        utf8.encode(_state2DigestInput(_stateItems('student_kp'))),
-      )}',
-    );
+    return result;
   }
 
-  List<ArtifactState1Item> _stateItems(String artifactClass) {
+  @override
+  Future<void> uploadArtifactBatch(List<PendingArtifactUpload> uploads) async {
+    uploadBatchCalls++;
+    for (final upload in uploads) {
+      final current = _items[upload.artifactId];
+      final normalizedBase = upload.baseSha256.trim();
+      if (!upload.overwriteServer) {
+        if (current == null && normalizedBase.isNotEmpty) {
+          throw ArtifactConflictException(
+            message: 'Artifact conflict: server_missing',
+            serverSha256: '',
+            expectedBaseSha256: normalizedBase,
+          );
+        }
+        if (current != null && current.sha256.trim() != normalizedBase) {
+          throw ArtifactConflictException(
+            message: 'Artifact conflict: server_changed',
+            serverSha256: current.sha256,
+            expectedBaseSha256: normalizedBase,
+          );
+        }
+      }
+      _storeUploadedArtifact(
+        artifactId: upload.artifactId,
+        sha256: upload.sha256,
+        bytes: upload.bytes,
+      );
+      uploadedArtifactIds.add(upload.artifactId);
+    }
+  }
+
+  List<ArtifactState1Item> _stateItems(
+    String artifactClass, {
+    int? studentUserId,
+    int? courseId,
+  }) {
     final items = _items.values
         .where((item) => item.artifactClass == artifactClass)
+        .where((item) =>
+            studentUserId == null || item.studentUserId == studentUserId)
+        .where((item) => courseId == null || item.courseId == courseId)
         .toList(growable: false)
       ..sort((left, right) => left.artifactId.compareTo(right.artifactId));
     return items;
@@ -250,6 +280,36 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
         }
       }
     }
+  }
+
+  UploadArtifactResult _storeUploadedArtifact({
+    required String artifactId,
+    required String sha256,
+    required Uint8List bytes,
+  }) {
+    final payload = _zipStore.readPayload(bytes);
+    _assertServerCompatiblePayload(payload);
+    final item = ArtifactState1Item(
+      artifactId: artifactId,
+      artifactClass: 'student_kp',
+      courseId: (payload['course_id'] as num?)?.toInt() ?? 0,
+      teacherUserId: (payload['teacher_remote_user_id'] as num?)?.toInt() ?? 0,
+      studentUserId: (payload['student_remote_user_id'] as num?)?.toInt() ?? 0,
+      kpKey: (payload['kp_key'] as String?)?.trim() ?? '',
+      bundleVersionId: 0,
+      sha256: sha256.trim(),
+      lastModified: (payload['updated_at'] as String?)?.trim() ?? '',
+    );
+    _items[artifactId] = item;
+    _bytesByArtifactId[artifactId] = Uint8List.fromList(bytes);
+    return UploadArtifactResult(
+      artifactId: artifactId,
+      sha256: sha256.trim(),
+      bundleVersionId: 0,
+      state2: 'artifact_state2_v1:${crypto.sha256.convert(
+        utf8.encode(_state2DigestInput(_stateItems('student_kp'))),
+      )}',
+    );
   }
 }
 
@@ -443,7 +503,8 @@ void main() {
     expect(api.uploadCalls, 0);
   });
 
-  test('upload-only session sync uploads local changes without downloads', () async {
+  test('upload-only session sync uploads local changes without downloads',
+      () async {
     final teacherId = await db.createUser(
       username: 'teacher',
       pinHash: 'hash',
@@ -568,6 +629,90 @@ void main() {
     );
     expect(secondStats.uploadedCount, 0);
     expect(api.uploadCalls, 1);
+  });
+
+  test('enrollment db callbacks do not rebuild session artifacts inline',
+      () async {
+    final teacherId = await db.createUser(
+      username: 'teacher',
+      pinHash: 'hash',
+      role: 'teacher',
+      remoteUserId: 901,
+    );
+    final studentId = await db.createUser(
+      username: 'student',
+      pinHash: 'hash',
+      role: 'student',
+      remoteUserId: 3001,
+    );
+    final courseVersionId = await db.createCourseVersion(
+      teacherId: teacherId,
+      subject: 'Physics',
+      granularity: 1,
+      textbookText: '',
+    );
+    await db.upsertCourseRemoteLink(
+      courseVersionId: courseVersionId,
+      remoteCourseId: 200,
+    );
+    await db.into(db.courseNodes).insert(
+          CourseNodesCompanion.insert(
+            courseVersionId: courseVersionId,
+            kpKey: '1.1',
+            title: 'Motion',
+            description: '',
+            orderIndex: 1,
+          ),
+        );
+    final sessionService = SessionSyncService(
+      db: db,
+      api: _FakeArtifactSyncApiService(),
+      artifactStore: artifactStore,
+    );
+    await sessionService.ensureLocalCutoverInitialized();
+    db.setSyncRelevantChangeCallback((change) async {
+      await sessionService.handleLocalSyncRelevantChange(change);
+    });
+
+    final sessionId = await db.into(db.chatSessions).insert(
+          ChatSessionsCompanion.insert(
+            studentId: studentId,
+            courseVersionId: courseVersionId,
+            kpKey: '1.1',
+            title: const Value('Existing Local Session'),
+            startedAt: Value(DateTime.parse('2026-04-09T09:00:00Z')),
+            syncId: const Value('local-session-existing'),
+            syncUpdatedAt: Value(DateTime.parse('2026-04-09T09:05:00Z')),
+          ),
+        );
+    await db.into(db.chatMessages).insert(
+          ChatMessagesCompanion.insert(
+            sessionId: sessionId,
+            role: 'assistant',
+            content: 'existing local message',
+            createdAt: Value(DateTime.parse('2026-04-09T09:00:10Z')),
+          ),
+        );
+    await db.upsertProgressFromSync(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+      kpKey: '1.1',
+      lit: true,
+      litPercent: 70,
+      updatedAt: DateTime.parse('2026-04-09T09:05:30Z'),
+      mergeWithLocal: false,
+    );
+
+    final before = await artifactStore.loadManifest(3001);
+    expect(before.items, isEmpty);
+
+    await db.assignStudent(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+    );
+
+    final after = await artifactStore.loadManifest(3001);
+    expect(after.items, isEmpty);
   });
 
   test('local json text fields upload as server-compatible strings', () async {
@@ -877,6 +1022,117 @@ void main() {
     expect(api.downloadCalls, 0);
   });
 
+  test('uploads artifact batch when more than three local artifacts changed',
+      () async {
+    final teacherId = await db.createUser(
+      username: 'teacher',
+      pinHash: 'hash',
+      role: 'teacher',
+      remoteUserId: 901,
+    );
+    final studentId = await db.createUser(
+      username: 'student',
+      pinHash: 'hash',
+      role: 'student',
+      remoteUserId: 3001,
+    );
+    final courseVersionId = await db.createCourseVersion(
+      teacherId: teacherId,
+      subject: 'Science',
+      granularity: 1,
+      textbookText: '',
+    );
+    await db.upsertCourseRemoteLink(
+      courseVersionId: courseVersionId,
+      remoteCourseId: 200,
+    );
+    await db.assignStudent(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+    );
+
+    final seedService = SessionSyncService(
+      db: db,
+      api: _FakeArtifactSyncApiService(),
+      artifactStore: artifactStore,
+    );
+    await seedService.ensureLocalCutoverInitialized();
+
+    for (final kp in const <String>['1.1', '1.2', '1.3', '1.4']) {
+      await db.into(db.courseNodes).insert(
+            CourseNodesCompanion.insert(
+              courseVersionId: courseVersionId,
+              kpKey: kp,
+              title: 'Node $kp',
+              description: '',
+              orderIndex: int.parse(kp.split('.').last),
+            ),
+          );
+      final sessionId = await db.into(db.chatSessions).insert(
+            ChatSessionsCompanion.insert(
+              studentId: studentId,
+              courseVersionId: courseVersionId,
+              kpKey: kp,
+              title: Value('Local $kp'),
+              startedAt: Value(DateTime.parse('2026-04-01T09:00:00Z')),
+              syncId: Value('local-session-$kp'),
+              syncUpdatedAt: Value(DateTime.parse('2026-04-01T09:05:00Z')),
+            ),
+          );
+      await db.into(db.chatMessages).insert(
+            ChatMessagesCompanion.insert(
+              sessionId: sessionId,
+              role: 'assistant',
+              content: 'local message $kp',
+              createdAt: Value(DateTime.parse('2026-04-01T09:00:10Z')),
+            ),
+          );
+      await db.upsertProgressFromSync(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+        kpKey: kp,
+        lit: true,
+        litPercent: 60,
+        updatedAt: DateTime.parse('2026-04-01T09:12:30Z'),
+        mergeWithLocal: false,
+      );
+    }
+
+    await seedService.handleLocalSyncRelevantChange(
+      SyncRelevantChange(localUserIds: <int>{studentId}),
+    );
+
+    final api = _FakeArtifactSyncApiService();
+    final uploadService = SessionSyncService(
+      db: db,
+      api: api,
+      artifactStore: artifactStore,
+    );
+    final student = (await db.getUserById(studentId))!;
+
+    final stats = await uploadService.syncIfReady(
+      currentUser: student,
+      mode: SessionSyncMode.uploadOnly,
+    );
+
+    expect(stats.uploadedCount, 4);
+    expect(stats.downloadedCount, 0);
+    expect(api.uploadBatchCalls, 1);
+    expect(api.uploadCalls, 0);
+    expect(api.getState1Calls, 1);
+    expect(api.downloadCalls, 0);
+    expect(api.downloadBatchCalls, 0);
+    expect(
+      api.uploadedArtifactIds,
+      containsAll(const <String>[
+        'student_kp:3001:200:1.1',
+        'student_kp:3001:200:1.2',
+        'student_kp:3001:200:1.3',
+        'student_kp:3001:200:1.4',
+      ]),
+    );
+  });
+
   test(
       'teacher batch sync downloads artifact bytes once and materialize stays local',
       () async {
@@ -1086,5 +1342,19 @@ void main() {
     );
 
     expect(countingStore.saveManifestCalls, 2);
+    final manifest = await countingStore.loadManifest(3001);
+    expect(
+      manifest.items.values.every((item) => item.storageFile.trim().isNotEmpty),
+      isTrue,
+    );
+    final artifactsDir =
+        Directory(p.join(artifactRoot.path, '3001', 'artifacts'));
+    final artifactFiles = artifactsDir.existsSync()
+        ? artifactsDir
+            .listSync(followLinks: false)
+            .whereType<File>()
+            .toList(growable: false)
+        : const <File>[];
+    expect(artifactFiles, isNotEmpty);
   });
 }

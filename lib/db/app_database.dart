@@ -278,11 +278,51 @@ class SyncMetadataEntries extends Table {
 }
 
 class SyncRelevantChange {
-  const SyncRelevantChange({this.localUserIds = const <int>{}});
+  const SyncRelevantChange({
+    this.localUserIds = const <int>{},
+    this.refreshEnrollmentState = true,
+    this.refreshSessionArtifacts = true,
+  });
 
   final Set<int> localUserIds;
+  final bool refreshEnrollmentState;
+  final bool refreshSessionArtifacts;
 
-  bool get isEmpty => localUserIds.isEmpty;
+  bool get isEmpty =>
+      localUserIds.isEmpty ||
+      (!refreshEnrollmentState && !refreshSessionArtifacts);
+}
+
+class SyncedProgressUpsert {
+  const SyncedProgressUpsert({
+    required this.studentId,
+    required this.courseVersionId,
+    required this.kpKey,
+    required this.lit,
+    required this.litPercent,
+    required this.updatedAt,
+    this.easyPassedCount = 0,
+    this.mediumPassedCount = 0,
+    this.hardPassedCount = 0,
+    this.questionLevel,
+    this.summaryText,
+    this.summaryRawResponse,
+    this.summaryValid,
+  });
+
+  final int studentId;
+  final int courseVersionId;
+  final String kpKey;
+  final bool lit;
+  final int litPercent;
+  final int easyPassedCount;
+  final int mediumPassedCount;
+  final int hardPassedCount;
+  final String? questionLevel;
+  final String? summaryText;
+  final String? summaryRawResponse;
+  final bool? summaryValid;
+  final DateTime updatedAt;
 }
 
 @DriftDatabase(
@@ -340,7 +380,11 @@ class AppDatabase extends _$AppDatabase {
     await callback(change);
   }
 
-  Future<void> _notifySyncRelevantUsers(Iterable<int> userIds) async {
+  Future<void> _notifySyncRelevantUsers(
+    Iterable<int> userIds, {
+    bool refreshEnrollmentState = true,
+    bool refreshSessionArtifacts = false,
+  }) async {
     final normalized = <int>{};
     for (final userId in userIds) {
       if (userId > 0) {
@@ -348,7 +392,11 @@ class AppDatabase extends _$AppDatabase {
       }
     }
     await _notifySyncRelevantChange(
-      SyncRelevantChange(localUserIds: normalized),
+      SyncRelevantChange(
+        localUserIds: normalized,
+        refreshEnrollmentState: refreshEnrollmentState,
+        refreshSessionArtifacts: refreshSessionArtifacts,
+      ),
     );
   }
 
@@ -1789,6 +1837,53 @@ ORDER BY l.created_at DESC
         ),
       );
     }
+  }
+
+  Future<void> upsertProgressBatchFromSync({
+    required List<SyncedProgressUpsert> rows,
+  }) async {
+    if (rows.isEmpty) {
+      return;
+    }
+    await batch((batch) {
+      for (final row in rows) {
+        final normalizedCounts = _normalizePassedCounts(
+          lit: row.lit,
+          litPercent: row.litPercent,
+          questionLevel: row.questionLevel,
+          easyPassedCount: row.easyPassedCount,
+          mediumPassedCount: row.mediumPassedCount,
+          hardPassedCount: row.hardPassedCount,
+          fallbackHardForLit: row.lit,
+        );
+        final clampedPercent = _deriveLitPercentFromPassedCounts(
+          easyPassedCount: normalizedCounts.easyPassedCount,
+          mediumPassedCount: normalizedCounts.mediumPassedCount,
+          hardPassedCount: normalizedCounts.hardPassedCount,
+          fallbackPercent: row.litPercent.clamp(0, 100),
+        );
+        final normalizedQuestionLevel = _normalizeLevel(row.questionLevel);
+        batch.insert(
+          progressEntries,
+          ProgressEntriesCompanion.insert(
+            studentId: row.studentId,
+            courseVersionId: row.courseVersionId,
+            kpKey: row.kpKey,
+            lit: Value(row.lit),
+            litPercent: Value(clampedPercent),
+            questionLevel: Value(normalizedQuestionLevel),
+            easyPassedCount: Value(normalizedCounts.easyPassedCount),
+            mediumPassedCount: Value(normalizedCounts.mediumPassedCount),
+            hardPassedCount: Value(normalizedCounts.hardPassedCount),
+            summaryText: Value(row.summaryText),
+            summaryRawResponse: Value(row.summaryRawResponse),
+            summaryValid: Value(row.summaryValid),
+            updatedAt: Value(row.updatedAt),
+          ),
+          mode: InsertMode.insertOrReplace,
+        );
+      }
+    });
   }
 
   Future<int> deleteApiConfigById(int id) {
