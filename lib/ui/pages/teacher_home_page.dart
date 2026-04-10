@@ -13,6 +13,7 @@ import '../../services/course_bundle_service.dart';
 import '../../services/home_sync_coordinator.dart';
 import '../../services/marketplace_api_service.dart';
 import '../../services/prompt_bundle_compat.dart';
+import '../../services/prompt_template_validator.dart';
 import '../../services/session_sync_service.dart';
 import '../../services/teacher_marketplace_upload_service.dart';
 import '../../services/sync_progress.dart';
@@ -232,14 +233,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.logout),
-                  onPressed: () async {
-                    final confirmed =
-                        await AppQuitFlow.confirmTeacherPinIfRequired(context);
-                    if (!confirmed) {
-                      return;
-                    }
-                    await auth.logout();
-                  },
+                  onPressed: () => AppQuitFlow.handleLogout(context),
                 ),
               ],
             ),
@@ -1028,6 +1022,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     required int remoteCourseId,
   }) async {
     final db = context.read<AppDatabase>();
+    final promptValidator = PromptTemplateValidator();
     final courseKey = (course.sourcePath ?? '').trim();
     if (courseKey.isEmpty) {
       throw StateError('Course path missing.');
@@ -1107,6 +1102,18 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         scope = 'course';
       } else if (template.courseKey != null && template.studentId != null) {
         scope = 'student_course';
+      }
+      final validation = promptValidator.validate(
+        promptName: template.promptName,
+        content: template.content,
+      );
+      if (!validation.isValid) {
+        throw StateError(
+          'Invalid upload prompt metadata for "${template.promptName}" scope '
+          '"$scope". missing=${validation.missingVariables.join(',')} '
+          'unknown=${validation.unknownVariables.join(',')} '
+          'invalid=${validation.invalidVariables.join(',')}',
+        );
       }
 
       promptTemplatesPayload.add({

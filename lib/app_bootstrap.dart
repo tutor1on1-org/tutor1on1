@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'app.dart';
+import 'app_theme.dart';
 import 'services/app_services.dart';
 import 'ui/app_close_button.dart';
 
@@ -31,29 +32,84 @@ class _AppBootstrapState extends State<AppBootstrap> {
       future: _servicesFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
-          return MaterialApp(
-            home: Scaffold(
-              appBar: AppBar(
-                actions: buildAppBarActionsWithClose(context),
-              ),
-              body: const Center(child: CircularProgressIndicator()),
-            ),
+          return const _BootstrapShell(
+            message: 'Starting Tutor1on1...',
+            showProgress: true,
           );
         }
         if (snapshot.hasError) {
-          return MaterialApp(
-            home: Scaffold(
-              appBar: AppBar(
-                actions: buildAppBarActionsWithClose(context),
-              ),
-              body: Center(
-                child: Text('Failed to start app: ${snapshot.error}'),
-              ),
-            ),
+          return _BootstrapShell(
+            message: 'Failed to start app.',
+            detail: '${snapshot.error}',
           );
         }
         return Tutor1on1App(services: snapshot.data!);
       },
+    );
+  }
+}
+
+class _BootstrapShell extends StatelessWidget {
+  const _BootstrapShell({
+    required this.message,
+    this.detail,
+    this.showProgress = false,
+  });
+
+  final String message;
+  final String? detail;
+  final bool showProgress;
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      theme: buildTutor1on1Theme(),
+      home: Builder(
+        builder: (innerContext) {
+          final theme = Theme.of(innerContext);
+          return Scaffold(
+            appBar: AppBar(
+              title: const Text('Tutor1on1'),
+              actions: buildAppBarActionsWithClose(innerContext),
+            ),
+            body: ColoredBox(
+              color: theme.colorScheme.surface,
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 420),
+                  child: Card(
+                    margin: const EdgeInsets.all(24),
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            message,
+                            style: theme.textTheme.titleMedium,
+                          ),
+                          if ((detail ?? '').trim().isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            SelectableText(
+                              detail!.trim(),
+                              style: theme.textTheme.bodyMedium,
+                            ),
+                          ],
+                          if (showProgress) ...[
+                            const SizedBox(height: 16),
+                            const LinearProgressIndicator(),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 }

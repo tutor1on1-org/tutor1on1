@@ -1136,6 +1136,252 @@ void main() {
     );
   });
 
+  test('syncNow refreshes latest local student artifacts before final upload',
+      () async {
+    final teacherId = await db.createUser(
+      username: 'teacher',
+      pinHash: 'hash',
+      role: 'teacher',
+      remoteUserId: 901,
+    );
+    final studentId = await db.createUser(
+      username: 'student',
+      pinHash: 'hash',
+      role: 'student',
+      remoteUserId: 3001,
+    );
+    final courseVersionId = await db.createCourseVersion(
+      teacherId: teacherId,
+      subject: 'Chemistry',
+      granularity: 1,
+      textbookText: '',
+    );
+    await db.upsertCourseRemoteLink(
+      courseVersionId: courseVersionId,
+      remoteCourseId: 200,
+    );
+    await db.assignStudent(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+    );
+    await db.into(db.courseNodes).insert(
+          CourseNodesCompanion.insert(
+            courseVersionId: courseVersionId,
+            kpKey: '1.1',
+            title: 'Atoms',
+            description: '',
+            orderIndex: 1,
+          ),
+        );
+
+    final api = _FakeArtifactSyncApiService();
+    final service = SessionSyncService(
+      db: db,
+      api: api,
+      artifactStore: artifactStore,
+    );
+    await service.ensureLocalCutoverInitialized();
+
+    final sessionId = await db.into(db.chatSessions).insert(
+          ChatSessionsCompanion.insert(
+            studentId: studentId,
+            courseVersionId: courseVersionId,
+            kpKey: '1.1',
+            title: const Value('Unsynced Local Session'),
+            startedAt: Value(DateTime.parse('2026-04-10T09:00:00Z')),
+            syncId: const Value('local-session-exit'),
+            syncUpdatedAt: Value(DateTime.parse('2026-04-10T09:05:00Z')),
+          ),
+        );
+    await db.into(db.chatMessages).insert(
+          ChatMessagesCompanion.insert(
+            sessionId: sessionId,
+            role: 'assistant',
+            content: 'latest local message',
+            createdAt: Value(DateTime.parse('2026-04-10T09:00:10Z')),
+          ),
+        );
+    await db.upsertProgressFromSync(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+      kpKey: '1.1',
+      lit: true,
+      litPercent: 75,
+      updatedAt: DateTime.parse('2026-04-10T09:05:30Z'),
+      mergeWithLocal: false,
+    );
+
+    final student = (await db.getUserById(studentId))!;
+    final stats = await service.syncNow(
+      currentUser: student,
+      password: 'unused',
+      mode: SessionSyncMode.full,
+    );
+
+    expect(stats.uploadedCount, 1);
+    expect(stats.downloadedCount, 0);
+    expect(api.uploadCalls, 1);
+    expect(
+      api.uploadedArtifactIds,
+      equals(<String>['student_kp:3001:200:1.1']),
+    );
+  });
+
+  test('full sync downloads newer server artifact during periodic sync',
+      () async {
+    final teacherId = await db.createUser(
+      username: 'teacher',
+      pinHash: 'hash',
+      role: 'teacher',
+      remoteUserId: 901,
+    );
+    final studentId = await db.createUser(
+      username: 'student',
+      pinHash: 'hash',
+      role: 'student',
+      remoteUserId: 3001,
+    );
+    final courseVersionId = await db.createCourseVersion(
+      teacherId: teacherId,
+      subject: 'Biology',
+      granularity: 1,
+      textbookText: '',
+    );
+    await db.upsertCourseRemoteLink(
+      courseVersionId: courseVersionId,
+      remoteCourseId: 200,
+    );
+    await db.assignStudent(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+    );
+    await db.into(db.courseNodes).insert(
+          CourseNodesCompanion.insert(
+            courseVersionId: courseVersionId,
+            kpKey: '1.1',
+            title: 'Cells',
+            description: '',
+            orderIndex: 1,
+          ),
+        );
+
+    final api = _FakeArtifactSyncApiService();
+    api.seedServerArtifact(
+      await _buildServerArtifact(
+        store: artifactStore,
+        remoteStudentUserId: 3001,
+        remoteCourseId: 200,
+        teacherRemoteUserId: 901,
+        courseSubject: 'Biology',
+        kpKey: '1.1',
+        updatedAt: '2026-04-10T08:05:00Z',
+        progress: <String, dynamic>{
+          'course_id': 200,
+          'course_subject': 'Biology',
+          'kp_key': '1.1',
+          'lit': true,
+          'lit_percent': 60,
+          'easy_passed_count': 0,
+          'medium_passed_count': 0,
+          'hard_passed_count': 0,
+          'teacher_remote_user_id': 901,
+          'student_remote_user_id': 3001,
+          'updated_at': '2026-04-10T08:05:00Z',
+        },
+        sessions: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'session_sync_id': 'remote-session-1',
+            'course_id': 200,
+            'course_subject': 'Biology',
+            'kp_key': '1.1',
+            'kp_title': 'Cells',
+            'session_title': 'Remote Session',
+            'started_at': '2026-04-10T08:00:00Z',
+            'student_remote_user_id': 3001,
+            'student_username': 'student',
+            'teacher_remote_user_id': 901,
+            'updated_at': '2026-04-10T08:05:00Z',
+            'messages': <Map<String, dynamic>>[
+              <String, dynamic>{
+                'role': 'assistant',
+                'content': 'server v1',
+                'created_at': '2026-04-10T08:00:10Z',
+              },
+            ],
+          },
+        ],
+      ),
+    );
+
+    final service = SessionSyncService(
+      db: db,
+      api: api,
+      artifactStore: artifactStore,
+    );
+    final student = (await db.getUserById(studentId))!;
+    await service.forcePullFromServer(
+      currentUser: student,
+      wipeLocalStudentData: true,
+      mode: SessionSyncMode.downloadOnly,
+    );
+
+    api.seedServerArtifact(
+      await _buildServerArtifact(
+        store: artifactStore,
+        remoteStudentUserId: 3001,
+        remoteCourseId: 200,
+        teacherRemoteUserId: 901,
+        courseSubject: 'Biology',
+        kpKey: '1.1',
+        updatedAt: '2026-04-10T09:05:00Z',
+        progress: <String, dynamic>{
+          'course_id': 200,
+          'course_subject': 'Biology',
+          'kp_key': '1.1',
+          'lit': true,
+          'lit_percent': 90,
+          'easy_passed_count': 1,
+          'medium_passed_count': 0,
+          'hard_passed_count': 0,
+          'teacher_remote_user_id': 901,
+          'student_remote_user_id': 3001,
+          'updated_at': '2026-04-10T09:05:00Z',
+        },
+        sessions: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'session_sync_id': 'remote-session-1',
+            'course_id': 200,
+            'course_subject': 'Biology',
+            'kp_key': '1.1',
+            'kp_title': 'Cells',
+            'session_title': 'Remote Session Updated',
+            'started_at': '2026-04-10T08:00:00Z',
+            'student_remote_user_id': 3001,
+            'student_username': 'student',
+            'teacher_remote_user_id': 901,
+            'updated_at': '2026-04-10T09:05:00Z',
+            'messages': <Map<String, dynamic>>[
+              <String, dynamic>{
+                'role': 'assistant',
+                'content': 'server v2',
+                'created_at': '2026-04-10T09:00:10Z',
+              },
+            ],
+          },
+        ],
+      ),
+    );
+
+    final stats = await service.syncIfReady(
+      currentUser: student,
+      mode: SessionSyncMode.full,
+    );
+
+    expect(stats.downloadedCount, 1);
+    expect(stats.uploadedCount, 0);
+    expect(api.downloadCalls + api.downloadBatchCalls, greaterThan(0));
+  });
+
   test(
       'teacher batch sync downloads artifact bytes once and materialize stays local',
       () async {

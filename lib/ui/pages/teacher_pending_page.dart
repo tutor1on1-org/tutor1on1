@@ -32,14 +32,7 @@ class TeacherPendingPage extends StatelessWidget {
           actions: [
             IconButton(
               icon: const Icon(Icons.logout),
-              onPressed: () async {
-                final confirmed =
-                    await AppQuitFlow.confirmTeacherPinIfRequired(context);
-                if (!confirmed) {
-                  return;
-                }
-                await auth.logout();
-              },
+              onPressed: () => AppQuitFlow.handleLogout(context),
             ),
           ],
         ),

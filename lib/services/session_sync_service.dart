@@ -125,6 +125,7 @@ class SessionSyncService {
       force: true,
       onProgress: onProgress,
       mode: mode,
+      refreshLocalArtifactsBeforeSync: true,
     );
   }
 
@@ -138,6 +139,7 @@ class SessionSyncService {
       force: false,
       onProgress: onProgress,
       mode: mode,
+      refreshLocalArtifactsBeforeSync: false,
     );
   }
 
@@ -162,6 +164,7 @@ class SessionSyncService {
       force: true,
       onProgress: onProgress,
       mode: mode,
+      refreshLocalArtifactsBeforeSync: false,
     );
   }
 
@@ -526,6 +529,7 @@ class SessionSyncService {
     required bool force,
     required SyncProgressCallback? onProgress,
     SessionSyncMode mode = SessionSyncMode.full,
+    required bool refreshLocalArtifactsBeforeSync,
   }) async {
     final stats = SyncRunStats();
     if (_syncing) {
@@ -540,6 +544,11 @@ class SessionSyncService {
     Object? syncError;
     StackTrace? syncStackTrace;
     try {
+      if (currentUser.role == 'student' &&
+          refreshLocalArtifactsBeforeSync &&
+          mode != SessionSyncMode.downloadOnly) {
+        await _refreshLocalArtifactsForStudent(currentUser);
+      }
       final initialManifest = await _artifactStore.loadManifest(remoteUserId);
       if (mode == SessionSyncMode.uploadOnly) {
         if (currentUser.role == 'student') {

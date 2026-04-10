@@ -252,3 +252,13 @@ Last updated: 2026-04-10
 - Symptom: after a student account logs in on the same machine, teacher home can show `No students` while `Course / Student / Tree` still lists the same students and their trees.
 - Root cause: local auth upsert cleared `users.teacher_id` on every login, so authenticated student rows lost the teacher binding used by the teacher-side student list; when remote artifact `state2` still matched, teacher enrollment sync skipped remote changes and never re-derived that local ownership edge.
 - Prevention: preserve an existing local student's `teacher_id` during auth upsert, and on teacher enrollment sync refresh / `state2` fast-path re-assert `student_course_assignments -> course_versions.teacher_id` ownership so shared-device student logins cannot strand teacher-side student rows.
+
+48. Artifact cutover/repair must recover progress from session evidence when explicit progress rows are missing
+- Symptom: after the server switched to canonical `student_kp` artifacts, some KPs kept session history but lost visible wins/progress on every device.
+- Root cause: cutover/rebuild logic only copied legacy progress rows into artifact `progress` payloads and ignored session evidence for KPs that had no explicit progress row, so canonical artifacts were written incomplete.
+- Prevention: backup/cutover repair must preserve explicit progress rows and derive missing per-KP progress from durable session evidence before rewriting canonical `student_kp` artifacts; rebuild `state1/state2` only after those repaired artifacts are stored.
+
+49. Prompt metadata sync must validate before clear
+- Symptom: a teacher's current prompt can fall back to default after sync even though history still contains older custom prompt rows, and repeated course sync can show duplicate history timestamps.
+- Root cause: prompt metadata apply cleared active scope rows before validating downloaded prompt templates, then silently skipped invalid templates; repeated imports of the same teacher-scope prompt from multiple course bundles also inserted duplicate history rows because identical `(scope, content, created_at)` imports were not reused.
+- Prevention: validate all prompt metadata before mutating local active rows, fail sync/upload loudly on invalid prompt contracts, and reuse an existing prompt history row when the imported scope/content/timestamp already matches.

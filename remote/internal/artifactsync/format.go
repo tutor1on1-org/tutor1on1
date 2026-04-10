@@ -320,7 +320,7 @@ func normalizeStudentSessionPayload(payload StudentSessionPayload) (map[string]i
 		if raw := normalizeOptionalString(message.RawContent); raw != "" {
 			normalized["raw_content"] = raw
 		}
-		if parsed := normalizeJSONText(message.ParsedJSON); parsed != nil {
+		if parsed := normalizeOptionalString(message.ParsedJSON); parsed != "" {
 			normalized["parsed_json"] = parsed
 		}
 		if action := normalizeOptionalString(message.Action); action != "" {
@@ -353,13 +353,13 @@ func normalizeStudentSessionPayload(payload StudentSessionPayload) (map[string]i
 	if summary := normalizeOptionalString(payload.SummaryText); summary != "" {
 		result["summary_text"] = summary
 	}
-	if control := normalizeJSONText(payload.ControlStateJSON); control != nil {
+	if control := normalizeOptionalString(payload.ControlStateJSON); control != "" {
 		result["control_state_json"] = control
 	}
 	if controlUpdatedAt := normalizeOptionalString(payload.ControlStateUpdatedAt); controlUpdatedAt != "" {
 		result["control_state_updated_at"] = controlUpdatedAt
 	}
-	if evidence := normalizeJSONText(payload.EvidenceStateJSON); evidence != nil {
+	if evidence := normalizeOptionalString(payload.EvidenceStateJSON); evidence != "" {
 		result["evidence_state_json"] = evidence
 	}
 	if evidenceUpdatedAt := normalizeOptionalString(payload.EvidenceStateUpdatedAt); evidenceUpdatedAt != "" {

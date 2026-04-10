@@ -738,7 +738,7 @@ void main() {
   });
 
   test(
-      'student sync skips invalid prompt template metadata but still imports course',
+      'student sync fails on invalid prompt template metadata before clearing existing prompt',
       () async {
     final studentId = await db.createUser(
       username: 'charles',
@@ -754,6 +754,23 @@ void main() {
       remoteUserId: 9001,
     );
     final teacher = (await db.getUserById(teacherId))!;
+    await db.insertPromptTemplate(
+      teacherId: teacher.id,
+      promptName: 'review',
+      content: '''
+{{kp_description}}
+{{student_input}}
+{{active_review_question_json}}
+{{presented_questions}}
+{{error_book_summary}}
+{{review_pass_counts}}
+{{review_fail_counts}}
+{{recent_chat}}
+{{help_bias}}
+''',
+      courseKey: null,
+      studentId: null,
+    );
 
     final courseDir = await _createCourseFolder(
       root: rootDir,
@@ -836,27 +853,25 @@ void main() {
       courseArtifactService: courseArtifactService,
     );
 
-    final result = await service.syncIfReady(currentUser: student);
-
-    expect(result.downloadedCount, 1);
-    expect(await db.getAssignedCoursesForStudent(student.id), hasLength(1));
-    final importedTeacher = await db.findUserByRemoteId(9001);
-    expect(importedTeacher, isNotNull);
-    final activeLearn = await db.getActivePromptTemplate(
-      teacherId: importedTeacher!.id,
-      promptName: 'learn',
-      courseKey: null,
-      studentId: null,
+    await expectLater(
+      () => service.syncIfReady(currentUser: student),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains('Invalid download prompt metadata'),
+        ),
+      ),
     );
+    expect(await db.getAssignedCoursesForStudent(student.id), isEmpty);
     final activeReview = await db.getActivePromptTemplate(
-      teacherId: importedTeacher.id,
+      teacherId: teacher.id,
       promptName: 'review',
       courseKey: null,
       studentId: null,
     );
-    expect(activeLearn, isNotNull);
-    expect(activeLearn!.content, contains('{{lesson_content}}'));
-    expect(activeReview, isNull);
+    expect(activeReview, isNotNull);
+    expect(activeReview!.content, contains('{{review_pass_counts}}'));
   });
 
   test(

@@ -2676,6 +2676,32 @@ HAVING COUNT(*) > 1
           .write(
         const PromptTemplatesCompanion(isActive: Value(false)),
       );
+      final existing = await (select(promptTemplates)
+            ..where((tbl) =>
+                tbl.teacherId.equals(teacherId) &
+                tbl.promptName.equals(promptName) &
+                tbl.content.equals(content) &
+                tbl.createdAt.equals(normalizedCreatedAt) &
+                _promptScopeMatch(
+                  courseKey: normalizedCourseKey,
+                  studentId: studentId,
+                )(tbl))
+            ..orderBy([
+              (tbl) => OrderingTerm(
+                    expression: tbl.id,
+                    mode: OrderingMode.desc,
+                  ),
+            ])
+            ..limit(1))
+          .getSingleOrNull();
+      if (existing != null) {
+        await (update(promptTemplates)
+              ..where((tbl) => tbl.id.equals(existing.id)))
+            .write(
+          const PromptTemplatesCompanion(isActive: Value(true)),
+        );
+        return existing.id;
+      }
       return into(promptTemplates).insert(
         PromptTemplatesCompanion.insert(
           teacherId: teacherId,

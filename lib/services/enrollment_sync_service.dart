@@ -2907,14 +2907,12 @@ class EnrollmentSyncService {
       } else if (template.courseKey != null && template.studentId != null) {
         scope = 'student_course';
       }
-      if (!_shouldIncludePromptTemplate(
+      _requireValidPromptTemplate(
         promptName: template.promptName,
         content: template.content,
         scope: scope,
         source: 'upload',
-      )) {
-        continue;
-      }
+      );
       final timestampKey = _teacherPromptTemplateTimestampKey(
         promptName: template.promptName,
         scope: scope,
@@ -3101,7 +3099,42 @@ class EnrollmentSyncService {
     };
   }
 
-  bool _shouldIncludePromptTemplate({
+  void _validatePromptTemplateMetadata({
+    required Object? promptTemplates,
+    required String source,
+  }) {
+    if (promptTemplates == null) {
+      return;
+    }
+    if (promptTemplates is! List) {
+      throw StateError(
+        'Invalid $source prompt metadata: prompt_templates must be a list.',
+      );
+    }
+    for (final item in promptTemplates) {
+      if (item is! Map<String, dynamic>) {
+        throw StateError(
+          'Invalid $source prompt metadata: prompt_templates entry is not an object.',
+        );
+      }
+      final promptName = (item['prompt_name'] as String?)?.trim() ?? '';
+      final content = (item['content'] as String?)?.trim() ?? '';
+      final scope = (item['scope'] as String?)?.trim() ?? '';
+      if (promptName.isEmpty || content.isEmpty || scope.isEmpty) {
+        throw StateError(
+          'Invalid $source prompt metadata: prompt entry is missing prompt_name, scope, or content.',
+        );
+      }
+      _requireValidPromptTemplate(
+        promptName: promptName,
+        content: content,
+        scope: scope,
+        source: source,
+      );
+    }
+  }
+
+  void _requireValidPromptTemplate({
     required String promptName,
     required String content,
     required String scope,
@@ -3112,15 +3145,14 @@ class EnrollmentSyncService {
       content: content,
     );
     if (validation.isValid) {
-      return true;
+      return;
     }
-    stderr.writeln(
-      'Skipping invalid $source prompt metadata for "$promptName" scope '
+    throw StateError(
+      'Invalid $source prompt metadata for "$promptName" scope '
       '"$scope". missing=${validation.missingVariables.join(',')} '
       'unknown=${validation.unknownVariables.join(',')} '
       'invalid=${validation.invalidVariables.join(',')}',
     );
-    return false;
   }
 
   Map<String, dynamic> _profileToJson(
@@ -3290,6 +3322,11 @@ class EnrollmentSyncService {
         assignments.map((assignment) => assignment.studentId).toSet();
     final referencedStudentIds = <int>{};
     final importedTimestampStrings = <String, Map<String, String>>{};
+    final promptTemplates = metadata['prompt_templates'];
+    _validatePromptTemplateMetadata(
+      promptTemplates: promptTemplates,
+      source: 'download',
+    );
 
     await _db.transaction(() async {
       await (_db.update(_db.promptTemplates)
@@ -3315,7 +3352,6 @@ class EnrollmentSyncService {
       await _db.deleteStudentPassConfigsForCourse(course.id);
     });
 
-    final promptTemplates = metadata['prompt_templates'];
     if (promptTemplates is List) {
       for (final item in promptTemplates) {
         if (item is! Map<String, dynamic>) {
@@ -3325,14 +3361,6 @@ class EnrollmentSyncService {
         final content = (item['content'] as String?)?.trim() ?? '';
         final scope = (item['scope'] as String?)?.trim() ?? '';
         if (promptName.isEmpty || content.isEmpty) {
-          continue;
-        }
-        if (!_shouldIncludePromptTemplate(
-          promptName: promptName,
-          content: content,
-          scope: scope,
-          source: 'download',
-        )) {
           continue;
         }
 
@@ -3575,6 +3603,11 @@ class EnrollmentSyncService {
     if (courseKey == null || courseKey.isEmpty) {
       return;
     }
+    final promptTemplates = metadata['prompt_templates'];
+    _validatePromptTemplateMetadata(
+      promptTemplates: promptTemplates,
+      source: 'download',
+    );
 
     await _db.transaction(() async {
       for (final promptName in const <String>['learn', 'review']) {
@@ -3629,7 +3662,6 @@ class EnrollmentSyncService {
       );
     });
 
-    final promptTemplates = metadata['prompt_templates'];
     if (promptTemplates is List) {
       for (final item in promptTemplates) {
         if (item is! Map<String, dynamic>) {
@@ -3639,14 +3671,6 @@ class EnrollmentSyncService {
         final content = (item['content'] as String?)?.trim() ?? '';
         final scope = (item['scope'] as String?)?.trim() ?? '';
         if (promptName.isEmpty || content.isEmpty) {
-          continue;
-        }
-        if (!_shouldIncludePromptTemplate(
-          promptName: promptName,
-          content: content,
-          scope: scope,
-          source: 'download',
-        )) {
           continue;
         }
 

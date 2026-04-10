@@ -5,6 +5,7 @@ import 'package:tutor1on1/l10n/app_language.dart';
 import 'package:tutor1on1/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
+import 'app_theme.dart';
 import 'services/app_services.dart';
 import 'state/auth_controller.dart';
 import 'state/settings_controller.dart';
@@ -55,18 +56,7 @@ class Tutor1on1App extends StatelessWidget {
               enabled: studyModeController.enabled,
               child: child ?? const SizedBox.shrink(),
             ),
-            theme: ThemeData(
-              useMaterial3: true,
-              colorSchemeSeed: Colors.teal,
-              fontFamily: 'Microsoft YaHei UI',
-              fontFamilyFallback: const [
-                'Microsoft YaHei',
-                'Noto Sans CJK SC',
-                'Source Han Sans SC',
-                'PingFang SC',
-                'SimHei',
-              ],
-            ),
+            theme: buildTutor1on1Theme(),
             home: const AuthGate(),
           );
         },

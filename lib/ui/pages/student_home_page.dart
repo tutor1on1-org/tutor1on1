@@ -178,7 +178,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
           onProgress: null,
           includeEnrollmentSync: false,
           includeSessionSync: true,
-          sessionSyncMode: SessionSyncMode.uploadOnly,
+          sessionSyncMode: SessionSyncMode.full,
         );
       }
       if (showOverlay) {
@@ -478,14 +478,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.logout),
-                  onPressed: () async {
-                    final confirmed =
-                        await AppQuitFlow.confirmTeacherPinIfRequired(context);
-                    if (!confirmed) {
-                      return;
-                    }
-                    await auth.logout();
-                  },
+                  onPressed: () => AppQuitFlow.handleLogout(context),
                 ),
               ],
             ),
