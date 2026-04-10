@@ -1968,7 +1968,6 @@ ORDER BY l.created_at DESC
           username: Value(normalizedUsername),
           pinHash: Value(pinHash),
           role: Value(role),
-          teacherId: const Value(null),
           remoteUserId:
               remoteUserId == null ? const Value.absent() : Value(remoteUserId),
         ),

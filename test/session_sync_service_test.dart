@@ -77,9 +77,9 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
   }
 
   @override
-  Future<String> getState2({required String artifactClass}) async {
+  Future<String> getState2({String? artifactClass}) async {
     getState2Calls++;
-    final items = _stateItems(artifactClass);
+    final items = _stateItems(artifactClass ?? '');
     final builder = StringBuffer();
     for (final item in items) {
       builder
@@ -95,13 +95,13 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
 
   @override
   Future<ArtifactState1Result> getState1({
-    required String artifactClass,
+    String? artifactClass,
     int? studentUserId,
     int? courseId,
   }) async {
     getState1Calls++;
     final items = _stateItems(
-      artifactClass,
+      artifactClass ?? '',
       studentUserId: studentUserId,
       courseId: courseId,
     );
@@ -239,8 +239,11 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
     int? studentUserId,
     int? courseId,
   }) {
+    final normalizedArtifactClass = artifactClass.trim();
     final items = _items.values
-        .where((item) => item.artifactClass == artifactClass)
+        .where((item) =>
+            normalizedArtifactClass.isEmpty ||
+            item.artifactClass == normalizedArtifactClass)
         .where((item) =>
             studentUserId == null || item.studentUserId == studentUserId)
         .where((item) => courseId == null || item.courseId == courseId)

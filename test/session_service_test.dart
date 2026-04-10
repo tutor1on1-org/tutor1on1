@@ -658,13 +658,41 @@ void main() {
       Future<LlmCallResult>.value(
         _llmOk(
           responseText: jsonEncode(<String, Object?>{
+            'text': 'Which number is greater: -3 or 2?',
+            'difficulty': 'medium',
+            'mistakes': <String>[],
+            'next_action': 'review',
+            'finished': false,
+          }),
+          callHash: 'review_prompt_1',
+        ),
+      ),
+    );
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
             'text': 'Correct. 2 is greater than -3.',
             'difficulty': 'medium',
             'mistakes': <String>[],
             'next_action': 'review',
             'finished': true,
           }),
-          callHash: 'review_1',
+          callHash: 'review_answer_1',
+        ),
+      ),
+    );
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': 'Put these in ascending order: 1, -4, 2, -3.',
+            'difficulty': 'hard',
+            'mistakes': <String>['ordering_integers'],
+            'next_action': 'review',
+            'finished': false,
+          }),
+          callHash: 'review_prompt_2',
         ),
       ),
     );
@@ -678,31 +706,49 @@ void main() {
             'next_action': 'review',
             'finished': true,
           }),
-          callHash: 'review_2',
+          callHash: 'review_answer_2',
         ),
       ),
     );
 
-    final first = await service.startTutorAction(
+    final firstPrompt = await service.startTutorAction(
+      sessionId: fixture.sessionId,
+      mode: 'review',
+      studentInput: '',
+      courseVersion: fixture.courseVersion,
+      node: fixture.node,
+    );
+    await firstPrompt.future;
+
+    final firstAnswer = await service.startTutorAction(
       sessionId: fixture.sessionId,
       mode: 'review',
       studentInput: '2',
       courseVersion: fixture.courseVersion,
       node: fixture.node,
     );
-    await first.future;
+    await firstAnswer.future;
 
     var session = await db.getSession(fixture.sessionId);
     expect(session?.summaryLit, isFalse);
 
-    final second = await service.startTutorAction(
+    final secondPrompt = await service.startTutorAction(
+      sessionId: fixture.sessionId,
+      mode: 'review',
+      studentInput: '',
+      courseVersion: fixture.courseVersion,
+      node: fixture.node,
+    );
+    await secondPrompt.future;
+
+    final secondAnswer = await service.startTutorAction(
       sessionId: fixture.sessionId,
       mode: 'review',
       studentInput: '-4, -3, 1, 2',
       courseVersion: fixture.courseVersion,
       node: fixture.node,
     );
-    await second.future;
+    await secondAnswer.future;
 
     final evidence = await _sessionEvidence(db, fixture.sessionId);
     final control = await _sessionControl(db, fixture.sessionId);

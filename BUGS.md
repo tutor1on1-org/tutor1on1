@@ -1,5 +1,5 @@
 # BUGS
-Last updated: 2026-04-06
+Last updated: 2026-04-10
 
 ## Active watch
 - Student import race after bundle download (monitoring): fixed by awaiting archive extraction in client bundle service (`f77e7e0`); keep watching for recurrence in production-like flow.
@@ -247,3 +247,8 @@ Last updated: 2026-04-06
 - Symptom: Dennis teacher login could spend roughly three minutes in enrollment sync on a fresh machine even though only three course bundles were downloaded and the later `student_kp` sync was already down to a few seconds.
 - Root cause: remote `course_bundle` import extracted the whole bundle to disk and rebuilt all lecture/question files before preview/import, so the `MATH` bundle's roughly 3900 small files dominated login. On this host that was amplified because `getApplicationDocumentsDirectory()` points at `C:\Mac\Home\Documents`, where small-file extraction is especially slow.
 - Prevention: login/import from a lightweight scaffold (`contents.txt` / optional `context.txt`), cache the canonical bundle, and lazily read lecture/question text from the bundle when the scaffold folder lacks those files. Only full materialization for explicit teacher actions that need a writable source folder.
+
+47. Student auth upsert must not erase teacher-owned local student bindings
+- Symptom: after a student account logs in on the same machine, teacher home can show `No students` while `Course / Student / Tree` still lists the same students and their trees.
+- Root cause: local auth upsert cleared `users.teacher_id` on every login, so authenticated student rows lost the teacher binding used by the teacher-side student list; when remote artifact `state2` still matched, teacher enrollment sync skipped remote changes and never re-derived that local ownership edge.
+- Prevention: preserve an existing local student's `teacher_id` during auth upsert, and on teacher enrollment sync refresh / `state2` fast-path re-assert `student_course_assignments -> course_versions.teacher_id` ownership so shared-device student logins cannot strand teacher-side student rows.

@@ -352,8 +352,8 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
   int uploadCalls = 0;
   final List<String> uploadedArtifactIds = <String>[];
 
-  List<ArtifactState1Item> _visibleItems(String artifactClass) {
-    if (artifactClass != 'course_bundle') {
+  List<ArtifactState1Item> _visibleItems(String? artifactClass) {
+    if ((artifactClass ?? '').isNotEmpty && artifactClass != 'course_bundle') {
       return const <ArtifactState1Item>[];
     }
     final courses = currentRole == 'teacher'
@@ -363,7 +363,7 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
   }
 
   @override
-  Future<String> getState2({required String artifactClass}) async {
+  Future<String> getState2({String? artifactClass}) async {
     final items = _visibleItems(artifactClass)
       ..sort((left, right) => left.artifactId.compareTo(right.artifactId));
     final builder = StringBuffer();
@@ -379,7 +379,7 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
 
   @override
   Future<ArtifactState1Result> getState1({
-    required String artifactClass,
+    String? artifactClass,
     int? studentUserId,
     int? courseId,
   }) async {
@@ -1152,6 +1152,114 @@ void main() {
     expect(third.downloadedCount, 0);
     expect(artifactApi.uploadCalls, 0);
     expect(artifactApi.uploadedArtifactIds, isEmpty);
+  });
+
+  test('teacher sync repairs missing student teacher binding on state2 match',
+      () async {
+    final teacherId = await db.createUser(
+      username: 'dennis',
+      pinHash: 'pin',
+      role: 'teacher',
+      remoteUserId: 9001,
+    );
+    final teacher = (await db.getUserById(teacherId))!;
+    final studentId = await db.createUser(
+      username: 'albert',
+      pinHash: 'pin',
+      role: 'student',
+      remoteUserId: 3001,
+    );
+
+    final localCourseDir = await _createCourseFolder(
+      root: rootDir,
+      folderName: 'teacher_repair_course',
+      rootTitle: 'Remote Math',
+    );
+    final courseVersionId = await db.createCourseVersion(
+      teacherId: teacher.id,
+      subject: 'Remote Math',
+      granularity: 1,
+      textbookText: '',
+      sourcePath: localCourseDir.path,
+    );
+    await db.upsertCourseRemoteLink(
+      courseVersionId: courseVersionId,
+      remoteCourseId: 501,
+    );
+    await db.assignStudent(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+    );
+    await courseArtifactService.rebuildCourseArtifacts(
+      courseVersionId: courseVersionId,
+      folderPath: localCourseDir.path,
+    );
+    final prepared = await courseArtifactService.prepareUploadBundle(
+      courseVersionId: courseVersionId,
+      promptMetadata: <String, dynamic>{
+        'schema': kCurrentPromptBundleSchema,
+        'remote_course_id': 501,
+        'teacher_username': 'dennis',
+        'prompt_templates': const <Map<String, dynamic>>[],
+        'student_prompt_profiles': const <Map<String, dynamic>>[],
+        'student_pass_configs': const <Map<String, dynamic>>[],
+      },
+      bundleLabel: 'Remote Math',
+    );
+
+    final server = _FakeCourseBundleServer()
+      ..seedCourse(
+        courseId: 501,
+        teacherUserId: 9001,
+        teacherName: 'dennis',
+        subject: 'Remote Math',
+        bundleVersionId: 3,
+        bundleBytes: await prepared.bundleFile.readAsBytes(),
+        bundleSha256: prepared.hash,
+      );
+    final artifactApi = _FakeArtifactSyncApiService(
+      server: server,
+      currentRemoteUserId: 9001,
+      currentRole: 'teacher',
+    );
+    final marketplaceApi = _FakeMarketplaceApiService(
+      server: server,
+      currentRemoteUserId: 9001,
+      currentRole: 'teacher',
+    );
+    final service = EnrollmentSyncService(
+      db: db,
+      secureStorage: secureStorage,
+      courseService: courseService,
+      marketplaceApi: marketplaceApi,
+      artifactApi: artifactApi,
+      promptRepository: promptRepository,
+      courseArtifactService: courseArtifactService,
+    );
+
+    await service.refreshStoredLocalState2(currentUser: teacher);
+    await db.updateStudentTeacherId(
+      studentId: studentId,
+      teacherId: teacher.id,
+    );
+    await db.customStatement(
+      "UPDATE users SET teacher_id = NULL WHERE id = ?",
+      <Object?>[studentId],
+    );
+    await secureStorage.writeSyncRunAt(
+      remoteUserId: 9001,
+      domain: 'enrollment_sync_teacher',
+      runAt: DateTime.now().toUtc().subtract(const Duration(minutes: 5)),
+    );
+
+    final stats = await service.syncIfReady(currentUser: teacher);
+    final repairedStudent = await db.getUserById(studentId);
+
+    expect(stats.downloadedCount, 0);
+    expect(stats.uploadedCount, 0);
+    expect(repairedStudent, isNotNull);
+    expect(repairedStudent!.teacherId, teacher.id);
+    expect(await db.watchStudents(teacher.id).first, hasLength(1));
   });
 
   test('student sync deletes local course when remote artifact disappears',

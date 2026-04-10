@@ -160,10 +160,15 @@ class ArtifactSyncApiService {
   final String _baseUrl;
   final http.Client _client;
 
-  Future<String> getState2({required String artifactClass}) async {
+  Future<String> getState2({String? artifactClass}) async {
+    final params = <String, String>{};
+    final normalizedArtifactClass = artifactClass?.trim() ?? '';
+    if (normalizedArtifactClass.isNotEmpty) {
+      params['artifact_class'] = normalizedArtifactClass;
+    }
     final response = await _get(
       '/api/artifacts/sync/state2',
-      params: {'artifact_class': artifactClass},
+      params: params.isEmpty ? null : params,
     );
     if (response is! Map<String, dynamic>) {
       throw ArtifactSyncApiException('Unexpected response format.');
@@ -172,13 +177,15 @@ class ArtifactSyncApiService {
   }
 
   Future<ArtifactState1Result> getState1({
-    required String artifactClass,
+    String? artifactClass,
     int? studentUserId,
     int? courseId,
   }) async {
-    final params = <String, String>{
-      'artifact_class': artifactClass,
-    };
+    final params = <String, String>{};
+    final normalizedArtifactClass = artifactClass?.trim() ?? '';
+    if (normalizedArtifactClass.isNotEmpty) {
+      params['artifact_class'] = normalizedArtifactClass;
+    }
     if (studentUserId != null && studentUserId > 0) {
       params['student_user_id'] = '$studentUserId';
     }
@@ -187,7 +194,7 @@ class ArtifactSyncApiService {
     }
     final response = await _get(
       '/api/artifacts/sync/state1',
-      params: params,
+      params: params.isEmpty ? null : params,
     );
     if (response is! Map<String, dynamic>) {
       throw ArtifactSyncApiException('Unexpected response format.');

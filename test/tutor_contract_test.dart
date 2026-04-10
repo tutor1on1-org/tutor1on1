@@ -38,6 +38,9 @@ void main() {
       easyPassedCount: 0,
       mediumPassedCount: 0,
       hardPassedCount: 1,
+      easyFailedCount: 0,
+      mediumFailedCount: 0,
+      hardFailedCount: 0,
       lastAssessedAction: 'REVIEW',
       lastEvidence: const <String, dynamic>{
         'difficulty': 'hard',
@@ -53,6 +56,14 @@ void main() {
           actionMode: 'review',
           parsed: <String, dynamic>{
             'difficulty': 'easy',
+            'finished': false,
+            'mistakes': <String>['retry'],
+          },
+        ),
+        TutorEvidenceAssistantTurn(
+          actionMode: 'review',
+          parsed: <String, dynamic>{
+            'difficulty': 'easy',
             'finished': true,
             'mistakes': <String>[],
           },
@@ -61,8 +72,24 @@ void main() {
           actionMode: 'review',
           parsed: <String, dynamic>{
             'difficulty': 'medium',
+            'finished': false,
+            'mistakes': <String>['retry'],
+          },
+        ),
+        TutorEvidenceAssistantTurn(
+          actionMode: 'review',
+          parsed: <String, dynamic>{
+            'difficulty': 'medium',
             'finished': true,
             'mistakes': <String>[],
+          },
+        ),
+        TutorEvidenceAssistantTurn(
+          actionMode: 'review',
+          parsed: <String, dynamic>{
+            'difficulty': 'hard',
+            'finished': false,
+            'mistakes': <String>['retry'],
           },
         ),
         TutorEvidenceAssistantTurn(

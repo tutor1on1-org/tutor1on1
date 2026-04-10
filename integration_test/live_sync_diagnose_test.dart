@@ -1,8 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
-import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -21,9 +19,11 @@ import 'package:tutor1on1/services/course_artifact_service.dart';
 import 'package:tutor1on1/services/course_service.dart';
 import 'package:tutor1on1/services/device_identity_service.dart';
 import 'package:tutor1on1/services/enrollment_sync_service.dart';
+import 'package:tutor1on1/services/home_sync_coordinator.dart';
 import 'package:tutor1on1/services/marketplace_api_service.dart';
 import 'package:tutor1on1/services/secure_storage_service.dart';
 import 'package:tutor1on1/services/session_sync_service.dart';
+import 'package:tutor1on1/services/settings_repository.dart';
 import 'package:tutor1on1/services/student_kp_artifact_store_service.dart';
 import 'package:tutor1on1/services/sync_log_repository.dart';
 import 'package:tutor1on1/services/sync_progress.dart';
@@ -33,6 +33,9 @@ const List<_AccountSpec> _accounts = <_AccountSpec>[
   _AccountSpec(username: 'albert', password: '1234'),
   _AccountSpec(username: 'charles', password: '1234'),
 ];
+
+const String _enrollmentSyncDomainTeacher = 'enrollment_sync_teacher';
+const String _enrollmentSyncDomainStudent = 'enrollment_sync_student';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -71,6 +74,49 @@ void main() {
           Directory.current.path,
           '.tmp',
           'live_sync_diagnose_report.json',
+        ),
+      );
+      await outFile.parent.create(recursive: true);
+      await outFile.writeAsString(reportJson, flush: true);
+      // ignore: avoid_print
+      print(reportJson);
+    },
+    timeout: const Timeout(Duration(minutes: 45)),
+  );
+
+  testWidgets(
+    'diagnose repeat login core sync timings for dennis and albert',
+    (tester) async {
+      WidgetsFlutterBinding.ensureInitialized();
+      final report = <String, Object?>{
+        'generated_at': DateTime.now().toUtc().toIso8601String(),
+        'api_base_url': kAuthBaseUrl,
+        'results': <Object?>[],
+      };
+
+      final realSecureStorage = SecureStorageService();
+      await realSecureStorage.ensureReadableOrReset();
+      final deviceSnapshot =
+          await DeviceIdentityService(realSecureStorage).snapshot();
+      final secureSeed = await const FlutterSecureStorage().readAll();
+
+      for (final account in _accounts.where((it) {
+        return it.username == 'dennis' || it.username == 'albert';
+      })) {
+        final accountReport = await _runRepeatLoginDiagnosis(
+          account: account,
+          secureSeed: secureSeed,
+          deviceSnapshot: deviceSnapshot,
+        );
+        (report['results'] as List<Object?>).add(accountReport);
+      }
+
+      final reportJson = const JsonEncoder.withIndent('  ').convert(report);
+      final outFile = File(
+        p.join(
+          Directory.current.path,
+          '.tmp',
+          'repeat_login_sync_report.json',
         ),
       );
       await outFile.parent.create(recursive: true);
@@ -253,6 +299,143 @@ Future<Map<String, Object?>> _runAccountDiagnosis({
   }
 }
 
+Future<Map<String, Object?>> _runRepeatLoginDiagnosis({
+  required _AccountSpec account,
+  required Map<String, String> secureSeed,
+  required DeviceIdentitySnapshot deviceSnapshot,
+}) async {
+  final tempRoot = await Directory.systemTemp.createTemp(
+    'repeat_login_sync_${account.username}_',
+  );
+  final docsDir = Directory(p.join(tempRoot.path, 'documents'))
+    ..createSync(recursive: true);
+  final secureStorage = _SeededSecureStorage(secureSeed);
+
+  AppDatabase? db;
+  try {
+    final liveDbFile = await _copyLiveDatabase(docsDir);
+    await _copyLiveArtifacts(docsDir);
+    PathProviderPlatform.instance = _TestPathProviderPlatform(tempRoot.path);
+
+    db = AppDatabase.forTesting(NativeDatabase(liveDbFile));
+    final promptRepository = PromptRepository(db: db);
+    final courseArtifactService = CourseArtifactService();
+    final courseService = CourseService(
+      db,
+      courseArtifactService: courseArtifactService,
+    );
+    final artifactApi = ArtifactSyncApiService(secureStorage: secureStorage);
+    final marketplaceApi = MarketplaceApiService(secureStorage: secureStorage);
+    final enrollmentSyncService = EnrollmentSyncService(
+      db: db,
+      secureStorage: secureStorage,
+      courseService: courseService,
+      marketplaceApi: marketplaceApi,
+      promptRepository: promptRepository,
+      artifactApi: artifactApi,
+      courseArtifactService: courseArtifactService,
+    );
+    final sessionSyncService = SessionSyncService(
+      db: db,
+      api: artifactApi,
+      artifactStore: StudentKpArtifactStoreService(),
+    );
+    final syncCoordinator = HomeSyncCoordinator(
+      enrollmentSyncService: enrollmentSyncService,
+      sessionSyncService: sessionSyncService,
+      syncLogRepository: SyncLogRepository(SettingsRepository(db)),
+    );
+    await promptRepository.backfillAssignmentPrompts();
+    await sessionSyncService.ensureLocalCutoverInitialized();
+    db.setSyncRelevantChangeCallback((change) async {
+      await enrollmentSyncService.handleLocalSyncRelevantChange(change);
+      await sessionSyncService.handleLocalSyncRelevantChange(change);
+    });
+
+    final authApi = AuthApiService(
+      baseUrl: kAuthBaseUrl,
+      allowInsecureTls: kAuthAllowInsecureTls,
+    );
+    final auth = await authApi.login(
+      username: account.username,
+      password: account.password,
+      deviceKey: deviceSnapshot.deviceKey,
+      deviceName: deviceSnapshot.deviceName,
+      platform: deviceSnapshot.platform,
+      timezoneName: deviceSnapshot.timezoneName,
+      timezoneOffsetMinutes: deviceSnapshot.timezoneOffsetMinutes,
+      appVersion: deviceSnapshot.appVersion,
+    );
+    await secureStorage.writeAuthTokens(
+      accessToken: auth.accessToken,
+      refreshToken: auth.refreshToken,
+    );
+    final currentUser = await db.upsertAuthenticatedUser(
+      username: account.username,
+      pinHash: PinHasher.hash(account.password),
+      role: auth.role,
+      remoteUserId: auth.userId,
+    );
+    await sessionSyncService.prepareForAutoSync(
+      currentUser: currentUser,
+      password: account.password,
+    );
+
+    final stages = <Map<String, Object?>>[];
+    await _timeStage(
+      stages,
+      'login_sync_1',
+      () => syncCoordinator.runLoginSync(
+        user: currentUser,
+        trigger: 'login_1',
+        onProgress: null,
+        includeSessionSync: true,
+        sessionSyncMode: SessionSyncMode.downloadOnly,
+      ),
+    );
+    await secureStorage.writeSyncRunAt(
+      remoteUserId: auth.userId,
+      domain: currentUser.role == 'teacher'
+          ? _enrollmentSyncDomainTeacher
+          : _enrollmentSyncDomainStudent,
+      runAt: DateTime.now().toUtc().subtract(const Duration(minutes: 2)),
+    );
+    await _timeStage(
+      stages,
+      'login_sync_2',
+      () => syncCoordinator.runLoginSync(
+        user: currentUser,
+        trigger: 'login_2',
+        onProgress: null,
+        includeSessionSync: true,
+        sessionSyncMode: SessionSyncMode.downloadOnly,
+      ),
+    );
+
+    return <String, Object?>{
+      'username': account.username,
+      'role': auth.role,
+      'remote_user_id': auth.userId,
+      'temp_root': tempRoot.path,
+      'stages': stages,
+      'local_stats': await _collectLocalStats(
+        db: db,
+        currentUser: currentUser,
+        remoteUserId: auth.userId,
+      ),
+    };
+  } catch (error, stackTrace) {
+    return <String, Object?>{
+      'username': account.username,
+      'temp_root': tempRoot.path,
+      'fatal_error': error.toString(),
+      'fatal_stack': stackTrace.toString(),
+    };
+  } finally {
+    await db?.close();
+  }
+}
+
 Future<void> _timeStage(
   List<Map<String, Object?>> events,
   String name,
@@ -408,7 +591,7 @@ class _ProfilingArtifactSyncApiService extends ArtifactSyncApiService {
   final List<Map<String, Object?>> events;
 
   @override
-  Future<String> getState2({required String artifactClass}) async {
+  Future<String> getState2({String? artifactClass}) async {
     return _time(
         'artifact_state2',
         () => super.getState2(
@@ -418,7 +601,7 @@ class _ProfilingArtifactSyncApiService extends ArtifactSyncApiService {
 
   @override
   Future<ArtifactState1Result> getState1({
-    required String artifactClass,
+    String? artifactClass,
     int? studentUserId,
     int? courseId,
   }) async {
@@ -430,7 +613,8 @@ class _ProfilingArtifactSyncApiService extends ArtifactSyncApiService {
         courseId: courseId,
       ),
       extra: <String, Object?>{
-        'artifact_class': artifactClass,
+        if ((artifactClass ?? '').trim().isNotEmpty)
+          'artifact_class': artifactClass,
         if (studentUserId != null) 'student_user_id': studentUserId,
         if (courseId != null) 'course_id': courseId,
       },

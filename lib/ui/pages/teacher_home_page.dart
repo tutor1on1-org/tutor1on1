@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:developer' show log;
 import 'dart:io';
 
 import 'package:drift/drift.dart' hide Column;
@@ -14,6 +13,7 @@ import '../../services/course_bundle_service.dart';
 import '../../services/home_sync_coordinator.dart';
 import '../../services/marketplace_api_service.dart';
 import '../../services/prompt_bundle_compat.dart';
+import '../../services/session_sync_service.dart';
 import '../../services/teacher_marketplace_upload_service.dart';
 import '../../services/sync_progress.dart';
 import '../../state/auth_controller.dart';
@@ -74,8 +74,8 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       syncLogRepository: services.syncLogRepository,
     );
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await _refreshMarketplaceState(surfaceAuthErrors: true);
       await _startSync();
+      unawaited(_refreshMarketplaceState(surfaceAuthErrors: true));
       _startAutoSync();
     });
   }
@@ -124,11 +124,12 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     String? syncError;
     try {
       if (showOverlay) {
-        await _syncCoordinator.forcePullFromServer(
+        await _syncCoordinator.runLoginSync(
           user: user,
           trigger: trigger,
           onProgress: _applySyncProgress,
-          includeSessionSync: false,
+          includeSessionSync: true,
+          sessionSyncMode: SessionSyncMode.downloadOnly,
         );
       } else {
         await _syncCoordinator.runCoreSync(
@@ -139,14 +140,10 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         );
       }
       if (showOverlay) {
-        _applySyncProgress(
-          const SyncProgress(
-            message: 'Refreshing course status...',
-            forcePaint: true,
-          ),
-        );
+        unawaited(_refreshMarketplaceState(surfaceAuthErrors: true));
+      } else {
+        await _refreshMarketplaceState(surfaceAuthErrors: false);
       }
-      await _refreshMarketplaceState();
     } on HomeSyncException catch (error) {
       syncError = error.message;
     } on Object catch (error) {
@@ -163,45 +160,6 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         return;
       }
       _setPersistentMessage(syncError, isError: true);
-    }
-  }
-
-  Future<void> _runTeacherBackgroundSessionSync(User user) async {
-    if (!mounted || _backgroundSessionSyncInProgress) {
-      return;
-    }
-    _backgroundSessionSyncInProgress = true;
-    try {
-      await _syncCoordinator.forcePullFromServer(
-        user: user,
-        trigger: 'teacher_login_background',
-        onProgress: null,
-        includeEnrollmentSync: false,
-      );
-    } on HomeSyncException catch (error) {
-      if (!mounted) {
-        return;
-      }
-      _setPersistentMessage(error.message, isError: true);
-    } on Object catch (error, stackTrace) {
-      log(
-        'Background teacher session sync failed.',
-        error: error,
-        stackTrace: stackTrace,
-        name: 'TeacherHomePage',
-      );
-      if (!mounted) {
-        return;
-      }
-      _setPersistentMessage(
-        describeSyncFailure(
-          stage: 'Session sync',
-          error: error,
-        ).userMessage,
-        isError: true,
-      );
-    } finally {
-      _backgroundSessionSyncInProgress = false;
     }
   }
 

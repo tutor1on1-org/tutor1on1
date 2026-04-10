@@ -138,6 +138,9 @@ class EnrollmentSyncService {
     if (remoteUserId == null || remoteUserId <= 0) {
       return;
     }
+    if (currentUser.role == 'teacher') {
+      await _repairTeacherStudentOwnership(teacherId: currentUser.id);
+    }
     late final String domain;
     late final Map<String, String> state1FingerprintsByScope;
     if (currentUser.role == 'teacher') {
@@ -168,6 +171,72 @@ class EnrollmentSyncService {
       domain: domain,
       state2: localState2,
     );
+  }
+
+  Future<String> readCanonicalRemoteState2() {
+    return _artifactApi.getState2();
+  }
+
+  Future<ArtifactState1Result> readCanonicalRemoteState1() {
+    return _artifactApi.getState1();
+  }
+
+  Future<Map<String, String>> buildCanonicalVisibleArtifactHashes({
+    required User currentUser,
+  }) async {
+    final remoteUserId = currentUser.remoteUserId;
+    if (remoteUserId == null || remoteUserId <= 0) {
+      return const <String, String>{};
+    }
+    if (currentUser.role == 'teacher') {
+      return _buildTeacherVisibleArtifactHashes(remoteUserId: remoteUserId);
+    }
+    return _buildStudentVisibleArtifactHashes(
+      currentUser: currentUser,
+      remoteUserId: remoteUserId,
+    );
+  }
+
+  Future<SyncRunStats> syncFromCanonicalState1({
+    required User currentUser,
+    required List<ArtifactState1Item> visibleItems,
+  }) async {
+    final stats = SyncRunStats();
+    if (_syncing) {
+      return stats;
+    }
+    final remoteUserId = currentUser.remoteUserId;
+    if (remoteUserId == null || remoteUserId <= 0) {
+      return stats;
+    }
+    final summary = _SyncTransferSummary();
+    _syncing = true;
+    try {
+      await _runWithLocalState2RefreshSuppressed(() async {
+        final bundleItems = visibleItems
+            .where((item) => item.artifactClass == _artifactClassCourseBundle)
+            .toList(growable: false)
+          ..sort((left, right) => left.artifactId.compareTo(right.artifactId));
+        if (currentUser.role == 'teacher') {
+          await _syncTeacherCoursesFromCanonicalState1(
+            currentUser: currentUser,
+            remoteUserId: remoteUserId,
+            bundleItems: bundleItems,
+            summary: summary,
+          );
+        } else {
+          await _syncStudentEnrollmentsFromCanonicalState1(
+            currentUser: currentUser,
+            remoteUserId: remoteUserId,
+            bundleItems: bundleItems,
+            summary: summary,
+          );
+        }
+      });
+      return summary.toStats();
+    } finally {
+      _syncing = false;
+    }
   }
 
   Future<void> _writeLocalState1Fingerprints({
@@ -651,6 +720,9 @@ class EnrollmentSyncService {
               domain: _syncDomainTeacherCourses,
               readRemoteState2: () => _artifactApi.getState2(
                 artifactClass: _artifactClassCourseBundle,
+              ),
+              onMatch: () => refreshStoredLocalState2(
+                currentUser: currentUser,
               ),
               onMismatch: () async {
                 final remoteState1 = await _artifactApi.getState1(
@@ -1379,6 +1451,107 @@ class EnrollmentSyncService {
     await refreshStoredLocalState2(currentUser: currentUser);
   }
 
+  Future<void> _syncTeacherCoursesFromCanonicalState1({
+    required User currentUser,
+    required int remoteUserId,
+    required List<ArtifactState1Item> bundleItems,
+    required _SyncTransferSummary summary,
+  }) async {
+    final localFingerprintsByScope = await _readStoredLocalState1Fingerprints(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainTeacherCourses,
+    );
+    final remoteFingerprintsByScope =
+        _buildRemoteTeacherCourseArtifactFingerprints(bundleItems);
+    final changedRemoteCourses = _filterChangedState1Items(
+      remoteItems: bundleItems,
+      localFingerprintsByScope: localFingerprintsByScope,
+      scopeKeyOf: (item) => item.courseId > 0
+          ? _localState1ScopeKeyForRemoteCourse(item.courseId)
+          : null,
+      fingerprintOf: (item) => _buildTeacherCourseItemFingerprint(
+        remoteCourseId: item.courseId,
+        localCourseVersionId: null,
+        bundleHash: item.sha256,
+      ),
+    );
+    final removedRemoteCourseIds = _extractRemovedRemoteCourseIds(
+      localFingerprintsByScope: localFingerprintsByScope,
+      remoteFingerprintsByScope: remoteFingerprintsByScope,
+    );
+    if (changedRemoteCourses.isEmpty && removedRemoteCourseIds.isEmpty) {
+      return;
+    }
+    final remoteCourses = bundleItems.isEmpty
+        ? const <TeacherCourseSummary>[]
+        : _resolveTeacherCoursesFromArtifacts(
+            artifactItems: bundleItems,
+            remoteCourses: await _api.listTeacherCourses(),
+          );
+    await _syncTeacherCourses(
+      currentUser: currentUser,
+      remoteUserId: remoteUserId,
+      remoteCourses: remoteCourses,
+      changedRemoteCourses: _resolveTeacherCoursesFromArtifacts(
+        artifactItems: changedRemoteCourses,
+        remoteCourses: remoteCourses,
+      ),
+      removedRemoteCourseIds: removedRemoteCourseIds,
+      allowAutoUpload: false,
+      summary: summary,
+    );
+  }
+
+  Future<void> _syncStudentEnrollmentsFromCanonicalState1({
+    required User currentUser,
+    required int remoteUserId,
+    required List<ArtifactState1Item> bundleItems,
+    required _SyncTransferSummary summary,
+  }) async {
+    final localFingerprintsByScope = await _readStoredLocalState1Fingerprints(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainStudentEnrollments,
+    );
+    final remoteFingerprintsByScope =
+        _buildRemoteStudentEnrollmentArtifactFingerprints(bundleItems);
+    final changedEnrollments = _filterChangedState1Items(
+      remoteItems: bundleItems,
+      localFingerprintsByScope: localFingerprintsByScope,
+      scopeKeyOf: (item) => item.courseId > 0
+          ? _localState1ScopeKeyForRemoteCourse(item.courseId)
+          : null,
+      fingerprintOf: (item) => _buildStudentEnrollmentItemFingerprint(
+        remoteCourseId: item.courseId,
+        teacherRemoteUserId: item.teacherUserId,
+        bundleHash: item.sha256,
+      ),
+    );
+    final removedRemoteCourseIds = _extractRemovedRemoteCourseIds(
+      localFingerprintsByScope: localFingerprintsByScope,
+      remoteFingerprintsByScope: remoteFingerprintsByScope,
+    );
+    if (changedEnrollments.isEmpty && removedRemoteCourseIds.isEmpty) {
+      return;
+    }
+    final allRemoteEnrollments = bundleItems.isEmpty
+        ? const <EnrollmentSummary>[]
+        : _resolveEnrollmentsFromArtifacts(
+            artifactItems: bundleItems,
+            enrollments: await _api.listEnrollments(),
+          );
+    await _syncStudentEnrollments(
+      currentUser: currentUser,
+      remoteUserId: remoteUserId,
+      enrollments: _resolveEnrollmentsFromArtifacts(
+        artifactItems: changedEnrollments,
+        enrollments: allRemoteEnrollments,
+      ),
+      allRemoteEnrollments: allRemoteEnrollments,
+      removedRemoteCourseIds: removedRemoteCourseIds,
+      summary: summary,
+    );
+  }
+
   Future<Map<String, String>> _buildStudentEnrollmentState1Fingerprints({
     required User currentUser,
     required int remoteUserId,
@@ -1521,6 +1694,27 @@ class EnrollmentSyncService {
     required User currentUser,
     required int remoteUserId,
   }) async {
+    final artifactHashesById = await _buildStudentVisibleArtifactHashes(
+      currentUser: currentUser,
+      remoteUserId: remoteUserId,
+    );
+    return _buildState2FromArtifactHashes(artifactHashesById);
+  }
+
+  Future<String> _buildTeacherLocalState2({
+    required User currentUser,
+    required int remoteUserId,
+  }) async {
+    final artifactHashesById = await _buildTeacherVisibleArtifactHashes(
+      remoteUserId: remoteUserId,
+    );
+    return _buildState2FromArtifactHashes(artifactHashesById);
+  }
+
+  Future<Map<String, String>> _buildStudentVisibleArtifactHashes({
+    required User currentUser,
+    required int remoteUserId,
+  }) async {
     final artifactHashesById = <String, String>{};
     final assignedRemoteCourses =
         await _db.getAssignedRemoteCoursesForStudent(currentUser.id);
@@ -1540,33 +1734,31 @@ class EnrollmentSyncService {
       artifactHashesById['$_artifactClassCourseBundle:${info.remoteCourseId}'] =
           bundleHash;
     }
-    return _buildState2FromArtifactHashes(artifactHashesById);
+    return artifactHashesById;
   }
 
-  Future<String> _buildTeacherLocalState2({
-    required User currentUser,
+  Future<Map<String, String>> _buildTeacherVisibleArtifactHashes({
     required int remoteUserId,
   }) async {
     final artifactHashesById = <String, String>{};
-    final localCourses = await _db.getCourseVersionsForTeacher(currentUser.id);
-    for (final course in localCourses) {
-      final remoteCourseId = await _db.getRemoteCourseId(course.id);
-      final localHash = (await _resolveTeacherCourseLocalState1Hash(
-        teacher: currentUser,
-        remoteUserId: remoteUserId,
-        course: course,
-        remoteCourseId: remoteCourseId,
-      ))
-          .trim();
-      if (localHash.isEmpty) {
+    final remoteCourseLinks = await (_db.select(_db.courseRemoteLinks)).get();
+    for (final link in remoteCourseLinks) {
+      if (link.remoteCourseId <= 0) {
         continue;
       }
-      final artifactId = remoteCourseId != null && remoteCourseId > 0
-          ? '$_artifactClassCourseBundle:$remoteCourseId'
-          : 'local-course:${course.id}';
-      artifactHashesById[artifactId] = localHash;
+      final syncState = await _secureStorage.readSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainTeacherCourseUpload,
+        scopeKey: _teacherCourseScopeKey(link.remoteCourseId),
+      );
+      final bundleHash = syncState?.contentHash.trim() ?? '';
+      if (bundleHash.isEmpty) {
+        continue;
+      }
+      artifactHashesById['$_artifactClassCourseBundle:${link.remoteCourseId}'] =
+          bundleHash;
     }
-    return _buildState2FromArtifactHashes(artifactHashesById);
+    return artifactHashesById;
   }
 
   String _buildState2FromArtifactHashes(
@@ -3793,6 +3985,33 @@ class EnrollmentSyncService {
       id: courseVersionId,
       teacherId: expectedTeacherId,
     );
+  }
+
+  Future<void> _repairTeacherStudentOwnership({
+    required int teacherId,
+  }) async {
+    final courses = await _db.getCourseVersionsForTeacher(teacherId);
+    final seenStudentIds = <int>{};
+    for (final course in courses) {
+      final assignments = await _db.getAssignmentsForCourse(course.id);
+      for (final assignment in assignments) {
+        final studentId = assignment.studentId;
+        if (!seenStudentIds.add(studentId)) {
+          continue;
+        }
+        final student = await _db.getUserById(studentId);
+        if (student == null || student.role != 'student') {
+          continue;
+        }
+        if (student.teacherId == teacherId) {
+          continue;
+        }
+        await _db.updateStudentTeacherId(
+          studentId: studentId,
+          teacherId: teacherId,
+        );
+      }
+    }
   }
 
   Future<void> _claimTeacherCourseOwnership({

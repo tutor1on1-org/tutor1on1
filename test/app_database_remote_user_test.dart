@@ -80,4 +80,34 @@ void main() {
     final sessions = await db.getSessionsForStudent(canonicalId);
     expect(sessions, hasLength(1));
   });
+
+  test('upsertAuthenticatedUser preserves existing student teacher binding',
+      () async {
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(() async => db.close());
+
+    final teacherId = await db.createUser(
+      username: 'dennis',
+      pinHash: PinHasher.hash('teacher_pin'),
+      role: 'teacher',
+      remoteUserId: 9001,
+    );
+    final studentId = await db.createUser(
+      username: 'albert',
+      pinHash: PinHasher.hash('old_pin'),
+      role: 'student',
+      teacherId: teacherId,
+      remoteUserId: 3001,
+    );
+
+    final authenticated = await db.upsertAuthenticatedUser(
+      username: 'albert',
+      pinHash: PinHasher.hash('new_pin'),
+      role: 'student',
+      remoteUserId: 3001,
+    );
+
+    expect(authenticated.id, studentId);
+    expect(authenticated.teacherId, teacherId);
+  });
 }

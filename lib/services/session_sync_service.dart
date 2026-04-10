@@ -165,6 +165,122 @@ class SessionSyncService {
     );
   }
 
+  Future<Map<String, String>> buildCanonicalVisibleArtifactHashes({
+    required User currentUser,
+  }) async {
+    final remoteUserId = currentUser.remoteUserId;
+    if (remoteUserId == null || remoteUserId <= 0) {
+      return const <String, String>{};
+    }
+    await ensureLocalCutoverInitialized();
+    final manifest = await _artifactStore.loadManifest(remoteUserId);
+    final artifactHashesById = <String, String>{};
+    for (final item in manifest.items.values) {
+      if (item.deleted) {
+        continue;
+      }
+      final artifactId = item.artifactId.trim();
+      final sha256 = item.sha256.trim();
+      if (artifactId.isEmpty || sha256.isEmpty) {
+        continue;
+      }
+      artifactHashesById[artifactId] = sha256;
+    }
+    return artifactHashesById;
+  }
+
+  Future<SyncRunStats> syncFromCanonicalState1({
+    required User currentUser,
+    required List<ArtifactState1Item> visibleItems,
+    SyncProgressCallback? onProgress,
+    SessionSyncMode mode = SessionSyncMode.downloadOnly,
+  }) async {
+    final stats = SyncRunStats();
+    if (_syncing) {
+      return stats;
+    }
+    final remoteUserId = currentUser.remoteUserId;
+    if (remoteUserId == null || remoteUserId <= 0) {
+      return stats;
+    }
+    await ensureLocalCutoverInitialized();
+    _syncing = true;
+    try {
+      final serverItems = visibleItems
+          .where((item) => item.artifactClass == _artifactClass)
+          .toList(growable: false)
+        ..sort((left, right) => left.artifactId.compareTo(right.artifactId));
+      var manifest = await _artifactStore.loadManifest(remoteUserId);
+      manifest = await _removeResolvedDeletedEntries(
+        currentUser: currentUser,
+        manifest: manifest,
+        serverItems: serverItems,
+      );
+      if (currentUser.role == 'teacher') {
+        await _reportProgress(
+          onProgress,
+          const SyncProgress(
+            message: 'Refreshing teacher student artifact metadata...',
+            forcePaint: true,
+          ),
+        );
+        manifest = await _reconcileTeacherManifestMetadata(
+          currentUser: currentUser,
+          remoteUserId: remoteUserId,
+          manifest: manifest,
+          serverItems: serverItems,
+        );
+      } else {
+        await _reportProgress(
+          onProgress,
+          const SyncProgress(
+            message: 'Syncing student per-KP artifacts...',
+            forcePaint: true,
+          ),
+        );
+        manifest = await _applyServerDownloads(
+          currentUser: currentUser,
+          remoteUserId: remoteUserId,
+          manifest: manifest,
+          serverItems: serverItems,
+          stats: stats,
+          onProgress: onProgress,
+        );
+        if (mode == SessionSyncMode.full) {
+          manifest = await _uploadLocalChanges(
+            currentUser: currentUser,
+            remoteUserId: remoteUserId,
+            manifest: manifest,
+            serverItems: serverItems,
+            stats: stats,
+            onProgress: onProgress,
+          );
+          final refreshedState1 = await _api.getState1(
+            artifactClass: _artifactClass,
+          );
+          manifest = await _applyServerDownloads(
+            currentUser: currentUser,
+            remoteUserId: remoteUserId,
+            manifest: manifest,
+            serverItems: refreshedState1.items,
+            stats: stats,
+            onProgress: onProgress,
+          );
+          await _assertNoPendingArtifactConflicts(
+            currentUser: currentUser,
+            manifest: manifest,
+            serverItems: refreshedState1.items,
+          );
+        }
+      }
+      await _artifactStore.saveManifest(manifest);
+      return stats;
+    } finally {
+      _syncing = false;
+      await _drainPendingRefreshes();
+    }
+  }
+
   Future<void> materializeTeacherArtifactsForView({
     required User currentUser,
     required int localStudentId,
@@ -743,6 +859,78 @@ class SessionSyncService {
       }
     }
     return await _artifactStore.loadManifest(remoteUserId);
+  }
+
+  Future<StudentKpArtifactManifest> _reconcileTeacherManifestMetadata({
+    required User currentUser,
+    required int remoteUserId,
+    required StudentKpArtifactManifest manifest,
+    required List<ArtifactState1Item> serverItems,
+  }) async {
+    final serverById = <String, ArtifactState1Item>{
+      for (final item in serverItems)
+        if (item.artifactId.trim().isNotEmpty) item.artifactId.trim(): item,
+    };
+    var currentManifest = manifest;
+    final localOnlyIds = currentManifest.items.keys
+        .where((artifactId) => !serverById.containsKey(artifactId))
+        .toList(growable: false)
+      ..sort();
+    for (final artifactId in localOnlyIds) {
+      final localItem = currentManifest.items[artifactId];
+      if (localItem == null) {
+        continue;
+      }
+      if (!localItem.deleted) {
+        await _runWithLocalMutationSuppressed(() async {
+          await _deleteLocalArtifactScopeById(
+            currentUser: currentUser,
+            artifactId: artifactId,
+          );
+        });
+      }
+      await _artifactStore.deleteArtifactFile(
+        remoteUserId: remoteUserId,
+        storageFile: localItem.storageFile,
+      );
+      final updatedItems = Map<String, StudentKpArtifactManifestItem>.from(
+        currentManifest.items,
+      )..remove(artifactId);
+      currentManifest = currentManifest.copyWith(items: updatedItems);
+    }
+
+    final nextItems = Map<String, StudentKpArtifactManifestItem>.from(
+      currentManifest.items,
+    );
+    for (final serverItem in serverItems) {
+      final localItem = nextItems[serverItem.artifactId];
+      if (localItem != null &&
+          localItem.sha256.trim() != serverItem.sha256.trim() &&
+          !localItem.deleted) {
+        await _runWithLocalMutationSuppressed(() async {
+          await _deleteLocalArtifactScopeById(
+            currentUser: currentUser,
+            artifactId: serverItem.artifactId,
+          );
+        });
+        await _artifactStore.deleteArtifactFile(
+          remoteUserId: remoteUserId,
+          storageFile: localItem.storageFile,
+        );
+      }
+      nextItems[serverItem.artifactId] = StudentKpArtifactManifestItem(
+        artifactId: serverItem.artifactId,
+        sha256: serverItem.sha256.trim(),
+        baseSha256: serverItem.sha256.trim(),
+        lastModified: serverItem.lastModified.trim(),
+        storageFile: localItem != null &&
+                localItem.sha256.trim() == serverItem.sha256.trim()
+            ? localItem.storageFile
+            : '',
+        deleted: false,
+      );
+    }
+    return currentManifest.copyWith(items: nextItems);
   }
 
   Future<StudentKpArtifactManifest> _applyDownloadedArtifactInChunks({

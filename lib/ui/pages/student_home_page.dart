@@ -164,36 +164,33 @@ class _StudentHomePageState extends State<StudentHomePage> {
     String? syncError;
     try {
       if (showOverlay) {
-        await _syncCoordinator.forcePullFromServer(
+        await _syncCoordinator.runLoginSync(
           user: user,
           trigger: trigger,
           onProgress: _applySyncProgress,
           includeSessionSync: true,
           sessionSyncMode: SessionSyncMode.downloadOnly,
-          wipeLocalStudentData: true,
         );
       } else {
         await _syncCoordinator.runCoreSync(
           user: user,
           trigger: trigger,
           onProgress: null,
+          includeEnrollmentSync: false,
           includeSessionSync: true,
           sessionSyncMode: SessionSyncMode.uploadOnly,
         );
       }
       if (showOverlay) {
-        _applySyncProgress(
-          const SyncProgress(
-            message: 'Refreshing study mode status...',
-            forcePaint: true,
-          ),
+        unawaited(_refreshLoginUiState(services: services, user: user));
+      } else {
+        await _syncRemoteStudyMode(
+          services: services,
+          user: user,
+          studyModeController: studyModeController,
         );
+        await _refreshRemoteEnrollmentState();
       }
-      await _syncRemoteStudyMode(
-        services: services,
-        user: user,
-        studyModeController: studyModeController,
-      );
     } on HomeSyncException catch (error) {
       syncError = error.message;
     } on Object catch (error) {
@@ -202,16 +199,31 @@ class _StudentHomePageState extends State<StudentHomePage> {
         error: error,
       ).userMessage;
     } finally {
-      _setSyncState(
-        syncing: showOverlay,
-        message: showOverlay ? 'Refreshing enrollment status...' : '',
-      );
-      await _refreshRemoteEnrollmentState();
       _setSyncState(syncing: false, message: '');
       _syncInProgress = false;
     }
     if (syncError != null) {
       _setPersistentMessage(syncError);
+    }
+  }
+
+  Future<void> _refreshLoginUiState({
+    required AppServices services,
+    required User user,
+  }) async {
+    if (!mounted) {
+      return;
+    }
+    final studyModeController = context.read<StudyModeController>();
+    try {
+      await _syncRemoteStudyMode(
+        services: services,
+        user: user,
+        studyModeController: studyModeController,
+      );
+      await _refreshRemoteEnrollmentState();
+    } catch (error) {
+      _setPersistentMessage('Failed to refresh student status: $error');
     }
   }
 
