@@ -282,3 +282,8 @@ Last updated: 2026-04-11
 - Symptom: course nodes display or persist as `1.1, 1.10, 1.11, ..., 1.2` instead of logical dotted numeric order.
 - Root cause: some course tree paths used plain string comparison or wrote `course_nodes.order_index` from parser map iteration, so multi-digit dotted ids sorted lexicographically.
 - Prevention: route course KP ordering through the shared dotted numeric comparator for parser children, UI search/detail lists, and persisted `orderIndex`; keep regression tests with `1.1`, `1.2`, `1.10`, and `1.11`.
+
+54. Teacher tree target student can be assigned too late
+- Symptom: from a teacher course/student tree route, tapping a KP can show `No assigned student for this course.` while on-demand student artifact materialization is still pending.
+- Root cause: `_teacherStudentId` was set only after awaiting `materializeTeacherArtifactsForView`, so the tap path could run with a null target student even though the route/assignment already identified one.
+- Prevention: set the teacher-view target student from the route or assignment before awaiting artifact materialization, and keep a widget regression test where materialization remains pending during a KP tap.

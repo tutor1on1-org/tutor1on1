@@ -120,6 +120,11 @@ class _SkillTreePageState extends State<SkillTreePage> {
     final auth = context.read<AuthController>();
     final currentUser = auth.currentUser;
     if (widget.teacherStudentId != null) {
+      if (mounted) {
+        setState(() {
+          _teacherStudentId = widget.teacherStudentId;
+        });
+      }
       if (currentUser != null && currentUser.role == 'teacher') {
         final services = context.read<AppServices>();
         await services.sessionSyncService.materializeTeacherArtifactsForView(
@@ -128,18 +133,18 @@ class _SkillTreePageState extends State<SkillTreePage> {
           courseVersionId: widget.courseVersionId,
         );
       }
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _teacherStudentId = widget.teacherStudentId;
-      });
       return;
     }
     final assignments =
         await _db.getAssignmentsForCourse(widget.courseVersionId);
     final selectedStudentId =
         assignments.isNotEmpty ? assignments.first.studentId : null;
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _teacherStudentId = selectedStudentId;
+    });
     if (selectedStudentId != null &&
         currentUser != null &&
         currentUser.role == 'teacher') {
@@ -150,12 +155,6 @@ class _SkillTreePageState extends State<SkillTreePage> {
         courseVersionId: widget.courseVersionId,
       );
     }
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _teacherStudentId = selectedStudentId;
-    });
   }
 
   Future<void> _loadTree() async {
@@ -553,6 +552,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
                           width: 160,
                           child: DropdownButtonFormField<int>(
                             initialValue: _levelLimit,
+                            isExpanded: true,
                             decoration: InputDecoration(
                               labelText: l10n.levelFilterLabel,
                               border: const OutlineInputBorder(),
@@ -588,6 +588,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
                           width: 180,
                           child: DropdownButtonFormField<int?>(
                             initialValue: _yearFilter,
+                            isExpanded: true,
                             decoration: InputDecoration(
                               labelText: l10n.yearFilterLabel,
                               border: const OutlineInputBorder(),
