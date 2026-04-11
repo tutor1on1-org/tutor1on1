@@ -328,7 +328,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
                   node.title.toLowerCase().contains(_searchQuery.toLowerCase()),
             )
             .toList()
-      ..sort((a, b) => a.id.compareTo(b.id));
+      ..sort((a, b) => compareSkillNodeIds(a.id, b.id));
 
     final selectedNode = _selectedId == null
         ? null
@@ -886,7 +886,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
         }
       }
     }
-    result.sort((a, b) => a.id.compareTo(b.id));
+    result.sort((a, b) => compareSkillNodeIds(a.id, b.id));
     return result;
   }
 

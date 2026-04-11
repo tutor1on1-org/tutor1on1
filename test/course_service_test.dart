@@ -74,6 +74,34 @@ void main() {
     expect(preview.message, contains('1: "Unit" -> "Renamed Unit"'));
   });
 
+  test('loadCourseFromFolder stores dotted numeric ids in natural order',
+      () async {
+    final base = await _createCourseFolder(
+      root: tempRoot,
+      folderName: 'natural_order_course',
+      contents: '''
+1 Unit
+1.1 (First, Y1)
+1.10 (Tenth, Y1)
+1.11 (Eleventh, Y1)
+1.2 (Second, Y1)
+''',
+      lectureIds: <String>['1', '1.1', '1.10', '1.11', '1.2'],
+    );
+
+    final loaded = await service.loadCourseFromFolder(
+      teacherId: teacherId,
+      folderPath: base.path,
+    );
+
+    expect(loaded.success, isTrue);
+    final nodes = await db.getCourseNodes(loaded.course!.id);
+    expect(
+      nodes.map((node) => node.kpKey),
+      <String>['1', '1.1', '1.2', '1.10', '1.11'],
+    );
+  });
+
   test('preview reports deleted node session counts', () async {
     final base = await _createCourseFolder(
       root: tempRoot,
@@ -120,7 +148,8 @@ void main() {
     expect(deleted.first.sessionCount, 1);
   });
 
-  test('previewCourseLoadFromContents skips lecture file checks for bundle scaffolds',
+  test(
+      'previewCourseLoadFromContents skips lecture file checks for bundle scaffolds',
       () async {
     final scaffoldDir = Directory(p.join(tempRoot.path, 'bundle_scaffold'));
     await scaffoldDir.create(recursive: true);
@@ -143,7 +172,8 @@ void main() {
     expect(preview.normalizedPath, scaffoldDir.path);
   });
 
-  test('previewCourseLoad reports a synced scaffold as one concise reload error',
+  test(
+      'previewCourseLoad reports a synced scaffold as one concise reload error',
       () async {
     final scaffoldDir = Directory(
       p.join(tempRoot.path, 'downloaded_courses', 'bundle_scaffold'),
@@ -160,7 +190,8 @@ void main() {
 
     expect(preview.success, isFalse);
     expect(preview.message, contains('not a reloadable source folder'));
-    expect(preview.message, contains('Choose the original local course folder'));
+    expect(
+        preview.message, contains('Choose the original local course folder'));
     expect(preview.message, isNot(contains('Missing file:')));
   });
 

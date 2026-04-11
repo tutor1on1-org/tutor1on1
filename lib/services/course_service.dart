@@ -389,7 +389,7 @@ GROUP BY kp_key
       final nodeRows = <CourseNodesCompanion>[];
       final edgeRows = <CourseEdgesCompanion>[];
       var orderIndex = 0;
-      for (final node in preview.parseResult!.nodes.values) {
+      for (final node in _orderedCourseNodes(preview.parseResult!)) {
         if (node.isPlaceholder) {
           continue;
         }
@@ -604,14 +604,14 @@ GROUP BY kp_key
         }
       }
       if (missingLecturePaths.isNotEmpty) {
-        final allLecturesMissing =
-            expectedLectureCount > 0 &&
+        final allLecturesMissing = expectedLectureCount > 0 &&
             missingLecturePaths.length == expectedLectureCount;
         if (allLecturesMissing) {
           errors.add(_describeMissingLectureRoot(basePath));
         } else {
           errors.addAll(
-            missingLecturePaths.map((lecturePath) => 'Missing file: $lecturePath'),
+            missingLecturePaths
+                .map((lecturePath) => 'Missing file: $lecturePath'),
           );
         }
       }
@@ -718,6 +718,13 @@ GROUP BY kp_key
       }
     }
     return maxDepth;
+  }
+
+  List<SkillNode> _orderedCourseNodes(SkillTreeParseResult parseResult) {
+    return parseResult.nodes.values
+        .where((node) => !node.isPlaceholder)
+        .toList()
+      ..sort((left, right) => compareSkillNodeIds(left.id, right.id));
   }
 }
 

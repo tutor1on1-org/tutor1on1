@@ -37,6 +37,28 @@ class SkillNode {
   final List<SkillNode> children = [];
 }
 
+int compareSkillNodeIds(String left, String right) {
+  final leftParts = left.split('.');
+  final rightParts = right.split('.');
+  var index = 0;
+  while (index < leftParts.length && index < rightParts.length) {
+    final leftNumber = int.tryParse(leftParts[index]);
+    final rightNumber = int.tryParse(rightParts[index]);
+    final partCompare = leftNumber != null && rightNumber != null
+        ? leftNumber.compareTo(rightNumber)
+        : leftParts[index].compareTo(rightParts[index]);
+    if (partCompare != 0) {
+      return partCompare;
+    }
+    index += 1;
+  }
+  final lengthCompare = leftParts.length.compareTo(rightParts.length);
+  if (lengthCompare != 0) {
+    return lengthCompare;
+  }
+  return left.compareTo(right);
+}
+
 class SkillTreeParser {
   SkillTreeParseResult parse(String content) {
     final lines = content.split(RegExp(r'\r\n|\n|\r'));
@@ -101,7 +123,7 @@ class SkillTreeParser {
       return placeholder;
     }
 
-    for (final node in nodes.values) {
+    for (final node in nodes.values.toList()) {
       final parentId = _parentId(node.id);
       node.parentId = parentId;
       if (parentId == null) {
@@ -111,12 +133,22 @@ class SkillTreeParser {
         parent.children.add(node);
       }
     }
+    _sortChildren(root);
 
     return SkillTreeParseResult(
       root: root,
       nodes: nodes,
       unparsedLines: unparsed,
     );
+  }
+
+  void _sortChildren(SkillNode node) {
+    node.children.sort(
+      (left, right) => compareSkillNodeIds(left.id, right.id),
+    );
+    for (final child in node.children) {
+      _sortChildren(child);
+    }
   }
 
   String? _parentId(String id) {
