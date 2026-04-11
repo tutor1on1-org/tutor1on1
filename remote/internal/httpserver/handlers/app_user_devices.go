@@ -9,6 +9,8 @@ import (
 
 var errDeviceLimitReached = errors.New("device limit reached")
 
+const maxAppUserDevicesPerUser = 10
+
 type appUserDeviceSessionInput struct {
 	DeviceKey             string
 	DeviceName            string
@@ -80,33 +82,21 @@ func upsertAppUserDeviceSession(
 		}
 	}()
 
-	var existingID int64
-	row := tx.QueryRow(
-		`SELECT id FROM app_user_devices
-		 WHERE user_id = ? AND device_key = ?
-		 LIMIT 1`,
+	registeredDevices, existingID, err := lockAppUserDevicesForLogin(
+		tx,
 		userID,
 		normalized.DeviceKey,
 	)
-	switch scanErr := row.Scan(&existingID); {
-	case scanErr == nil:
-	case errors.Is(scanErr, sql.ErrNoRows):
-		var registeredCount int
-		countRow := tx.QueryRow(
-			`SELECT COUNT(*)
-			 FROM app_user_devices
-			 WHERE user_id = ?`,
-			userID,
-		)
-		if err = countRow.Scan(&registeredCount); err != nil {
-			return "", appUserDeviceSessionInput{}, err
-		}
-		if registeredCount >= 10 {
-			return "", appUserDeviceSessionInput{}, errDeviceLimitReached
-		}
-	default:
-		err = scanErr
+	if err != nil {
 		return "", appUserDeviceSessionInput{}, err
+	}
+	if existingID <= 0 && len(registeredDevices) >= maxAppUserDevicesPerUser {
+		evictCount := len(registeredDevices) - maxAppUserDevicesPerUser + 1
+		for _, device := range registeredDevices[:evictCount] {
+			if err = evictAppUserDevice(tx, userID, device.DeviceKey); err != nil {
+				return "", appUserDeviceSessionInput{}, err
+			}
+		}
 	}
 
 	sessionNonce, err := randomToken(16)
@@ -172,6 +162,76 @@ func upsertAppUserDeviceSession(
 	}
 	committed = true
 	return sessionNonce, normalized, nil
+}
+
+type registeredAppUserDevice struct {
+	ID        int64
+	DeviceKey string
+}
+
+func lockAppUserDevicesForLogin(
+	tx *sql.Tx,
+	userID int64,
+	deviceKey string,
+) ([]registeredAppUserDevice, int64, error) {
+	rows, err := tx.Query(
+		`SELECT id, device_key
+		 FROM app_user_devices
+		 WHERE user_id = ?
+		 ORDER BY COALESCE(last_seen_at, created_at) ASC, id ASC
+		 FOR UPDATE`,
+		userID,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	devices := []registeredAppUserDevice{}
+	var existingID int64
+	for rows.Next() {
+		var device registeredAppUserDevice
+		if err := rows.Scan(&device.ID, &device.DeviceKey); err != nil {
+			return nil, 0, err
+		}
+		devices = append(devices, device)
+		if device.DeviceKey == deviceKey {
+			existingID = device.ID
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return devices, existingID, nil
+}
+
+func evictAppUserDevice(tx *sql.Tx, userID int64, deviceKey string) error {
+	if _, err := tx.Exec(
+		`UPDATE refresh_tokens
+		 SET revoked_at = NOW()
+		 WHERE user_id = ? AND device_key = ? AND revoked_at IS NULL`,
+		userID,
+		deviceKey,
+	); err != nil {
+		return err
+	}
+	result, err := tx.Exec(
+		`DELETE FROM app_user_devices
+		 WHERE user_id = ? AND device_key = ?`,
+		userID,
+		deviceKey,
+	)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected <= 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func isActiveAppUserDeviceSession(

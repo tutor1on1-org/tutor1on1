@@ -267,3 +267,8 @@ Last updated: 2026-04-10
 - Symptom: Dennis could log in on a fresh Android APK and see no teacher-home students or course/student/tree rows even though Windows still showed them.
 - Root cause: teacher login wrote `student_kp` artifact hashes into the local manifest without downloading payloads, which kept login fast but did not create local student/course assignment scaffolds. Because the manifest `state2` then matched the server, later sync passes skipped the download path that used to create those scaffolds.
 - Prevention: bootstrap teacher-home student/course assignment scaffolds from an explicit teacher active-enrollment API after course metadata is reconciled, including state2-match fast paths. Do not rely on full `student_kp` downloads or optional course-bundle prompt metadata to discover active students.
+
+51. Secure-storage-only auth device keys can exhaust the device limit
+- Symptom: the same physical device can appear as multiple registered account devices and quickly trigger the per-account device limit.
+- Root cause: the client stored the auth `device_key` only in secure storage. If secure storage was reset or failed across a release/plugin incident, the next login generated a fresh random UUID, so the server counted the same installed app as a new device. The server compounded this by rejecting the 11th device instead of pruning old entries.
+- Prevention: back up the non-sensitive `device_key` under application support and restore secure storage from that backup when needed. On the server, when a valid login arrives at the device cap, evict the least-recently-used registered device and revoke its refresh tokens before inserting the new session.
