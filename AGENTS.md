@@ -27,3 +27,4 @@
 - Public web links should use `www.tutor1on1.org` for site pages and `api.tutor1on1.org/downloads/` for downloadable artifacts; do not publish raw IP URLs.
 - Website localization keeps English at `/`, Simplified Chinese at `/zh/`, and other locales under `/<locale>/` static paths; keep detection, explicit-locale path handling, and dropdown switching centralized in `/site.js` instead of duplicating per-page logic.
 - Public macOS downloads must stay off the website until there is a runnable Release build. When macOS is ready, publish only a signed `Developer ID Application` build with Hardened Runtime and notarization; do not publish raw `flutter build macos` output.
+- Course KP ordering must use dotted numeric comparison, not plain string comparison; keep parser, UI, and persisted `orderIndex` ordering aligned.

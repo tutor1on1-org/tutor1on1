@@ -1,5 +1,5 @@
 # WORKLOG
-Last updated: 2026-04-01
+Last updated: 2026-04-11
 
 Active remote runbook and host details only. Historical deployment timeline lives in `LOGBOOK.md`.
 
@@ -32,6 +32,7 @@ Active remote runbook and host details only. Historical deployment timeline live
 - `student_kp` must stay owned by `ftapp:ftapp` so per-KP artifact writes do not fail during cutover or live sync.
 - Nginx worker (`nginx`) must be able to read and traverse storage paths.
 - API upload max size and Nginx `client_max_body_size` must match.
+- Artifact-manifest sync uses the server copy as canonical; if local sync state disagrees, reset/rebuild local state from server instead of preserving both copies.
 
 ## Current production sync state
 - Production runtime sync is artifact-manifest only; retired row-level routes `/api/session/sync`, `/api/progress/sync`, and `/api/sync/download` should stay `404`.
@@ -39,11 +40,12 @@ Active remote runbook and host details only. Historical deployment timeline live
 - Latest pre-cutover backup: `/home/ecs-user/db_backups/family_teacher_20260401_195705_artifact_cutover_pre.sql.gz`
 
 ## Latest verified public artifacts
+- Version: `v1.0.7`
 - Android APK: `https://api.tutor1on1.org/downloads/Tutor1on1.apk`
-  - SHA-256: `7c76d548f3ced5b69f71a65ef9fe3bf5d3e7a831a635a62ba57122ef5cbe4f15`
+  - SHA-256: `a4baa5d899b04ea216df91e2b0c3e92e62887b74b0c38a5b5d29c497857d07b0`
 - Windows ZIP: `https://api.tutor1on1.org/downloads/Tutor1on1.zip`
-  - SHA-256: `f355e03827c9f2112ec4fa905c83efc9f358832cd10419fa87061fa5d3864959`
-- GitHub Release: `https://github.com/tutor1on1-org/tutor1on1/releases/tag/v1.0.1`
+  - SHA-256: `ad3f83187cb311d423dfab393003b1c164ebe6352a8048ca11f17fcda75fce21`
+- GitHub Release: `https://github.com/tutor1on1-org/tutor1on1/releases/tag/v1.0.7`
 - Website root: `https://www.tutor1on1.org`
 
 ## Common checks

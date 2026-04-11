@@ -1,5 +1,5 @@
 # BUGS
-Last updated: 2026-04-10
+Last updated: 2026-04-11
 
 ## Active watch
 - Student import race after bundle download (monitoring): fixed by awaiting archive extraction in client bundle service (`f77e7e0`); keep watching for recurrence in production-like flow.
@@ -277,3 +277,8 @@ Last updated: 2026-04-10
 - Symptom: a login request that sends a flat `device_key` payload can still create/update only the `legacy` device row, hiding the real client device identity from server-side account-device logic.
 - Root cause: the auth request structs embedded an unexported `authDevicePayload` type. Fiber `BodyParser` did not populate those promoted fields from the flat JSON body, so `createAuthDeviceSession()` received empty device fields and `normalizeAppUserDeviceSessionInput()` used the `legacy` fallback.
 - Prevention: embed an exported reusable auth-device payload type and keep a handler-level parse regression test that posts flat JSON with `device_key`, `device_name`, platform, timezone, and app version.
+
+53. Course KP ordering can regress to lexicographic order
+- Symptom: course nodes display or persist as `1.1, 1.10, 1.11, ..., 1.2` instead of logical dotted numeric order.
+- Root cause: some course tree paths used plain string comparison or wrote `course_nodes.order_index` from parser map iteration, so multi-digit dotted ids sorted lexicographically.
+- Prevention: route course KP ordering through the shared dotted numeric comparator for parser children, UI search/detail lists, and persisted `orderIndex`; keep regression tests with `1.1`, `1.2`, `1.10`, and `1.11`.

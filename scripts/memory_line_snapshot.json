@@ -1,15 +1,15 @@
 {
     "line_counts":  {
-                        "AGENTS.md":  23,
-                        "README.md":  53,
-                        "WORKFLOW.md":  70,
-                        "SCRIPTS.md":  215,
-                        "BUGS.md":  146,
-                        "TODOS.md":  14,
-                        "LOGBOOK.md":  59,
-                        "WORKLOG.md":  105,
+                        "AGENTS.md":  30,
+                        "README.md":  55,
+                        "WORKFLOW.md":  79,
+                        "SCRIPTS.md":  336,
+                        "BUGS.md":  284,
+                        "TODOS.md":  44,
+                        "LOGBOOK.md":  81,
+                        "WORKLOG.md":  74,
                         "PLANS.md":  25,
-                        "DONEs.md":  45,
+                        "DONEs.md":  15,
                         "BACKUP_DRILL.md":  79
                     }
 }
