@@ -173,6 +173,18 @@ class EnrollmentSyncService {
     );
   }
 
+  Future<void> repairTeacherEnrollmentScaffoldsFromServer({
+    required User currentUser,
+  }) async {
+    if (currentUser.role != 'teacher') {
+      return;
+    }
+    await _reconcileTeacherEnrollmentScaffolds(
+      currentUser: currentUser,
+      teacherEnrollments: await _api.listTeacherEnrollments(),
+    );
+  }
+
   Future<String> readCanonicalRemoteState2() {
     return _artifactApi.getState2();
   }
@@ -641,6 +653,7 @@ class EnrollmentSyncService {
                 currentUser: currentUser,
                 remoteUserId: remoteUserId,
                 remoteCourses: remoteCourses,
+                teacherEnrollments: await _api.listTeacherEnrollments(),
                 changedRemoteCourses: remoteCourses,
                 removedRemoteCourseIds: removedRemoteCourseIds,
                 allowAutoUpload: false,
@@ -721,9 +734,14 @@ class EnrollmentSyncService {
               readRemoteState2: () => _artifactApi.getState2(
                 artifactClass: _artifactClassCourseBundle,
               ),
-              onMatch: () => refreshStoredLocalState2(
-                currentUser: currentUser,
-              ),
+              onMatch: () async {
+                await repairTeacherEnrollmentScaffoldsFromServer(
+                  currentUser: currentUser,
+                );
+                await refreshStoredLocalState2(
+                  currentUser: currentUser,
+                );
+              },
               onMismatch: () async {
                 final remoteState1 = await _artifactApi.getState1(
                   artifactClass: _artifactClassCourseBundle,
@@ -771,6 +789,7 @@ class EnrollmentSyncService {
                   currentUser: currentUser,
                   remoteUserId: remoteUserId,
                   remoteCourses: remoteCourses,
+                  teacherEnrollments: await _api.listTeacherEnrollments(),
                   changedRemoteCourses: _resolveTeacherCoursesFromArtifacts(
                     artifactItems: changedRemoteCourses,
                     remoteCourses: remoteCourses,
@@ -1368,6 +1387,7 @@ class EnrollmentSyncService {
     required User currentUser,
     required int remoteUserId,
     required List<TeacherCourseSummary> remoteCourses,
+    required List<TeacherEnrollmentSummary> teacherEnrollments,
     required List<TeacherCourseSummary> changedRemoteCourses,
     required Set<int> removedRemoteCourseIds,
     required bool allowAutoUpload,
@@ -1386,6 +1406,10 @@ class EnrollmentSyncService {
     await _reconcileTeacherCourseMetadata(
       currentUser: currentUser,
       remoteCourses: remoteCourses,
+    );
+    await _reconcileTeacherEnrollmentScaffolds(
+      currentUser: currentUser,
+      teacherEnrollments: teacherEnrollments,
     );
     await _pullTeacherCoursesFromServer(
       currentUser: currentUser,
@@ -1432,6 +1456,10 @@ class EnrollmentSyncService {
         currentUser: currentUser,
         remoteCourses: refreshedRemoteCourses,
       );
+      await _reconcileTeacherEnrollmentScaffolds(
+        currentUser: currentUser,
+        teacherEnrollments: await _api.listTeacherEnrollments(),
+      );
       await _pullTeacherCoursesFromServer(
         currentUser: currentUser,
         remoteUserId: remoteUserId,
@@ -1449,6 +1477,45 @@ class EnrollmentSyncService {
     }
     await _cleanupTeacherLocalDuplicates(currentUser.id);
     await refreshStoredLocalState2(currentUser: currentUser);
+  }
+
+  Future<void> _reconcileTeacherEnrollmentScaffolds({
+    required User currentUser,
+    required List<TeacherEnrollmentSummary> teacherEnrollments,
+  }) async {
+    if (currentUser.role != 'teacher') {
+      return;
+    }
+    for (final enrollment in teacherEnrollments) {
+      if (enrollment.status.trim() != 'active') {
+        continue;
+      }
+      if (enrollment.courseId <= 0 || enrollment.studentRemoteUserId <= 0) {
+        throw StateError(
+          'Teacher enrollment bootstrap returned an invalid enrollment.',
+        );
+      }
+      final courseVersionId =
+          await _db.getCourseVersionIdForRemoteCourse(enrollment.courseId);
+      if (courseVersionId == null || courseVersionId <= 0) {
+        throw StateError(
+          'Remote teacher enrollment course ${enrollment.courseId} is not '
+          'installed locally.',
+        );
+      }
+      final studentId =
+          await _remoteStudentIdentity.resolveOrCreateLocalStudentId(
+        db: _db,
+        remoteStudentId: enrollment.studentRemoteUserId,
+        usernameHint: enrollment.studentUsername,
+        teacherId: currentUser.id,
+      );
+      await _db.assignStudent(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+        notifySyncUsers: false,
+      );
+    }
   }
 
   Future<void> _syncTeacherCoursesFromCanonicalState1({
@@ -1479,19 +1546,26 @@ class EnrollmentSyncService {
       localFingerprintsByScope: localFingerprintsByScope,
       remoteFingerprintsByScope: remoteFingerprintsByScope,
     );
-    if (changedRemoteCourses.isEmpty && removedRemoteCourseIds.isEmpty) {
-      return;
-    }
     final remoteCourses = bundleItems.isEmpty
         ? const <TeacherCourseSummary>[]
         : _resolveTeacherCoursesFromArtifacts(
             artifactItems: bundleItems,
             remoteCourses: await _api.listTeacherCourses(),
           );
+    final teacherEnrollments = await _api.listTeacherEnrollments();
+    if (changedRemoteCourses.isEmpty && removedRemoteCourseIds.isEmpty) {
+      await _reconcileTeacherEnrollmentScaffolds(
+        currentUser: currentUser,
+        teacherEnrollments: teacherEnrollments,
+      );
+      await refreshStoredLocalState2(currentUser: currentUser);
+      return;
+    }
     await _syncTeacherCourses(
       currentUser: currentUser,
       remoteUserId: remoteUserId,
       remoteCourses: remoteCourses,
+      teacherEnrollments: teacherEnrollments,
       changedRemoteCourses: _resolveTeacherCoursesFromArtifacts(
         artifactItems: changedRemoteCourses,
         remoteCourses: remoteCourses,

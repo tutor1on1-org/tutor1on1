@@ -223,6 +223,46 @@ class EnrollmentSummary {
   }
 }
 
+class TeacherEnrollmentSummary {
+  TeacherEnrollmentSummary({
+    required this.enrollmentId,
+    required this.courseId,
+    required this.studentRemoteUserId,
+    required this.studentUsername,
+    required this.status,
+    required this.assignedAt,
+    required this.courseSubject,
+    required this.latestBundleVersionId,
+    this.latestBundleHash = '',
+  });
+
+  final int enrollmentId;
+  final int courseId;
+  final int studentRemoteUserId;
+  final String studentUsername;
+  final String status;
+  final String assignedAt;
+  final String courseSubject;
+  final int? latestBundleVersionId;
+  final String latestBundleHash;
+
+  factory TeacherEnrollmentSummary.fromJson(Map<String, dynamic> json) {
+    return TeacherEnrollmentSummary(
+      enrollmentId: (json['enrollment_id'] as num?)?.toInt() ?? 0,
+      courseId: (json['course_id'] as num?)?.toInt() ?? 0,
+      studentRemoteUserId:
+          (json['student_remote_user_id'] as num?)?.toInt() ?? 0,
+      studentUsername: (json['student_username'] as String?) ?? '',
+      status: (json['status'] as String?) ?? '',
+      assignedAt: (json['assigned_at'] as String?) ?? '',
+      courseSubject: (json['course_subject'] as String?) ?? '',
+      latestBundleVersionId:
+          (json['latest_bundle_version_id'] as num?)?.toInt(),
+      latestBundleHash: (json['latest_bundle_hash'] as String?) ?? '',
+    );
+  }
+}
+
 class TeacherRequestSummary {
   TeacherRequestSummary({
     required this.requestId,
@@ -966,6 +1006,14 @@ class MarketplaceApiService {
     return _decodeList(
       response,
       (json) => TeacherQuitRequestSummary.fromJson(json),
+    );
+  }
+
+  Future<List<TeacherEnrollmentSummary>> listTeacherEnrollments() async {
+    final response = await _get('/api/teacher/enrollments');
+    return _decodeList(
+      response,
+      (json) => TeacherEnrollmentSummary.fromJson(json),
     );
   }
 

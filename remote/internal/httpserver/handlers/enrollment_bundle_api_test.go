@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"family_teacher_remote/internal/config"
 	storepkg "family_teacher_remote/internal/db"
@@ -145,6 +146,70 @@ func TestDownloadBundleRejectsNonEnrolledStudent(t *testing.T) {
 	assertSQLMockExpectations(t, mock)
 }
 
+func TestListTeacherEnrollmentsReturnsActiveStudentCourses(t *testing.T) {
+	db, mock := newHandlerSQLMock(t)
+	defer db.Close()
+
+	userID := int64(901)
+	teacherID := int64(7001)
+	assignedAt := time.Date(2026, 4, 10, 12, 30, 0, 0, time.UTC)
+	mock.ExpectQuery(`SELECT id FROM teacher_accounts WHERE user_id = \? AND status = 'active' LIMIT 1`).
+		WithArgs(userID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(teacherID))
+	mock.ExpectQuery(`SELECT e.id, e.course_id, e.student_id, u.username, e.status, e.assigned_at`).
+		WithArgs(teacherID).
+		WillReturnRows(
+			sqlmock.NewRows([]string{
+				"id",
+				"course_id",
+				"student_id",
+				"username",
+				"status",
+				"assigned_at",
+				"subject",
+				"latest_bundle_version_id",
+				"latest_bundle_hash",
+				"latest_bundle_oss_path",
+			}).AddRow(
+				int64(501),
+				int64(77),
+				int64(3001),
+				"albert",
+				"active",
+				assignedAt,
+				"Remote Math",
+				int64(9001),
+				"abc123",
+				"bundles/77/1.zip",
+			),
+		)
+
+	app := buildEnrollmentBundleTestApp(db, []string{"test-secret"})
+	token := signTestJWT(t, "test-secret", userID, true)
+	status, body, _ := callAPI(
+		t,
+		app,
+		http.MethodGet,
+		"/api/teacher/enrollments",
+		token,
+		"",
+	)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", status, http.StatusOK, body)
+	}
+	for _, expected := range []string{
+		`"student_remote_user_id":3001`,
+		`"student_username":"albert"`,
+		`"course_subject":"Remote Math"`,
+		`"latest_bundle_hash":"abc123"`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("body missing %s: %s", expected, body)
+		}
+	}
+	assertSQLMockExpectations(t, mock)
+}
+
 func TestDownloadBundleAllowsEnrolledStudent(t *testing.T) {
 	db, mock := newHandlerSQLMock(t)
 	defer db.Close()
@@ -245,6 +310,7 @@ func buildEnrollmentBundleTestApp(db *sql.DB, jwtSecrets []string) *fiber.App {
 
 	app := fiber.New()
 	app.Post("/api/enrollment-requests", enrollments.CreateRequest)
+	app.Get("/api/teacher/enrollments", enrollments.ListTeacherEnrollments)
 	app.Get("/api/bundles/download", bundles.Download)
 	return app
 }

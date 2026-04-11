@@ -38,6 +38,18 @@ type enrollmentSummary struct {
 	LatestBundleHash      string `json:"latest_bundle_hash"`
 }
 
+type teacherEnrollmentSummary struct {
+	EnrollmentID          int64  `json:"enrollment_id"`
+	CourseID              int64  `json:"course_id"`
+	StudentRemoteUserID   int64  `json:"student_remote_user_id"`
+	StudentName           string `json:"student_username"`
+	Status                string `json:"status"`
+	AssignedAt            string `json:"assigned_at"`
+	CourseName            string `json:"course_subject"`
+	LatestBundleVersionID int64  `json:"latest_bundle_version_id"`
+	LatestBundleHash      string `json:"latest_bundle_hash"`
+}
+
 func (h *EnrollmentHandler) CreateRequest(c *fiber.Ctx) error {
 	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
 	if err != nil {
@@ -352,6 +364,110 @@ func (h *EnrollmentHandler) ListEnrollments(c *fiber.Ctx) error {
 	results, err := h.listEnrollmentSummaries(userID)
 	if err != nil {
 		return err
+	}
+	return respondJSONWithETag(c, results)
+}
+
+func (h *EnrollmentHandler) ListTeacherEnrollments(c *fiber.Ctx) error {
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	}
+	teacherID, err := getTeacherAccountID(h.cfg.Store.DB, userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusForbidden, "teacher account required")
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, "teacher lookup failed")
+	}
+	rows, err := h.cfg.Store.DB.Query(
+		`SELECT e.id, e.course_id, e.student_id, u.username, e.status, e.assigned_at,
+		        c.subject,
+		        (
+		          SELECT bv.id FROM bundles b
+		          JOIN bundle_versions bv ON bv.bundle_id = b.id
+		          WHERE b.course_id = e.course_id
+		          ORDER BY bv.version DESC, bv.id DESC
+		          LIMIT 1
+		        ) AS latest_bundle_version_id,
+		        (
+		          SELECT bv.hash FROM bundles b
+		          JOIN bundle_versions bv ON bv.bundle_id = b.id
+		          WHERE b.course_id = e.course_id
+		          ORDER BY bv.version DESC, bv.id DESC
+		          LIMIT 1
+		        ) AS latest_bundle_hash,
+		        (
+		          SELECT bv.oss_path FROM bundles b
+		          JOIN bundle_versions bv ON bv.bundle_id = b.id
+		          WHERE b.course_id = e.course_id
+		          ORDER BY bv.version DESC, bv.id DESC
+		          LIMIT 1
+		        ) AS latest_bundle_oss_path
+		 FROM enrollments e
+		 JOIN courses c ON e.course_id = c.id
+		 JOIN users u ON e.student_id = u.id
+		 WHERE e.teacher_id = ? AND e.status = 'active'
+		 ORDER BY u.username ASC, c.subject ASC`,
+		teacherID,
+	)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "teacher enrollment list failed")
+	}
+	defer rows.Close()
+
+	results := []teacherEnrollmentSummary{}
+	for rows.Next() {
+		var (
+			id           int64
+			courseID     int64
+			studentID    int64
+			studentName  string
+			status       string
+			assigned     time.Time
+			subject      string
+			latestBundle sql.NullInt64
+			latestHash   sql.NullString
+			latestRel    sql.NullString
+		)
+		if err := rows.Scan(
+			&id,
+			&courseID,
+			&studentID,
+			&studentName,
+			&status,
+			&assigned,
+			&subject,
+			&latestBundle,
+			&latestHash,
+			&latestRel,
+		); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "teacher enrollment list failed")
+		}
+		resolvedHash, _, _, hashErr := ensureStoredBundleHash(
+			h.cfg.Store.DB,
+			h.cfg.Storage,
+			latestBundle.Int64,
+			latestHash.String,
+			latestRel.String,
+		)
+		if hashErr != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "teacher enrollment list failed")
+		}
+		results = append(results, teacherEnrollmentSummary{
+			EnrollmentID:          id,
+			CourseID:              courseID,
+			StudentRemoteUserID:   studentID,
+			StudentName:           studentName,
+			Status:                status,
+			AssignedAt:            assigned.Format(timeLayout),
+			CourseName:            subject,
+			LatestBundleVersionID: latestBundle.Int64,
+			LatestBundleHash:      resolvedHash,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "teacher enrollment list failed")
 	}
 	return respondJSONWithETag(c, results)
 }

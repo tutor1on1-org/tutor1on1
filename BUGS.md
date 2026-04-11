@@ -262,3 +262,8 @@ Last updated: 2026-04-10
 - Symptom: a teacher's current prompt can fall back to default after sync even though history still contains older custom prompt rows, and repeated course sync can show duplicate history timestamps.
 - Root cause: prompt metadata apply cleared active scope rows before validating downloaded prompt templates, then silently skipped invalid templates; repeated imports of the same teacher-scope prompt from multiple course bundles also inserted duplicate history rows because identical `(scope, content, created_at)` imports were not reused.
 - Prevention: validate all prompt metadata before mutating local active rows, fail sync/upload loudly on invalid prompt contracts, and reuse an existing prompt history row when the imported scope/content/timestamp already matches.
+
+50. Teacher fresh-device login can show no students after metadata-only student artifact sync
+- Symptom: Dennis could log in on a fresh Android APK and see no teacher-home students or course/student/tree rows even though Windows still showed them.
+- Root cause: teacher login wrote `student_kp` artifact hashes into the local manifest without downloading payloads, which kept login fast but did not create local student/course assignment scaffolds. Because the manifest `state2` then matched the server, later sync passes skipped the download path that used to create those scaffolds.
+- Prevention: bootstrap teacher-home student/course assignment scaffolds from an explicit teacher active-enrollment API after course metadata is reconciled, including state2-match fast paths. Do not rely on full `student_kp` downloads or optional course-bundle prompt metadata to discover active students.

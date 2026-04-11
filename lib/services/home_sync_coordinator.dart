@@ -50,9 +50,18 @@ class HomeSyncCoordinator {
           ),
         );
       final localState2 = _buildState2FromArtifactHashes(localArtifactHashes);
-      final remoteState2 = await _enrollmentSyncService.readCanonicalRemoteState2();
-      if (remoteState2.trim().isNotEmpty && remoteState2.trim() == localState2) {
-        await _enrollmentSyncService.refreshStoredLocalState2(currentUser: user);
+      final remoteState2 =
+          await _enrollmentSyncService.readCanonicalRemoteState2();
+      if (remoteState2.trim().isNotEmpty &&
+          remoteState2.trim() == localState2) {
+        if (includeEnrollmentSync && user.role == 'teacher') {
+          await _enrollmentSyncService
+              .repairTeacherEnrollmentScaffoldsFromServer(
+            currentUser: user,
+          );
+        }
+        await _enrollmentSyncService.refreshStoredLocalState2(
+            currentUser: user);
       } else {
         onProgress?.call(
           const SyncProgress(
@@ -348,7 +357,8 @@ class HomeSyncCoordinator {
     }
   }
 
-  String _buildState2FromArtifactHashes(Map<String, String> artifactHashesById) {
+  String _buildState2FromArtifactHashes(
+      Map<String, String> artifactHashesById) {
     final canonical = artifactHashesById.entries
         .where(
           (entry) =>

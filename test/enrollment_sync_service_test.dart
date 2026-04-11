@@ -194,6 +194,7 @@ class _ServerCourse {
 class _FakeCourseBundleServer {
   final Map<int, _ServerCourse> _courses = <int, _ServerCourse>{};
   final Map<int, Set<int>> _studentCourseIds = <int, Set<int>>{};
+  final Map<int, String> _studentUsernameById = <int, String>{};
   int _nextBundleId = 7000;
   int _nextCourseId = 9000;
 
@@ -223,8 +224,15 @@ class _FakeCourseBundleServer {
     }
   }
 
-  void setStudentCourses(int studentUserId, List<int> courseIds) {
+  void setStudentCourses(
+    int studentUserId,
+    List<int> courseIds, {
+    String? username,
+  }) {
     _studentCourseIds[studentUserId] = courseIds.toSet();
+    if (username != null) {
+      _studentUsernameById[studentUserId] = username;
+    }
   }
 
   List<_ServerCourse> visibleTeacherCourses(int teacherUserId) {
@@ -243,6 +251,41 @@ class _FakeCourseBundleServer {
         .toList(growable: false);
     courses.sort((left, right) => left.courseId.compareTo(right.courseId));
     return courses;
+  }
+
+  List<TeacherEnrollmentSummary> visibleTeacherEnrollments(int teacherUserId) {
+    final results = <TeacherEnrollmentSummary>[];
+    for (final entry in _studentCourseIds.entries) {
+      final studentUserId = entry.key;
+      for (final courseId in entry.value) {
+        final course = _courses[courseId];
+        if (course == null || course.teacherUserId != teacherUserId) {
+          continue;
+        }
+        results.add(
+          TeacherEnrollmentSummary(
+            enrollmentId: course.courseId * 100000 + studentUserId,
+            courseId: course.courseId,
+            studentRemoteUserId: studentUserId,
+            studentUsername:
+                _studentUsernameById[studentUserId] ?? 'student_$studentUserId',
+            status: 'active',
+            assignedAt: '',
+            courseSubject: course.subject,
+            latestBundleVersionId: course.bundleVersionId,
+            latestBundleHash: course.bundleSha256,
+          ),
+        );
+      }
+    }
+    results.sort((left, right) {
+      final userCompare = left.studentUsername.compareTo(right.studentUsername);
+      if (userCompare != 0) {
+        return userCompare;
+      }
+      return left.courseSubject.compareTo(right.courseSubject);
+    });
+    return results;
   }
 
   TeacherCourseSummary teacherCourseSummary(_ServerCourse course) {
@@ -496,6 +539,11 @@ class _FakeMarketplaceApiService extends MarketplaceApiService {
         .visibleTeacherCourses(currentRemoteUserId)
         .map(server.teacherCourseSummary)
         .toList(growable: false);
+  }
+
+  @override
+  Future<List<TeacherEnrollmentSummary>> listTeacherEnrollments() async {
+    return server.visibleTeacherEnrollments(currentRemoteUserId);
   }
 
   @override
@@ -1051,6 +1099,78 @@ void main() {
     expect(artifactApi.uploadCalls, 0);
   });
 
+  test('teacher canonical login sync bootstraps active student assignments',
+      () async {
+    final teacherId = await db.createUser(
+      username: 'dennis',
+      pinHash: 'pin',
+      role: 'teacher',
+      remoteUserId: 9001,
+    );
+    final teacher = (await db.getUserById(teacherId))!;
+
+    final seeded = await _createSeededBundle(
+      root: rootDir,
+      folderName: 'remote_teacher_enrollment_course',
+      rootTitle: 'Remote Math',
+    );
+    final server = _FakeCourseBundleServer()
+      ..seedCourse(
+        courseId: 501,
+        teacherUserId: 9001,
+        teacherName: 'dennis',
+        subject: 'Remote Math',
+        bundleVersionId: 3,
+        bundleBytes: seeded.bytes,
+        bundleSha256: seeded.sha256,
+      )
+      ..setStudentCourses(
+        3001,
+        <int>[501],
+        username: 'albert',
+      );
+    final artifactApi = _FakeArtifactSyncApiService(
+      server: server,
+      currentRemoteUserId: 9001,
+      currentRole: 'teacher',
+    );
+    final marketplaceApi = _FakeMarketplaceApiService(
+      server: server,
+      currentRemoteUserId: 9001,
+      currentRole: 'teacher',
+    );
+    final service = EnrollmentSyncService(
+      db: db,
+      secureStorage: secureStorage,
+      courseService: courseService,
+      marketplaceApi: marketplaceApi,
+      artifactApi: artifactApi,
+      promptRepository: promptRepository,
+      courseArtifactService: courseArtifactService,
+    );
+
+    final remoteState1 = await artifactApi.getState1();
+    final result = await service.syncFromCanonicalState1(
+      currentUser: teacher,
+      visibleItems: remoteState1.items,
+    );
+
+    expect(result.downloadedCount, 1);
+    final localCourseVersionId =
+        await db.getCourseVersionIdForRemoteCourse(501);
+    expect(localCourseVersionId, isNotNull);
+    final localStudent = await db.findUserByRemoteId(3001);
+    expect(localStudent, isNotNull);
+    expect(localStudent!.username, 'albert');
+    expect(localStudent.teacherId, teacher.id);
+    final assignedCourses =
+        await db.getAssignedCoursesForStudent(localStudent.id);
+    expect(
+      assignedCourses.map((course) => course.id),
+      contains(localCourseVersionId),
+    );
+  });
+
   test('teacher sync does not auto-upload changed course bundle artifact',
       () async {
     final teacherId = await db.createUser(
@@ -1231,6 +1351,11 @@ void main() {
         bundleVersionId: 3,
         bundleBytes: await prepared.bundleFile.readAsBytes(),
         bundleSha256: prepared.hash,
+      )
+      ..setStudentCourses(
+        3001,
+        <int>[501],
+        username: 'albert',
       );
     final artifactApi = _FakeArtifactSyncApiService(
       server: server,
@@ -1261,6 +1386,10 @@ void main() {
       "UPDATE users SET teacher_id = NULL WHERE id = ?",
       <Object?>[studentId],
     );
+    await db.customStatement(
+      "DELETE FROM student_course_assignments WHERE student_id = ? AND course_version_id = ?",
+      <Object?>[studentId, courseVersionId],
+    );
     await secureStorage.writeSyncRunAt(
       remoteUserId: 9001,
       domain: 'enrollment_sync_teacher',
@@ -1274,6 +1403,10 @@ void main() {
     expect(stats.uploadedCount, 0);
     expect(repairedStudent, isNotNull);
     expect(repairedStudent!.teacherId, teacher.id);
+    expect(
+      await db.getAssignedCoursesForStudent(studentId),
+      hasLength(1),
+    );
     expect(await db.watchStudents(teacher.id).first, hasLength(1));
   });
 
