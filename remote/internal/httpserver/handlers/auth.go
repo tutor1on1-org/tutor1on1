@@ -45,7 +45,7 @@ type registerRequest struct {
 	Username string `json:"username"`
 	Email    string `json:"email"`
 	Password string `json:"password"`
-	authDevicePayload
+	AuthDevicePayload
 }
 
 type registerTeacherRequest struct {
@@ -58,13 +58,13 @@ type registerTeacherRequest struct {
 	Contact          string  `json:"contact"`
 	ContactPublished bool    `json:"contact_published"`
 	SubjectLabelIDs  []int64 `json:"subject_label_ids"`
-	authDevicePayload
+	AuthDevicePayload
 }
 
 type loginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
-	authDevicePayload
+	AuthDevicePayload
 }
 
 type changePasswordRequest struct {
@@ -95,7 +95,7 @@ type revokeRequest struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
-type authDevicePayload struct {
+type AuthDevicePayload struct {
 	DeviceKey             string `json:"device_key"`
 	DeviceName            string `json:"device_name"`
 	Platform              string `json:"platform"`
@@ -141,7 +141,7 @@ func (h *AuthHandler) RegisterStudent(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "user insert failed")
 	}
-	deviceSession, deviceErr := h.createAuthDeviceSession(userID, req.authDevicePayload)
+	deviceSession, deviceErr := h.createAuthDeviceSession(userID, req.AuthDevicePayload)
 	if deviceErr != nil {
 		if errors.Is(deviceErr, errDeviceLimitReached) {
 			return fiber.NewError(fiber.StatusConflict, "device limit reached")
@@ -225,7 +225,7 @@ func (h *AuthHandler) RegisterTeacher(c *fiber.Ctx) error {
 	if err := tx.Commit(); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
 	}
-	deviceSession, deviceErr := h.createAuthDeviceSession(userID, req.authDevicePayload)
+	deviceSession, deviceErr := h.createAuthDeviceSession(userID, req.AuthDevicePayload)
 	if deviceErr != nil {
 		if errors.Is(deviceErr, errDeviceLimitReached) {
 			return fiber.NewError(fiber.StatusConflict, "device limit reached")
@@ -261,7 +261,7 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "role lookup failed")
 	}
-	deviceSession, deviceErr := h.createAuthDeviceSession(userID, req.authDevicePayload)
+	deviceSession, deviceErr := h.createAuthDeviceSession(userID, req.AuthDevicePayload)
 	if deviceErr != nil {
 		if errors.Is(deviceErr, errDeviceLimitReached) {
 			return fiber.NewError(fiber.StatusConflict, "device limit reached")
@@ -659,7 +659,7 @@ func (h *AuthHandler) newAccessToken(
 
 func (h *AuthHandler) createAuthDeviceSession(
 	userID int64,
-	payload authDevicePayload,
+	payload AuthDevicePayload,
 ) (authDeviceSession, error) {
 	sessionNonce, normalized, err := upsertAppUserDeviceSession(
 		h.store.DB,

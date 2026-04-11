@@ -272,3 +272,8 @@ Last updated: 2026-04-10
 - Symptom: the same physical device can appear as multiple registered account devices and quickly trigger the per-account device limit.
 - Root cause: the client stored the auth `device_key` only in secure storage. If secure storage was reset or failed across a release/plugin incident, the next login generated a fresh random UUID, so the server counted the same installed app as a new device. The server compounded this by rejecting the 11th device instead of pruning old entries.
 - Prevention: back up the non-sensitive `device_key` under application support and restore secure storage from that backup when needed. On the server, when a valid login arrives at the device cap, evict the least-recently-used registered device and revoke its refresh tokens before inserting the new session.
+
+52. Auth device payload can silently fall back to legacy when embedded in an unexported Go type
+- Symptom: a login request that sends a flat `device_key` payload can still create/update only the `legacy` device row, hiding the real client device identity from server-side account-device logic.
+- Root cause: the auth request structs embedded an unexported `authDevicePayload` type. Fiber `BodyParser` did not populate those promoted fields from the flat JSON body, so `createAuthDeviceSession()` received empty device fields and `normalizeAppUserDeviceSessionInput()` used the `legacy` fallback.
+- Prevention: embed an exported reusable auth-device payload type and keep a handler-level parse regression test that posts flat JSON with `device_key`, `device_name`, platform, timezone, and app version.
