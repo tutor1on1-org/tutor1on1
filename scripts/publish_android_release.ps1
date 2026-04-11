@@ -65,22 +65,121 @@ function Assert-Http200 {
   }
 }
 
-function Remove-StaleGeneratedPluginRegistrant {
+function Repair-GeneratedPluginRegistrantForRelease {
   param(
     [Parameter(Mandatory = $true)]
     [string]$RepoRoot
   )
 
-  $staleRegistrantPaths = @(
-    (Join-Path $RepoRoot 'android\app\src\main\java\io\flutter\plugins\GeneratedPluginRegistrant.java'),
-    (Join-Path $RepoRoot 'android\app\src\main\kotlin\io\flutter\plugins\GeneratedPluginRegistrant.kt')
+  $javaRegistrantPath = Join-Path $RepoRoot 'android\app\src\main\java\io\flutter\plugins\GeneratedPluginRegistrant.java'
+  if (-not (Test-Path -LiteralPath $javaRegistrantPath)) {
+    throw "GeneratedPluginRegistrant.java was not generated: $javaRegistrantPath"
+  }
+
+  $content = Get-Content -LiteralPath $javaRegistrantPath -Raw
+  if ($content -match 'dev\.flutter\.plugins\.integration_test\.IntegrationTestPlugin') {
+    $integrationTestBlockPattern = '(?ms)^\s*try\s*\{\s*\r?\n\s*flutterEngine\.getPlugins\(\)\.add\(new dev\.flutter\.plugins\.integration_test\.IntegrationTestPlugin\(\)\);\s*\r?\n\s*\}\s*catch \(Exception e\)\s*\{\s*\r?\n\s*Log\.e\(TAG, "Error registering plugin integration_test, dev\.flutter\.plugins\.integration_test\.IntegrationTestPlugin", e\);\s*\r?\n\s*\}\s*\r?\n'
+    $updatedContent = [regex]::Replace($content, $integrationTestBlockPattern, '')
+    if ($updatedContent -eq $content) {
+      throw "Could not remove integration_test from GeneratedPluginRegistrant.java"
+    }
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    [System.IO.File]::WriteAllText($javaRegistrantPath, $updatedContent, $utf8NoBom)
+    Write-Host "==> Remove release-only integration_test registrant block: $javaRegistrantPath"
+    $content = $updatedContent
+  }
+
+  if ($content -match 'dev\.flutter\.plugins\.integration_test\.IntegrationTestPlugin') {
+    throw "GeneratedPluginRegistrant.java still references integration_test after repair: $javaRegistrantPath"
+  }
+  if ($content -notmatch 'com\.it_nomads\.fluttersecurestorage\.FlutterSecureStoragePlugin') {
+    throw "GeneratedPluginRegistrant.java is missing flutter_secure_storage registration: $javaRegistrantPath"
+  }
+}
+
+function Assert-AndroidReleasePluginRegistration {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$ApkPath
   )
 
-  foreach ($path in $staleRegistrantPaths) {
-    if (Test-Path -LiteralPath $path) {
-      Write-Host "==> Remove stale Flutter registrant: $path"
-      Remove-Item -LiteralPath $path -Force
-    }
+  $resolvedApkPath = (Resolve-Path -LiteralPath $ApkPath).Path
+  $pythonScript = @'
+import re
+import struct
+import sys
+import zipfile
+
+required_classes = {
+    "Lio/flutter/plugins/GeneratedPluginRegistrant;",
+    "Lcom/it_nomads/fluttersecurestorage/FlutterSecureStoragePlugin;",
+}
+required_strings = {
+    "registerWith",
+    "plugins.it_nomads.com/flutter_secure_storage",
+}
+
+
+def read_u4(data, offset):
+    return struct.unpack_from("<I", data, offset)[0]
+
+
+def read_dex_string(data, offset):
+    pos = offset
+    while data[pos] & 0x80:
+        pos += 1
+    pos += 1
+    start = pos
+    while data[pos] != 0:
+        pos += 1
+    return data[start:pos].decode("utf-8", errors="replace")
+
+
+apk_path = sys.argv[1]
+missing_classes = set(required_classes)
+missing_strings = set(required_strings)
+dex_entries = 0
+
+with zipfile.ZipFile(apk_path) as archive:
+    for name in archive.namelist():
+        if not re.fullmatch(r"classes(\d*)\.dex", name.rsplit("/", 1)[-1]):
+            continue
+        dex_entries += 1
+        dex = archive.read(name)
+
+        for value in tuple(missing_strings):
+            if value.encode("utf-8") in dex:
+                missing_strings.discard(value)
+
+        string_ids_off = read_u4(dex, 0x3C)
+        type_ids_off = read_u4(dex, 0x44)
+        class_defs_size = read_u4(dex, 0x60)
+        class_defs_off = read_u4(dex, 0x64)
+
+        for index in range(class_defs_size):
+            if not missing_classes:
+                break
+            class_idx = read_u4(dex, class_defs_off + (32 * index))
+            string_idx = read_u4(dex, type_ids_off + (4 * class_idx))
+            string_data_off = read_u4(dex, string_ids_off + (4 * string_idx))
+            missing_classes.discard(read_dex_string(dex, string_data_off))
+
+if dex_entries <= 0:
+    print(f"Release APK is missing classes*.dex entries: {apk_path}", file=sys.stderr)
+    sys.exit(1)
+if missing_classes or missing_strings:
+    for value in sorted(missing_classes):
+        print(f"Release APK dex is missing required class {value} in {apk_path}", file=sys.stderr)
+    for value in sorted(missing_strings):
+        print(f"Release APK dex is missing required string '{value}' in {apk_path}", file=sys.stderr)
+    sys.exit(1)
+
+print(f"==> APK plugin registration dex gate passed: {apk_path} ({dex_entries} dex file(s))")
+'@
+  $pythonOutput = $pythonScript | python - $resolvedApkPath 2>&1
+  $pythonOutput | ForEach-Object { Write-Host $_ }
+  if ($LASTEXITCODE -ne 0) {
+    throw "APK plugin registration dex gate failed with exit code $LASTEXITCODE."
   }
 }
 
@@ -121,11 +220,12 @@ try {
       Write-Host '==> Skip flutter pub get requested'
     }
 
-    Remove-StaleGeneratedPluginRegistrant -RepoRoot $repoRoot
+    Repair-GeneratedPluginRegistrantForRelease -RepoRoot $repoRoot
 
     Invoke-Checked -Label 'flutter build apk --config-only' -Action {
       flutter build apk --config-only --no-pub
     }
+    Repair-GeneratedPluginRegistrantForRelease -RepoRoot $repoRoot
     Invoke-Checked -Label 'flutter build apk --release' -Action {
       flutter build apk --release --no-pub
     }
@@ -136,6 +236,7 @@ try {
   if (-not (Test-Path -LiteralPath $releaseApkPath)) {
     throw "Release APK not found: $releaseApkPath"
   }
+  Assert-AndroidReleasePluginRegistration -ApkPath $releaseApkPath
 
   Copy-Item -LiteralPath $releaseApkPath -Destination $localPublishedApkPath -Force
   $apkItem = Get-Item -LiteralPath $localPublishedApkPath
