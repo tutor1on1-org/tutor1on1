@@ -1,6 +1,10 @@
 # LOGBOOK
 Historical timeline. Keep active runbook details in `WORKLOG.md`. Entries that mention row-level session/progress/enrollment sync remain historical delivery records only.
 
+## 2026-04-12
+- Fixed marketplace course/bundle deletion when moderation requests or artifact manifest rows still reference `bundle_versions`: full-course delete, single bundle-version delete, and automatic bundle prune now clear `course_upload_votes`, `course_upload_requests`, and `artifact_state1_items` inside the same transaction before deleting bundle versions.
+- Validated with `go test ./internal/httpserver/handlers` and `go test ./...` under `remote/`; deployed the rebuilt Linux amd64 API binary for commit `d7c5bbb` to `/opt/family_teacher_remote/bin/family-teacher-api`, restarted `family-teacher-api.service`, verified remote SHA-256 `d1269359d99cd05fc5e7d7204989fe323ce528ca4e25da3b3e454e861fe166a0`, and confirmed `https://api.tutor1on1.org/health` returns `{"status":"ok"}`.
+
 ## 2026-04-05
 - Fixed the client enrollment `state2` parity bug that could raise `Stored student enrollment sync state drifted from canonical local state1` on the next due sync after login or `Take server copy`: local enrollment sync state now uses the same manifest contract as the server (`artifact_state2_v1` over sorted `artifact_id|sha256` lines), while teacher-only pending uploads still use synthetic local-only artifact ids to force the intended upload path.
 - Added due-interval regression coverage so student and teacher clean-second-sync checks no longer pass trivially inside the 60-second cooldown window.
