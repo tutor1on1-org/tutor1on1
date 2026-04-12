@@ -40,6 +40,7 @@ Durable cross-session lessons and operating rules moved from AGENTS.md (memory-m
 - Workflow-critical UI feedback should use persistent, manually dismissible messages instead of auto-fade snackbars, including marketplace enrollment/quit/download flows.
 - Marketplace course identity must be normalized and enforced server-side as `(teacher_id + course_name_key)` to prevent duplicate course rows across repeated uploads.
 - Marketplace visibility must require at least one bundle version; deleting the last bundle version should auto-unpublish the course to avoid stale/duplicate listings.
+- Marketplace course/bundle deletion must clear dependent `course_upload_votes`, `course_upload_requests`, and `artifact_state1_items` inside the same transaction before deleting `bundle_versions`; use the same cleanup path for full-course delete, single-version delete, and bundle prune.
 - JWT secret exposure is critical: with HS256 auth, anyone holding the secret can mint bearer tokens for arbitrary `sub`; rotate secrets immediately if exposed and minimize distribution.
 - JWT rotation rollout must keep signing and verification separated: sign with current `JWT_SECRET`, verify with `[JWT_SECRET + JWT_PREVIOUS_SECRETS]` during cutover, and enforce `RECOVERY_TOKEN_ECHO=false` when `APP_ENV=production`.
 - Stale local `remoteCourseId` links after server deletions can trigger bundle ensure failures; server must return `404 course not found` (not 500), and client upload flow must re-resolve/create remote course before `ensureBundle`.

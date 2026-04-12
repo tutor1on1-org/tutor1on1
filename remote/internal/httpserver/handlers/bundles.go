@@ -251,6 +251,11 @@ func (h *BundlesHandler) Upload(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusInternalServerError, "bundle prune lookup failed")
 		}
 		for _, target := range prunedTargets {
+			if err = deleteBundleVersionReferencesTx(tx, target.id); err != nil {
+				_ = tx.Rollback()
+				_ = h.removeStoredFile(relPath)
+				return fiber.NewError(fiber.StatusInternalServerError, "bundle prune dependency delete failed")
+			}
 			if _, err = tx.Exec(
 				"DELETE FROM bundle_versions WHERE id = ?",
 				target.id,
@@ -540,7 +545,21 @@ func (h *BundlesHandler) DeleteTeacherCourseBundleVersion(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "bundle version lookup failed")
 	}
 
-	result, err := h.cfg.Store.DB.Exec(
+	tx, err := h.cfg.Store.DB.Begin()
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if err := deleteBundleVersionReferencesTx(tx, bundleVersionID); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "bundle version references delete failed")
+	}
+	result, err := tx.Exec(
 		`DELETE bv FROM bundle_versions bv
 		 JOIN bundles b ON b.id = bv.bundle_id
 		 WHERE bv.id = ? AND b.course_id = ? AND b.teacher_id = ?`,
@@ -555,12 +574,12 @@ func (h *BundlesHandler) DeleteTeacherCourseBundleVersion(c *fiber.Ctx) error {
 	if err != nil || affected == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "bundle version not found")
 	}
-	hasRemaining, err := h.hasBundleVersions(courseID, teacherID)
+	hasRemaining, err := hasBundleVersionsTx(tx, courseID, teacherID)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "bundle version lookup failed")
 	}
 	if !hasRemaining {
-		if _, err := h.cfg.Store.DB.Exec(
+		if _, err := tx.Exec(
 			`UPDATE course_catalog_entries
 			 SET visibility = 'private', published_at = NULL
 			 WHERE course_id = ? AND teacher_id = ?`,
@@ -570,6 +589,10 @@ func (h *BundlesHandler) DeleteTeacherCourseBundleVersion(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusInternalServerError, "catalog update failed")
 		}
 	}
+	if err := tx.Commit(); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
+	}
+	committed = true
 	if h.cfg.Storage != nil {
 		if err := artifactsync.RefreshUsersForCourse(h.cfg.Store.DB, courseID); err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
@@ -751,7 +774,19 @@ func (h *BundlesHandler) removeStoredFile(relPath string) error {
 }
 
 func (h *BundlesHandler) hasBundleVersions(courseID int64, teacherID int64) (bool, error) {
-	row := h.cfg.Store.DB.QueryRow(
+	return hasBundleVersionsQuery(h.cfg.Store.DB, courseID, teacherID)
+}
+
+func hasBundleVersionsTx(tx *sql.Tx, courseID int64, teacherID int64) (bool, error) {
+	return hasBundleVersionsQuery(tx, courseID, teacherID)
+}
+
+type bundleVersionQuerier interface {
+	QueryRow(query string, args ...interface{}) *sql.Row
+}
+
+func hasBundleVersionsQuery(db bundleVersionQuerier, courseID int64, teacherID int64) (bool, error) {
+	row := db.QueryRow(
 		`SELECT 1
 		 FROM bundles b
 		 JOIN bundle_versions bv ON bv.bundle_id = b.id

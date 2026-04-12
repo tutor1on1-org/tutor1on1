@@ -590,6 +590,9 @@ func (h *TeacherCoursesHandler) DeleteCourse(c *fiber.Ctx) error {
 	); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "catalog delete failed")
 	}
+	if err = deleteCourseBundleReferencesTx(tx, courseID); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "bundle references delete failed")
+	}
 	if _, err = tx.Exec(
 		`DELETE bv FROM bundle_versions bv
 		 JOIN bundles b ON bv.bundle_id = b.id

@@ -86,6 +86,16 @@ func TestDeleteLastBundleVersionAutoUnpublishesCourse(t *testing.T) {
 	mock.ExpectQuery(`(?s)SELECT bv.oss_path.*WHERE bv.id = \? AND b.course_id = \? AND b.teacher_id = \?`).
 		WithArgs(versionID, courseID, teacherID).
 		WillReturnRows(sqlmock.NewRows([]string{"oss_path"}).AddRow("bundles/77/1.zip"))
+	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)DELETE cuv FROM course_upload_votes cuv.*WHERE cur.bundle_version_id = \?`).
+		WithArgs(versionID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`DELETE FROM course_upload_requests WHERE bundle_version_id = \?`).
+		WithArgs(versionID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`DELETE FROM artifact_state1_items WHERE bundle_version_id = \?`).
+		WithArgs(versionID).
+		WillReturnResult(sqlmock.NewResult(0, 2))
 	mock.ExpectExec(`(?s)DELETE bv FROM bundle_versions bv.*WHERE bv.id = \? AND b.course_id = \? AND b.teacher_id = \?`).
 		WithArgs(versionID, courseID, teacherID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -95,6 +105,7 @@ func TestDeleteLastBundleVersionAutoUnpublishesCourse(t *testing.T) {
 	mock.ExpectExec(`(?s)UPDATE course_catalog_entries\s+SET visibility = 'private', published_at = NULL\s+WHERE course_id = \? AND teacher_id = \?`).
 		WithArgs(courseID, teacherID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 
 	app := buildTeacherContractTestApp(db, []string{"test-secret"})
 	token := signTestJWT(t, "test-secret", userID, true)
@@ -111,6 +122,68 @@ func TestDeleteLastBundleVersionAutoUnpublishesCourse(t *testing.T) {
 	}
 	if !strings.Contains(body, `"status":"deleted"`) {
 		t.Fatalf("body = %q, want contains %q", body, `"status":"deleted"`)
+	}
+	assertSQLMockExpectations(t, mock)
+}
+
+func TestDeleteCourseBundleReferencesTxDeletesModerationAndArtifactState(t *testing.T) {
+	db, mock := newHandlerSQLMock(t)
+	defer db.Close()
+
+	courseID := int64(707)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)DELETE cuv FROM course_upload_votes cuv.*WHERE cur.course_id = \?`).
+		WithArgs(courseID).
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec(`DELETE FROM course_upload_requests WHERE course_id = \?`).
+		WithArgs(courseID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`DELETE FROM artifact_state1_items WHERE course_id = \?`).
+		WithArgs(courseID).
+		WillReturnResult(sqlmock.NewResult(0, 3))
+	mock.ExpectCommit()
+
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	if err := deleteCourseBundleReferencesTx(tx, courseID); err != nil {
+		t.Fatalf("deleteCourseBundleReferencesTx() error = %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+	assertSQLMockExpectations(t, mock)
+}
+
+func TestDeleteBundleVersionReferencesTxDeletesModerationAndArtifactState(t *testing.T) {
+	db, mock := newHandlerSQLMock(t)
+	defer db.Close()
+
+	bundleVersionID := int64(808)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`(?s)DELETE cuv FROM course_upload_votes cuv.*WHERE cur.bundle_version_id = \?`).
+		WithArgs(bundleVersionID).
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec(`DELETE FROM course_upload_requests WHERE bundle_version_id = \?`).
+		WithArgs(bundleVersionID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`DELETE FROM artifact_state1_items WHERE bundle_version_id = \?`).
+		WithArgs(bundleVersionID).
+		WillReturnResult(sqlmock.NewResult(0, 3))
+	mock.ExpectCommit()
+
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	if err := deleteBundleVersionReferencesTx(tx, bundleVersionID); err != nil {
+		t.Fatalf("deleteBundleVersionReferencesTx() error = %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() error = %v", err)
 	}
 	assertSQLMockExpectations(t, mock)
 }

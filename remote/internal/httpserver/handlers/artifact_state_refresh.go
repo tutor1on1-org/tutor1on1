@@ -35,6 +35,56 @@ func deleteStudentArtifactsForCourseAndStudentTx(
 	return err
 }
 
+func deleteCourseBundleReferencesTx(tx *sql.Tx, courseID int64) error {
+	if tx == nil || courseID <= 0 {
+		return nil
+	}
+	if _, err := tx.Exec(
+		`DELETE cuv FROM course_upload_votes cuv
+		 JOIN course_upload_requests cur ON cur.id = cuv.request_id
+		 WHERE cur.course_id = ?`,
+		courseID,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM course_upload_requests WHERE course_id = ?`,
+		courseID,
+	); err != nil {
+		return err
+	}
+	_, err := tx.Exec(
+		`DELETE FROM artifact_state1_items WHERE course_id = ?`,
+		courseID,
+	)
+	return err
+}
+
+func deleteBundleVersionReferencesTx(tx *sql.Tx, bundleVersionID int64) error {
+	if tx == nil || bundleVersionID <= 0 {
+		return nil
+	}
+	if _, err := tx.Exec(
+		`DELETE cuv FROM course_upload_votes cuv
+		 JOIN course_upload_requests cur ON cur.id = cuv.request_id
+		 WHERE cur.bundle_version_id = ?`,
+		bundleVersionID,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM course_upload_requests WHERE bundle_version_id = ?`,
+		bundleVersionID,
+	); err != nil {
+		return err
+	}
+	_, err := tx.Exec(
+		`DELETE FROM artifact_state1_items WHERE bundle_version_id = ?`,
+		bundleVersionID,
+	)
+	return err
+}
+
 func refreshArtifactStatesForUsers(db *sql.DB, userIDs []int64) error {
 	if db == nil {
 		return nil
