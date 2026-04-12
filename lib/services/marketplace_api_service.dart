@@ -892,13 +892,21 @@ class MarketplaceApiService {
     required SecureStorageService secureStorage,
     String? baseUrl,
     http.Client? client,
-  })  : _secureStorage = secureStorage,
+    FirstPartyApiHttpClientFactory? clientFactory,
+  })  : assert(client == null || clientFactory == null),
+        _secureStorage = secureStorage,
         _baseUrl = _normalizeBaseUrl(baseUrl ?? kAuthBaseUrl),
-        _client = client ?? _buildClient(kAuthAllowInsecureTls);
+        _clientFactory =
+            clientFactory ?? (() => _buildClient(kAuthAllowInsecureTls)),
+        _ownsClient = client == null,
+        _client = client ??
+            (clientFactory ?? (() => _buildClient(kAuthAllowInsecureTls)))();
 
   final SecureStorageService _secureStorage;
   final String _baseUrl;
-  final http.Client _client;
+  final FirstPartyApiHttpClientFactory _clientFactory;
+  final bool _ownsClient;
+  http.Client _client;
 
   Future<List<CatalogCourse>> listCourses({
     String? query,
@@ -1500,17 +1508,18 @@ class MarketplaceApiService {
       },
     );
     Future<http.StreamedResponse> send(String token) async {
-      final request = http.MultipartRequest('POST', uri);
-      request.headers['Authorization'] = 'Bearer $token';
-      request.files.add(await http.MultipartFile.fromPath(
-        'bundle',
-        bundleFile.path,
-      ));
-      try {
-        return await _client.send(request);
-      } on Exception catch (error) {
-        throw MarketplaceApiException('Request failed: $error');
-      }
+      return _runRequest(
+        uri: uri,
+        action: () async {
+          final request = http.MultipartRequest('POST', uri);
+          request.headers['Authorization'] = 'Bearer $token';
+          request.files.add(await http.MultipartFile.fromPath(
+            'bundle',
+            bundleFile.path,
+          ));
+          return _client.send(request);
+        },
+      );
     }
 
     var token = await _requireAccessToken();
@@ -1537,13 +1546,14 @@ class MarketplaceApiService {
       },
     );
     Future<http.StreamedResponse> send(String token) async {
-      final request = http.Request('GET', uri);
-      request.headers['Authorization'] = 'Bearer $token';
-      try {
-        return await _client.send(request);
-      } on Exception catch (error) {
-        throw MarketplaceApiException('Request failed: $error');
-      }
+      return _runRequest(
+        uri: uri,
+        action: () {
+          final request = http.Request('GET', uri);
+          request.headers['Authorization'] = 'Bearer $token';
+          return _client.send(request);
+        },
+      );
     }
 
     var token = await _requireAccessToken();
@@ -1599,12 +1609,10 @@ class MarketplaceApiService {
     Map<String, String>? params,
   }) async {
     final uri = Uri.parse('$_baseUrl$path').replace(queryParameters: params);
-    http.Response response;
-    try {
-      response = await _client.get(uri);
-    } on Exception catch (error) {
-      throw MarketplaceApiException('Request failed: $error');
-    }
+    final response = await _runRequest(
+      uri: uri,
+      action: () => _client.get(uri),
+    );
     return _decodeResponse(response);
   }
 
@@ -1620,14 +1628,13 @@ class MarketplaceApiService {
       if (etag.isNotEmpty) {
         headers['If-None-Match'] = etag;
       }
-      try {
-        return await _client.get(
+      return _runRequest(
+        uri: uri,
+        action: () => _client.get(
           uri,
           headers: headers,
-        );
-      } on Exception catch (error) {
-        throw MarketplaceApiException('Request failed: $error');
-      }
+        ),
+      );
     }
 
     var token = await _requireAccessToken();
@@ -1646,15 +1653,14 @@ class MarketplaceApiService {
   }) async {
     final uri = Uri.parse('$_baseUrl$path').replace(queryParameters: params);
     Future<http.Response> send(String token) async {
-      try {
-        return await _client.post(
+      return _runRequest(
+        uri: uri,
+        action: () => _client.post(
           uri,
           headers: _authHeaders(token),
           body: jsonEncode(body),
-        );
-      } on Exception catch (error) {
-        throw MarketplaceApiException('Request failed: $error');
-      }
+        ),
+      );
     }
 
     var token = await _requireAccessToken();
@@ -1689,6 +1695,22 @@ class MarketplaceApiService {
         baseUrl: _baseUrl,
       );
     } on AuthTokenRefreshException catch (error) {
+      if (_ownsClient && isFreshFirstPartyApiClientRetryableError(error)) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        _rebuildClient();
+        try {
+          return await AuthTokenRefreshCoordinator.refresh(
+            client: _client,
+            secureStorage: _secureStorage,
+            baseUrl: _baseUrl,
+          );
+        } on AuthTokenRefreshException catch (retryError) {
+          throw MarketplaceApiException(
+            'Token refresh failed after fresh-client retry. first_error=${error.message}; retry_error=${retryError.message}',
+            statusCode: retryError.statusCode,
+          );
+        }
+      }
       throw MarketplaceApiException(
         error.message,
         statusCode: error.statusCode,
@@ -1727,6 +1749,40 @@ class MarketplaceApiService {
     return buildFirstPartyApiHttpClient(
       allowInsecureTls: allowInsecureTls,
     );
+  }
+
+  Future<T> _runRequest<T>({
+    required Uri uri,
+    required Future<T> Function() action,
+  }) async {
+    try {
+      return await action();
+    } on MarketplaceApiException {
+      rethrow;
+    } catch (error) {
+      if (_ownsClient && isFreshFirstPartyApiClientRetryableError(error)) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        _rebuildClient();
+        try {
+          return await action();
+        } on MarketplaceApiException {
+          rethrow;
+        } catch (retryError) {
+          throw MarketplaceApiException(
+            'Request to $uri failed after fresh-client retry. first_error=$error; retry_error=$retryError',
+          );
+        }
+      }
+      throw MarketplaceApiException('Request failed: $error');
+    }
+  }
+
+  void _rebuildClient() {
+    if (!_ownsClient) {
+      return;
+    }
+    _client.close();
+    _client = _clientFactory();
   }
 
   static String _normalizeBaseUrl(String value) {

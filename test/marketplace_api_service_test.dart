@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -117,6 +119,100 @@ void main() {
     expect(enrollments, isEmpty);
     expect(refreshCalls, equals(1));
     expect(enrollmentCalls, equals(2));
+    expect(await storage.readAuthAccessToken(), equals('fresh-token'));
+    expect(await storage.readAuthRefreshToken(), equals('refresh-2'));
+  });
+
+  test('public requests retry transient DNS failure with a fresh client',
+      () async {
+    var factoryCalls = 0;
+    final api = MarketplaceApiService(
+      secureStorage: _TokenSecureStorageService(accessToken: 'token'),
+      baseUrl: 'https://example.com',
+      clientFactory: () {
+        factoryCalls++;
+        if (factoryCalls == 1) {
+          return MockClient((request) async {
+            throw http.ClientException(
+              "SocketException: Failed host lookup: 'example.com'",
+              request.url,
+            );
+          });
+        }
+        return MockClient((request) async {
+          expect(request.url.path, equals('/api/subject-labels'));
+          return http.Response('[]', 200);
+        });
+      },
+    );
+
+    final labels = await api.listSubjectLabels();
+
+    expect(labels, isEmpty);
+    expect(factoryCalls, equals(2));
+  });
+
+  test('token refresh retries transient DNS failure with a fresh client',
+      () async {
+    final storage = _TokenSecureStorageService(
+      accessToken: 'expired-token',
+      refreshToken: 'refresh-1',
+    );
+    var factoryCalls = 0;
+    var firstEnrollmentCalls = 0;
+    var refreshCalls = 0;
+    var secondEnrollmentCalls = 0;
+    final api = MarketplaceApiService(
+      secureStorage: storage,
+      baseUrl: 'https://example.com',
+      clientFactory: () {
+        factoryCalls++;
+        if (factoryCalls == 1) {
+          return MockClient((request) async {
+            if (request.url.path == '/api/enrollments') {
+              firstEnrollmentCalls++;
+              return http.Response('{"message":"unauthorized"}', 401);
+            }
+            if (request.url.path == '/api/auth/refresh') {
+              throw http.ClientException(
+                "SocketException: Failed host lookup: 'example.com'",
+                request.url,
+              );
+            }
+            fail('Unexpected request: ${request.url.path}');
+          });
+        }
+        return MockClient((request) async {
+          if (request.url.path == '/api/auth/refresh') {
+            refreshCalls++;
+            final body = jsonDecode(request.body) as Map<String, dynamic>;
+            expect(body['refresh_token'], equals('refresh-1'));
+            return http.Response(
+              '{"access_token":"fresh-token","refresh_token":"refresh-2"}',
+              200,
+              headers: <String, String>{'content-type': 'application/json'},
+            );
+          }
+          if (request.url.path == '/api/enrollments') {
+            secondEnrollmentCalls++;
+            expect(
+              request.headers['Authorization'],
+              equals('Bearer fresh-token'),
+            );
+            return http.Response('[]', 200);
+          }
+          fail('Unexpected request: ${request.url.path}');
+        });
+      },
+    );
+
+    final enrollments = await api.listEnrollments();
+
+    expect(enrollments, isEmpty);
+    expect(factoryCalls, equals(2));
+    expect(firstEnrollmentCalls, equals(1));
+    expect(refreshCalls, equals(1));
+    expect(secondEnrollmentCalls, equals(1));
     expect(await storage.readAuthAccessToken(), equals('fresh-token'));
     expect(await storage.readAuthRefreshToken(), equals('refresh-2'));
   });

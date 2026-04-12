@@ -1,5 +1,5 @@
 # BUGS
-Last updated: 2026-04-11
+Last updated: 2026-04-12
 
 ## Active watch
 - Student import race after bundle download (monitoring): fixed by awaiting archive extraction in client bundle service (`f77e7e0`); keep watching for recurrence in production-like flow.
@@ -287,3 +287,8 @@ Last updated: 2026-04-11
 - Symptom: from a teacher course/student tree route, tapping a KP can show `No assigned student for this course.` while on-demand student artifact materialization is still pending.
 - Root cause: `_teacherStudentId` was set only after awaiting `materializeTeacherArtifactsForView`, so the tap path could run with a null target student even though the route/assignment already identified one.
 - Prevention: set the teacher-view target student from the route or assignment before awaiting artifact materialization, and keep a widget regression test where materialization remains pending during a KP tap.
+
+55. App resume can surface transient DNS/socket failures as hard sync failures
+- Symptom: Android APK can show `Session sync failed: Could not contact api.tutor1on1.org...` after switching apps, while logging in again later can continue normally.
+- Root cause: `ArtifactSyncApiService` and `MarketplaceApiService` kept long-lived first-party `HttpClient` instances and treated `Failed host lookup` / socket / timeout transport exceptions during timer sync or token refresh as final user-visible failures.
+- Prevention: owned first-party API clients should wait briefly, rebuild the underlying `HttpClient`, and retry one time for transport-only failures. Keep injected test clients non-retryable and keep HTTP status/protocol/data errors on the normal fail-loud path.

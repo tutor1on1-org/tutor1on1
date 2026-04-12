@@ -149,16 +149,26 @@ class ArtifactSyncApiService {
     required SecureStorageService secureStorage,
     String? baseUrl,
     http.Client? client,
-  })  : _secureStorage = secureStorage,
+    FirstPartyApiHttpClientFactory? clientFactory,
+  })  : assert(client == null || clientFactory == null),
+        _secureStorage = secureStorage,
         _baseUrl = _normalizeBaseUrl(baseUrl ?? kAuthBaseUrl),
+        _clientFactory = clientFactory ??
+            (() => buildFirstPartyApiHttpClient(
+                  allowInsecureTls: kAuthAllowInsecureTls,
+                )),
+        _ownsClient = client == null,
         _client = client ??
-            buildFirstPartyApiHttpClient(
-              allowInsecureTls: kAuthAllowInsecureTls,
-            );
+            (clientFactory ??
+                (() => buildFirstPartyApiHttpClient(
+                      allowInsecureTls: kAuthAllowInsecureTls,
+                    )))();
 
   final SecureStorageService _secureStorage;
   final String _baseUrl;
-  final http.Client _client;
+  final FirstPartyApiHttpClientFactory _clientFactory;
+  final bool _ownsClient;
+  http.Client _client;
 
   Future<String> getState2({String? artifactClass}) async {
     final params = <String, String>{};
@@ -450,6 +460,24 @@ class ArtifactSyncApiService {
         baseUrl: _baseUrl,
       );
     } on AuthTokenRefreshException catch (error) {
+      if (_ownsClient && isFreshFirstPartyApiClientRetryableError(error)) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        _rebuildClient();
+        try {
+          return await AuthTokenRefreshCoordinator.refresh(
+            client: _client,
+            secureStorage: _secureStorage,
+            baseUrl: _baseUrl,
+          );
+        } on AuthTokenRefreshException catch (retryError) {
+          throw ArtifactSyncApiException(
+            retryError.message,
+            statusCode: retryError.statusCode,
+            debugMessage:
+                'Token refresh failed after fresh-client retry. first_error=${error.message}; retry_error=${retryError.message}',
+          );
+        }
+      }
       throw ArtifactSyncApiException(
         error.message,
         statusCode: error.statusCode,
@@ -575,11 +603,36 @@ class ArtifactSyncApiService {
     } on ArtifactConflictException {
       rethrow;
     } catch (error) {
+      if (_ownsClient && isFreshFirstPartyApiClientRetryableError(error)) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        _rebuildClient();
+        try {
+          return await action();
+        } on ArtifactSyncApiException {
+          rethrow;
+        } on ArtifactConflictException {
+          rethrow;
+        } catch (retryError) {
+          throw ArtifactSyncApiException(
+            _describeTransportError(uri: uri, error: retryError),
+            debugMessage:
+                'Transport request to $uri failed after fresh-client retry. first_error=$error; retry_error=$retryError',
+          );
+        }
+      }
       throw ArtifactSyncApiException(
         _describeTransportError(uri: uri, error: error),
         debugMessage: 'Transport request to $uri failed: $error',
       );
     }
+  }
+
+  void _rebuildClient() {
+    if (!_ownsClient) {
+      return;
+    }
+    _client.close();
+    _client = _clientFactory();
   }
 }
 
