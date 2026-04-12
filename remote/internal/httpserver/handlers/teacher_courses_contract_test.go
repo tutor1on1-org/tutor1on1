@@ -188,6 +188,34 @@ func TestDeleteBundleVersionReferencesTxDeletesModerationAndArtifactState(t *tes
 	assertSQLMockExpectations(t, mock)
 }
 
+func TestDeleteCourseRecordReferencesTxDeletesRemainingCourseFKs(t *testing.T) {
+	db, mock := newHandlerSQLMock(t)
+	defer db.Close()
+
+	courseID := int64(909)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`DELETE FROM course_quit_requests WHERE course_id = \?`).
+		WithArgs(courseID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`DELETE FROM course_subject_labels WHERE course_id = \?`).
+		WithArgs(courseID).
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectCommit()
+
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	if err := deleteCourseRecordReferencesTx(tx, courseID); err != nil {
+		t.Fatalf("deleteCourseRecordReferencesTx() error = %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+	assertSQLMockExpectations(t, mock)
+}
+
 func TestGetLatestCourseBundleInfoReturnsHashForTeacher(t *testing.T) {
 	db, mock := newHandlerSQLMock(t)
 	defer db.Close()

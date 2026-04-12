@@ -85,6 +85,23 @@ func deleteBundleVersionReferencesTx(tx *sql.Tx, bundleVersionID int64) error {
 	return err
 }
 
+func deleteCourseRecordReferencesTx(tx *sql.Tx, courseID int64) error {
+	if tx == nil || courseID <= 0 {
+		return nil
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM course_quit_requests WHERE course_id = ?`,
+		courseID,
+	); err != nil {
+		return err
+	}
+	_, err := tx.Exec(
+		`DELETE FROM course_subject_labels WHERE course_id = ?`,
+		courseID,
+	)
+	return err
+}
+
 func refreshArtifactStatesForUsers(db *sql.DB, userIDs []int64) error {
 	if db == nil {
 		return nil
