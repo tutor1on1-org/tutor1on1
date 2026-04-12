@@ -38,8 +38,10 @@ class TeacherHomePage extends StatefulWidget {
   State<TeacherHomePage> createState() => _TeacherHomePageState();
 }
 
-class _TeacherHomePageState extends State<TeacherHomePage> {
+class _TeacherHomePageState extends State<TeacherHomePage>
+    with WidgetsBindingObserver {
   static const Duration _autoSyncInterval = Duration(seconds: 60);
+  static const Duration _resumeSyncDelay = Duration(seconds: 3);
   bool _syncStarted = false;
   bool _syncInProgress = false;
   bool _backgroundSessionSyncInProgress = false;
@@ -48,6 +50,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
   double? _syncProgressValue;
   String? _syncProgressDetail;
   Timer? _autoSyncTimer;
+  Timer? _resumeSyncTimer;
   final Set<int> _uploadingCourseIds = {};
   final Set<int> _pullingCourseIds = {};
   String? _persistentMessage;
@@ -61,6 +64,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final services = context.read<AppServices>();
     _marketplaceApi =
         MarketplaceApiService(secureStorage: services.secureStorage);
@@ -83,8 +87,19 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _autoSyncTimer?.cancel();
+    _resumeSyncTimer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _scheduleResumeSync();
+      return;
+    }
+    _stopAutoSync();
   }
 
   Future<void> _startSync() async {
@@ -98,6 +113,27 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
   void _startAutoSync() {
     _autoSyncTimer?.cancel();
     _autoSyncTimer = Timer.periodic(_autoSyncInterval, (_) async {
+      await _runSyncCycle(showOverlay: false);
+    });
+  }
+
+  void _stopAutoSync() {
+    _autoSyncTimer?.cancel();
+    _autoSyncTimer = null;
+    _resumeSyncTimer?.cancel();
+    _resumeSyncTimer = null;
+  }
+
+  void _scheduleResumeSync() {
+    if (!_syncStarted || !mounted) {
+      return;
+    }
+    _resumeSyncTimer?.cancel();
+    _resumeSyncTimer = Timer(_resumeSyncDelay, () async {
+      if (!mounted) {
+        return;
+      }
+      _startAutoSync();
       await _runSyncCycle(showOverlay: false);
     });
   }
@@ -132,6 +168,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
           includeSessionSync: true,
           sessionSyncMode: SessionSyncMode.downloadOnly,
         );
+        _clearPersistentError();
       } else {
         await _syncCoordinator.runCoreSync(
           user: user,
@@ -139,6 +176,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
           onProgress: null,
           includeSessionSync: true,
         );
+        _clearPersistentError();
       }
       if (showOverlay) {
         unawaited(_refreshMarketplaceState(surfaceAuthErrors: true));
@@ -965,6 +1003,16 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     setState(() {
       _persistentMessage = message;
       _persistentMessageIsError = isError;
+    });
+  }
+
+  void _clearPersistentError() {
+    if (!mounted || !_persistentMessageIsError || _persistentMessage == null) {
+      return;
+    }
+    setState(() {
+      _persistentMessage = null;
+      _persistentMessageIsError = false;
     });
   }
 

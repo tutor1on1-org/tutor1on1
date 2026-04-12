@@ -29,8 +29,10 @@ class StudentHomePage extends StatefulWidget {
   State<StudentHomePage> createState() => _StudentHomePageState();
 }
 
-class _StudentHomePageState extends State<StudentHomePage> {
+class _StudentHomePageState extends State<StudentHomePage>
+    with WidgetsBindingObserver {
   static const Duration _autoSyncInterval = Duration(seconds: 60);
+  static const Duration _resumeSyncDelay = Duration(seconds: 3);
   bool _syncStarted = false;
   bool _syncInProgress = false;
   bool _syncingFromServer = false;
@@ -38,6 +40,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
   double? _syncProgressValue;
   String? _syncProgressDetail;
   Timer? _autoSyncTimer;
+  Timer? _resumeSyncTimer;
   late final MarketplaceApiService _marketplaceApi;
   late final HomeSyncCoordinator _syncCoordinator;
   late final StudentServerCopyService _serverCopyService;
@@ -51,6 +54,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final services = context.read<AppServices>();
     _marketplaceApi =
         MarketplaceApiService(secureStorage: services.secureStorage);
@@ -68,8 +72,19 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _autoSyncTimer?.cancel();
+    _resumeSyncTimer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _scheduleResumeSync();
+      return;
+    }
+    _stopAutoSync();
   }
 
   Future<void> _refreshRemoteEnrollmentState() async {
@@ -139,6 +154,27 @@ class _StudentHomePageState extends State<StudentHomePage> {
     });
   }
 
+  void _stopAutoSync() {
+    _autoSyncTimer?.cancel();
+    _autoSyncTimer = null;
+    _resumeSyncTimer?.cancel();
+    _resumeSyncTimer = null;
+  }
+
+  void _scheduleResumeSync() {
+    if (!_syncStarted || !mounted) {
+      return;
+    }
+    _resumeSyncTimer?.cancel();
+    _resumeSyncTimer = Timer(_resumeSyncDelay, () async {
+      if (!mounted) {
+        return;
+      }
+      _startAutoSync();
+      await _runSyncCycle(showOverlay: false);
+    });
+  }
+
   Future<void> _runSyncCycle({required bool showOverlay}) async {
     if (!mounted || _syncInProgress) {
       return;
@@ -171,6 +207,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
           includeSessionSync: true,
           sessionSyncMode: SessionSyncMode.downloadOnly,
         );
+        _clearPersistentError();
       } else {
         await _syncCoordinator.runCoreSync(
           user: user,
@@ -180,6 +217,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
           includeSessionSync: true,
           sessionSyncMode: SessionSyncMode.full,
         );
+        _clearPersistentError();
       }
       if (showOverlay) {
         unawaited(_refreshLoginUiState(services: services, user: user));
@@ -407,6 +445,16 @@ class _StudentHomePageState extends State<StudentHomePage> {
     setState(() {
       _persistentMessage = message;
       _persistentMessageIsError = isError;
+    });
+  }
+
+  void _clearPersistentError() {
+    if (!mounted || !_persistentMessageIsError || _persistentMessage == null) {
+      return;
+    }
+    setState(() {
+      _persistentMessage = null;
+      _persistentMessageIsError = false;
     });
   }
 

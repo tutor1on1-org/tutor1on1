@@ -290,5 +290,5 @@ Last updated: 2026-04-12
 
 55. App resume can surface transient DNS/socket failures as hard sync failures
 - Symptom: Android APK can show `Session sync failed: Could not contact api.tutor1on1.org...` after switching apps, while logging in again later can continue normally.
-- Root cause: `ArtifactSyncApiService` and `MarketplaceApiService` kept long-lived first-party `HttpClient` instances and treated `Failed host lookup` / socket / timeout transport exceptions during timer sync or token refresh as final user-visible failures.
-- Prevention: owned first-party API clients should wait briefly, rebuild the underlying `HttpClient`, and retry one time for transport-only failures. Keep injected test clients non-retryable and keep HTTP status/protocol/data errors on the normal fail-loud path.
+- Root cause: the home screens kept their 60-second auto-sync timers active across Android lifecycle changes. On resume, a queued timer could immediately run teacher enrollment sync before the device DNS/network stack was ready, and successful later syncs did not clear the stale persistent error message.
+- Prevention: stop home auto-sync timers while inactive/paused, restart them only after a short resumed delay, and clear old persistent sync errors after a successful sync. Keep the transport-level fresh-client retry as a secondary guard, not the primary lifecycle fix.
