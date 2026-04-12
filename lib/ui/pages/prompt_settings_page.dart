@@ -608,7 +608,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
       'error_book_summary':
           'Aggregated mistake counts and tags for this knowledge point.',
       'presented_questions':
-          'Candidate question pool for review, or source lesson material when no question bank exists.',
+          'Candidate question pool provided for review question selection.',
       'active_review_question_json':
           'JSON for the one active review question, or null when no review question is open.',
       'review_pass_counts':

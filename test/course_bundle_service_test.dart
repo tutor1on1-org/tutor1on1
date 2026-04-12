@@ -301,8 +301,10 @@ void main() {
             courseName: 'Algebra',
           );
 
-          expect(File(p.join(scaffoldPath, 'contents.txt')).existsSync(), isTrue);
-          expect(File(p.join(scaffoldPath, 'context.txt')).existsSync(), isTrue);
+          expect(
+              File(p.join(scaffoldPath, 'contents.txt')).existsSync(), isTrue);
+          expect(
+              File(p.join(scaffoldPath, 'context.txt')).existsSync(), isTrue);
           expect(
             File(p.join(scaffoldPath, '1.1_lecture.txt')).existsSync(),
             isFalse,
@@ -623,8 +625,59 @@ void main() {
     },
   );
 
+  test('compareCourseFolderWithBundle reports question bank changes', () async {
+    final tempDir = await Directory.systemTemp.createTemp(
+      'course_bundle_question_diff_test_',
+    );
+    try {
+      final localFolder = Directory(p.join(tempDir.path, 'local_course'))
+        ..createSync(recursive: true);
+      await File(p.join(localFolder.path, 'contents.txt')).writeAsString(
+        '1 Root branch\n',
+        encoding: utf8,
+      );
+      await File(p.join(localFolder.path, '1_lecture.txt')).writeAsString(
+        'Lecture unchanged',
+        encoding: utf8,
+      );
+      await File(p.join(localFolder.path, '1_medium.txt')).writeAsString(
+        'New question bank',
+        encoding: utf8,
+      );
+
+      final archive = Archive();
+      final contents = Uint8List.fromList(utf8.encode('1 Root branch\n'));
+      final lecture = Uint8List.fromList(utf8.encode('Lecture unchanged'));
+      final oldQuestions = Uint8List.fromList(utf8.encode('Old question bank'));
+      archive.addFile(
+        ArchiveFile('contents.txt', contents.length, contents),
+      );
+      archive.addFile(
+        ArchiveFile('1_lecture.txt', lecture.length, lecture),
+      );
+      archive.addFile(
+        ArchiveFile('1_medium.txt', oldQuestions.length, oldQuestions),
+      );
+      final zipBytes = ZipEncoder().encode(archive);
+      expect(zipBytes, isNotNull);
+      final oldBundle = File(p.join(tempDir.path, 'old_bundle.zip'));
+      await oldBundle.writeAsBytes(zipBytes!, flush: true);
+
+      final service = CourseBundleService();
+      final diff = await service.compareCourseFolderWithBundle(
+        folderPath: localFolder.path,
+        bundleFile: oldBundle,
+      );
+      expect(diff.addedCount, equals(0));
+      expect(diff.removedCount, equals(0));
+      expect(diff.updatedCount, equals(1));
+    } finally {
+      await tempDir.delete(recursive: true);
+    }
+  });
+
   test(
-    'createBundleFromFolder includes only required course/prompt txt files',
+    'createBundleFromFolder includes course prompt and question bank txt files',
     () async {
       final tempDir = await Directory.systemTemp.createTemp(
         'course_bundle_create_test_',
@@ -643,6 +696,18 @@ void main() {
           );
           await File(p.join(courseDir.path, '1.1_lecture.txt')).writeAsString(
             'Lecture child',
+            encoding: utf8,
+          );
+          await File(p.join(courseDir.path, '1.1_medium.txt')).writeAsString(
+            'Question child',
+            encoding: utf8,
+          );
+          final legacyQuestionDir =
+              Directory(p.join(courseDir.path, '1.1', 'hard'))
+                ..createSync(recursive: true);
+          await File(p.join(legacyQuestionDir.path, 'questions.txt'))
+              .writeAsString(
+            'Legacy hard question child',
             encoding: utf8,
           );
           final promptsDir = Directory(p.join(courseDir.path, 'prompts'))
@@ -687,6 +752,8 @@ void main() {
               'contents.txt',
               '1_lecture.txt',
               '1.1_lecture.txt',
+              '1.1/hard/questions.txt',
+              '1.1_medium.txt',
               'prompts/learn.txt',
               CourseBundleService.promptMetadataEntryPath,
             }),
@@ -742,13 +809,23 @@ void main() {
 
           expect(hashB, equals(hashA));
 
+          await File(p.join(courseDir.path, '1_medium.txt')).writeAsString(
+            'Question bank content',
+            encoding: utf8,
+          );
+          final bundleWithQuestion =
+              await service.createBundleFromFolder(courseDir.path);
+          final hashWithQuestion =
+              await service.computeBundleSemanticHash(bundleWithQuestion);
+          expect(hashWithQuestion, isNot(equals(hashA)));
+
           await File(lecturePath).writeAsString(
             'Changed lecture content',
             encoding: utf8,
           );
           final bundleC = await service.createBundleFromFolder(courseDir.path);
           final hashC = await service.computeBundleSemanticHash(bundleC);
-          expect(hashC, isNot(equals(hashA)));
+          expect(hashC, isNot(equals(hashWithQuestion)));
         });
       } finally {
         await tempDir.delete(recursive: true);

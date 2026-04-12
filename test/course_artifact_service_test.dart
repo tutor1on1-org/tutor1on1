@@ -63,6 +63,7 @@ void main() {
 2.1 Expressions
 ''',
       lectureIds: const <String>['1', '1.1', '2', '2.1'],
+      questionIds: const <String>['1.1'],
     );
 
     final manifest = await artifactService.rebuildCourseArtifacts(
@@ -71,6 +72,22 @@ void main() {
     );
     expect(manifest.chapters.map((chapter) => chapter.chapterKey).toList(),
         equals(const <String>['1', '2']));
+    expect(
+      await bundleService.readTextEntryFromBundleFile(
+        bundleFile: File(manifest.contentBundlePath),
+        candidateRelativePaths: const <String>['1.1_medium.txt'],
+      ),
+      equals('Question for 1.1'),
+    );
+    final chapterOne =
+        manifest.chapters.singleWhere((chapter) => chapter.chapterKey == '1');
+    expect(
+      await bundleService.readTextEntryFromBundleFile(
+        bundleFile: File(chapterOne.zipPath),
+        candidateRelativePaths: const <String>['1.1_medium.txt'],
+      ),
+      equals('Question for 1.1'),
+    );
 
     await courseDir.delete(recursive: true);
 
@@ -143,6 +160,7 @@ Future<Directory> _createCourseFolder({
   required String folderName,
   required String contents,
   required List<String> lectureIds,
+  List<String> questionIds = const <String>[],
 }) async {
   final dir = Directory(p.join(root.path, folderName));
   if (await dir.exists()) {
@@ -153,6 +171,10 @@ Future<Directory> _createCourseFolder({
   for (final id in lectureIds) {
     await File(p.join(dir.path, '${id}_lecture.txt'))
         .writeAsString('Lecture for $id');
+  }
+  for (final id in questionIds) {
+    await File(p.join(dir.path, '${id}_medium.txt'))
+        .writeAsString('Question for $id');
   }
   return dir;
 }

@@ -87,6 +87,12 @@ class PreparedCourseUploadBundle {
 }
 
 class CourseArtifactService {
+  static const List<String> _questionLevels = <String>[
+    'easy',
+    'medium',
+    'hard',
+  ];
+
   CourseArtifactService({
     Future<Directory> Function()? artifactsRootProvider,
     CourseBundleService? bundleService,
@@ -532,6 +538,15 @@ class CourseArtifactService {
         p.relative(lectureSource.path, from: normalizedFolder),
       );
       group[archivePath] = lectureSource;
+      for (final questionSource in _resolveQuestionFiles(
+        folderPath: normalizedFolder,
+        nodeId: node.id,
+      )) {
+        final questionArchivePath = _normalizeArchivePath(
+          p.relative(questionSource.path, from: normalizedFolder),
+        );
+        group[questionArchivePath] = questionSource;
+      }
     }
 
     final chapters = <CourseChapterArtifact>[];
@@ -619,6 +634,26 @@ class CourseArtifactService {
       return legacyLecture;
     }
     throw StateError('Missing lecture file for node "$nodeId".');
+  }
+
+  List<File> _resolveQuestionFiles({
+    required String folderPath,
+    required String nodeId,
+  }) {
+    final files = <File>[];
+    for (final level in _questionLevels) {
+      final flatQuestion = File(p.join(folderPath, '${nodeId}_$level.txt'));
+      if (flatQuestion.existsSync()) {
+        files.add(flatQuestion);
+      }
+      final legacyQuestion = File(
+        p.join(folderPath, nodeId, level, 'questions.txt'),
+      );
+      if (legacyQuestion.existsSync()) {
+        files.add(legacyQuestion);
+      }
+    }
+    return files;
   }
 
   String _topLevelChapterKey(String nodeId) {

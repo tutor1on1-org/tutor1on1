@@ -28,8 +28,6 @@ Rules:
 - Choose the next question difficulty yourself using the active question state, recent chat, and the pass/fail counts.
 - Put the full visible question or feedback inside `text`.
 - Keep the review tight to this knowledge point and concise.
-- Use presented_questions as the source. If it starts with [source_material],
-  create a review question from that source material.
 - Easy questions should ask one thing only.
 - Medium and hard questions may ask at most two things.
 - If giving a hint, give one next step and end with one short direct ask.

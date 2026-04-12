@@ -28,6 +28,11 @@ class CourseKpDiffSummary {
 class CourseBundleService {
   static const String promptMetadataEntryPath = kCurrentPromptMetadataEntryPath;
   static const int _backgroundBundleThresholdBytes = 256 * 1024;
+  static const List<String> _questionLevels = <String>[
+    'easy',
+    'medium',
+    'hard',
+  ];
   static final RegExp _idPattern = RegExp(r'^(\d+(?:\.\d+)*)\s*(.+)$');
 
   Future<File> createBundleFromFolder(
@@ -251,8 +256,8 @@ class CourseBundleService {
     final candidateNames = <String>{
       ...normalizedCandidates,
       if (indexed.selectedRoot.isNotEmpty)
-        ...normalizedCandidates
-            .map((value) => _normalizeArchivePath('${indexed.selectedRoot}/$value')),
+        ...normalizedCandidates.map(
+            (value) => _normalizeArchivePath('${indexed.selectedRoot}/$value')),
     };
     for (final name in candidateNames) {
       final entry = indexed.entryByName[name];
@@ -824,13 +829,16 @@ class CourseBundleService {
           File(p.join(folderPath, node.id, 'lecture.txt'));
       if (lectureFile.existsSync()) {
         addEntry(lectureFile);
-        continue;
-      }
-      if (legacyLectureFile.existsSync()) {
+      } else if (legacyLectureFile.existsSync()) {
         addEntry(legacyLectureFile);
-        continue;
+      } else {
+        throw StateError('Missing file: ${lectureFile.path}');
       }
-      throw StateError('Missing file: ${lectureFile.path}');
+      _addQuestionEntriesForNode(
+        folderPath: folderPath,
+        nodeId: node.id,
+        addEntry: addEntry,
+      );
     }
 
     final promptsDir = Directory(p.join(folderPath, 'prompts'));
@@ -852,6 +860,25 @@ class CourseBundleService {
       throw StateError('Course bundle has no required files.');
     }
     return entries;
+  }
+
+  void _addQuestionEntriesForNode({
+    required String folderPath,
+    required String nodeId,
+    required void Function(File file) addEntry,
+  }) {
+    for (final level in _questionLevels) {
+      final flatQuestionFile = File(p.join(folderPath, '${nodeId}_$level.txt'));
+      if (flatQuestionFile.existsSync()) {
+        addEntry(flatQuestionFile);
+      }
+      final legacyQuestionFile = File(
+        p.join(folderPath, nodeId, level, 'questions.txt'),
+      );
+      if (legacyQuestionFile.existsSync()) {
+        addEntry(legacyQuestionFile);
+      }
+    }
   }
 
   List<int> _normalizePromptMetadataBytes(List<int> rawData) {
@@ -1204,11 +1231,16 @@ class CourseBundleService {
         throw StateError('Missing file: $lecturePath');
       }
       final lectureText = await lectureSource.readAsString(encoding: utf8);
+      final questionTexts = await _readQuestionTextsFromFolder(
+        folderPath: normalizedPath,
+        nodeId: node.id,
+      );
       final line = lineById[node.id] ??
           (node.rawLine.isNotEmpty ? node.rawLine : '${node.id} ${node.title}');
       fingerprints[node.id] = _kpFingerprint(
         line: line,
         lectureText: lectureText,
+        questionTexts: questionTexts,
       );
     }
     return _CourseKpSnapshot(kpFingerprints: fingerprints);
@@ -1310,6 +1342,11 @@ class CourseBundleService {
           );
         }
         final lectureText = utf8.decode(_entryBytes(lectureEntry));
+        final questionTexts = _readQuestionTextsFromBundle(
+          entryByName: entryByName,
+          selectedRoot: selectedRoot,
+          nodeId: node.id,
+        );
         final line = lineById[node.id] ??
             (node.rawLine.isNotEmpty
                 ? node.rawLine
@@ -1317,6 +1354,7 @@ class CourseBundleService {
         fingerprints[node.id] = _kpFingerprint(
           line: line,
           lectureText: lectureText,
+          questionTexts: questionTexts,
         );
       }
 
@@ -1354,15 +1392,69 @@ class CourseBundleService {
   String _kpFingerprint({
     required String line,
     required String lectureText,
+    required List<String> questionTexts,
   }) {
     final normalizedLine = _normalizeTextForHash(line);
     final normalizedLecture = _normalizeTextForHash(lectureText);
-    final payload = '$normalizedLine\u0000$normalizedLecture';
+    final normalizedQuestions =
+        questionTexts.map(_normalizeTextForHash).join('\u0000');
+    final payload =
+        '$normalizedLine\u0000$normalizedLecture\u0000$normalizedQuestions';
     return sha256.convert(utf8.encode(payload)).toString();
   }
 
   String _normalizeTextForHash(String input) {
     return input.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+  }
+
+  Future<List<String>> _readQuestionTextsFromFolder({
+    required String folderPath,
+    required String nodeId,
+  }) async {
+    final texts = <String>[];
+    for (final relativePath in _questionRelativePaths(nodeId)) {
+      final file = File(p.joinAll(<String>[
+        folderPath,
+        ...relativePath.split('/'),
+      ]));
+      if (!file.existsSync()) {
+        continue;
+      }
+      final normalizedRelativePath = _normalizeArchivePath(relativePath);
+      final text = await file.readAsString(encoding: utf8);
+      texts.add('$normalizedRelativePath\u0000$text');
+    }
+    return texts;
+  }
+
+  List<String> _readQuestionTextsFromBundle({
+    required Map<String, ArchiveFile> entryByName,
+    required String selectedRoot,
+    required String nodeId,
+  }) {
+    final texts = <String>[];
+    for (final relativePath in _questionRelativePaths(nodeId)) {
+      final normalizedRelativePath = _normalizeArchivePath(relativePath);
+      final entryName = selectedRoot.isEmpty
+          ? normalizedRelativePath
+          : _normalizeArchivePath('$selectedRoot/$normalizedRelativePath');
+      final entry = entryByName[entryName];
+      if (entry == null) {
+        continue;
+      }
+      final text = utf8.decode(_entryBytes(entry));
+      texts.add('$normalizedRelativePath\u0000$text');
+    }
+    return texts;
+  }
+
+  List<String> _questionRelativePaths(String nodeId) {
+    return <String>[
+      for (final level in _questionLevels) ...<String>[
+        '${nodeId}_$level.txt',
+        '$nodeId/$level/questions.txt',
+      ],
+    ];
   }
 }
 

@@ -419,7 +419,7 @@ class SessionService {
       );
     }
     if (actionMode == 'review') {
-      values['presented_questions'] = await _loadReviewSourceText(
+      values['presented_questions'] = await _loadQuestionsText(
         courseVersion: courseVersion,
         kpKey: node.kpKey,
       );
@@ -1117,28 +1117,6 @@ class SessionService {
       sections.add('[$level]\n$trimmed');
     }
     return sections.join('\n\n');
-  }
-
-  Future<String> _loadReviewSourceText({
-    required CourseVersion courseVersion,
-    required String kpKey,
-  }) async {
-    final questions = await _loadQuestionsText(
-      courseVersion: courseVersion,
-      kpKey: kpKey,
-    );
-    if (questions.trim().isNotEmpty) {
-      return questions;
-    }
-    final lecture = await _loadLectureTextIfPresent(
-      courseVersion: courseVersion,
-      kpKey: kpKey,
-    );
-    final trimmedLecture = lecture.trim();
-    if (trimmedLecture.isEmpty) {
-      return '';
-    }
-    return '[source_material]\n$trimmedLecture';
   }
 
   Future<String> _loadQuestionTextForLevel({
