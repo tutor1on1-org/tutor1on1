@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../l10n/app_localizations.dart';
@@ -34,6 +35,7 @@ class PromptEditorDialog extends StatefulWidget {
     required this.validator,
     required this.variableRows,
     required this.allVariableRows,
+    required this.requireRequiredVariables,
   });
 
   final String title;
@@ -42,6 +44,7 @@ class PromptEditorDialog extends StatefulWidget {
   final PromptTemplateValidator validator;
   final List<Widget> variableRows;
   final List<Widget> allVariableRows;
+  final bool requireRequiredVariables;
 
   @override
   State<PromptEditorDialog> createState() => _PromptEditorDialogState();
@@ -49,18 +52,57 @@ class PromptEditorDialog extends StatefulWidget {
 
 class _PromptEditorDialogState extends State<PromptEditorDialog> {
   late final TextEditingController _controller;
+  late final ScrollController _scrollController;
   List<String> _validationMessages = const <String>[];
 
   @override
   void initState() {
     super.initState();
     _controller = TextEditingController(text: widget.initialContent);
+    _scrollController = ScrollController();
+    _controller.addListener(_validateLive);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _validationMessages = _buildLiveValidationMessages();
   }
 
   @override
   void dispose() {
+    _controller.removeListener(_validateLive);
     _controller.dispose();
+    _scrollController.dispose();
     super.dispose();
+  }
+
+  void _validateLive() {
+    if (!mounted) {
+      return;
+    }
+    final messages = _buildLiveValidationMessages();
+    if (!listEquals(_validationMessages, messages)) {
+      setState(() {
+        _validationMessages = messages;
+      });
+    }
+  }
+
+  List<String> _buildLiveValidationMessages() {
+    final l10n = Localizations.of<AppLocalizations>(
+      context,
+      AppLocalizations,
+    );
+    if (l10n == null) {
+      return const <String>[];
+    }
+    final validation = widget.validator.validate(
+      promptName: widget.promptName,
+      content: _controller.text,
+      allowMissingRequired: !widget.requireRequiredVariables,
+    );
+    return buildPromptValidationMessages(l10n, validation);
   }
 
   void _save() {
@@ -68,11 +110,20 @@ class _PromptEditorDialogState extends State<PromptEditorDialog> {
     final validation = widget.validator.validate(
       promptName: widget.promptName,
       content: _controller.text,
-      allowMissingRequired: false,
+      allowMissingRequired: !widget.requireRequiredVariables,
     );
     if (!validation.isValid) {
       setState(() {
         _validationMessages = buildPromptValidationMessages(l10n, validation);
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            0,
+            duration: const Duration(milliseconds: 160),
+            curve: Curves.easeOut,
+          );
+        }
       });
       return;
     }
@@ -87,20 +138,11 @@ class _PromptEditorDialogState extends State<PromptEditorDialog> {
       content: SizedBox(
         width: 640,
         child: SingleChildScrollView(
+          controller: _scrollController,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              TextField(
-                controller: _controller,
-                maxLines: 18,
-                minLines: 8,
-                decoration: InputDecoration(
-                  labelText: l10n.promptTemplateLabel,
-                  border: const OutlineInputBorder(),
-                ),
-              ),
               if (_validationMessages.isNotEmpty) ...[
-                const SizedBox(height: 12),
                 DecoratedBox(
                   decoration: BoxDecoration(
                     color: Colors.red.shade50,
@@ -115,14 +157,27 @@ class _PromptEditorDialogState extends State<PromptEditorDialog> {
                     ),
                   ),
                 ),
+                const SizedBox(height: 12),
               ],
+              TextField(
+                controller: _controller,
+                maxLines: 18,
+                minLines: 8,
+                decoration: InputDecoration(
+                  labelText: l10n.promptTemplateLabel,
+                  border: const OutlineInputBorder(),
+                ),
+              ),
               const SizedBox(height: 12),
               Text(
-                l10n.promptRequiredVars(
-                  widget.validator
-                      .requiredVariables(widget.promptName)
-                      .join(', '),
-                ),
+                widget.requireRequiredVariables
+                    ? l10n.promptRequiredVars(
+                        widget.validator
+                            .requiredVariables(widget.promptName)
+                            .join(', '),
+                      )
+                    : 'Required variables are enforced only for system prompts. '
+                        'Append prompts may omit them.',
               ),
               Text(
                 l10n.promptAllowedVars(

@@ -292,3 +292,8 @@ Last updated: 2026-04-12
 - Symptom: Android APK can show `Session sync failed: Could not contact api.tutor1on1.org...` after switching apps, while logging in again later can continue normally.
 - Root cause: the home screens kept their 60-second auto-sync timers active across Android lifecycle changes. On resume, a queued timer could immediately run teacher enrollment sync before the device DNS/network stack was ready, and successful later syncs did not clear the stale persistent error message.
 - Prevention: stop home auto-sync timers while inactive/paused, restart them only after a short resumed delay, and clear old persistent sync errors after a successful sync. Keep the transport-level fresh-client retry as a secondary guard, not the primary lifecycle fix.
+
+56. Prompt variables must have one registry
+- Symptom: teachers could add `{{conversation_history}}` to a prompt and the runtime could render it, but the APK prompt editor rejected the same variable as unsupported and sometimes showed the validation error only after scrolling.
+- Root cause: supported prompt variables were duplicated across runtime render values, validator allowlists/required lists, and prompt-editor description text, so the lists drifted.
+- Prevention: keep prompt variable names, descriptions, allowed scopes, and required scopes in one registry consumed by runtime, validator, and UI help. Keep regression tests that compare runtime render keys and bundled prompt variables against that registry, and keep prompt-editor validation visible above the editor.

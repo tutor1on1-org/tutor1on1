@@ -17,6 +17,7 @@ import '../models/tutor_contract.dart';
 import '../llm/prompt_repository.dart';
 import 'course_artifact_service.dart';
 import 'llm_log_repository.dart';
+import 'prompt_variable_registry.dart';
 import 'session_upload_cache_service.dart';
 import 'settings_repository.dart';
 
@@ -389,40 +390,41 @@ class SessionService {
       studentId: session?.studentId,
     );
     final settings = await _settingsRepository.load();
-    final values = {
-      'kp_title': node.title,
-      'kp_description': node.description,
-      'student_input': studentInput.trim(),
-      'recent_chat': recentChat,
-      'help_bias': resolvedHelpBias,
-      'student_summary': progress?.summaryText ?? session?.summaryText ?? '',
-      'student_profile': studentPromptContext.profileText,
-      'student_preferences': studentPromptContext.preferencesText,
-      'lesson_content': '',
-      'error_book_summary': errorBookSummary,
-      'presented_questions': '',
-      'active_review_question_json': controlState.activeReviewQuestion == null
+    final values = PromptVariableRegistry.buildTutorPromptValues(
+      kpTitle: node.title,
+      kpDescription: node.description,
+      studentInput: studentInput.trim(),
+      recentChat: recentChat,
+      conversationHistory: history,
+      helpBias: resolvedHelpBias,
+      studentSummary: progress?.summaryText ?? session?.summaryText ?? '',
+      studentProfile: studentPromptContext.profileText,
+      studentPreferences: studentPromptContext.preferencesText,
+      lessonContent: '',
+      errorBookSummary: errorBookSummary,
+      presentedQuestions: '',
+      activeReviewQuestionJson: controlState.activeReviewQuestion == null
           ? 'null'
           : jsonEncode(controlState.activeReviewQuestion),
-      'review_pass_counts': jsonEncode(passedCounts),
-      'review_fail_counts': jsonEncode(failedCounts),
-      'review_correct_total': evidenceState.reviewCorrectTotal.toString(),
-      'review_attempt_total': evidenceState.reviewAttemptTotal.toString(),
-      'conversation_history': history,
-      'session_history': history,
-    };
+      reviewPassCounts: jsonEncode(passedCounts),
+      reviewFailCounts: jsonEncode(failedCounts),
+      reviewCorrectTotal: evidenceState.reviewCorrectTotal.toString(),
+      reviewAttemptTotal: evidenceState.reviewAttemptTotal.toString(),
+    );
     final needsLessonContent = promptName == 'learn';
     if (needsLessonContent) {
-      values['lesson_content'] = await _loadLectureTextIfPresent(
+      final lessonContent = await _loadLectureTextIfPresent(
         courseVersion: courseVersion,
         kpKey: node.kpKey,
       );
+      values[PromptVariableRegistry.lessonContent] = lessonContent;
     }
     if (actionMode == 'review') {
-      values['presented_questions'] = await _loadQuestionsText(
+      final presentedQuestions = await _loadQuestionsText(
         courseVersion: courseVersion,
         kpKey: node.kpKey,
       );
+      values[PromptVariableRegistry.presentedQuestions] = presentedQuestions;
     }
     final renderResult = _renderWithHistoryLimit(
       template: template,
@@ -806,13 +808,15 @@ class SessionService {
     required Map<String, Object?> values,
     required int maxTokens,
   }) {
-    final historyValue = (values['conversation_history'] ?? '').toString();
-    final usesHistory = _hasVariable(template, 'conversation_history') ||
-        _hasVariable(template, 'session_history');
+    final historyValue =
+        (values[PromptVariableRegistry.conversationHistory] ?? '').toString();
+    final usesHistory =
+        _hasVariable(template, PromptVariableRegistry.conversationHistory) ||
+            _hasVariable(template, PromptVariableRegistry.sessionHistory);
     String renderWithHistory(String history) {
       final updated = Map<String, Object?>.from(values);
-      updated['conversation_history'] = history;
-      updated['session_history'] = history;
+      updated[PromptVariableRegistry.conversationHistory] = history;
+      updated[PromptVariableRegistry.sessionHistory] = history;
       return _renderer.render(template, updated);
     }
 

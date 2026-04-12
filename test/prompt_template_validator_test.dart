@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:tutor1on1/services/prompt_variable_registry.dart';
 import 'package:tutor1on1/services/prompt_template_validator.dart';
 
 void main() {
@@ -9,8 +10,9 @@ void main() {
       promptName: 'review',
       content: '''
 {{kp_description}}
-{{student_input}}
 {{active_review_question_json}}
+{{conversation_history}}
+{{session_history}}
 {{target_difficulty}}
 {{presented_questions}}
 {{bad_name}}
@@ -18,9 +20,45 @@ void main() {
 ''',
     );
 
-    expect(result.missingVariables, contains('error_book_summary'));
-    expect(result.unknownVariables, contains('bad_name'));
+    expect(result.missingVariables, contains('student_input'));
+    expect(
+      result.unknownVariables,
+      containsAll(['target_difficulty', 'bad_name']),
+    );
+    expect(result.unknownVariables, isNot(contains('conversation_history')));
+    expect(result.unknownVariables, isNot(contains('session_history')));
     expect(result.invalidVariables, contains('学生输入'));
     expect(result.isValid, isFalse);
+  });
+
+  test('runtime prompt values are covered by the registry and validator', () {
+    final validator = PromptTemplateValidator();
+    final runtimeKeys = PromptVariableRegistry.buildTutorPromptValues(
+      kpTitle: '',
+      kpDescription: '',
+      studentInput: '',
+      recentChat: '',
+      conversationHistory: '',
+      helpBias: '',
+      studentSummary: '',
+      studentProfile: '',
+      studentPreferences: '',
+      lessonContent: '',
+      errorBookSummary: '',
+      presentedQuestions: '',
+      activeReviewQuestionJson: '',
+      reviewPassCounts: '',
+      reviewFailCounts: '',
+      reviewCorrectTotal: '',
+      reviewAttemptTotal: '',
+    ).keys.toSet();
+
+    expect(validator.allSupportedVariables(), containsAll(runtimeKeys));
+    expect(runtimeKeys, contains('conversation_history'));
+    expect(runtimeKeys, contains('session_history'));
+    expect(
+      validator.allowedVariables('review'),
+      containsAll(['conversation_history', 'session_history']),
+    );
   });
 }

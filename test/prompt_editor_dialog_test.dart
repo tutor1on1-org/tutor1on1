@@ -41,6 +41,7 @@ void main() {
                         validator: validator,
                         variableRows: const <Widget>[Text('vars')],
                         allVariableRows: const <Widget>[Text('all vars')],
+                        requireRequiredVariables: true,
                       ),
                     );
                   },
@@ -56,6 +57,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(PromptEditorDialog), findsOneWidget);
+      expect(
+        find.textContaining('Invalid variables: 瀛︾敓杈撳叆'),
+        findsOneWidget,
+      );
 
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
@@ -73,6 +78,53 @@ void main() {
 
       expect(find.byType(PromptEditorDialog), findsNothing);
       expect(savedContent, equals(validContent));
+    },
+  );
+
+  testWidgets(
+    'append prompt can save without complete system prompt variables',
+    (tester) async {
+      final validator = PromptTemplateValidator();
+      const appendContent = 'Use a concise tone. {{conversation_history}}';
+      String? savedContent;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: Builder(
+              builder: (context) {
+                return ElevatedButton(
+                  onPressed: () async {
+                    savedContent = await showDialog<String>(
+                      context: context,
+                      builder: (context) => PromptEditorDialog(
+                        title: 'Edit review append prompt',
+                        promptName: 'review',
+                        initialContent: appendContent,
+                        validator: validator,
+                        variableRows: const <Widget>[Text('vars')],
+                        allVariableRows: const <Widget>[Text('all vars')],
+                        requireRequiredVariables: false,
+                      ),
+                    );
+                  },
+                  child: const Text('Open'),
+                );
+              },
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(PromptEditorDialog), findsNothing);
+      expect(savedContent, equals(appendContent));
     },
   );
 }

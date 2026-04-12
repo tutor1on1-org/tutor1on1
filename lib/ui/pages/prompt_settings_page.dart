@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:tutor1on1/l10n/app_localizations.dart';
 
 import '../../db/app_database.dart';
 import '../../llm/prompt_repository.dart';
 import '../../services/app_services.dart';
+import '../../services/prompt_variable_registry.dart';
 import '../../services/prompt_template_validator.dart';
-import 'package:tutor1on1/l10n/app_localizations.dart';
 import '../app_close_button.dart';
 import '../widgets/prompt_editor_dialog.dart';
 
@@ -354,6 +355,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
         allVariableRows: _buildVariableRowsForVariables(
           _validator.allSupportedVariables().toList()..sort(),
         ),
+        requireRequiredVariables: isSystemScope,
       ),
     );
 
@@ -364,9 +366,15 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
     final validation = _validator.validate(
       promptName: item.name,
       content: result,
-      allowMissingRequired: false,
+      allowMissingRequired: !isSystemScope,
     );
     if (!validation.isValid) {
+      if (context.mounted) {
+        _showMessage(
+          context,
+          buildPromptValidationMessages(l10n, validation).join('\n'),
+        );
+      }
       return;
     }
 
@@ -569,10 +577,10 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
   }
 
   List<Widget> _buildVariableRowsForVariables(List<String> variables) {
-    final info = _variableDescriptions();
     return variables.map((variable) {
       final description =
-          info[variable] ?? 'Value provided by the session context.';
+          PromptVariableRegistry.descriptionFor(variable) ??
+              'Value provided by the session context.';
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: SelectableText.rich(
@@ -588,38 +596,6 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
         ),
       );
     }).toList();
-  }
-
-  Map<String, String> _variableDescriptions() {
-    return {
-      'kp_title': 'Knowledge point title from the course node.',
-      'kp_description':
-          'Knowledge point description from the course node (raw line).',
-      'student_input': 'Latest student input text in this session.',
-      'recent_chat':
-          'Short recent chat window so the tutor does not repeat itself.',
-      'student_summary':
-          'Saved summary for this student/course/kp (falls back to the session summary).',
-      'student_profile':
-          'Resolved student profile from teacher-defined fields (level, language, interests, support notes).',
-      'student_preferences':
-          'Resolved student preferences from teacher-defined fields (tone, pace, format).',
-      'lesson_content': 'Lesson content for the current knowledge point.',
-      'error_book_summary':
-          'Aggregated mistake counts and tags for this knowledge point.',
-      'presented_questions':
-          'Candidate question pool provided for review question selection.',
-      'active_review_question_json':
-          'JSON for the one active review question, or null when no review question is open.',
-      'review_pass_counts':
-          'JSON map with cumulative passed counts by difficulty (easy/medium/hard).',
-      'review_fail_counts':
-          'JSON map with cumulative failed counts by difficulty (easy/medium/hard).',
-      'review_correct_total':
-          'Number of closed review questions answered correctly in this session.',
-      'review_attempt_total':
-          'Number of closed review questions attempted in this session.',
-    };
   }
 }
 

@@ -3217,6 +3217,7 @@ class EnrollmentSyncService {
     final validation = _promptValidator.validate(
       promptName: promptName,
       content: content,
+      allowMissingRequired: scope != 'teacher',
     );
     if (validation.isValid) {
       return;
