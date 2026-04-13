@@ -498,6 +498,7 @@
   "promptReview": "复习",
   "promptSummarize": "总结",
   "promptStatusDefault": "当前：默认",
+  "promptStatusInherited": "当前：继承上层",
   "promptStatusCustom": "当前：自定义（{time}）",
   "@promptStatusCustom": {
     "placeholders": {
@@ -506,7 +507,7 @@
   },
   "promptHistoryTitle": "历史",
   "promptHistoryEmpty": "暂无历史。",
-  "useDefaultButton": "使用默认",
+  "useDefaultButton": "重置为上层",
   "previewButton": "预览",
   "useButton": "使用",
   "promptEditTitle": "编辑提示词（{name}）",
@@ -529,7 +530,7 @@
     }
   },
   "promptSaved": "提示词已保存。",
-  "promptReverted": "已恢复默认。",
+  "promptReverted": "已重置为上层。",
   "promptActivated": "已设为当前。",
   "promptPreviewTitle": "提示词预览",
   "promptValidationFailedTitle": "提示词验证失败",

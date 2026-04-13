@@ -186,7 +186,7 @@ Last updated: 2026-04-13
 35. Teacher prompt settings diverged from live tutor prompt resolution
 - Symptom: teacher/student prompt scopes for `learn` and `review` could appear blank in Preview, teacher edits did not affect runtime, and synced prompt metadata could silently carry malformed placeholders that later broke variable injection expectations.
 - Root cause: runtime still treated `learn`/`review` as bundled-only prompts, Prompt Settings preview/diff rendered append-only fragments instead of the resolved prompt, student-global scope was missing from the resolution chain, and prompt validation did not block malformed or non-English placeholder identifiers.
-- Prevention: keep one shared resolved-prompt path for runtime and Preview/Diff (`bundled fallback -> teacher default -> course -> student-global -> student-course`), expose the same scopes in UI and sync, reject invalid prompt templates on teacher save and sync apply, and when bundle-level conflicts can be caused by prompt metadata, label them as bundle conflicts and provide an explicit teacher-side "Pull Latest Server" action.
+- Prevention: keep one shared resolved-prompt path for runtime and Preview/Diff (`student-course override -> student-global override -> course override -> teacher default override -> bundled fallback`), expose the same scopes in UI and sync, reject invalid prompt templates on teacher save and sync apply, and when bundle-level conflicts can be caused by prompt metadata, label them as bundle conflicts and provide an explicit teacher-side "Pull Latest Server" action.
 
 36. Legacy/current prompt bundle metadata created false teacher sync conflicts
 - Symptom: teacher sync could still fail with `Teacher bundle sync conflict ... Pull latest server bundle` immediately after a successful pull from server.
@@ -297,3 +297,8 @@ Last updated: 2026-04-13
 - Symptom: Android APK student tutor chat can fail with `HandshakeException: Connection terminated during handshake` immediately after tapping `Learn` / `Review` or sending text, while normal network access still works and Windows may not reproduce it.
 - Root cause: tutor chat always uses LLM streaming, but the streaming `client.send(request)` path did not share the non-streaming `_sendWithRetry` transport guard. A single transient TLS/socket/timeout failure during the initial streamed send escaped directly to the UI.
 - Prevention: route streamed LLM sends through a retry helper that recreates the `http.Request` for the retry, because streamed requests cannot be reused after `send()`. Keep regression coverage that the first streamed send can throw `HandshakeException` and the second request succeeds.
+
+58. Prompt scope rows must not mix append fragments with full overrides
+- Symptom: Prompt Settings preview could show a full resolved prompt, while editing a course/student scope opened only an append fragment, making it unclear whether the teacher was editing the base prompt or adding a rule.
+- Root cause: the prompt model had two meanings for `prompt_templates.content`: teacher default rows were full prompt overrides, but course/student rows were append fragments that were concatenated at runtime.
+- Prevention: treat every active prompt-template row as a full prompt override. Unmodified child scopes should have no row and inherit dynamically from the nearest active parent override; resetting a scope clears its active row. Delete legacy append rows during the schema migration instead of trying to reinterpret them.

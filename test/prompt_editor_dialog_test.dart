@@ -82,10 +82,15 @@ void main() {
   );
 
   testWidgets(
-    'append prompt can save without complete system prompt variables',
+    'scoped prompt requires complete full prompt variables',
     (tester) async {
       final validator = PromptTemplateValidator();
-      const appendContent = 'Use a concise tone. {{conversation_history}}';
+      const incompleteContent = 'Use a concise tone. {{conversation_history}}';
+      const fullContent = '''
+{{kp_description}}
+{{student_input}}
+Use a concise tone. {{conversation_history}}
+''';
       String? savedContent;
 
       await tester.pumpWidget(
@@ -100,13 +105,13 @@ void main() {
                     savedContent = await showDialog<String>(
                       context: context,
                       builder: (context) => PromptEditorDialog(
-                        title: 'Edit review append prompt',
+                        title: 'Edit review scoped prompt',
                         promptName: 'review',
-                        initialContent: appendContent,
+                        initialContent: incompleteContent,
                         validator: validator,
                         variableRows: const <Widget>[Text('vars')],
                         allVariableRows: const <Widget>[Text('all vars')],
-                        requireRequiredVariables: false,
+                        requireRequiredVariables: true,
                       ),
                     );
                   },
@@ -123,8 +128,16 @@ void main() {
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
+      expect(find.byType(PromptEditorDialog), findsOneWidget);
+      expect(find.textContaining('Missing variables'), findsOneWidget);
+      expect(savedContent, isNull);
+
+      await tester.enterText(find.byType(TextField), fullContent);
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
       expect(find.byType(PromptEditorDialog), findsNothing);
-      expect(savedContent, equals(appendContent));
+      expect(savedContent, equals(fullContent));
     },
   );
 }

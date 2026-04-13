@@ -498,6 +498,7 @@
   "promptReview": "Review",
   "promptSummarize": "Summarize",
   "promptStatusDefault": "Current: Default",
+  "promptStatusInherited": "Current: Inherited",
   "promptStatusCustom": "Current: Custom ({time})",
   "@promptStatusCustom": {
     "placeholders": {
@@ -506,7 +507,7 @@
   },
   "promptHistoryTitle": "History",
   "promptHistoryEmpty": "No history yet.",
-  "useDefaultButton": "Use Default",
+  "useDefaultButton": "Reset to Parent",
   "previewButton": "Preview",
   "useButton": "Use",
   "promptEditTitle": "Edit Prompt ({name})",
@@ -529,7 +530,7 @@
     }
   },
   "promptSaved": "Prompt saved.",
-  "promptReverted": "Reverted to default.",
+  "promptReverted": "Reset to parent.",
   "promptActivated": "Prompt set active.",
   "promptPreviewTitle": "Prompt Preview",
   "promptValidationFailedTitle": "Prompt validation failed",

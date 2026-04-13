@@ -190,4 +190,42 @@ void main() {
 
     await db.close();
   });
+
+  test('migration to v31 drops legacy prompt template overrides', () async {
+    final tempDir = await Directory.systemTemp.createTemp('tutor1on1');
+    final dbFile = File(p.join(tempDir.path, 'test.db'));
+
+    final rawDb = sqlite3.sqlite3.open(dbFile.path);
+    rawDb.execute('''
+      CREATE TABLE prompt_templates (
+        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        teacher_id INTEGER NOT NULL,
+        course_key TEXT NULL,
+        student_id INTEGER NULL,
+        prompt_name TEXT NOT NULL,
+        content TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 0 CHECK (is_active IN (0, 1)),
+        created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s', CURRENT_TIMESTAMP) AS INTEGER))
+      );
+    ''');
+    rawDb.execute('''
+      INSERT INTO prompt_templates (
+        teacher_id,
+        course_key,
+        student_id,
+        prompt_name,
+        content,
+        is_active
+      ) VALUES (1, 'course_math', 2, 'learn', 'legacy scoped prompt', 1);
+    ''');
+    rawDb.execute('PRAGMA user_version = 30;');
+    rawDb.dispose();
+
+    final db = AppDatabase.forTesting(NativeDatabase(dbFile));
+    final rows = await db.customSelect('SELECT * FROM prompt_templates').get();
+
+    expect(rows, isEmpty);
+
+    await db.close();
+  });
 }

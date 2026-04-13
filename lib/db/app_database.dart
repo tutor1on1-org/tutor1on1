@@ -497,7 +497,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 30;
+  int get schemaVersion => 31;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -728,6 +728,9 @@ ORDER BY id
             await customStatement(
               'ALTER TABLE llm_calls_new RENAME TO llm_calls',
             );
+          }
+          if (from < 31) {
+            await customStatement('DELETE FROM prompt_templates');
           }
         },
       );

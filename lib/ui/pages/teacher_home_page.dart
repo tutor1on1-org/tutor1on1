@@ -1154,7 +1154,7 @@ class _TeacherHomePageState extends State<TeacherHomePage>
       final validation = promptValidator.validate(
         promptName: template.promptName,
         content: template.content,
-        allowMissingRequired: scope != 'teacher',
+        allowMissingRequired: false,
       );
       if (!validation.isValid) {
         throw StateError(

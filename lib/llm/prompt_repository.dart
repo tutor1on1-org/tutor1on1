@@ -51,6 +51,20 @@ Return a valid response following the REVIEW output schema.
     String? courseKey,
     int? studentId,
   }) async {
+    return loadResolvedScopedPrompt(
+      name,
+      teacherId: teacherId,
+      courseKey: courseKey,
+      studentId: studentId,
+    );
+  }
+
+  Future<String> loadResolvedScopedPrompt(
+    String name, {
+    required int? teacherId,
+    String? courseKey,
+    int? studentId,
+  }) async {
     final normalizedCourseKey = _normalizeCourseKey(courseKey);
     final cacheKey = [
       teacherId?.toString() ?? 'default',
@@ -62,113 +76,29 @@ Return a valid response following the REVIEW output schema.
       return _promptCache[cacheKey]!;
     }
 
-    final systemPrompt = await loadResolvedSystemPrompt(
-      name,
-      teacherId: teacherId,
-    );
-    final courseAppend = normalizedCourseKey == null
-        ? ''
-        : await _loadAppendPrompt(
-            name,
-            teacherId: teacherId,
-            courseKey: normalizedCourseKey,
-          );
-    final studentGlobalAppend = studentId == null
-        ? ''
-        : await _loadAppendPrompt(
-            name,
-            teacherId: teacherId,
-            courseKey: null,
-            studentId: studentId,
-          );
-    final studentCourseAppend =
-        studentId == null || normalizedCourseKey == null
-            ? ''
-            : await _loadAppendPrompt(
-                name,
-                teacherId: teacherId,
-                courseKey: normalizedCourseKey,
-                studentId: studentId,
-              );
-    final combined = _combinePrompts([
-      systemPrompt,
-      courseAppend,
-      studentGlobalAppend,
-      studentCourseAppend,
-    ]);
-    _promptCache[cacheKey] = combined;
-    return combined;
-  }
-
-  Future<String> loadAppendPrompt(
-    String name, {
-    required int teacherId,
-    String? courseKey,
-    int? studentId,
-  }) async {
-    final normalizedCourseKey = _normalizeCourseKey(courseKey);
-    return _loadAppendPrompt(
-      name,
-      teacherId: teacherId,
-      courseKey: normalizedCourseKey,
-      studentId: studentId,
-    );
-  }
-
-  Future<String> buildPromptPreview({
-    required String name,
-    required int teacherId,
-    String? courseKey,
-    int? studentId,
-    String? courseAppendOverride,
-    String? studentAppendOverride,
-    bool includeSystem = true,
-  }) async {
-    final normalizedCourseKey = _normalizeCourseKey(courseKey);
-    final systemPrompt = includeSystem
-        ? await loadResolvedSystemPrompt(name, teacherId: teacherId)
-        : '';
-    final courseAppend = normalizedCourseKey == null
-        ? ''
-        : courseAppendOverride ??
-            await _loadAppendPrompt(
-              name,
-              teacherId: teacherId,
-              courseKey: normalizedCourseKey,
-            );
-    var studentGlobalAppend = '';
-    var studentCourseAppend = '';
-    if (studentId != null) {
-      if (normalizedCourseKey == null) {
-        studentGlobalAppend = studentAppendOverride ??
-            await _loadAppendPrompt(
-              name,
-              teacherId: teacherId,
-              courseKey: null,
-              studentId: studentId,
-            );
-      } else {
-        studentGlobalAppend = await _loadAppendPrompt(
+    final db = _db;
+    if (db != null && teacherId != null) {
+      final scopes = _promptOverrideLookupScopes(
+        courseKey: normalizedCourseKey,
+        studentId: studentId,
+      );
+      for (final scope in scopes) {
+        final override = await _loadPromptOverride(
           name,
           teacherId: teacherId,
-          courseKey: null,
-          studentId: studentId,
+          courseKey: scope.courseKey,
+          studentId: scope.studentId,
         );
-        studentCourseAppend = studentAppendOverride ??
-            await _loadAppendPrompt(
-              name,
-              teacherId: teacherId,
-              courseKey: normalizedCourseKey,
-              studentId: studentId,
-            );
+        if (override != null) {
+          _promptCache[cacheKey] = override;
+          return override;
+        }
       }
     }
-    return _combinePrompts([
-      systemPrompt,
-      courseAppend,
-      studentGlobalAppend,
-      studentCourseAppend,
-    ]);
+
+    final bundled = await _loadBundledSystemPrompt(name);
+    _promptCache[cacheKey] = bundled;
+    return bundled;
   }
 
   Future<void> ensureAssignmentPrompts({
@@ -176,12 +106,12 @@ Return a valid response following the REVIEW output schema.
     required int studentId,
     required int courseVersionId,
   }) async {
-    // Append prompts default to empty; no need to pre-seed per-assignment rows.
+    // Prompt scopes inherit from their nearest active parent override.
     return;
   }
 
   Future<void> backfillAssignmentPrompts() async {
-    // Append prompts default to empty; no backfill required.
+    // Prompt scopes inherit from their nearest active parent override.
     return;
   }
 
@@ -260,6 +190,29 @@ Return a valid response following the REVIEW output schema.
     return override?.content;
   }
 
+  List<_PromptOverrideScope> _promptOverrideLookupScopes({
+    required String? courseKey,
+    required int? studentId,
+  }) {
+    final scopes = <_PromptOverrideScope>[];
+    void add(String? scopeCourseKey, int? scopeStudentId) {
+      final scope = _PromptOverrideScope(scopeCourseKey, scopeStudentId);
+      if (!scopes.contains(scope)) {
+        scopes.add(scope);
+      }
+    }
+
+    add(courseKey, studentId);
+    if (studentId != null) {
+      add(null, studentId);
+    }
+    if (courseKey != null) {
+      add(courseKey, null);
+    }
+    add(null, null);
+    return scopes;
+  }
+
   String? _normalizeCourseKey(String? value) {
     final trimmed = value?.trim();
     if (trimmed == null || trimmed.isEmpty) {
@@ -268,7 +221,7 @@ Return a valid response following the REVIEW output schema.
     return p.normalize(trimmed);
   }
 
-  Future<String> _loadAppendPrompt(
+  Future<String?> _loadPromptOverride(
     String name, {
     required int? teacherId,
     required String? courseKey,
@@ -278,25 +231,13 @@ Return a valid response following the REVIEW output schema.
     if (db == null || teacherId == null) {
       return '';
     }
-    final append = await db.getActivePromptTemplate(
+    final override = await db.getActivePromptTemplate(
       teacherId: teacherId,
       promptName: name,
       courseKey: courseKey,
       studentId: studentId,
     );
-    return (append?.content ?? '').trim();
-  }
-
-  String _combinePrompts(List<String?> parts) {
-    final cleaned = parts
-        .whereType<String>()
-        .map((part) => part.trim())
-        .where((part) => part.isNotEmpty)
-        .toList();
-    if (cleaned.isEmpty) {
-      return '';
-    }
-    return cleaned.join('\n\n');
+    return override?.content.trim();
   }
 
   Future<Map<String, dynamic>> loadSchema(String name) async {
@@ -318,4 +259,21 @@ Return a valid response following the REVIEW output schema.
     _textbookCache[filename] = content;
     return content;
   }
+}
+
+class _PromptOverrideScope {
+  const _PromptOverrideScope(this.courseKey, this.studentId);
+
+  final String? courseKey;
+  final int? studentId;
+
+  @override
+  bool operator ==(Object other) {
+    return other is _PromptOverrideScope &&
+        other.courseKey == courseKey &&
+        other.studentId == studentId;
+  }
+
+  @override
+  int get hashCode => Object.hash(courseKey, studentId);
 }

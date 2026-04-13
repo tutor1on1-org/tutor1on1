@@ -176,8 +176,7 @@ class _PromptEditorDialogState extends State<PromptEditorDialog> {
                             .requiredVariables(widget.promptName)
                             .join(', '),
                       )
-                    : 'Required variables are enforced only for system prompts. '
-                        'Append prompts may omit them.',
+                    : 'Required variables are not enforced for this prompt.',
               ),
               Text(
                 l10n.promptAllowedVars(

@@ -186,7 +186,9 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
                 builder: (context, snapshot) {
                   final active = snapshot.data;
                   final statusText = active == null
-                      ? l10n.promptStatusDefault
+                      ? ((scope?.isSystem ?? false)
+                          ? l10n.promptStatusDefault
+                          : l10n.promptStatusInherited)
                       : l10n.promptStatusCustom(
                           _formatTime(active.createdAt),
                         );
@@ -208,7 +210,6 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
                               promptRepo,
                               item,
                               active?.content,
-                              isSystemScope: scope?.isSystem ?? false,
                               courseKey: courseKey,
                               studentId: studentId,
                             ),
@@ -219,7 +220,6 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
                               context,
                               promptRepo,
                               item.name,
-                              isSystemScope: scope?.isSystem ?? false,
                               courseKey: courseKey,
                               studentId: studentId,
                             ),
@@ -285,7 +285,6 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
                                         promptRepo,
                                         item.name,
                                         entry,
-                                        isSystemScope: scope?.isSystem ?? false,
                                         courseKey: courseKey,
                                         studentId: studentId,
                                       ),
@@ -331,16 +330,14 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
 
   Future<void> _openEditor(BuildContext context, PromptRepository promptRepo,
       _PromptItem item, String? currentContent,
-      {required bool isSystemScope, String? courseKey, int? studentId}) async {
+      {String? courseKey, int? studentId}) async {
     final l10n = AppLocalizations.of(context)!;
-    final defaultContent = isSystemScope
-        ? await promptRepo.loadBundledSystemPrompt(item.name)
-        : await promptRepo.loadAppendPrompt(
-            item.name,
-            teacherId: widget.teacherId,
-            courseKey: courseKey,
-            studentId: studentId,
-          );
+    final defaultContent = await promptRepo.loadPrompt(
+      item.name,
+      teacherId: widget.teacherId,
+      courseKey: courseKey,
+      studentId: studentId,
+    );
     final controller =
         TextEditingController(text: currentContent ?? defaultContent);
 
@@ -355,7 +352,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
         allVariableRows: _buildVariableRowsForVariables(
           _validator.allSupportedVariables().toList()..sort(),
         ),
-        requireRequiredVariables: isSystemScope,
+        requireRequiredVariables: true,
       ),
     );
 
@@ -366,7 +363,7 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
     final validation = _validator.validate(
       promptName: item.name,
       content: result,
-      allowMissingRequired: !isSystemScope,
+      allowMissingRequired: false,
     );
     if (!validation.isValid) {
       if (context.mounted) {
@@ -396,23 +393,16 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
     BuildContext context,
     PromptRepository promptRepo,
     String promptName, {
-    required bool isSystemScope,
     String? courseKey,
     int? studentId,
   }) async {
     final l10n = AppLocalizations.of(context)!;
-    final preview = isSystemScope
-        ? await promptRepo.loadResolvedSystemPrompt(
-            promptName,
-            teacherId: widget.teacherId,
-          )
-        : await promptRepo.buildPromptPreview(
-            name: promptName,
-            teacherId: widget.teacherId,
-            courseKey: courseKey,
-            studentId: studentId,
-            includeSystem: true,
-          );
+    final preview = await promptRepo.loadPrompt(
+      promptName,
+      teacherId: widget.teacherId,
+      courseKey: courseKey,
+      studentId: studentId,
+    );
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
@@ -438,34 +428,17 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
     PromptRepository promptRepo,
     String promptName,
     PromptTemplate entry, {
-    required bool isSystemScope,
     String? courseKey,
     int? studentId,
   }) async {
     final l10n = AppLocalizations.of(context)!;
-    final current = isSystemScope
-        ? await promptRepo.loadResolvedSystemPrompt(
-            promptName,
-            teacherId: widget.teacherId,
-          )
-        : await promptRepo.buildPromptPreview(
-            name: promptName,
-            teacherId: widget.teacherId,
-            courseKey: courseKey,
-            studentId: studentId,
-            includeSystem: true,
-          );
-    final historical = isSystemScope
-        ? entry.content
-        : await promptRepo.buildPromptPreview(
-            name: promptName,
-            teacherId: widget.teacherId,
-            courseKey: courseKey,
-            studentId: studentId,
-            courseAppendOverride: studentId == null ? entry.content : null,
-            studentAppendOverride: studentId == null ? null : entry.content,
-            includeSystem: true,
-          );
+    final current = await promptRepo.loadPrompt(
+      promptName,
+      teacherId: widget.teacherId,
+      courseKey: courseKey,
+      studentId: studentId,
+    );
+    final historical = entry.content;
     final diff = _buildUnifiedDiff(
       current,
       historical,
@@ -578,9 +551,8 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
 
   List<Widget> _buildVariableRowsForVariables(List<String> variables) {
     return variables.map((variable) {
-      final description =
-          PromptVariableRegistry.descriptionFor(variable) ??
-              'Value provided by the session context.';
+      final description = PromptVariableRegistry.descriptionFor(variable) ??
+          'Value provided by the session context.';
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: SelectableText.rich(

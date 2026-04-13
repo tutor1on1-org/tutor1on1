@@ -16,7 +16,7 @@ void main() {
     await db.close();
   });
 
-  test('loadPrompt applies teacher, course, student-global, and student-course scopes', () async {
+  test('loadPrompt resolves the nearest full prompt override', () async {
     final teacherId = await db.createUser(
       username: 'teacher_prompt_scope',
       pinHash: 'hash',
@@ -31,26 +31,26 @@ void main() {
     await db.insertPromptTemplate(
       teacherId: teacherId,
       promptName: 'learn',
-      content: 'SYSTEM override',
+      content: 'TEACHER full prompt',
     );
     await db.insertPromptTemplate(
       teacherId: teacherId,
       promptName: 'learn',
       courseKey: 'course_math',
-      content: 'COURSE append',
+      content: 'COURSE full prompt',
     );
     await db.insertPromptTemplate(
       teacherId: teacherId,
       promptName: 'learn',
       studentId: studentId,
-      content: 'STUDENT GLOBAL append',
+      content: 'STUDENT GLOBAL full prompt',
     );
     await db.insertPromptTemplate(
       teacherId: teacherId,
       promptName: 'learn',
       courseKey: 'course_math',
       studentId: studentId,
-      content: 'STUDENT COURSE append',
+      content: 'STUDENT COURSE full prompt',
     );
 
     final repo = PromptRepository(db: db);
@@ -60,68 +60,48 @@ void main() {
       courseKey: 'course_math',
       studentId: studentId,
     );
-    expect(
-      combined,
-      equals(
-        'SYSTEM override\n\n'
-        'COURSE append\n\n'
-        'STUDENT GLOBAL append\n\n'
-        'STUDENT COURSE append',
-      ),
+    expect(combined, equals('STUDENT COURSE full prompt'));
+
+    await db.clearActivePromptTemplates(
+      teacherId: teacherId,
+      promptName: 'learn',
+      courseKey: 'course_math',
+      studentId: studentId,
     );
+    repo.invalidatePromptCache(promptName: 'learn');
+    final withoutStudentCourse = await repo.loadPrompt(
+      'learn',
+      teacherId: teacherId,
+      courseKey: 'course_math',
+      studentId: studentId,
+    );
+    expect(withoutStudentCourse, equals('STUDENT GLOBAL full prompt'));
+
+    await db.clearActivePromptTemplates(
+      teacherId: teacherId,
+      promptName: 'learn',
+      studentId: studentId,
+    );
+    repo.invalidatePromptCache(promptName: 'learn');
+    final withoutStudentGlobal = await repo.loadPrompt(
+      'learn',
+      teacherId: teacherId,
+      courseKey: 'course_math',
+      studentId: studentId,
+    );
+    expect(withoutStudentGlobal, equals('COURSE full prompt'));
 
     final noStudent = await repo.loadPrompt(
       'learn',
       teacherId: teacherId,
       courseKey: 'course_math',
     );
-    expect(noStudent, equals('SYSTEM override\n\nCOURSE append'));
+    expect(noStudent, equals('COURSE full prompt'));
 
     final systemOnly = await repo.loadPrompt(
       'learn',
       teacherId: teacherId,
     );
-    expect(systemOnly, equals('SYSTEM override'));
-  });
-
-  test('loadAppendPrompt resolves course and student-global scopes', () async {
-    final teacherId = await db.createUser(
-      username: 'teacher_prompt_normalize',
-      pinHash: 'hash',
-      role: 'teacher',
-    );
-    final studentId = await db.createUser(
-      username: 'student_prompt_normalize',
-      pinHash: 'hash',
-      role: 'student',
-      teacherId: teacherId,
-    );
-    await db.insertPromptTemplate(
-      teacherId: teacherId,
-      promptName: 'learn',
-      courseKey: '  course_math  ',
-      content: 'COURSE append',
-    );
-    await db.insertPromptTemplate(
-      teacherId: teacherId,
-      promptName: 'learn',
-      studentId: studentId,
-      content: 'STUDENT GLOBAL append',
-    );
-
-    final repo = PromptRepository(db: db);
-    final courseAppend = await repo.loadAppendPrompt(
-      'learn',
-      teacherId: teacherId,
-      courseKey: 'course_math',
-    );
-    expect(courseAppend, equals('COURSE append'));
-
-    final studentGlobalAppend = await repo.loadAppendPrompt(
-      'learn',
-      teacherId: teacherId,
-      studentId: studentId,
-    );
-    expect(studentGlobalAppend, equals('STUDENT GLOBAL append'));
+    expect(systemOnly, equals('TEACHER full prompt'));
   });
 }
