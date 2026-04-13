@@ -9,6 +9,7 @@ import '../services/llm_call_repository.dart';
 import '../services/llm_log_repository.dart';
 import '../services/secure_storage_service.dart';
 import '../services/settings_repository.dart';
+import '../services/transport_retry_policy.dart';
 import 'llm_hash.dart';
 import 'llm_models.dart';
 import 'llm_providers.dart';
@@ -21,14 +22,16 @@ class LlmService {
     this._secureStorage,
     this._callRepository,
     this._logRepository,
-    this._validator,
-  );
+    this._validator, {
+    http.Client Function()? clientFactory,
+  }) : _clientFactory = clientFactory ?? (() => http.Client());
 
   final SettingsRepository _settingsRepository;
   final SecureStorageService _secureStorage;
   final LlmCallRepository _callRepository;
   final LlmLogRepository _logRepository;
   final SchemaValidator _validator;
+  final http.Client Function() _clientFactory;
 
   LlmRequestHandle startCall({
     required String promptName,
@@ -38,7 +41,7 @@ class LlmService {
     String? modelOverride,
     LlmCallContext? context,
   }) {
-    final client = http.Client();
+    final client = _clientFactory();
     var cancelled = false;
     final future = _execute(
       client: client,
@@ -70,7 +73,7 @@ class LlmService {
     String? modelOverride,
     LlmCallContext? context,
   }) {
-    final client = http.Client();
+    final client = _clientFactory();
     var cancelled = false;
     final future = _executeStreaming(
       client: client,
@@ -646,11 +649,22 @@ class LlmService {
       reasoningEffort: reasoningEffort,
       stream: true,
     );
-    final request = http.Request('POST', url);
-    request.headers.addAll(_buildHeaders(provider: provider, apiKey: apiKey));
-    request.body = jsonEncode(bodyMap);
-    final response =
-        await client.send(request).timeout(Duration(seconds: timeoutSeconds));
+    Future<http.StreamedResponse> send() {
+      return client
+          .send(
+            _buildJsonPostRequest(
+              url: url,
+              headers: _buildHeaders(provider: provider, apiKey: apiKey),
+              bodyMap: bodyMap,
+            ),
+          )
+          .timeout(Duration(seconds: timeoutSeconds));
+    }
+
+    final response = await _sendStreamWithRetry(
+      send,
+      isCancelled: isCancelled,
+    );
 
     if (isCancelled()) {
       throw StateError('Request cancelled.');
@@ -806,6 +820,17 @@ class LlmService {
     };
   }
 
+  http.Request _buildJsonPostRequest({
+    required Uri url,
+    required Map<String, String> headers,
+    required Map<String, dynamic> bodyMap,
+  }) {
+    final request = http.Request('POST', url);
+    request.headers.addAll(headers);
+    request.body = jsonEncode(bodyMap);
+    return request;
+  }
+
   Future<LlmPreparedResponse> _postAnthropicStream({
     required http.Client client,
     required String baseUrl,
@@ -822,23 +847,32 @@ class LlmService {
     required void Function(String chunk) onChunk,
   }) async {
     final url = Uri.parse('${_normalizeBaseUrl(baseUrl)}${provider.chatPath}');
-    final request = http.Request('POST', url);
-    request.headers.addAll(_buildHeaders(provider: provider, apiKey: apiKey));
-    request.body = jsonEncode(
-      _buildRequestBody(
-        provider: provider,
-        baseUrl: baseUrl,
-        promptName: promptName,
-        model: model,
-        renderedPrompt: renderedPrompt,
-        schemaMap: schemaMap,
-        maxTokens: maxTokens,
-        reasoningEffort: reasoningEffort,
-        stream: true,
-      ),
+    Future<http.StreamedResponse> send() {
+      return client
+          .send(
+            _buildJsonPostRequest(
+              url: url,
+              headers: _buildHeaders(provider: provider, apiKey: apiKey),
+              bodyMap: _buildRequestBody(
+                provider: provider,
+                baseUrl: baseUrl,
+                promptName: promptName,
+                model: model,
+                renderedPrompt: renderedPrompt,
+                schemaMap: schemaMap,
+                maxTokens: maxTokens,
+                reasoningEffort: reasoningEffort,
+                stream: true,
+              ),
+            ),
+          )
+          .timeout(Duration(seconds: timeoutSeconds));
+    }
+
+    final response = await _sendStreamWithRetry(
+      send,
+      isCancelled: isCancelled,
     );
-    final response =
-        await client.send(request).timeout(Duration(seconds: timeoutSeconds));
 
     if (isCancelled()) {
       throw StateError('Request cancelled.');
@@ -939,19 +973,40 @@ class LlmService {
     Future<http.Response> Function() request, {
     required bool Function() isCancelled,
   }) async {
-    http.Response response;
+    return _sendWithOneRetry(
+      request,
+      isCancelled: isCancelled,
+      statusCodeOf: (response) => response.statusCode,
+    );
+  }
+
+  Future<http.StreamedResponse> _sendStreamWithRetry(
+    Future<http.StreamedResponse> Function() request, {
+    required bool Function() isCancelled,
+  }) async {
+    return _sendWithOneRetry(
+      request,
+      isCancelled: isCancelled,
+      statusCodeOf: (response) => response.statusCode,
+      disposeBeforeRetry: (response) => response.stream.drain(),
+    );
+  }
+
+  Future<T> _sendWithOneRetry<T>(
+    Future<T> Function() request, {
+    required bool Function() isCancelled,
+    required int Function(T response) statusCodeOf,
+    Future<void> Function(T response)? disposeBeforeRetry,
+  }) async {
+    T response;
     try {
       response = await request();
     } on Exception catch (e) {
       if (isCancelled()) {
         rethrow;
       }
-      if (e is SocketException ||
-          e is HandshakeException ||
-          e is HttpException ||
-          e is TimeoutException) {
-        response = await request();
-        return response;
+      if (isRetryableTransportException(e)) {
+        return request();
       }
       rethrow;
     }
@@ -960,9 +1015,15 @@ class LlmService {
       return response;
     }
 
-    if (response.statusCode == 429 ||
-        (response.statusCode >= 500 && response.statusCode < 600)) {
+    if (isRetryableHttpStatus(statusCodeOf(response))) {
+      await disposeBeforeRetry?.call(response);
+      if (isCancelled()) {
+        return response;
+      }
       await Future<void>.delayed(const Duration(seconds: 1));
+      if (isCancelled()) {
+        return response;
+      }
       response = await request();
     }
     return response;

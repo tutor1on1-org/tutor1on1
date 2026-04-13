@@ -1,5 +1,5 @@
 # BUGS
-Last updated: 2026-04-12
+Last updated: 2026-04-13
 
 ## Active watch
 - Student import race after bundle download (monitoring): fixed by awaiting archive extraction in client bundle service (`f77e7e0`); keep watching for recurrence in production-like flow.
@@ -238,11 +238,6 @@ Last updated: 2026-04-12
 - Root cause: the app's first-party API clients (`AuthApiService`, `MarketplaceApiService`, `ArtifactSyncApiService`) used default `HttpClient` proxy discovery, so `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` such as `http://10.211.55.2:7890` silently tunneled `api.tutor1on1.org` traffic through a slow local proxy.
 - Prevention: build first-party API `HttpClient`s with `findProxy = (_) => 'DIRECT'` so app login/sync traffic does not inherit launcher-shell proxy env, and verify suspiciously slow downloads by comparing proxied vs `--noproxy '*'` timings on the same machine.
 
-46. Teacher login course sync blocked on full bundle extraction of thousands of small files
-- Symptom: Dennis teacher login on Windows could spend minutes in enrollment sync even though the downloaded `course_bundle` zip itself was only a few MB and network transfer was fast.
-- Root cause: login-time remote course import fully extracted large bundles like `MATH` into `getApplicationDocumentsDirectory()` before home render, paying huge small-file I/O cost on the redirected `C:\Mac\Home\Documents` path. The hot path only needed `contents.txt` and metadata, but it still materialized every lecture/question file eagerly.
-- Prevention: keep login-time course import scaffold-only (`contents.txt` / `context.txt`), cache the canonical bundle zip, and lazily read or materialize lesson/question files only for later actions that truly need them.
-
 46. Login-time remote course import fully extracted large bundles on the hot path
 - Symptom: Dennis teacher login could spend roughly three minutes in enrollment sync on a fresh machine even though only three course bundles were downloaded and the later `student_kp` sync was already down to a few seconds.
 - Root cause: remote `course_bundle` import extracted the whole bundle to disk and rebuilt all lecture/question files before preview/import, so the `MATH` bundle's roughly 3900 small files dominated login. On this host that was amplified because `getApplicationDocumentsDirectory()` points at `C:\Mac\Home\Documents`, where small-file extraction is especially slow.
@@ -297,3 +292,8 @@ Last updated: 2026-04-12
 - Symptom: teachers could add `{{conversation_history}}` to a prompt and the runtime could render it, but the APK prompt editor rejected the same variable as unsupported and sometimes showed the validation error only after scrolling.
 - Root cause: supported prompt variables were duplicated across runtime render values, validator allowlists/required lists, and prompt-editor description text, so the lists drifted.
 - Prevention: keep prompt variable names, descriptions, allowed scopes, and required scopes in one registry consumed by runtime, validator, and UI help. Keep regression tests that compare runtime render keys and bundled prompt variables against that registry, and keep prompt-editor validation visible above the editor.
+
+57. LLM streaming transport failures must retry with a fresh streamed request
+- Symptom: Android APK student tutor chat can fail with `HandshakeException: Connection terminated during handshake` immediately after tapping `Learn` / `Review` or sending text, while normal network access still works and Windows may not reproduce it.
+- Root cause: tutor chat always uses LLM streaming, but the streaming `client.send(request)` path did not share the non-streaming `_sendWithRetry` transport guard. A single transient TLS/socket/timeout failure during the initial streamed send escaped directly to the UI.
+- Prevention: route streamed LLM sends through a retry helper that recreates the `http.Request` for the retry, because streamed requests cannot be reused after `send()`. Keep regression coverage that the first streamed send can throw `HandshakeException` and the second request succeeds.

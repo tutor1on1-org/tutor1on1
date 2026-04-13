@@ -1,8 +1,9 @@
-import 'dart:async';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
+
+import 'transport_retry_policy.dart';
 
 typedef FirstPartyApiHttpClientFactory = http.Client Function();
 
@@ -20,11 +21,7 @@ http.Client buildFirstPartyApiHttpClient({
 
 bool isFreshFirstPartyApiClientRetryableError(Object error) {
   final message = error.toString();
-  if (error is TimeoutException ||
-      error is SocketException ||
-      error is HttpException ||
-      error is HandshakeException ||
-      error is http.ClientException) {
+  if (isRetryableTransportException(error)) {
     return true;
   }
   return message.contains('Failed host lookup') ||
