@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:drift/drift.dart' hide Column;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -12,8 +11,7 @@ import '../../services/app_services.dart';
 import '../../services/course_bundle_service.dart';
 import '../../services/home_sync_coordinator.dart';
 import '../../services/marketplace_api_service.dart';
-import '../../services/prompt_bundle_compat.dart';
-import '../../services/prompt_template_validator.dart';
+import '../../services/prompt_bundle_metadata_builder.dart';
 import '../../services/session_sync_service.dart';
 import '../../services/teacher_marketplace_upload_service.dart';
 import '../../services/sync_progress.dart';
@@ -585,7 +583,8 @@ class _TeacherHomePageState extends State<TeacherHomePage>
       );
       final remoteCourseId = target.remoteCourseId;
       final bundleService = CourseBundleService();
-      final promptMetadata = await _buildPromptBundleMetadata(
+      final promptMetadata =
+          await PromptBundleMetadataBuilder(db: services.db).build(
         teacher: teacher,
         course: course,
         remoteCourseId: remoteCourseId,
@@ -1064,247 +1063,12 @@ class _TeacherHomePageState extends State<TeacherHomePage>
     );
   }
 
-  Future<Map<String, dynamic>> _buildPromptBundleMetadata({
-    required User teacher,
-    required CourseVersion course,
-    required int remoteCourseId,
-  }) async {
-    final db = context.read<AppDatabase>();
-    final promptValidator = PromptTemplateValidator();
-    final courseKey = (course.sourcePath ?? '').trim();
-    if (courseKey.isEmpty) {
-      throw StateError('Course path missing.');
-    }
-
-    final scopeTemplates = <PromptTemplate>[];
-    final assignments = await db.getAssignmentsForCourse(course.id);
-    final assignedStudentIds =
-        assignments.map((assignment) => assignment.studentId).toSet();
-    final systemTemplates = await (db.select(db.promptTemplates)
-          ..where((tbl) =>
-              tbl.teacherId.equals(teacher.id) &
-              tbl.isActive.equals(true) &
-              tbl.courseKey.isNull() &
-              tbl.studentId.isNull())
-          ..orderBy([
-            (tbl) =>
-                OrderingTerm(expression: tbl.createdAt, mode: OrderingMode.desc)
-          ]))
-        .get();
-    scopeTemplates.addAll(systemTemplates);
-
-    if (assignedStudentIds.isNotEmpty) {
-      final studentGlobalTemplates = await (db.select(db.promptTemplates)
-            ..where((tbl) =>
-                tbl.teacherId.equals(teacher.id) &
-                tbl.isActive.equals(true) &
-                tbl.courseKey.isNull() &
-                tbl.studentId.isIn(assignedStudentIds))
-            ..orderBy([
-              (tbl) => OrderingTerm(
-                    expression: tbl.createdAt,
-                    mode: OrderingMode.desc,
-                  )
-            ]))
-          .get();
-      scopeTemplates.addAll(studentGlobalTemplates);
-    }
-
-    final courseTemplates = await (db.select(db.promptTemplates)
-          ..where((tbl) =>
-              tbl.teacherId.equals(teacher.id) &
-              tbl.isActive.equals(true) &
-              tbl.courseKey.equals(courseKey))
-          ..orderBy([
-            (tbl) =>
-                OrderingTerm(expression: tbl.createdAt, mode: OrderingMode.desc)
-          ]))
-        .get();
-    scopeTemplates.addAll(courseTemplates);
-
-    final dedupedByScope = <String, PromptTemplate>{};
-    for (final template in scopeTemplates) {
-      final key = [
-        template.promptName,
-        template.courseKey ?? '',
-        template.studentId?.toString() ?? '',
-      ].join('::');
-      dedupedByScope.putIfAbsent(key, () => template);
-    }
-
-    final studentCache = <int, User?>{};
-    final promptTemplatesPayload = <Map<String, dynamic>>[];
-    for (final template in dedupedByScope.values) {
-      final studentId = template.studentId;
-      User? student;
-      if (studentId != null) {
-        student = studentCache[studentId];
-        student ??= await db.getUserById(studentId);
-        studentCache[studentId] = student;
-      }
-
-      String scope = 'teacher';
-      if (template.courseKey == null && template.studentId != null) {
-        scope = 'student_global';
-      } else if (template.courseKey != null && template.studentId == null) {
-        scope = 'course';
-      } else if (template.courseKey != null && template.studentId != null) {
-        scope = 'student_course';
-      }
-      final validation = promptValidator.validate(
-        promptName: template.promptName,
-        content: template.content,
-        allowMissingRequired: false,
-      );
-      if (!validation.isValid) {
-        throw StateError(
-          'Invalid upload prompt metadata for "${template.promptName}" scope '
-          '"$scope". missing=${validation.missingVariables.join(',')} '
-          'unknown=${validation.unknownVariables.join(',')} '
-          'invalid=${validation.invalidVariables.join(',')}',
-        );
-      }
-
-      promptTemplatesPayload.add({
-        'prompt_name': template.promptName,
-        'scope': scope,
-        'content': template.content,
-        'student_remote_user_id': student?.remoteUserId,
-        'student_username': student?.username,
-        'created_at': template.createdAt.toUtc().toIso8601String(),
-      });
-    }
-
-    final profilesPayload = <Map<String, dynamic>>[];
-    final systemProfile = await db.getStudentPromptProfile(
-      teacherId: teacher.id,
-      courseKey: null,
-      studentId: null,
-    );
-    if (systemProfile != null) {
-      profilesPayload.add(
-        _profileToJson(systemProfile, scope: 'teacher'),
-      );
-    }
-
-    for (final studentId in assignedStudentIds) {
-      final profile = await db.getStudentPromptProfile(
-        teacherId: teacher.id,
-        courseKey: null,
-        studentId: studentId,
-      );
-      if (profile == null) {
-        continue;
-      }
-      var student = studentCache[studentId];
-      student ??= await db.getUserById(studentId);
-      studentCache[studentId] = student;
-      profilesPayload.add(
-        _profileToJson(
-          profile,
-          scope: 'student_global',
-          studentRemoteUserId: student?.remoteUserId,
-          studentUsername: student?.username,
-        ),
-      );
-    }
-
-    final courseProfile = await db.getStudentPromptProfile(
-      teacherId: teacher.id,
-      courseKey: courseKey,
-      studentId: null,
-    );
-    if (courseProfile != null) {
-      profilesPayload.add(
-        _profileToJson(courseProfile, scope: 'course'),
-      );
-    }
-
-    final studentProfileRows = await (db.select(db.studentPromptProfiles)
-          ..where((tbl) =>
-              tbl.teacherId.equals(teacher.id) &
-              tbl.courseKey.equals(courseKey) &
-              tbl.studentId.isNotNull())
-          ..orderBy([
-            (tbl) => OrderingTerm(
-                  expression: tbl.updatedAt,
-                  mode: OrderingMode.desc,
-                ),
-            (tbl) => OrderingTerm(
-                  expression: tbl.createdAt,
-                  mode: OrderingMode.desc,
-                ),
-          ]))
-        .get();
-
-    final studentIds = <int>{};
-    for (final row in studentProfileRows) {
-      final studentId = row.studentId;
-      if (studentId != null) {
-        studentIds.add(studentId);
-      }
-    }
-
-    for (final studentId in studentIds) {
-      final profile = await db.getStudentPromptProfile(
-        teacherId: teacher.id,
-        courseKey: courseKey,
-        studentId: studentId,
-      );
-      if (profile == null) {
-        continue;
-      }
-      var student = studentCache[studentId];
-      student ??= await db.getUserById(studentId);
-      studentCache[studentId] = student;
-      profilesPayload.add(
-        _profileToJson(
-          profile,
-          scope: 'student_course',
-          studentRemoteUserId: student?.remoteUserId,
-          studentUsername: student?.username,
-        ),
-      );
-    }
-
-    return {
-      'schema': kCurrentPromptBundleSchema,
-      'remote_course_id': remoteCourseId,
-      'teacher_username': teacher.username,
-      'prompt_templates': promptTemplatesPayload,
-      'student_prompt_profiles': profilesPayload,
-    };
-  }
-
   String _normalizeCourseName(String value) {
     return value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
   }
 
   String _stripVersionSuffix(String value) {
     return value.trim().replaceFirst(RegExp(r'_(\d{10,})$'), '');
-  }
-
-  Map<String, dynamic> _profileToJson(
-    StudentPromptProfile profile, {
-    required String scope,
-    int? studentRemoteUserId,
-    String? studentUsername,
-  }) {
-    return {
-      'scope': scope,
-      'student_remote_user_id': studentRemoteUserId,
-      'student_username': studentUsername,
-      'grade_level': profile.gradeLevel,
-      'reading_level': profile.readingLevel,
-      'preferred_language': profile.preferredLanguage,
-      'interests': profile.interests,
-      'preferred_tone': profile.preferredTone,
-      'preferred_pace': profile.preferredPace,
-      'preferred_format': profile.preferredFormat,
-      'support_notes': profile.supportNotes,
-      'updated_at':
-          (profile.updatedAt ?? profile.createdAt).toUtc().toIso8601String(),
-    };
   }
 
   Future<void> _confirmDeleteCourse(

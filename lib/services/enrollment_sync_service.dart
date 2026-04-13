@@ -13,6 +13,7 @@ import 'course_bundle_service.dart';
 import 'course_service.dart';
 import 'marketplace_api_service.dart';
 import 'prompt_bundle_compat.dart';
+import 'prompt_bundle_metadata_builder.dart';
 import 'prompt_template_validator.dart';
 import 'remote_student_identity_service.dart';
 import 'remote_teacher_identity_service.dart';
@@ -2453,12 +2454,18 @@ class EnrollmentSyncService {
                     tbl.studentId.isIn(assignedStudentIds);
             final courseScope = courseKey.isEmpty
                 ? const Constant(false)
-                : tbl.courseKey.equals(courseKey);
+                : tbl.courseKey.equals(courseKey) & tbl.studentId.isNull();
+            final studentCourseScope =
+                courseKey.isEmpty || assignedStudentIds.isEmpty
+                    ? const Constant(false)
+                    : tbl.courseKey.equals(courseKey) &
+                        tbl.studentId.isIn(assignedStudentIds);
             return tbl.teacherId.equals(teacher.id) &
                 tbl.isActive.equals(true) &
                 ((tbl.courseKey.isNull() & tbl.studentId.isNull()) |
                     studentGlobalScope |
-                    courseScope);
+                    courseScope |
+                    studentCourseScope);
           }))
         .get();
     for (final template in promptTemplates) {
@@ -2473,11 +2480,17 @@ class EnrollmentSyncService {
                     tbl.studentId.isIn(assignedStudentIds);
             final courseScope = courseKey.isEmpty
                 ? const Constant(false)
-                : tbl.courseKey.equals(courseKey);
+                : tbl.courseKey.equals(courseKey) & tbl.studentId.isNull();
+            final studentCourseScope =
+                courseKey.isEmpty || assignedStudentIds.isEmpty
+                    ? const Constant(false)
+                    : tbl.courseKey.equals(courseKey) &
+                        tbl.studentId.isIn(assignedStudentIds);
             return tbl.teacherId.equals(teacher.id) &
                 ((tbl.courseKey.isNull() & tbl.studentId.isNull()) |
                     studentGlobalScope |
-                    courseScope);
+                    courseScope |
+                    studentCourseScope);
           }))
         .get();
     for (final profile in profiles) {
@@ -2487,9 +2500,13 @@ class EnrollmentSyncService {
       );
     }
 
-    final passConfigs = await (_db.select(_db.studentPassConfigs)
-          ..where((tbl) => tbl.courseVersionId.equals(course.id)))
-        .get();
+    final passConfigs = assignedStudentIds.isEmpty
+        ? const <StudentPassConfig>[]
+        : await (_db.select(_db.studentPassConfigs)
+              ..where((tbl) =>
+                  tbl.courseVersionId.equals(course.id) &
+                  tbl.studentId.isIn(assignedStudentIds)))
+            .get();
     for (final config in passConfigs) {
       latest = _maxUtc(
         latest,
@@ -2886,76 +2903,6 @@ class EnrollmentSyncService {
     required CourseVersion course,
     required int remoteCourseId,
   }) async {
-    final courseKey = (course.sourcePath ?? '').trim();
-    if (courseKey.isEmpty) {
-      return <String, dynamic>{
-        'schema': kCurrentPromptBundleSchema,
-        'remote_course_id': remoteCourseId,
-        'teacher_username': teacher.username,
-        'prompt_templates': const <Map<String, dynamic>>[],
-        'student_prompt_profiles': const <Map<String, dynamic>>[],
-        'student_pass_configs': const <Map<String, dynamic>>[],
-      };
-    }
-
-    final scopeTemplates = <PromptTemplate>[];
-    final assignments = await _db.getAssignmentsForCourse(course.id);
-    final assignedStudentIds =
-        assignments.map((assignment) => assignment.studentId).toSet();
-
-    final systemTemplates = await (_db.select(_db.promptTemplates)
-          ..where((tbl) =>
-              tbl.teacherId.equals(teacher.id) &
-              tbl.isActive.equals(true) &
-              tbl.courseKey.isNull() &
-              tbl.studentId.isNull())
-          ..orderBy([
-            (tbl) =>
-                OrderingTerm(expression: tbl.createdAt, mode: OrderingMode.desc)
-          ]))
-        .get();
-    scopeTemplates.addAll(systemTemplates);
-
-    if (assignedStudentIds.isNotEmpty) {
-      final studentGlobalTemplates = await (_db.select(_db.promptTemplates)
-            ..where((tbl) =>
-                tbl.teacherId.equals(teacher.id) &
-                tbl.isActive.equals(true) &
-                tbl.courseKey.isNull() &
-                tbl.studentId.isIn(assignedStudentIds))
-            ..orderBy([
-              (tbl) => OrderingTerm(
-                    expression: tbl.createdAt,
-                    mode: OrderingMode.desc,
-                  )
-            ]))
-          .get();
-      scopeTemplates.addAll(studentGlobalTemplates);
-    }
-
-    final courseTemplates = await (_db.select(_db.promptTemplates)
-          ..where((tbl) =>
-              tbl.teacherId.equals(teacher.id) &
-              tbl.isActive.equals(true) &
-              tbl.courseKey.equals(courseKey))
-          ..orderBy([
-            (tbl) =>
-                OrderingTerm(expression: tbl.createdAt, mode: OrderingMode.desc)
-          ]))
-        .get();
-    scopeTemplates.addAll(courseTemplates);
-
-    final dedupedByScope = <String, PromptTemplate>{};
-    for (final template in scopeTemplates) {
-      final key = [
-        template.promptName,
-        template.courseKey ?? '',
-        template.studentId?.toString() ?? '',
-      ].join('::');
-      dedupedByScope.putIfAbsent(key, () => template);
-    }
-
-    final studentCache = <int, User?>{};
     final rawTimestampMetadata =
         teacher.remoteUserId != null && teacher.remoteUserId! > 0
             ? await _readTeacherPromptTimestampMetadata(
@@ -2963,214 +2910,12 @@ class EnrollmentSyncService {
                 remoteCourseId: remoteCourseId,
               )
             : const <String, Map<String, String>>{};
-    final promptTemplatesPayload = <Map<String, dynamic>>[];
-    for (final template in dedupedByScope.values) {
-      final studentId = template.studentId;
-      User? student;
-      if (studentId != null) {
-        student = studentCache[studentId];
-        student ??= await _db.getUserById(studentId);
-        studentCache[studentId] = student;
-      }
-
-      var scope = 'teacher';
-      if (template.courseKey == null && template.studentId != null) {
-        scope = 'student_global';
-      } else if (template.courseKey != null && template.studentId == null) {
-        scope = 'course';
-      } else if (template.courseKey != null && template.studentId != null) {
-        scope = 'student_course';
-      }
-      _requireValidPromptTemplate(
-        promptName: template.promptName,
-        content: template.content,
-        scope: scope,
-        source: 'upload',
-      );
-      final timestampKey = _teacherPromptTemplateTimestampKey(
-        promptName: template.promptName,
-        scope: scope,
-        studentRemoteUserId: student?.remoteUserId,
-      );
-      final timestampStrings = rawTimestampMetadata[timestampKey];
-
-      promptTemplatesPayload.add({
-        'prompt_name': template.promptName,
-        'scope': scope,
-        'content': template.content,
-        'student_remote_user_id': student?.remoteUserId,
-        'student_username': student?.username,
-        'created_at': _resolveTeacherPromptTimestampString(
-          raw: timestampStrings?['created_at'],
-          actual: template.createdAt.toUtc(),
-        ),
-      });
-    }
-
-    final profilesPayload = <Map<String, dynamic>>[];
-    final systemProfile = await _db.getStudentPromptProfile(
-      teacherId: teacher.id,
-      courseKey: null,
-      studentId: null,
+    return PromptBundleMetadataBuilder(db: _db).build(
+      teacher: teacher,
+      course: course,
+      remoteCourseId: remoteCourseId,
+      timestampMetadata: rawTimestampMetadata,
     );
-    if (systemProfile != null) {
-      profilesPayload.add(
-        _profileToJson(
-          systemProfile,
-          scope: 'teacher',
-          timestampStrings: rawTimestampMetadata[_teacherProfileTimestampKey(
-            scope: 'teacher',
-            studentRemoteUserId: null,
-          )],
-        ),
-      );
-    }
-
-    for (final studentId in assignedStudentIds) {
-      final profile = await _db.getStudentPromptProfile(
-        teacherId: teacher.id,
-        courseKey: null,
-        studentId: studentId,
-      );
-      if (profile == null) {
-        continue;
-      }
-      var student = studentCache[studentId];
-      student ??= await _db.getUserById(studentId);
-      studentCache[studentId] = student;
-      profilesPayload.add(
-        _profileToJson(
-          profile,
-          scope: 'student_global',
-          studentRemoteUserId: student?.remoteUserId,
-          studentUsername: student?.username,
-          timestampStrings: rawTimestampMetadata[_teacherProfileTimestampKey(
-            scope: 'student_global',
-            studentRemoteUserId: student?.remoteUserId,
-          )],
-        ),
-      );
-    }
-
-    final courseProfile = await _db.getStudentPromptProfile(
-      teacherId: teacher.id,
-      courseKey: courseKey,
-      studentId: null,
-    );
-    if (courseProfile != null) {
-      profilesPayload.add(
-        _profileToJson(
-          courseProfile,
-          scope: 'course',
-          timestampStrings: rawTimestampMetadata[_teacherProfileTimestampKey(
-            scope: 'course',
-            studentRemoteUserId: null,
-          )],
-        ),
-      );
-    }
-
-    final studentProfileRows = await (_db.select(_db.studentPromptProfiles)
-          ..where((tbl) =>
-              tbl.teacherId.equals(teacher.id) &
-              tbl.courseKey.equals(courseKey) &
-              tbl.studentId.isNotNull())
-          ..orderBy([
-            (tbl) => OrderingTerm(
-                  expression: tbl.updatedAt,
-                  mode: OrderingMode.desc,
-                ),
-            (tbl) => OrderingTerm(
-                  expression: tbl.createdAt,
-                  mode: OrderingMode.desc,
-                ),
-          ]))
-        .get();
-
-    final studentIds = <int>{};
-    for (final row in studentProfileRows) {
-      final studentId = row.studentId;
-      if (studentId != null) {
-        studentIds.add(studentId);
-      }
-    }
-
-    for (final studentId in studentIds) {
-      final profile = await _db.getStudentPromptProfile(
-        teacherId: teacher.id,
-        courseKey: courseKey,
-        studentId: studentId,
-      );
-      if (profile == null) {
-        continue;
-      }
-      var student = studentCache[studentId];
-      student ??= await _db.getUserById(studentId);
-      studentCache[studentId] = student;
-      profilesPayload.add(
-        _profileToJson(
-          profile,
-          scope: 'student_course',
-          studentRemoteUserId: student?.remoteUserId,
-          studentUsername: student?.username,
-          timestampStrings: rawTimestampMetadata[_teacherProfileTimestampKey(
-            scope: 'student_course',
-            studentRemoteUserId: student?.remoteUserId,
-          )],
-        ),
-      );
-    }
-
-    final passConfigsPayload = <Map<String, dynamic>>[];
-    final passConfigRows = await (_db.select(_db.studentPassConfigs)
-          ..where(
-            (tbl) => tbl.courseVersionId.equals(course.id),
-          )
-          ..orderBy([
-            (tbl) => OrderingTerm(
-                  expression: tbl.updatedAt,
-                  mode: OrderingMode.desc,
-                ),
-            (tbl) => OrderingTerm(
-                  expression: tbl.createdAt,
-                  mode: OrderingMode.desc,
-                ),
-          ]))
-        .get();
-    for (final config in passConfigRows) {
-      var student = studentCache[config.studentId];
-      student ??= await _db.getUserById(config.studentId);
-      studentCache[config.studentId] = student;
-      passConfigsPayload.add({
-        'student_remote_user_id': student?.remoteUserId,
-        'student_username': student?.username,
-        'easy_weight': config.easyWeight,
-        'medium_weight': config.mediumWeight,
-        'hard_weight': config.hardWeight,
-        'pass_threshold': config.passThreshold,
-        'created_at': _resolveTeacherPromptTimestampString(
-          raw: rawTimestampMetadata[_teacherPassConfigTimestampKey(
-            studentRemoteUserId: student?.remoteUserId,
-          )]?['created_at'],
-          actual: config.createdAt.toUtc(),
-        ),
-        'updated_at': _resolveTeacherPromptTimestampString(
-          raw: rawTimestampMetadata[_teacherPassConfigTimestampKey(
-            studentRemoteUserId: student?.remoteUserId,
-          )]?['updated_at'],
-          actual: (config.updatedAt ?? config.createdAt).toUtc(),
-        ),
-      });
-    }
-
-    return {
-      'schema': kCurrentPromptBundleSchema,
-      'remote_course_id': remoteCourseId,
-      'teacher_username': teacher.username,
-      'prompt_templates': promptTemplatesPayload,
-      'student_prompt_profiles': profilesPayload,
-      'student_pass_configs': passConfigsPayload,
-    };
   }
 
   void _validatePromptTemplateMetadata({
@@ -3228,88 +2973,6 @@ class EnrollmentSyncService {
       'unknown=${validation.unknownVariables.join(',')} '
       'invalid=${validation.invalidVariables.join(',')}',
     );
-  }
-
-  Map<String, dynamic> _profileToJson(
-    StudentPromptProfile profile, {
-    required String scope,
-    int? studentRemoteUserId,
-    String? studentUsername,
-    Map<String, String>? timestampStrings,
-  }) {
-    return {
-      'scope': scope,
-      'student_remote_user_id': studentRemoteUserId,
-      'student_username': studentUsername,
-      'grade_level': profile.gradeLevel,
-      'reading_level': profile.readingLevel,
-      'preferred_language': profile.preferredLanguage,
-      'interests': profile.interests,
-      'preferred_tone': profile.preferredTone,
-      'preferred_pace': profile.preferredPace,
-      'preferred_format': profile.preferredFormat,
-      'support_notes': profile.supportNotes,
-      'created_at': _resolveTeacherPromptTimestampString(
-        raw: timestampStrings?['created_at'],
-        actual: profile.createdAt.toUtc(),
-      ),
-      'updated_at': _resolveTeacherPromptTimestampString(
-        raw: timestampStrings?['updated_at'],
-        actual: (profile.updatedAt ?? profile.createdAt).toUtc(),
-      ),
-    };
-  }
-
-  DateTime? _parseMetadataTimestamp(Object? value) {
-    final raw = value is String ? value.trim() : '';
-    if (raw.isEmpty) {
-      return null;
-    }
-    return DateTime.tryParse(raw)?.toUtc();
-  }
-
-  String _resolveTeacherPromptTimestampString({
-    required String? raw,
-    required DateTime actual,
-  }) {
-    final parsed = _parseMetadataTimestamp(raw);
-    if (parsed != null && parsed.isAtSameMomentAs(actual.toUtc())) {
-      return raw!.trim();
-    }
-    return actual.toUtc().toIso8601String();
-  }
-
-  String _teacherPromptTemplateTimestampKey({
-    required String promptName,
-    required String scope,
-    required int? studentRemoteUserId,
-  }) {
-    return [
-      'prompt',
-      promptName.trim(),
-      scope.trim(),
-      studentRemoteUserId?.toString() ?? '',
-    ].join('::');
-  }
-
-  String _teacherProfileTimestampKey({
-    required String scope,
-    required int? studentRemoteUserId,
-  }) {
-    return [
-      'profile',
-      scope.trim(),
-      studentRemoteUserId?.toString() ?? '',
-    ].join('::');
-  }
-
-  String _teacherPassConfigTimestampKey({
-    required int? studentRemoteUserId,
-  }) {
-    return [
-      'pass_config',
-      studentRemoteUserId?.toString() ?? '',
-    ].join('::');
   }
 
   Future<Map<String, Map<String, String>>> _readTeacherPromptTimestampMetadata({
@@ -3489,7 +3152,8 @@ class EnrollmentSyncService {
         }
         final createdAtRaw = (item['created_at'] as String?)?.trim() ?? '';
         if (createdAtRaw.isNotEmpty) {
-          importedTimestampStrings[_teacherPromptTemplateTimestampKey(
+          importedTimestampStrings[
+              PromptBundleTimestampMetadata.promptTemplateKey(
             promptName: promptName,
             scope: scope,
             studentRemoteUserId: targetRemoteUserId,
@@ -3499,8 +3163,10 @@ class EnrollmentSyncService {
           teacherId: currentUser.id,
           promptName: promptName,
           content: content,
-          createdAt:
-              _parseMetadataTimestamp(item['created_at']) ?? DateTime.now(),
+          createdAt: PromptBundleTimestampMetadata.parseTimestamp(
+                item['created_at'],
+              ) ??
+              DateTime.now(),
           courseKey: scopeCourseKey,
           studentId: scopeStudentId,
         );
@@ -3573,7 +3239,7 @@ class EnrollmentSyncService {
           profileTimestamps['updated_at'] = updatedAtRaw;
         }
         if (profileTimestamps.isNotEmpty) {
-          importedTimestampStrings[_teacherProfileTimestampKey(
+          importedTimestampStrings[PromptBundleTimestampMetadata.profileKey(
             scope: scope,
             studentRemoteUserId: targetRemoteUserId,
           )] = profileTimestamps;
@@ -3590,8 +3256,10 @@ class EnrollmentSyncService {
           preferredPace: item['preferred_pace'] as String?,
           preferredFormat: item['preferred_format'] as String?,
           supportNotes: item['support_notes'] as String?,
-          createdAt: _parseMetadataTimestamp(item['created_at']),
-          updatedAt: _parseMetadataTimestamp(item['updated_at']),
+          createdAt:
+              PromptBundleTimestampMetadata.parseTimestamp(item['created_at']),
+          updatedAt:
+              PromptBundleTimestampMetadata.parseTimestamp(item['updated_at']),
         );
       }
     }
@@ -3627,7 +3295,7 @@ class EnrollmentSyncService {
           passTimestamps['updated_at'] = updatedAtRaw;
         }
         if (passTimestamps.isNotEmpty) {
-          importedTimestampStrings[_teacherPassConfigTimestampKey(
+          importedTimestampStrings[PromptBundleTimestampMetadata.passConfigKey(
             studentRemoteUserId: targetRemoteUserId,
           )] = passTimestamps;
         }
@@ -3642,8 +3310,10 @@ class EnrollmentSyncService {
               ResolvedStudentPassRule.defaultHardWeight,
           passThreshold: ((item['pass_threshold'] as num?)?.toDouble()) ??
               ResolvedStudentPassRule.defaultPassThreshold,
-          createdAt: _parseMetadataTimestamp(item['created_at']),
-          updatedAt: _parseMetadataTimestamp(item['updated_at']),
+          createdAt:
+              PromptBundleTimestampMetadata.parseTimestamp(item['created_at']),
+          updatedAt:
+              PromptBundleTimestampMetadata.parseTimestamp(item['updated_at']),
         );
       }
     }
@@ -3799,8 +3469,10 @@ class EnrollmentSyncService {
           teacherId: course.teacherId,
           promptName: promptName,
           content: content,
-          createdAt:
-              _parseMetadataTimestamp(item['created_at']) ?? DateTime.now(),
+          createdAt: PromptBundleTimestampMetadata.parseTimestamp(
+                item['created_at'],
+              ) ??
+              DateTime.now(),
           courseKey: scopeCourseKey,
           studentId: scopeStudentId,
         );
@@ -3872,8 +3544,10 @@ class EnrollmentSyncService {
           preferredPace: item['preferred_pace'] as String?,
           preferredFormat: item['preferred_format'] as String?,
           supportNotes: item['support_notes'] as String?,
-          createdAt: _parseMetadataTimestamp(item['created_at']),
-          updatedAt: _parseMetadataTimestamp(item['updated_at']),
+          createdAt:
+              PromptBundleTimestampMetadata.parseTimestamp(item['created_at']),
+          updatedAt:
+              PromptBundleTimestampMetadata.parseTimestamp(item['updated_at']),
         );
       }
     }
@@ -3908,8 +3582,10 @@ class EnrollmentSyncService {
               ResolvedStudentPassRule.defaultHardWeight,
           passThreshold: ((item['pass_threshold'] as num?)?.toDouble()) ??
               ResolvedStudentPassRule.defaultPassThreshold,
-          createdAt: _parseMetadataTimestamp(item['created_at']),
-          updatedAt: _parseMetadataTimestamp(item['updated_at']),
+          createdAt:
+              PromptBundleTimestampMetadata.parseTimestamp(item['created_at']),
+          updatedAt:
+              PromptBundleTimestampMetadata.parseTimestamp(item['updated_at']),
         );
       }
     }
