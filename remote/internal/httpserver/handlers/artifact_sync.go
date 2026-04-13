@@ -58,6 +58,12 @@ type artifactBatchUploadItemResponse struct {
 	SHA256     string `json:"sha256"`
 }
 
+type artifactDeleteRequest struct {
+	ArtifactID      string `json:"artifact_id"`
+	BaseSHA256      string `json:"base_sha256"`
+	OverwriteServer bool   `json:"overwrite_server"`
+}
+
 type artifactUploadConflict struct {
 	payload fiber.Map
 }
@@ -417,6 +423,86 @@ func (h *ArtifactSyncHandler) UploadBatch(c *fiber.Ctx) error {
 	})
 }
 
+func (h *ArtifactSyncHandler) Delete(c *fiber.Ctx) error {
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	}
+	if h.cfg.Storage == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "storage unavailable")
+	}
+	var request artifactDeleteRequest
+	if err := json.Unmarshal(c.Body(), &request); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "delete request invalid")
+	}
+	artifactID := strings.TrimSpace(request.ArtifactID)
+	if !strings.HasPrefix(artifactID, "student_kp:") {
+		return fiber.NewError(fiber.StatusBadRequest, "student_kp artifact required")
+	}
+	studentUserID, courseID, _, err := artifactsync.ParseStudentKpArtifactID(artifactID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "artifact_id invalid")
+	}
+	if userID != studentUserID {
+		return fiber.NewError(fiber.StatusForbidden, "student artifact delete forbidden")
+	}
+	enrolled, err := isEnrolled(h.cfg.Store.DB, userID, courseID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "enrollment check failed")
+	}
+	if !enrolled {
+		return fiber.NewError(fiber.StatusForbidden, "student not enrolled")
+	}
+	currentSHA, storageRelPath, err := h.lookupStudentKpDeleteState(artifactID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "student artifact lookup failed")
+	}
+	if conflict := uploadConflict(currentSHA, strings.TrimSpace(request.BaseSHA256), request.OverwriteServer); conflict != nil {
+		return c.Status(fiber.StatusConflict).JSON(conflict)
+	}
+	if strings.TrimSpace(currentSHA) != "" {
+		tx, err := h.cfg.Store.DB.Begin()
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
+		}
+		committed := false
+		defer func() {
+			if !committed {
+				_ = tx.Rollback()
+			}
+		}()
+		if _, err := tx.Exec(
+			`DELETE FROM student_kp_artifacts
+			 WHERE artifact_id = ? AND student_user_id = ?`,
+			artifactID,
+			userID,
+		); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "student artifact delete failed")
+		}
+		if err := tx.Commit(); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
+		}
+		committed = true
+		if strings.TrimSpace(storageRelPath) != "" {
+			if err := h.cfg.Storage.RemoveRelativePath(storageRelPath); err != nil {
+				return fiber.NewError(fiber.StatusInternalServerError, "artifact delete failed")
+			}
+		}
+	}
+	if err := artifactsync.RefreshUsersForCourse(h.cfg.Store.DB, courseID); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
+	}
+	state2, err := artifactsync.ReadState2(h.cfg.Store.DB, userID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
+	}
+	return c.JSON(fiber.Map{
+		"status":      "deleted",
+		"artifact_id": artifactID,
+		"state2":      state2,
+	})
+}
+
 func (h *ArtifactSyncHandler) uploadCourseBundle(
 	c *fiber.Ctx,
 	userID int64,
@@ -690,6 +776,25 @@ func (h *ArtifactSyncHandler) lookupStudentKpUploadState(artifactID string) (str
 		return "", err
 	}
 	return strings.TrimSpace(sha), nil
+}
+
+func (h *ArtifactSyncHandler) lookupStudentKpDeleteState(artifactID string) (string, string, error) {
+	row := h.cfg.Store.DB.QueryRow(
+		`SELECT sha256, storage_rel_path
+		 FROM student_kp_artifacts
+		 WHERE artifact_id = ?
+		 LIMIT 1`,
+		artifactID,
+	)
+	var sha string
+	var storageRelPath string
+	if err := row.Scan(&sha, &storageRelPath); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", "", nil
+		}
+		return "", "", err
+	}
+	return strings.TrimSpace(sha), strings.TrimSpace(storageRelPath), nil
 }
 
 func uploadConflict(currentSHA string, baseSHA string, overwriteServer bool) fiber.Map {

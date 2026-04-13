@@ -12,12 +12,19 @@ typedef SessionForcePull = Future<SyncRunStats> Function({
   SyncProgressCallback? onProgress,
 });
 
+typedef SessionForcePush = Future<SyncRunStats> Function({
+  required User currentUser,
+  SyncProgressCallback? onProgress,
+});
+
 class StudentServerCopyService {
   StudentServerCopyService({
     required EnrollmentForcePull forcePullEnrollments,
     required SessionForcePull forcePullSessions,
+    required SessionForcePush forcePushSessions,
   })  : _forcePullEnrollments = forcePullEnrollments,
-        _forcePullSessions = forcePullSessions;
+        _forcePullSessions = forcePullSessions,
+        _forcePushSessions = forcePushSessions;
 
   factory StudentServerCopyService.fromAppServices(AppServices services) {
     return StudentServerCopyService(
@@ -35,11 +42,20 @@ class StudentServerCopyService {
         wipeLocalStudentData: wipeLocalStudentData,
         onProgress: onProgress,
       ),
+      forcePushSessions: ({
+        required currentUser,
+        onProgress,
+      }) =>
+          services.sessionSyncService.forcePushLocalToServer(
+        currentUser: currentUser,
+        onProgress: onProgress,
+      ),
     );
   }
 
   final EnrollmentForcePull _forcePullEnrollments;
   final SessionForcePull _forcePullSessions;
+  final SessionForcePush _forcePushSessions;
 
   Future<SyncRunStats> takeServerCopy({
     required User currentUser,
@@ -72,6 +88,45 @@ class StudentServerCopyService {
       await _forcePullSessions(
         currentUser: currentUser,
         wipeLocalStudentData: true,
+        onProgress: onProgress,
+      ),
+    );
+    return stats;
+  }
+
+  Future<SyncRunStats> takeThisDeviceCopy({
+    required User currentUser,
+    SyncProgressCallback? onProgress,
+  }) async {
+    if (currentUser.role != 'student') {
+      throw StateError('Take this device copy requires a student user.');
+    }
+    if ((currentUser.remoteUserId ?? 0) <= 0) {
+      throw StateError(
+        'Take this device copy requires a synced student account.',
+      );
+    }
+
+    final stats = SyncRunStats();
+    onProgress?.call(
+      const SyncProgress(
+        message: 'Taking this device copy: syncing enrollments...',
+        forcePaint: true,
+      ),
+    );
+    stats.absorb(
+      await _forcePullEnrollments(currentUser: currentUser),
+    );
+    onProgress?.call(
+      const SyncProgress(
+        message:
+            'Taking this device copy: overwriting server sessions/progress...',
+        forcePaint: true,
+      ),
+    );
+    stats.absorb(
+      await _forcePushSessions(
+        currentUser: currentUser,
         onProgress: onProgress,
       ),
     );

@@ -168,6 +168,82 @@ class SessionSyncService {
     );
   }
 
+  Future<SyncRunStats> forcePushLocalToServer({
+    required User currentUser,
+    SyncProgressCallback? onProgress,
+  }) async {
+    final stats = SyncRunStats();
+    if (currentUser.role != 'student') {
+      throw StateError('Take this device copy requires a student user.');
+    }
+    if (_syncing) {
+      return stats;
+    }
+    final remoteUserId = currentUser.remoteUserId;
+    if (remoteUserId == null || remoteUserId <= 0) {
+      throw StateError(
+        'Take this device copy requires a synced student account.',
+      );
+    }
+    await ensureLocalCutoverInitialized();
+    _syncing = true;
+    Object? syncError;
+    StackTrace? syncStackTrace;
+    try {
+      await _reportProgress(
+        onProgress,
+        const SyncProgress(
+          message: 'Preparing this device copy...',
+          forcePaint: true,
+        ),
+      );
+      await _refreshLocalArtifactsForStudent(currentUser);
+      var manifest = await _artifactStore.loadManifest(remoteUserId);
+      final serverState1 = await _api.getState1(artifactClass: _artifactClass);
+      manifest = await _removeResolvedDeletedEntries(
+        currentUser: currentUser,
+        manifest: manifest,
+        serverItems: serverState1.items,
+      );
+      manifest = await _deleteServerArtifactsForLocalDeletes(
+        remoteUserId: remoteUserId,
+        manifest: manifest,
+        serverItems: serverState1.items,
+        stats: stats,
+        onProgress: onProgress,
+      );
+      manifest = await _uploadLocalChanges(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+        manifest: manifest,
+        serverItems: serverState1.items,
+        stats: stats,
+        onProgress: onProgress,
+        overwriteServer: true,
+        forceAllDivergent: true,
+      );
+      final refreshedState1 = await _api.getState1(
+        artifactClass: _artifactClass,
+      );
+      await _assertNoPendingArtifactConflicts(
+        currentUser: currentUser,
+        manifest: manifest,
+        serverItems: refreshedState1.items,
+      );
+      await _artifactStore.saveManifest(manifest);
+    } catch (error, stackTrace) {
+      syncError = error;
+      syncStackTrace = stackTrace;
+    } finally {
+      _syncing = false;
+      await _drainPendingRefreshes();
+    }
+    if (syncError != null) {
+      Error.throwWithStackTrace(syncError, syncStackTrace!);
+    }
+    return stats;
+  }
+
   Future<Map<String, String>> buildCanonicalVisibleArtifactHashes({
     required User currentUser,
   }) async {
@@ -959,8 +1035,7 @@ class SessionSyncService {
     final useFreshStudentImportFastPath = preferFreshStudentImportFastPath &&
         currentUser.role == 'student' &&
         manifest.items.isEmpty;
-    final deferManifestCheckpoint =
-        storageFileOverrides != null &&
+    final deferManifestCheckpoint = storageFileOverrides != null &&
         (currentUser.role == 'teacher' || useFreshStudentImportFastPath);
     final checkpointInterval =
         currentUser.role == 'teacher' || useFreshStudentImportFastPath
@@ -1053,6 +1128,8 @@ class SessionSyncService {
     required List<ArtifactState1Item> serverItems,
     required SyncRunStats stats,
     required SyncProgressCallback? onProgress,
+    bool overwriteServer = false,
+    bool forceAllDivergent = false,
   }) async {
     final serverById = <String, ArtifactState1Item>{
       for (final item in serverItems)
@@ -1064,7 +1141,12 @@ class SessionSyncService {
         continue;
       }
       final serverItem = serverById[item.artifactId];
-      if (_shouldUploadLocalArtifact(item: item, serverItem: serverItem)) {
+      final shouldUpload = forceAllDivergent
+          ? item.sha256.trim().isNotEmpty &&
+              (serverItem == null ||
+                  item.sha256.trim() != serverItem.sha256.trim())
+          : _shouldUploadLocalArtifact(item: item, serverItem: serverItem);
+      if (shouldUpload) {
         uploadCandidates.add(item);
       }
     }
@@ -1107,7 +1189,7 @@ class SessionSyncService {
               sha256: candidate.sha256.trim(),
               bytes: bytes,
               baseSha256: candidate.baseSha256.trim(),
-              overwriteServer: false,
+              overwriteServer: overwriteServer,
             ),
           );
           bytesByArtifactId[candidate.artifactId] = bytes;
@@ -1159,7 +1241,7 @@ class SessionSyncService {
           sha256: candidate.sha256.trim(),
           bytes: bytes,
           baseSha256: candidate.baseSha256.trim(),
-          overwriteServer: false,
+          overwriteServer: overwriteServer,
         );
         final updatedItems = Map<String, StudentKpArtifactManifestItem>.from(
             currentManifest.items);
@@ -1313,6 +1395,53 @@ class SessionSyncService {
       return false;
     }
     return baseSha.isNotEmpty && baseSha == serverSha;
+  }
+
+  Future<StudentKpArtifactManifest> _deleteServerArtifactsForLocalDeletes({
+    required int remoteUserId,
+    required StudentKpArtifactManifest manifest,
+    required List<ArtifactState1Item> serverItems,
+    required SyncRunStats stats,
+    required SyncProgressCallback? onProgress,
+  }) async {
+    final serverById = <String, ArtifactState1Item>{
+      for (final item in serverItems)
+        if (item.artifactId.trim().isNotEmpty) item.artifactId.trim(): item,
+    };
+    final deleteCandidates = manifest.items.values
+        .where(
+            (item) => item.deleted && serverById.containsKey(item.artifactId))
+        .toList(growable: false)
+      ..sort((left, right) => left.artifactId.compareTo(right.artifactId));
+    if (deleteCandidates.isEmpty) {
+      return manifest;
+    }
+
+    var currentManifest = manifest;
+    var completedCount = 0;
+    for (final candidate in deleteCandidates) {
+      await _api.deleteArtifact(
+        artifactId: candidate.artifactId,
+        baseSha256: candidate.baseSha256.trim(),
+        overwriteServer: true,
+      );
+      final updatedItems = Map<String, StudentKpArtifactManifestItem>.from(
+        currentManifest.items,
+      )..remove(candidate.artifactId);
+      currentManifest = currentManifest.copyWith(items: updatedItems);
+      await _artifactStore.saveManifest(currentManifest);
+      completedCount++;
+      stats.addUploaded(count: 1, bytes: 0);
+      await _reportProgress(
+        onProgress,
+        SyncProgress(
+          message: 'Deleting server student artifacts...',
+          completed: completedCount,
+          total: deleteCandidates.length,
+        ),
+      );
+    }
+    return await _artifactStore.loadManifest(remoteUserId);
   }
 
   Future<void> _assertNoPendingArtifactConflicts({

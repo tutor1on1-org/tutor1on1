@@ -29,6 +29,11 @@ void main() {
         );
         return SyncRunStats(downloadedCount: 2, downloadedBytes: 400);
       },
+      forcePushSessions: ({
+        required currentUser,
+        onProgress,
+      }) async =>
+          SyncRunStats(),
     );
 
     final stats = await service.takeServerCopy(
@@ -62,6 +67,11 @@ void main() {
         onProgress,
       }) async =>
           SyncRunStats(),
+      forcePushSessions: ({
+        required currentUser,
+        onProgress,
+      }) async =>
+          SyncRunStats(),
     );
 
     await expectLater(
@@ -87,6 +97,13 @@ void main() {
         sessionCalled = true;
         return SyncRunStats();
       },
+      forcePushSessions: ({
+        required currentUser,
+        onProgress,
+      }) async {
+        sessionCalled = true;
+        return SyncRunStats();
+      },
     );
 
     await expectLater(
@@ -95,6 +112,59 @@ void main() {
     );
     expect(enrollmentCalled, isFalse);
     expect(sessionCalled, isFalse);
+  });
+
+  test('take this device copy syncs enrollments before force-pushing sessions',
+      () async {
+    final progressEvents = <SyncProgress>[];
+    final callOrder = <String>[];
+    final service = StudentServerCopyService(
+      forcePullEnrollments: ({required currentUser}) async {
+        callOrder.add('enrollments:${currentUser.id}');
+        return SyncRunStats(downloadedCount: 1, downloadedBytes: 200);
+      },
+      forcePullSessions: ({
+        required currentUser,
+        required wipeLocalStudentData,
+        onProgress,
+      }) async =>
+          SyncRunStats(),
+      forcePushSessions: ({
+        required currentUser,
+        onProgress,
+      }) async {
+        callOrder.add('sessions:${currentUser.id}');
+        onProgress?.call(
+          const SyncProgress(
+            message: 'Uploading student artifacts...',
+            completed: 1,
+            total: 1,
+            completedBytes: 128,
+          ),
+        );
+        return SyncRunStats(uploadedCount: 1, uploadedBytes: 128);
+      },
+    );
+
+    final stats = await service.takeThisDeviceCopy(
+      currentUser: _studentUser(),
+      onProgress: progressEvents.add,
+    );
+
+    expect(
+      callOrder,
+      equals(<String>['enrollments:11', 'sessions:11']),
+    );
+    expect(
+      progressEvents.map((item) => item.message).toList(),
+      equals(<String>[
+        'Taking this device copy: syncing enrollments...',
+        'Taking this device copy: overwriting server sessions/progress...',
+        'Uploading student artifacts...',
+      ]),
+    );
+    expect(stats.downloadedCount, equals(1));
+    expect(stats.uploadedCount, equals(1));
   });
 }
 

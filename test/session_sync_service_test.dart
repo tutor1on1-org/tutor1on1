@@ -66,9 +66,13 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
   int downloadBatchCalls = 0;
   int uploadCalls = 0;
   int uploadBatchCalls = 0;
+  int deleteCalls = 0;
   int getState1Calls = 0;
   int getState2Calls = 0;
   final List<String> uploadedArtifactIds = <String>[];
+  final List<bool> uploadedOverwriteServerFlags = <bool>[];
+  final List<String> deletedArtifactIds = <String>[];
+  final List<bool> deletedOverwriteServerFlags = <bool>[];
 
   void seedServerArtifact(_ServerArtifact artifact) {
     _items[artifact.item.artifactId] = artifact.item;
@@ -200,6 +204,7 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
     );
     uploadCalls++;
     uploadedArtifactIds.add(artifactId);
+    uploadedOverwriteServerFlags.add(overwriteServer);
     return result;
   }
 
@@ -231,7 +236,39 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
         bytes: upload.bytes,
       );
       uploadedArtifactIds.add(upload.artifactId);
+      uploadedOverwriteServerFlags.add(upload.overwriteServer);
     }
+  }
+
+  @override
+  Future<void> deleteArtifact({
+    required String artifactId,
+    required String baseSha256,
+    required bool overwriteServer,
+  }) async {
+    final current = _items[artifactId];
+    final normalizedBase = baseSha256.trim();
+    if (!overwriteServer) {
+      if (current == null && normalizedBase.isNotEmpty) {
+        throw ArtifactConflictException(
+          message: 'Artifact conflict: server_missing',
+          serverSha256: '',
+          expectedBaseSha256: normalizedBase,
+        );
+      }
+      if (current != null && current.sha256.trim() != normalizedBase) {
+        throw ArtifactConflictException(
+          message: 'Artifact conflict: server_changed',
+          serverSha256: current.sha256,
+          expectedBaseSha256: normalizedBase,
+        );
+      }
+    }
+    _items.remove(artifactId);
+    _bytesByArtifactId.remove(artifactId);
+    deleteCalls++;
+    deletedArtifactIds.add(artifactId);
+    deletedOverwriteServerFlags.add(overwriteServer);
   }
 
   List<ArtifactState1Item> _stateItems(
@@ -632,6 +669,220 @@ void main() {
     );
     expect(secondStats.uploadedCount, 0);
     expect(api.uploadCalls, 1);
+  });
+
+  test('force push local overwrites changed server artifact', () async {
+    final teacherId = await db.createUser(
+      username: 'teacher',
+      pinHash: 'hash',
+      role: 'teacher',
+      remoteUserId: 901,
+    );
+    final studentId = await db.createUser(
+      username: 'student',
+      pinHash: 'hash',
+      role: 'student',
+      remoteUserId: 3001,
+    );
+    final courseVersionId = await db.createCourseVersion(
+      teacherId: teacherId,
+      subject: 'Physics',
+      granularity: 1,
+      textbookText: '',
+    );
+    await db.upsertCourseRemoteLink(
+      courseVersionId: courseVersionId,
+      remoteCourseId: 200,
+    );
+    await db.assignStudent(
+        studentId: studentId, courseVersionId: courseVersionId);
+    await db.into(db.courseNodes).insert(
+          CourseNodesCompanion.insert(
+            courseVersionId: courseVersionId,
+            kpKey: '1.1',
+            title: 'Motion',
+            description: '',
+            orderIndex: 1,
+          ),
+        );
+    final api = _FakeArtifactSyncApiService();
+    final service = SessionSyncService(
+      db: db,
+      api: api,
+      artifactStore: artifactStore,
+    );
+    await service.ensureLocalCutoverInitialized();
+    final sessionId = await db.into(db.chatSessions).insert(
+          ChatSessionsCompanion.insert(
+            studentId: studentId,
+            courseVersionId: courseVersionId,
+            kpKey: '1.1',
+            title: const Value('Local'),
+            startedAt: Value(DateTime.parse('2026-04-01T09:00:00Z')),
+            syncId: const Value('local-session'),
+            syncUpdatedAt: Value(DateTime.parse('2026-04-01T09:05:00Z')),
+          ),
+        );
+    await db.into(db.chatMessages).insert(
+          ChatMessagesCompanion.insert(
+            sessionId: sessionId,
+            role: 'assistant',
+            content: 'local base',
+            createdAt: Value(DateTime.parse('2026-04-01T09:00:10Z')),
+          ),
+        );
+
+    final student = (await db.getUserById(studentId))!;
+    await service.handleLocalSyncRelevantChange(
+      SyncRelevantChange(localUserIds: <int>{studentId}),
+    );
+    await service.syncIfReady(
+      currentUser: student,
+      mode: SessionSyncMode.uploadOnly,
+    );
+
+    api.seedServerArtifact(
+      await _buildServerArtifact(
+        store: artifactStore,
+        remoteStudentUserId: 3001,
+        remoteCourseId: 200,
+        teacherRemoteUserId: 901,
+        courseSubject: 'Physics',
+        kpKey: '1.1',
+        updatedAt: '2026-04-01T09:10:00Z',
+        sessions: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'session_sync_id': 'remote-session',
+            'course_id': 200,
+            'kp_key': '1.1',
+            'started_at': '2026-04-01T09:00:00Z',
+            'student_remote_user_id': 3001,
+            'teacher_remote_user_id': 901,
+            'updated_at': '2026-04-01T09:10:00Z',
+            'messages': <Map<String, dynamic>>[
+              <String, dynamic>{
+                'role': 'assistant',
+                'content': 'server changed',
+                'created_at': '2026-04-01T09:00:10Z',
+              },
+            ],
+          },
+        ],
+      ),
+    );
+    await db.into(db.chatMessages).insert(
+          ChatMessagesCompanion.insert(
+            sessionId: sessionId,
+            role: 'assistant',
+            content: 'local wins',
+            createdAt: Value(DateTime.parse('2026-04-01T09:06:10Z')),
+          ),
+        );
+    await service.handleLocalSyncRelevantChange(
+      SyncRelevantChange(localUserIds: <int>{studentId}),
+    );
+
+    final stats = await service.forcePushLocalToServer(currentUser: student);
+
+    expect(stats.uploadedCount, 1);
+    expect(api.uploadedArtifactIds.last, 'student_kp:3001:200:1.1');
+    expect(api.uploadedOverwriteServerFlags.last, isTrue);
+    final uploaded = await api.downloadArtifact('student_kp:3001:200:1.1');
+    final payload = artifactStore.readPayload(uploaded.bytes);
+    final sessions = payload['sessions'] as List<dynamic>;
+    final messages =
+        (sessions.single as Map<String, dynamic>)['messages'] as List<dynamic>;
+    expect(
+      messages.map((message) => message['content']).toList(),
+      contains('local wins'),
+    );
+  });
+
+  test('force push local deletes server artifact removed on this device',
+      () async {
+    final teacherId = await db.createUser(
+      username: 'teacher',
+      pinHash: 'hash',
+      role: 'teacher',
+      remoteUserId: 901,
+    );
+    final studentId = await db.createUser(
+      username: 'student',
+      pinHash: 'hash',
+      role: 'student',
+      remoteUserId: 3001,
+    );
+    final courseVersionId = await db.createCourseVersion(
+      teacherId: teacherId,
+      subject: 'Physics',
+      granularity: 1,
+      textbookText: '',
+    );
+    await db.upsertCourseRemoteLink(
+      courseVersionId: courseVersionId,
+      remoteCourseId: 200,
+    );
+    await db.assignStudent(
+        studentId: studentId, courseVersionId: courseVersionId);
+    await db.into(db.courseNodes).insert(
+          CourseNodesCompanion.insert(
+            courseVersionId: courseVersionId,
+            kpKey: '1.1',
+            title: 'Motion',
+            description: '',
+            orderIndex: 1,
+          ),
+        );
+    final api = _FakeArtifactSyncApiService();
+    final service = SessionSyncService(
+      db: db,
+      api: api,
+      artifactStore: artifactStore,
+    );
+    await service.ensureLocalCutoverInitialized();
+    final sessionId = await db.into(db.chatSessions).insert(
+          ChatSessionsCompanion.insert(
+            studentId: studentId,
+            courseVersionId: courseVersionId,
+            kpKey: '1.1',
+            title: const Value('Local'),
+            startedAt: Value(DateTime.parse('2026-04-01T09:00:00Z')),
+            syncId: const Value('local-session'),
+            syncUpdatedAt: Value(DateTime.parse('2026-04-01T09:05:00Z')),
+          ),
+        );
+    await db.into(db.chatMessages).insert(
+          ChatMessagesCompanion.insert(
+            sessionId: sessionId,
+            role: 'assistant',
+            content: 'local base',
+            createdAt: Value(DateTime.parse('2026-04-01T09:00:10Z')),
+          ),
+        );
+
+    final student = (await db.getUserById(studentId))!;
+    await service.handleLocalSyncRelevantChange(
+      SyncRelevantChange(localUserIds: <int>{studentId}),
+    );
+    await service.syncIfReady(
+      currentUser: student,
+      mode: SessionSyncMode.uploadOnly,
+    );
+    await db.deleteSession(sessionId);
+    await service.handleLocalSyncRelevantChange(
+      SyncRelevantChange(localUserIds: <int>{studentId}),
+    );
+
+    final stats = await service.forcePushLocalToServer(currentUser: student);
+
+    expect(stats.uploadedCount, 1);
+    expect(api.deleteCalls, 1);
+    expect(api.deletedArtifactIds, <String>['student_kp:3001:200:1.1']);
+    expect(api.deletedOverwriteServerFlags, <bool>[true]);
+    await expectLater(
+      api.downloadArtifact('student_kp:3001:200:1.1'),
+      throwsA(isA<StateError>()),
+    );
   });
 
   test('enrollment db callbacks do not rebuild session artifacts inline',

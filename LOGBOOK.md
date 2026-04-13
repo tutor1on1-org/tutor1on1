@@ -1,6 +1,10 @@
 # LOGBOOK
 Historical timeline. Keep active runbook details in `WORKLOG.md`. Entries that mention row-level session/progress/enrollment sync remain historical delivery records only.
 
+## 2026-04-13
+- Added student local-wins sync recovery: the client now exposes `Take This Device Copy`, force-pushes local `student_kp` sessions/progress with explicit `overwrite_server=true`, and resolves local delete conflicts through the new backend `/api/artifacts/delete` route.
+- Validated with `flutter test test\session_sync_service_test.dart test\student_server_copy_service_test.dart`, `flutter analyze`, and `go test ./internal/httpserver/handlers ./internal/artifactsync`; deployed the rebuilt Linux amd64 API binary with SHA-256 `2d81f98f5e14df2a70d701b8729c7bcff2320d7ee5ff451056b24bde5ece4551`, kept backup `/opt/family_teacher_remote/bin/family-teacher-api.bak_20260413_1744_pre_client_copy`, restarted `family-teacher-api.service`, verified `https://api.tutor1on1.org/health`, and confirmed unauthenticated `POST /api/artifacts/delete` returns `401`.
+
 ## 2026-04-12
 - Fixed marketplace course/bundle deletion when moderation requests, subject labels, quit requests, or artifact manifest rows still reference the course/bundle: full-course delete, single bundle-version delete, and automatic bundle prune now clear dependent rows inside the same transaction before deleting bundle versions or the course row.
 - Validated with `go test ./internal/httpserver/handlers` and `go test ./...` under `remote/`; deployed the rebuilt Linux amd64 API binary for commit `bb780e8` to `/opt/family_teacher_remote/bin/family-teacher-api`, restarted `family-teacher-api.service`, verified remote SHA-256 `58a4232fe17200dfdaaf149fc0e540f4502e4d70570d39e9c13f4120b8e0a979`, and confirmed `https://api.tutor1on1.org/health` returns `{"status":"ok"}`.

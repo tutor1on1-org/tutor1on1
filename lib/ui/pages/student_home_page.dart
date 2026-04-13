@@ -343,6 +343,62 @@ class _StudentHomePageState extends State<StudentHomePage>
     }
   }
 
+  Future<void> _takeThisDeviceCopy() async {
+    if (!mounted || _syncInProgress) {
+      return;
+    }
+    final auth = context.read<AuthController>();
+    final user = auth.currentUser;
+    if (user == null || user.role != 'student') {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Take this device copy'),
+        content: const Text(
+          'This will keep the server course assignments, then overwrite '
+          'server sessions/progress with this device\'s local copy. Other '
+          'devices will receive this device\'s sessions/progress on their '
+          'next sync. Continue?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Take this device copy'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    _syncInProgress = true;
+    _setSyncState(syncing: true, message: '');
+    try {
+      await _serverCopyService.takeThisDeviceCopy(
+        currentUser: user,
+        onProgress: _applySyncProgress,
+      );
+      await _refreshRemoteEnrollmentState();
+      _setPersistentMessage(
+        'This device copy completed. Server sessions/progress now match '
+        'this device.',
+        isError: false,
+      );
+    } catch (error) {
+      _setPersistentMessage('Take this device copy failed: $error');
+    } finally {
+      _setSyncState(syncing: false, message: '');
+      _syncInProgress = false;
+    }
+  }
+
   Future<void> _requestQuitCourse(CourseVersion course) async {
     if (_submittingQuitCourseIds.contains(course.id)) {
       return;
@@ -542,10 +598,21 @@ class _StudentHomePageState extends State<StudentHomePage>
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                 child: Align(
                   alignment: Alignment.centerLeft,
-                  child: OutlinedButton.icon(
-                    onPressed: _syncInProgress ? null : _takeServerCopy,
-                    icon: const Icon(Icons.cloud_download_outlined),
-                    label: const Text('Take Server Copy'),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _syncInProgress ? null : _takeServerCopy,
+                        icon: const Icon(Icons.cloud_download_outlined),
+                        label: const Text('Take Server Copy'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: _syncInProgress ? null : _takeThisDeviceCopy,
+                        icon: const Icon(Icons.cloud_upload_outlined),
+                        label: const Text('Take This Device Copy'),
+                      ),
+                    ],
                   ),
                 ),
               ),
