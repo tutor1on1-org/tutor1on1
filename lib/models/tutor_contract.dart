@@ -98,7 +98,7 @@ class TutorControlState {
     bool? turnFinished,
     TutorHelpBias? helpBias,
     List<TutorFinishedAction>? allowedActions,
-    TutorFinishedAction? recommendedAction,
+    Object? recommendedAction = _unset,
     Object? activeReviewQuestion = _unset,
     Object? justPassedKpEvent = _unset,
   }) {
@@ -109,7 +109,9 @@ class TutorControlState {
       turnFinished: turnFinished ?? this.turnFinished,
       helpBias: helpBias ?? this.helpBias,
       allowedActions: allowedActions ?? this.allowedActions,
-      recommendedAction: recommendedAction ?? this.recommendedAction,
+      recommendedAction: identical(recommendedAction, _unset)
+          ? this.recommendedAction
+          : (recommendedAction as TutorFinishedAction?),
       activeReviewQuestion: identical(activeReviewQuestion, _unset)
           ? this.activeReviewQuestion
           : (activeReviewQuestion as Map<String, dynamic>?),

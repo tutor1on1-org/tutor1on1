@@ -27,6 +27,24 @@ void main() {
     expect(decoded?.justPassedKpEvent?.hardPassedCount, equals(3));
   });
 
+  test('control state copyWith can clear recommended action', () {
+    const control = TutorControlState(
+      version: TutorControlState.currentVersion,
+      mode: TutorMode.review,
+      step: TutorTurnStep.newTurn,
+      turnFinished: true,
+      helpBias: TutorHelpBias.unchanged,
+      allowedActions: <TutorFinishedAction>[TutorFinishedAction.review],
+      recommendedAction: TutorFinishedAction.review,
+      activeReviewQuestion: null,
+      justPassedKpEvent: null,
+    );
+
+    final updated = control.copyWith(recommendedAction: null);
+
+    expect(updated.recommendedAction, isNull);
+  });
+
   test('rebuilds evidence counts from finished review turns', () {
     final seed = TutorEvidenceState(
       version: TutorEvidenceState.currentVersion,
