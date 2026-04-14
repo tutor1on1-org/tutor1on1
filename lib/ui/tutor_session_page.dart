@@ -1587,10 +1587,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     final modelOverride = _resolveModelOverride();
     _prepareTts();
     try {
-      final resolvedPromptName = _resolvePromptNameForAction(
-        action: action,
-        preferredStep: TutorTurnStep.continueTurn,
-      );
+      final resolvedPromptName = _resolvePromptNameForAction(action: action);
       await _persistVisibleControl(turnFinished: false);
       final llmHandle = await sessionService.startTutorAction(
         sessionId: widget.sessionId,
@@ -1670,7 +1667,6 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       );
       final mode = _resolvePromptNameForAction(
         action: message.action ?? _mode.promptName,
-        preferredStep: TutorTurnStep.continueTurn,
       );
       await _persistVisibleControl(turnFinished: false);
       final llmHandle = await sessionService.startTutorAction(
@@ -2219,16 +2215,10 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   }
 
   String _resolvePromptNameForSend() {
-    return _resolvePromptNameForAction(
-      action: _mode.promptName,
-      preferredStep: _step,
-    );
+    return _resolvePromptNameForAction(action: _mode.promptName);
   }
 
-  String _resolvePromptNameForAction({
-    required String action,
-    required TutorTurnStep preferredStep,
-  }) {
+  String _resolvePromptNameForAction({required String action}) {
     return action.trim().toLowerCase();
   }
 
