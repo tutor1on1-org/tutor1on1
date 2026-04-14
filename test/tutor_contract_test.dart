@@ -10,7 +10,6 @@ void main() {
       step: TutorTurnStep.newTurn,
       turnFinished: true,
       helpBias: TutorHelpBias.unchanged,
-      allowedActions: <TutorFinishedAction>[TutorFinishedAction.review],
       recommendedAction: TutorFinishedAction.review,
       activeReviewQuestion: null,
       justPassedKpEvent: TutorJustPassedKpEvent(
@@ -34,7 +33,6 @@ void main() {
       step: TutorTurnStep.newTurn,
       turnFinished: true,
       helpBias: TutorHelpBias.unchanged,
-      allowedActions: <TutorFinishedAction>[TutorFinishedAction.review],
       recommendedAction: TutorFinishedAction.review,
       activeReviewQuestion: null,
       justPassedKpEvent: null,
@@ -43,6 +41,23 @@ void main() {
     final updated = control.copyWith(recommendedAction: null);
 
     expect(updated.recommendedAction, isNull);
+  });
+
+  test('control state ignores legacy allowed actions field', () {
+    final decoded = TutorControlState.fromJson(<String, dynamic>{
+      'version': 2,
+      'mode': 'REVIEW',
+      'step': 'NEW',
+      'turn_finished': true,
+      'help_bias': 'UNCHANGED',
+      'allowed_actions': <String>['REVIEW'],
+      'recommended_action': 'REVIEW',
+      'active_review_question': null,
+      'just_passed_kp_event': null,
+    });
+
+    expect(decoded?.recommendedAction, equals(TutorFinishedAction.review));
+    expect(decoded?.toJson().containsKey('allowed_actions'), isFalse);
   });
 
   test('rebuilds evidence counts from finished review turns', () {

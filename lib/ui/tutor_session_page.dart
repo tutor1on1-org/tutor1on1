@@ -2184,7 +2184,6 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         step: _step,
         turnFinished: turnFinished,
         helpBias: _helpBias,
-        allowedActions: const <TutorFinishedAction>[],
         recommendedAction: turnFinished ? recommendedAction : null,
         activeReviewQuestion:
             preserveActiveQuestion ? existing.activeReviewQuestion : null,

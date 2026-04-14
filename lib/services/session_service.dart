@@ -1268,7 +1268,6 @@ class SessionService {
           step: finished ? TutorTurnStep.newTurn : TutorTurnStep.continueTurn,
           turnFinished: finished,
           helpBias: resolvedHelpBias,
-          allowedActions: const <TutorFinishedAction>[],
           recommendedAction: nextAction,
           activeReviewQuestion: nextQuestion,
         );
@@ -1283,7 +1282,6 @@ class SessionService {
         step: TutorTurnStep.newTurn,
         turnFinished: true,
         helpBias: resolvedHelpBias,
-        allowedActions: const <TutorFinishedAction>[],
         recommendedAction: nextAction,
         activeReviewQuestion: null,
       );

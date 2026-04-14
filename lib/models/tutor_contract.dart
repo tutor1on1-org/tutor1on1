@@ -71,20 +71,18 @@ class TutorControlState {
     required this.step,
     required this.turnFinished,
     required this.helpBias,
-    required this.allowedActions,
     required this.recommendedAction,
     required this.activeReviewQuestion,
     required this.justPassedKpEvent,
   });
 
-  static const int currentVersion = 2;
+  static const int currentVersion = 3;
 
   final int version;
   final TutorMode mode;
   final TutorTurnStep step;
   final bool turnFinished;
   final TutorHelpBias helpBias;
-  final List<TutorFinishedAction> allowedActions;
   final TutorFinishedAction? recommendedAction;
   final Map<String, dynamic>? activeReviewQuestion;
   final TutorJustPassedKpEvent? justPassedKpEvent;
@@ -97,7 +95,6 @@ class TutorControlState {
     TutorTurnStep? step,
     bool? turnFinished,
     TutorHelpBias? helpBias,
-    List<TutorFinishedAction>? allowedActions,
     Object? recommendedAction = _unset,
     Object? activeReviewQuestion = _unset,
     Object? justPassedKpEvent = _unset,
@@ -108,7 +105,6 @@ class TutorControlState {
       step: step ?? this.step,
       turnFinished: turnFinished ?? this.turnFinished,
       helpBias: helpBias ?? this.helpBias,
-      allowedActions: allowedActions ?? this.allowedActions,
       recommendedAction: identical(recommendedAction, _unset)
           ? this.recommendedAction
           : (recommendedAction as TutorFinishedAction?),
@@ -128,7 +124,6 @@ class TutorControlState {
       'step': step.wireValue,
       'turn_finished': turnFinished,
       'help_bias': helpBias.wireValue,
-      'allowed_actions': allowedActions.map((item) => item.wireValue).toList(),
       'recommended_action': recommendedAction?.wireValue,
       'active_review_question': activeReviewQuestion,
       'just_passed_kp_event': justPassedKpEvent?.toJson(),
@@ -161,25 +156,6 @@ class TutorControlState {
     if (mode == null || step == null || helpBias == null) {
       return null;
     }
-    final allowedRaw = json['allowed_actions'];
-    if (allowedRaw != null && allowedRaw is! List) {
-      return null;
-    }
-    final allowed = <TutorFinishedAction>[];
-    if (allowedRaw is List) {
-      for (final entry in allowedRaw) {
-        if (entry is! String) {
-          return null;
-        }
-        final action = TutorFinishedAction.fromWire(entry);
-        if (action == null) {
-          return null;
-        }
-        if (!allowed.contains(action)) {
-          allowed.add(action);
-        }
-      }
-    }
     final recommendedRaw = json['recommended_action'];
     if (recommendedRaw != null && recommendedRaw is! String) {
       return null;
@@ -207,7 +183,6 @@ class TutorControlState {
       step: step,
       turnFinished: turnFinished,
       helpBias: helpBias,
-      allowedActions: allowed,
       recommendedAction: recommended,
       activeReviewQuestion: activeReviewQuestionRaw == null
           ? null
@@ -223,7 +198,6 @@ class TutorControlState {
       step: TutorTurnStep.newTurn,
       turnFinished: false,
       helpBias: TutorHelpBias.unchanged,
-      allowedActions: const <TutorFinishedAction>[],
       recommendedAction: null,
       activeReviewQuestion: null,
       justPassedKpEvent: null,
@@ -261,7 +235,6 @@ class TutorControlState {
         step: finished ? TutorTurnStep.newTurn : TutorTurnStep.continueTurn,
         turnFinished: finished,
         helpBias: TutorHelpBias.unchanged,
-        allowedActions: const <TutorFinishedAction>[],
         recommendedAction: TutorFinishedAction.fromWire(
           (parsed['next_action'] as String?)?.trim().toUpperCase(),
         ),
@@ -285,7 +258,6 @@ class TutorControlState {
       step: TutorTurnStep.newTurn,
       turnFinished: true,
       helpBias: helpBias,
-      allowedActions: const <TutorFinishedAction>[],
       recommendedAction: nextAction,
       activeReviewQuestion: null,
       justPassedKpEvent: null,
