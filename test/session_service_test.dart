@@ -326,6 +326,44 @@ LlmCallResult _llmOk({
   );
 }
 
+void _queueReviewQuestion(
+  _FakeLlmService llmService, {
+  required String callHash,
+  String difficulty = 'easy',
+  String text = 'Review question?',
+}) {
+  llmService.queueCall(
+    Future<LlmCallResult>.value(
+      _llmOk(
+        responseText: jsonEncode(<String, Object?>{
+          'text': text,
+          'difficulty': difficulty,
+          'mistakes': <String>[],
+          'next_action': 'review',
+          'finished': false,
+        }),
+        callHash: callHash,
+      ),
+    ),
+  );
+}
+
+Future<void> _runReviewAction({
+  required SessionService service,
+  required _TutorFixture fixture,
+  int? sessionId,
+  String studentInput = '',
+}) async {
+  final handle = await service.startTutorAction(
+    sessionId: sessionId ?? fixture.sessionId,
+    mode: 'review',
+    studentInput: studentInput,
+    courseVersion: fixture.courseVersion,
+    node: fixture.node,
+  );
+  await handle.future;
+}
+
 Future<TutorControlState> _sessionControl(AppDatabase db, int sessionId) async {
   final session = await db.getSession(sessionId);
   final control = TutorControlState.fromJsonText(session?.controlStateJson);
@@ -847,6 +885,11 @@ void main() {
       hardWeight: 1,
       passThreshold: 1,
     );
+    _queueReviewQuestion(
+      llmService,
+      callHash: 'custom_pass_rule_prompt',
+      difficulty: 'easy',
+    );
     llmService.queueCall(
       Future<LlmCallResult>.value(
         _llmOk(
@@ -862,14 +905,12 @@ void main() {
       ),
     );
 
-    final handle = await service.startTutorAction(
-      sessionId: fixture.sessionId,
-      mode: 'review',
+    await _runReviewAction(service: service, fixture: fixture);
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
       studentInput: '2',
-      courseVersion: fixture.courseVersion,
-      node: fixture.node,
     );
-    await handle.future;
 
     final session = await db.getSession(fixture.sessionId);
     final control = await _sessionControl(db, fixture.sessionId);
@@ -888,8 +929,51 @@ void main() {
     expect(progress?.litPercent, equals(100));
   });
 
+  test('finished review without active question does not increment progress',
+      () async {
+    final fixture = await _createTutorFixture(db: db, service: service);
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': 'Correct, but no active review question was pending.',
+            'difficulty': 'easy',
+            'mistakes': <String>[],
+            'next_action': 'review',
+            'finished': true,
+          }),
+          callHash: 'orphan_finished_review',
+        ),
+      ),
+    );
+
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      studentInput: '2',
+    );
+
+    final evidence = await _sessionEvidence(db, fixture.sessionId);
+    final control = await _sessionControl(db, fixture.sessionId);
+    final progress = await db.getProgress(
+      studentId: fixture.studentId,
+      courseVersionId: fixture.courseVersion.id,
+      kpKey: fixture.node.kpKey,
+    );
+
+    expect(evidence.reviewCorrectTotal, equals(0));
+    expect(evidence.reviewAttemptTotal, equals(0));
+    expect(control.justPassedKpEvent, isNull);
+    expect(progress?.easyPassedCount ?? 0, equals(0));
+  });
+
   test('just-passed event uses post-update global progress counts', () async {
     final fixture = await _createTutorFixture(db: db, service: service);
+    _queueReviewQuestion(
+      llmService,
+      callHash: 'global_counts_seed_prompt',
+      difficulty: 'medium',
+    );
     llmService.queueCall(
       Future<LlmCallResult>.value(
         _llmOk(
@@ -905,19 +989,22 @@ void main() {
       ),
     );
 
-    final first = await service.startTutorAction(
-      sessionId: fixture.sessionId,
-      mode: 'review',
+    await _runReviewAction(service: service, fixture: fixture);
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
       studentInput: 'medium answer',
-      courseVersion: fixture.courseVersion,
-      node: fixture.node,
     );
-    await first.future;
 
     final secondSessionId = await service.startSession(
       studentId: fixture.studentId,
       courseVersionId: fixture.courseVersion.id,
       kpKey: fixture.node.kpKey,
+    );
+    _queueReviewQuestion(
+      llmService,
+      callHash: 'global_counts_pass_prompt',
+      difficulty: 'hard',
     );
     llmService.queueCall(
       Future<LlmCallResult>.value(
@@ -934,14 +1021,17 @@ void main() {
       ),
     );
 
-    final second = await service.startTutorAction(
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
       sessionId: secondSessionId,
-      mode: 'review',
-      studentInput: 'hard answer',
-      courseVersion: fixture.courseVersion,
-      node: fixture.node,
     );
-    await second.future;
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      sessionId: secondSessionId,
+      studentInput: 'hard answer',
+    );
 
     final control = await _sessionControl(db, secondSessionId);
     final progress = await db.getProgress(
@@ -970,6 +1060,11 @@ void main() {
       hardWeight: 1,
       passThreshold: 1,
     );
+    _queueReviewQuestion(
+      llmService,
+      callHash: 'first_pass_prompt',
+      difficulty: 'easy',
+    );
     llmService.queueCall(
       Future<LlmCallResult>.value(
         _llmOk(
@@ -985,14 +1080,12 @@ void main() {
       ),
     );
 
-    final first = await service.startTutorAction(
-      sessionId: fixture.sessionId,
-      mode: 'review',
+    await _runReviewAction(service: service, fixture: fixture);
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
       studentInput: '2',
-      courseVersion: fixture.courseVersion,
-      node: fixture.node,
     );
-    await first.future;
 
     final secondSessionId = await service.startSession(
       studentId: fixture.studentId,
@@ -1042,6 +1135,11 @@ void main() {
       hardWeight: 1,
       passThreshold: 1,
     );
+    _queueReviewQuestion(
+      llmService,
+      callHash: 'already_passed_seed_prompt',
+      difficulty: 'easy',
+    );
     llmService.queueCall(
       Future<LlmCallResult>.value(
         _llmOk(
@@ -1057,19 +1155,22 @@ void main() {
       ),
     );
 
-    final first = await service.startTutorAction(
-      sessionId: fixture.sessionId,
-      mode: 'review',
+    await _runReviewAction(service: service, fixture: fixture);
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
       studentInput: '2',
-      courseVersion: fixture.courseVersion,
-      node: fixture.node,
     );
-    await first.future;
 
     final secondSessionId = await service.startSession(
       studentId: fixture.studentId,
       courseVersionId: fixture.courseVersion.id,
       kpKey: fixture.node.kpKey,
+    );
+    _queueReviewQuestion(
+      llmService,
+      callHash: 'already_passed_repeat_prompt',
+      difficulty: 'easy',
     );
     llmService.queueCall(
       Future<LlmCallResult>.value(
@@ -1086,14 +1187,17 @@ void main() {
       ),
     );
 
-    final second = await service.startTutorAction(
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
       sessionId: secondSessionId,
-      mode: 'review',
-      studentInput: '3',
-      courseVersion: fixture.courseVersion,
-      node: fixture.node,
     );
-    await second.future;
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      sessionId: secondSessionId,
+      studentInput: '3',
+    );
 
     final control = await _sessionControl(db, secondSessionId);
     final progress = await db.getProgress(

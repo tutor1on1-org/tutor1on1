@@ -678,11 +678,13 @@ class SessionService {
           request.actionMode == 'review' ? TutorMode.review : TutorMode.learn,
     );
     final currentEvidence = _loadSessionEvidenceState(session);
+    final shouldCountReviewAttempt = request.actionMode == 'review' &&
+        currentControl.hasActiveReviewQuestion;
     final nextEvidence = TutorEvidenceState.updateFromAssistantPayload(
       current: currentEvidence,
       actionMode: request.actionMode,
       parsed: parsed,
-      hadActiveReviewQuestion: currentControl.activeReviewQuestion != null,
+      hadActiveReviewQuestion: shouldCountReviewAttempt,
       passedLevel: request.reviewPassedLevel,
     );
     final studentId = request.llmContext.studentId;
@@ -712,6 +714,7 @@ class SessionService {
       studentIntent: request.resolvedStudentIntent,
       parsedJsonText: resolution.payload.parsedJson,
       passedLevel: request.reviewPassedLevel,
+      shouldCountReviewAttempt: shouldCountReviewAttempt,
     );
     if (request.actionMode == 'review' && studentId != null && studentId > 0) {
       final progress = await _db.getProgress(
@@ -1553,8 +1556,12 @@ class SessionService {
     required String studentIntent,
     required String? parsedJsonText,
     required String? passedLevel,
+    required bool shouldCountReviewAttempt,
   }) async {
-    if (actionMode != 'review' || studentId == null || studentId <= 0) {
+    if (actionMode != 'review' ||
+        studentId == null ||
+        studentId <= 0 ||
+        !shouldCountReviewAttempt) {
       return;
     }
     final parsed =
