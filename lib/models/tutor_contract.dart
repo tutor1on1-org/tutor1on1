@@ -73,10 +73,11 @@ class TutorControlState {
     required this.helpBias,
     required this.recommendedAction,
     required this.activeReviewQuestion,
+    required this.currentReviewDifficulty,
     required this.justPassedKpEvent,
   });
 
-  static const int currentVersion = 3;
+  static const int currentVersion = 4;
 
   final int version;
   final TutorMode mode;
@@ -85,6 +86,7 @@ class TutorControlState {
   final TutorHelpBias helpBias;
   final TutorFinishedAction? recommendedAction;
   final Map<String, dynamic>? activeReviewQuestion;
+  final String? currentReviewDifficulty;
   final TutorJustPassedKpEvent? justPassedKpEvent;
 
   bool get hasActiveReviewQuestion =>
@@ -97,6 +99,7 @@ class TutorControlState {
     TutorHelpBias? helpBias,
     Object? recommendedAction = _unset,
     Object? activeReviewQuestion = _unset,
+    Object? currentReviewDifficulty = _unset,
     Object? justPassedKpEvent = _unset,
   }) {
     return TutorControlState(
@@ -111,6 +114,9 @@ class TutorControlState {
       activeReviewQuestion: identical(activeReviewQuestion, _unset)
           ? this.activeReviewQuestion
           : (activeReviewQuestion as Map<String, dynamic>?),
+      currentReviewDifficulty: identical(currentReviewDifficulty, _unset)
+          ? this.currentReviewDifficulty
+          : (currentReviewDifficulty as String?),
       justPassedKpEvent: identical(justPassedKpEvent, _unset)
           ? this.justPassedKpEvent
           : (justPassedKpEvent as TutorJustPassedKpEvent?),
@@ -126,6 +132,7 @@ class TutorControlState {
       'help_bias': helpBias.wireValue,
       'recommended_action': recommendedAction?.wireValue,
       'active_review_question': activeReviewQuestion,
+      'current_review_difficulty': currentReviewDifficulty,
       'just_passed_kp_event': justPassedKpEvent?.toJson(),
     };
   }
@@ -171,6 +178,13 @@ class TutorControlState {
         activeReviewQuestionRaw is! Map<String, dynamic>) {
       return null;
     }
+    final currentReviewDifficulty =
+        _normalizeLevel(json['current_review_difficulty']);
+    if (json['current_review_difficulty'] is String &&
+        (json['current_review_difficulty'] as String).trim().isNotEmpty &&
+        currentReviewDifficulty == null) {
+      return null;
+    }
     final justPassedKpEvent = TutorJustPassedKpEvent.fromJson(
       json['just_passed_kp_event'],
     );
@@ -187,6 +201,7 @@ class TutorControlState {
       activeReviewQuestion: activeReviewQuestionRaw == null
           ? null
           : Map<String, dynamic>.from(activeReviewQuestionRaw as Map),
+      currentReviewDifficulty: currentReviewDifficulty,
       justPassedKpEvent: justPassedKpEvent,
     );
   }
@@ -200,6 +215,7 @@ class TutorControlState {
       helpBias: TutorHelpBias.unchanged,
       recommendedAction: null,
       activeReviewQuestion: null,
+      currentReviewDifficulty: null,
       justPassedKpEvent: null,
     );
   }
@@ -239,6 +255,7 @@ class TutorControlState {
           (parsed['next_action'] as String?)?.trim().toUpperCase(),
         ),
         activeReviewQuestion: activeReviewQuestion,
+        currentReviewDifficulty: difficultyLevel,
         justPassedKpEvent: null,
       );
     }
@@ -260,6 +277,7 @@ class TutorControlState {
       helpBias: helpBias,
       recommendedAction: nextAction,
       activeReviewQuestion: null,
+      currentReviewDifficulty: null,
       justPassedKpEvent: null,
     );
   }

@@ -21,6 +21,8 @@ class PromptVariableRegistry {
 
   static const String learnPrompt = 'learn';
   static const String reviewPrompt = 'review';
+  static const String reviewInitPrompt = 'review_init';
+  static const String reviewContPrompt = 'review_cont';
 
   static const String kpTitle = 'kp_title';
   static const String kpDescription = 'kp_description';
@@ -45,19 +47,36 @@ class PromptVariableRegistry {
   static const Set<String> _structuredPromptNames = {
     learnPrompt,
     reviewPrompt,
+    reviewInitPrompt,
+    reviewContPrompt,
   };
 
   static const List<PromptVariableDefinition> definitions = [
     PromptVariableDefinition(
       name: kpTitle,
       description: 'Knowledge point title from the course node.',
-      promptNames: {learnPrompt, reviewPrompt},
+      promptNames: {
+        learnPrompt,
+        reviewPrompt,
+        reviewInitPrompt,
+        reviewContPrompt
+      },
     ),
     PromptVariableDefinition(
       name: kpDescription,
       description: 'Knowledge point description from the course node.',
-      promptNames: {learnPrompt, reviewPrompt},
-      requiredFor: {learnPrompt, reviewPrompt},
+      promptNames: {
+        learnPrompt,
+        reviewPrompt,
+        reviewInitPrompt,
+        reviewContPrompt
+      },
+      requiredFor: {
+        learnPrompt,
+        reviewPrompt,
+        reviewInitPrompt,
+        reviewContPrompt
+      },
     ),
     PromptVariableDefinition(
       name: studentInput,
@@ -73,12 +92,22 @@ class PromptVariableRegistry {
     PromptVariableDefinition(
       name: conversationHistory,
       description: 'Full current session history, trimmed only when needed.',
-      promptNames: {learnPrompt, reviewPrompt},
+      promptNames: {
+        learnPrompt,
+        reviewPrompt,
+        reviewInitPrompt,
+        reviewContPrompt
+      },
     ),
     PromptVariableDefinition(
       name: sessionHistory,
       description: 'Alias for conversation_history.',
-      promptNames: {learnPrompt, reviewPrompt},
+      promptNames: {
+        learnPrompt,
+        reviewPrompt,
+        reviewInitPrompt,
+        reviewContPrompt
+      },
     ),
     PromptVariableDefinition(
       name: helpBias,
@@ -95,7 +124,12 @@ class PromptVariableRegistry {
       name: studentContext,
       description:
           'Compact tutor-facing adaptation notes combining help bias, profile, and preferences.',
-      promptNames: {learnPrompt, reviewPrompt},
+      promptNames: {
+        learnPrompt,
+        reviewPrompt,
+        reviewInitPrompt,
+        reviewContPrompt
+      },
     ),
     PromptVariableDefinition(
       name: studentProfile,
@@ -119,18 +153,25 @@ class PromptVariableRegistry {
       name: errorBookSummary,
       description:
           'Aggregated mistake counts and tags for this knowledge point.',
-      promptNames: {learnPrompt, reviewPrompt},
+      promptNames: {
+        learnPrompt,
+        reviewPrompt,
+        reviewInitPrompt,
+        reviewContPrompt
+      },
     ),
     PromptVariableDefinition(
       name: presentedQuestions,
       description: 'Candidate question pool provided for review selection.',
-      promptNames: {reviewPrompt},
+      promptNames: {reviewPrompt, reviewInitPrompt},
+      requiredFor: {reviewInitPrompt},
     ),
     PromptVariableDefinition(
       name: activeReviewQuestionJson,
       description:
           'Legacy JSON state for the one active review question, or null.',
-      promptNames: {reviewPrompt},
+      promptNames: {reviewPrompt, reviewContPrompt},
+      requiredFor: {reviewContPrompt},
     ),
     PromptVariableDefinition(
       name: reviewPassCounts,

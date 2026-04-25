@@ -1434,6 +1434,42 @@ WHERE p.student_id = ? AND p.kp_key <> ?
     );
   }
 
+  Future<void> setProgressQuestionLevel({
+    required int studentId,
+    required int courseVersionId,
+    required String kpKey,
+    required String questionLevel,
+  }) async {
+    final normalizedLevel = _normalizeLevel(questionLevel);
+    if (normalizedLevel == null) {
+      throw StateError('Unsupported question level: $questionLevel');
+    }
+    final existing = await getProgress(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+      kpKey: kpKey,
+    );
+    if (existing == null) {
+      await into(progressEntries).insert(
+        ProgressEntriesCompanion.insert(
+          studentId: studentId,
+          courseVersionId: courseVersionId,
+          kpKey: kpKey,
+          questionLevel: Value(normalizedLevel),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+      return;
+    }
+    await (update(progressEntries)..where((tbl) => tbl.id.equals(existing.id)))
+        .write(
+      ProgressEntriesCompanion(
+        questionLevel: Value(normalizedLevel),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
   Future<void> incrementProgressPassedCount({
     required int studentId,
     required int courseVersionId,

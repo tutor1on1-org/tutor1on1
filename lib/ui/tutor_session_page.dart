@@ -2187,6 +2187,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         recommendedAction: turnFinished ? recommendedAction : null,
         activeReviewQuestion:
             preserveActiveQuestion ? existing.activeReviewQuestion : null,
+        currentReviewDifficulty: existing.currentReviewDifficulty,
         justPassedKpEvent: existing.justPassedKpEvent,
       ),
     );

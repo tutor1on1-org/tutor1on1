@@ -108,8 +108,12 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
         title: l10n.promptLearn,
       ),
       _PromptItem(
-        name: 'review',
-        title: l10n.promptReview,
+        name: 'review_init',
+        title: '${l10n.promptReview} init',
+      ),
+      _PromptItem(
+        name: 'review_cont',
+        title: '${l10n.promptReview} continue',
       ),
     ];
 

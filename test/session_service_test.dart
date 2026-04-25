@@ -138,7 +138,6 @@ student={{student_input}}
 lesson={{lesson_content}}
 recent={{recent_chat}}
 active={{active_review_question_json}}
-difficulty={{target_difficulty}}
 questions={{presented_questions}}
 errors={{error_book_summary}}
 ''';
@@ -277,7 +276,13 @@ Future<_TutorFixture> _createTutorFixture({
     'Integers can be positive, negative, or zero.',
   );
   await File('${courseRoot.path}\\1.1_easy.txt').writeAsString(
-    'Question bank',
+    'Easy Question bank',
+  );
+  await File('${courseRoot.path}\\1.1_medium.txt').writeAsString(
+    'Medium Question bank',
+  );
+  await File('${courseRoot.path}\\1.1_hard.txt').writeAsString(
+    'Hard Question bank',
   );
   await db.into(db.courseNodes).insert(
         CourseNodesCompanion.insert(
@@ -332,16 +337,11 @@ void _queueReviewQuestion(
   String difficulty = 'easy',
   String text = 'Review question?',
 }) {
+  final responseText = text.replaceAll('{{difficulty}}', difficulty);
   llmService.queueCall(
     Future<LlmCallResult>.value(
       _llmOk(
-        responseText: jsonEncode(<String, Object?>{
-          'text': text,
-          'difficulty': difficulty,
-          'mistakes': <String>[],
-          'next_action': 'review',
-          'finished': false,
-        }),
+        responseText: responseText,
         callHash: callHash,
       ),
     ),
@@ -353,6 +353,7 @@ Future<void> _runReviewAction({
   required _TutorFixture fixture,
   int? sessionId,
   String studentInput = '',
+  String? helpBias,
 }) async {
   final handle = await service.startTutorAction(
     sessionId: sessionId ?? fixture.sessionId,
@@ -360,6 +361,7 @@ Future<void> _runReviewAction({
     studentInput: studentInput,
     courseVersion: fixture.courseVersion,
     node: fixture.node,
+    helpBias: helpBias,
   );
   await handle.future;
 }
@@ -644,13 +646,7 @@ void main() {
     llmService.queueCall(
       Future<LlmCallResult>.value(
         _llmOk(
-          responseText: jsonEncode(<String, Object?>{
-            'text': 'Which number is greater: -3 or 2?',
-            'difficulty': 'easy',
-            'mistakes': <String>[],
-            'next_action': 'review',
-            'finished': false,
-          }),
+          responseText: 'Which number is greater: -3 or 2?',
         ),
       ),
     );
@@ -661,6 +657,7 @@ void main() {
       studentInput: '',
       courseVersion: fixture.courseVersion,
       node: fixture.node,
+      helpBias: 'EASIER',
     );
     await handle.future;
 
@@ -684,19 +681,49 @@ void main() {
     expect(control.justPassedKpEvent, isNull);
   });
 
+  test('review init clamps to the only available question difficulty',
+      () async {
+    final fixture = await _createTutorFixture(db: db, service: service);
+    final sourcePath = fixture.courseVersion.sourcePath!;
+    await File(p.join(sourcePath, '1.1_easy.txt')).delete();
+    await File(p.join(sourcePath, '1.1_medium.txt')).delete();
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: 'Hard-only review question?',
+          callHash: 'hard_only_prompt',
+        ),
+      ),
+    );
+
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      helpBias: 'EASIER',
+    );
+
+    final control = await _sessionControl(db, fixture.sessionId);
+    final progress = await db.getProgress(
+      studentId: fixture.studentId,
+      courseVersionId: fixture.courseVersion.id,
+      kpKey: fixture.node.kpKey,
+    );
+    final renderedPrompt = llmService.callInvocations.single.renderedPrompt;
+
+    expect(renderedPrompt, contains('Hard Question bank'));
+    expect(renderedPrompt, isNot(contains('Easy Question bank')));
+    expect(control.currentReviewDifficulty, equals('hard'));
+    expect(control.activeReviewQuestion?['difficulty'], equals('hard'));
+    expect(progress?.questionLevel, equals('hard'));
+  });
+
   test('finished review increments local counters and flips lit after two wins',
       () async {
     final fixture = await _createTutorFixture(db: db, service: service);
     llmService.queueCall(
       Future<LlmCallResult>.value(
         _llmOk(
-          responseText: jsonEncode(<String, Object?>{
-            'text': 'Which number is greater: -3 or 2?',
-            'difficulty': 'medium',
-            'mistakes': <String>[],
-            'next_action': 'review',
-            'finished': false,
-          }),
+          responseText: 'Which number is greater: -3 or 2?',
           callHash: 'review_prompt_1',
         ),
       ),
@@ -706,10 +733,9 @@ void main() {
         _llmOk(
           responseText: jsonEncode(<String, Object?>{
             'text': 'Correct. 2 is greater than -3.',
-            'difficulty': 'medium',
             'mistakes': <String>[],
-            'next_action': 'review',
             'finished': true,
+            'difficulty_adjustment': 'harder',
           }),
           callHash: 'review_answer_1',
         ),
@@ -718,13 +744,7 @@ void main() {
     llmService.queueCall(
       Future<LlmCallResult>.value(
         _llmOk(
-          responseText: jsonEncode(<String, Object?>{
-            'text': 'Put these in ascending order: 1, -4, 2, -3.',
-            'difficulty': 'hard',
-            'mistakes': <String>['ordering_integers'],
-            'next_action': 'review',
-            'finished': false,
-          }),
+          responseText: 'Put these in ascending order: 1, -4, 2, -3.',
           callHash: 'review_prompt_2',
         ),
       ),
@@ -734,10 +754,9 @@ void main() {
         _llmOk(
           responseText: jsonEncode(<String, Object?>{
             'text': 'Correct. The order is -4, -3, 1, 2.',
-            'difficulty': 'hard',
             'mistakes': <String>['ordering_integers'],
-            'next_action': 'review',
             'finished': true,
+            'difficulty_adjustment': 'same',
           }),
           callHash: 'review_answer_2',
         ),
@@ -864,17 +883,20 @@ void main() {
         _llmOk(
           responseText: jsonEncode(<String, Object?>{
             'text': 'Correct.',
-            'difficulty': 'easy',
             'mistakes': <String>[],
-            'next_action': 'review',
             'finished': true,
+            'difficulty_adjustment': 'same',
           }),
           callHash: 'custom_pass_rule',
         ),
       ),
     );
 
-    await _runReviewAction(service: service, fixture: fixture);
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      helpBias: 'EASIER',
+    );
     await _runReviewAction(
       service: service,
       fixture: fixture,
@@ -906,10 +928,9 @@ void main() {
         _llmOk(
           responseText: jsonEncode(<String, Object?>{
             'text': 'Correct, but no active review question was pending.',
-            'difficulty': 'easy',
             'mistakes': <String>[],
-            'next_action': 'review',
             'finished': true,
+            'difficulty_adjustment': 'same',
           }),
           callHash: 'orphan_finished_review',
         ),
@@ -948,10 +969,9 @@ void main() {
         _llmOk(
           responseText: jsonEncode(<String, Object?>{
             'text': 'Correct medium review.',
-            'difficulty': 'medium',
             'mistakes': <String>[],
-            'next_action': 'review',
             'finished': true,
+            'difficulty_adjustment': 'harder',
           }),
           callHash: 'global_counts_seed',
         ),
@@ -980,10 +1000,9 @@ void main() {
         _llmOk(
           responseText: jsonEncode(<String, Object?>{
             'text': 'Correct hard review.',
-            'difficulty': 'hard',
             'mistakes': <String>[],
-            'next_action': 'review',
             'finished': true,
+            'difficulty_adjustment': 'same',
           }),
           callHash: 'global_counts_pass',
         ),
@@ -1039,17 +1058,20 @@ void main() {
         _llmOk(
           responseText: jsonEncode(<String, Object?>{
             'text': 'Correct.',
-            'difficulty': 'easy',
             'mistakes': <String>[],
-            'next_action': 'review',
             'finished': true,
+            'difficulty_adjustment': 'same',
           }),
           callHash: 'first_pass',
         ),
       ),
     );
 
-    await _runReviewAction(service: service, fixture: fixture);
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      helpBias: 'EASIER',
+    );
     await _runReviewAction(
       service: service,
       fixture: fixture,
@@ -1064,13 +1086,7 @@ void main() {
     llmService.queueCall(
       Future<LlmCallResult>.value(
         _llmOk(
-          responseText: jsonEncode(<String, Object?>{
-            'text': 'Keep working on the same question.',
-            'difficulty': 'easy',
-            'mistakes': <String>[],
-            'next_action': 'review',
-            'finished': false,
-          }),
+          responseText: 'Keep working on the same question.',
           callHash: 'already_passed_unfinished',
         ),
       ),
@@ -1114,17 +1130,20 @@ void main() {
         _llmOk(
           responseText: jsonEncode(<String, Object?>{
             'text': 'Correct.',
-            'difficulty': 'easy',
             'mistakes': <String>[],
-            'next_action': 'review',
             'finished': true,
+            'difficulty_adjustment': 'same',
           }),
           callHash: 'already_passed_seed',
         ),
       ),
     );
 
-    await _runReviewAction(service: service, fixture: fixture);
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      helpBias: 'EASIER',
+    );
     await _runReviewAction(
       service: service,
       fixture: fixture,
@@ -1146,10 +1165,9 @@ void main() {
         _llmOk(
           responseText: jsonEncode(<String, Object?>{
             'text': 'Correct again.',
-            'difficulty': 'easy',
             'mistakes': <String>[],
-            'next_action': 'review',
             'finished': true,
+            'difficulty_adjustment': 'same',
           }),
           callHash: 'already_passed_repeat',
         ),

@@ -1,21 +1,17 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "LearnOutput",
+  "title": "ReviewContinueOutput",
   "type": "object",
   "required": [
     "text",
-    "difficulty",
     "mistakes",
-    "next_action"
+    "finished",
+    "difficulty_adjustment"
   ],
   "properties": {
     "text": {
       "type": "string",
       "minLength": 1
-    },
-    "difficulty": {
-      "type": "string",
-      "enum": ["easy", "medium", "hard"]
     },
     "mistakes": {
       "type": "array",
@@ -24,9 +20,12 @@
         "minLength": 1
       }
     },
-    "next_action": {
+    "finished": {
+      "type": "boolean"
+    },
+    "difficulty_adjustment": {
       "type": "string",
-      "enum": ["learn", "review"]
+      "enum": ["easier", "same", "harder"]
     }
   },
   "additionalProperties": false

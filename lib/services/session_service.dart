@@ -88,6 +88,8 @@ class _TutorRequestContext {
     required this.llmContext,
     required this.dedupeKey,
     required this.isStructuredPrompt,
+    required this.availableReviewDifficulties,
+    this.reviewQuestionDifficulty,
     this.reviewPassedLevel,
   });
 
@@ -102,6 +104,8 @@ class _TutorRequestContext {
   final LlmCallContext llmContext;
   final String dedupeKey;
   final bool isStructuredPrompt;
+  final Set<String> availableReviewDifficulties;
+  final String? reviewQuestionDifficulty;
   final String? reviewPassedLevel;
 }
 
@@ -355,6 +359,24 @@ class SessionService {
       sessionControl: controlState,
     );
     final promptName = promptResolution.promptName;
+    var questionTextsByLevel = const <String, String>{};
+    var availableReviewDifficulties = const <String>{};
+    String? reviewQuestionDifficulty;
+    if (actionMode == 'review') {
+      questionTextsByLevel = await _loadQuestionTextsByLevel(
+        courseVersion: courseVersion,
+        kpKey: node.kpKey,
+      );
+      availableReviewDifficulties =
+          _availableReviewDifficulties(questionTextsByLevel);
+      reviewQuestionDifficulty = _resolveReviewQuestionDifficulty(
+        promptName: promptName,
+        controlState: controlState,
+        progress: progress,
+        helpBias: resolvedHelpBias,
+        availableLevels: availableReviewDifficulties,
+      );
+    }
     final history = _buildHistory(messages);
     final recentChat = _buildRecentChat(messages);
     final passedCounts = _resolvePassedCounts(
@@ -425,11 +447,13 @@ class SessionService {
       values[PromptVariableRegistry.lessonContent] = lessonContent;
     }
     if (actionMode == 'review') {
-      final presentedQuestions = await _loadQuestionsText(
-        courseVersion: courseVersion,
-        kpKey: node.kpKey,
-      );
-      values[PromptVariableRegistry.presentedQuestions] = presentedQuestions;
+      if (promptName == PromptVariableRegistry.reviewInitPrompt) {
+        values[PromptVariableRegistry.presentedQuestions] =
+            _questionsTextForDifficulty(
+          questionTextsByLevel: questionTextsByLevel,
+          difficulty: reviewQuestionDifficulty,
+        );
+      }
     }
     final renderResult = _renderWithHistoryLimit(
       template: template,
@@ -466,9 +490,12 @@ class SessionService {
       llmContext: llmContext,
       dedupeKey: dedupeKey,
       isStructuredPrompt: _isStructuredPrompt(promptName),
+      availableReviewDifficulties: availableReviewDifficulties,
+      reviewQuestionDifficulty: reviewQuestionDifficulty,
       reviewPassedLevel: _reviewPassedLevelForPrompt(
         promptName: promptName,
-        previousAssistantJson: promptResolution.prevJson,
+        controlState: controlState,
+        reviewQuestionDifficulty: reviewQuestionDifficulty,
       ),
     );
   }
@@ -654,9 +681,14 @@ class SessionService {
     required _StructuredPayloadResolution resolution,
     int? assistantMessageId,
   }) async {
-    final parsed = resolution.payload.parsedJson == null
+    final decodedParsed = resolution.payload.parsedJson == null
         ? null
         : _tryDecodeJsonObject(resolution.payload.parsedJson!);
+    final parsed = _augmentReviewParsedJsonForPersistence(
+      request: request,
+      parsed: decodedParsed,
+    );
+    final parsedJsonText = parsed == null ? null : jsonEncode(parsed);
     if (assistantMessageId == null) {
       await _db.into(_db.chatMessages).insert(
             ChatMessagesCompanion.insert(
@@ -664,7 +696,7 @@ class SessionService {
               role: 'assistant',
               content: resolution.payload.displayText,
               rawContent: Value(resolution.payload.rawText),
-              parsedJson: Value(resolution.payload.parsedJson),
+              parsedJson: Value(parsedJsonText),
               action: Value(request.actionMode),
             ),
           );
@@ -673,7 +705,7 @@ class SessionService {
         messageId: assistantMessageId,
         content: resolution.payload.displayText,
         rawContent: resolution.payload.rawText,
-        parsedJson: resolution.payload.parsedJson,
+        parsedJson: parsedJsonText,
       );
     }
     final session = await _db.getSession(request.sessionId);
@@ -717,7 +749,7 @@ class SessionService {
       courseVersionId: request.courseVersionId,
       kpKey: request.kpKey,
       studentIntent: request.resolvedStudentIntent,
-      parsedJsonText: resolution.payload.parsedJson,
+      parsedJsonText: parsedJsonText,
       passedLevel: request.reviewPassedLevel,
       shouldCountReviewAttempt: shouldCountReviewAttempt,
     );
@@ -759,11 +791,29 @@ class SessionService {
     final nextControl = _deriveNextControlState(
       current: currentControl,
       actionMode: request.actionMode,
+      promptName: request.promptName,
       parsed: parsed,
+      displayText: resolution.payload.displayText,
+      reviewQuestionDifficulty: request.reviewQuestionDifficulty,
+      availableReviewDifficulties: request.availableReviewDifficulties,
       helpBias: _normalizeHelpBias(parsed?['next_help_bias'] as String?),
     ).copyWith(
       justPassedKpEvent: nextJustPassedKpEvent,
     );
+    final nextQuestionLevel = _normalizeLevel(
+      nextControl.currentReviewDifficulty,
+    );
+    if (request.actionMode == 'review' &&
+        studentId != null &&
+        studentId > 0 &&
+        nextQuestionLevel != null) {
+      await _db.setProgressQuestionLevel(
+        studentId: studentId,
+        courseVersionId: request.courseVersionId,
+        kpKey: request.kpKey,
+        questionLevel: nextQuestionLevel,
+      );
+    }
     await _db.updateSessionContracts(
       sessionId: request.sessionId,
       controlStateJson: nextControl.toJsonText(),
@@ -926,18 +976,11 @@ class SessionService {
         'Response preview: ${_summarizeResponseForError(responseText)}',
       );
     }
-    if (promptName == 'review') {
+    if (promptName == PromptVariableRegistry.reviewContPrompt) {
       final finished = parsed['finished'];
       if (finished is! bool) {
         throw StateError(
           'LLM response for "$promptName" is missing boolean "finished". '
-          'Response preview: ${_summarizeResponseForError(responseText)}',
-        );
-      }
-      final difficultyLevel = _normalizeLevel(parsed['difficulty']);
-      if (difficultyLevel == null) {
-        throw StateError(
-          'LLM response for "$promptName" has invalid "difficulty". '
           'Response preview: ${_summarizeResponseForError(responseText)}',
         );
       }
@@ -951,10 +994,11 @@ class SessionService {
           'Response preview: ${_summarizeResponseForError(responseText)}',
         );
       }
-      final nextAction = _normalizeNextAction(parsed['next_action']);
-      if (nextAction == null) {
+      final difficultyAdjustment =
+          _normalizeDifficultyAdjustment(parsed['difficulty_adjustment']);
+      if (difficultyAdjustment == null) {
         throw StateError(
-          'LLM response for "$promptName" has invalid "next_action". '
+          'LLM response for "$promptName" has invalid "difficulty_adjustment". '
           'Response preview: ${_summarizeResponseForError(responseText)}',
         );
       }
@@ -963,13 +1007,12 @@ class SessionService {
 
   Set<String> _requiredStructuredKeys(String promptName) {
     switch (promptName) {
-      case 'review':
+      case PromptVariableRegistry.reviewContPrompt:
         return {
           'text',
-          'difficulty',
           'mistakes',
-          'next_action',
           'finished',
+          'difficulty_adjustment',
         };
       default:
         return {'text'};
@@ -995,6 +1038,112 @@ class SessionService {
     if (normalized == 'easy' ||
         normalized == 'medium' ||
         normalized == 'hard') {
+      return normalized;
+    }
+    return null;
+  }
+
+  String _resolveReviewQuestionDifficulty({
+    required String promptName,
+    required TutorControlState controlState,
+    required ProgressEntry? progress,
+    required String helpBias,
+    required Set<String> availableLevels,
+  }) {
+    if (promptName == PromptVariableRegistry.reviewContPrompt) {
+      final activeDifficulty =
+          _normalizeLevel(controlState.activeReviewQuestion?['difficulty']);
+      if (activeDifficulty != null) {
+        return _clampReviewDifficulty(
+          activeDifficulty,
+          availableLevels: availableLevels,
+        );
+      }
+    }
+    final bias = helpBias.trim().toUpperCase();
+    final target = bias == TutorHelpBias.harder.wireValue
+        ? 'hard'
+        : bias == TutorHelpBias.easier.wireValue
+            ? 'easy'
+            : _normalizeLevel(controlState.currentReviewDifficulty) ??
+                _normalizeLevel(progress?.questionLevel) ??
+                'medium';
+    return _clampReviewDifficulty(
+      target,
+      availableLevels: availableLevels,
+    );
+  }
+
+  String _applyReviewDifficultyAdjustment({
+    required String? currentDifficulty,
+    required Object? adjustment,
+    required Set<String> availableLevels,
+  }) {
+    final normalizedAdjustment = _normalizeDifficultyAdjustment(adjustment);
+    final current = _clampReviewDifficulty(
+      _normalizeLevel(currentDifficulty) ?? 'medium',
+      availableLevels: availableLevels,
+    );
+    if (normalizedAdjustment == null || normalizedAdjustment == 'same') {
+      return current;
+    }
+    const order = <String>['easy', 'medium', 'hard'];
+    final currentIndex = order.indexOf(current);
+    final rawTargetIndex =
+        normalizedAdjustment == 'harder' ? currentIndex + 1 : currentIndex - 1;
+    final targetIndex = rawTargetIndex < 0
+        ? 0
+        : rawTargetIndex >= order.length
+            ? order.length - 1
+            : rawTargetIndex;
+    return _clampReviewDifficulty(
+      order[targetIndex],
+      availableLevels: availableLevels,
+      tieBias: normalizedAdjustment,
+    );
+  }
+
+  String _clampReviewDifficulty(
+    String target, {
+    required Set<String> availableLevels,
+    String tieBias = 'harder',
+  }) {
+    final normalizedTarget = _normalizeLevel(target) ?? 'medium';
+    final normalizedAvailable =
+        availableLevels.map(_normalizeLevel).whereType<String>().toSet();
+    if (normalizedAvailable.isEmpty ||
+        normalizedAvailable.contains(normalizedTarget)) {
+      return normalizedTarget;
+    }
+    const order = <String>['easy', 'medium', 'hard'];
+    final targetIndex = order.indexOf(normalizedTarget);
+    var best = normalizedAvailable.first;
+    var bestIndex = order.indexOf(best);
+    var bestDistance = (bestIndex - targetIndex).abs();
+    for (final candidate in normalizedAvailable.skip(1)) {
+      final candidateIndex = order.indexOf(candidate);
+      final distance = (candidateIndex - targetIndex).abs();
+      final shouldPreferTie = tieBias == 'easier'
+          ? candidateIndex < bestIndex
+          : candidateIndex > bestIndex;
+      if (distance < bestDistance ||
+          (distance == bestDistance && shouldPreferTie)) {
+        best = candidate;
+        bestIndex = candidateIndex;
+        bestDistance = distance;
+      }
+    }
+    return best;
+  }
+
+  String? _normalizeDifficultyAdjustment(Object? value) {
+    if (value is! String) {
+      return null;
+    }
+    final normalized = value.trim().toLowerCase();
+    if (normalized == 'easier' ||
+        normalized == 'same' ||
+        normalized == 'harder') {
       return normalized;
     }
     return null;
@@ -1065,10 +1214,13 @@ class SessionService {
 
   String? _reviewPassedLevelForPrompt({
     required String promptName,
-    required Map<String, dynamic>? previousAssistantJson,
+    required TutorControlState controlState,
+    required String? reviewQuestionDifficulty,
   }) {
-    if (promptName == 'review') {
-      return _normalizeLevel(previousAssistantJson?['difficulty']);
+    if (promptName == PromptVariableRegistry.reviewContPrompt) {
+      return _normalizeLevel(
+              controlState.activeReviewQuestion?['difficulty']) ??
+          reviewQuestionDifficulty;
     }
     return null;
   }
@@ -1100,11 +1252,11 @@ class SessionService {
         'Missing lecture file for course ${courseVersion.id}: $kpKey');
   }
 
-  Future<String> _loadQuestionsText({
+  Future<Map<String, String>> _loadQuestionTextsByLevel({
     required CourseVersion courseVersion,
     required String kpKey,
   }) async {
-    final sections = <String>[];
+    final result = <String, String>{};
     for (final level in const <String>['easy', 'medium', 'hard']) {
       final text = await _loadQuestionTextForLevel(
         courseVersion: courseVersion,
@@ -1115,9 +1267,28 @@ class SessionService {
       if (trimmed.isEmpty) {
         continue;
       }
-      sections.add('[$level]\n$trimmed');
+      result[level] = trimmed;
     }
-    return sections.join('\n\n');
+    return result;
+  }
+
+  Set<String> _availableReviewDifficulties(Map<String, String> textsByLevel) {
+    return textsByLevel.entries
+        .where((entry) => entry.value.trim().isNotEmpty)
+        .map((entry) => entry.key)
+        .where((level) => _normalizeLevel(level) != null)
+        .toSet();
+  }
+
+  String _questionsTextForDifficulty({
+    required Map<String, String> questionTextsByLevel,
+    required String? difficulty,
+  }) {
+    final normalized = _normalizeLevel(difficulty);
+    if (normalized == null) {
+      return '';
+    }
+    return questionTextsByLevel[normalized]?.trim() ?? '';
   }
 
   Future<String> _loadQuestionTextForLevel({
@@ -1182,13 +1353,33 @@ class SessionService {
   }) {
     final normalized = mode.trim().toLowerCase();
     final actionMode = _resolveActionMode(normalized);
-    if (actionMode == 'learn' || actionMode == 'review') {
+    if (actionMode == 'learn') {
       final previous = _findLastAssistantForActionMode(
         messages: messages,
         actionMode: actionMode,
       );
       return _TutorPromptResolution(
-        promptName: actionMode,
+        promptName: PromptVariableRegistry.learnPrompt,
+        lastAssistantIndex: previous?.index,
+        prevJson: previous?.json,
+      );
+    }
+    if (actionMode == 'review') {
+      final previous = _findLastAssistantForActionMode(
+        messages: messages,
+        actionMode: actionMode,
+      );
+      final explicitReviewPrompt =
+          normalized == PromptVariableRegistry.reviewInitPrompt ||
+              normalized == PromptVariableRegistry.reviewContPrompt;
+      final promptName = explicitReviewPrompt
+          ? normalized
+          : (sessionControl.hasActiveReviewQuestion ||
+                  studentInput.trim().isNotEmpty
+              ? PromptVariableRegistry.reviewContPrompt
+              : PromptVariableRegistry.reviewInitPrompt);
+      return _TutorPromptResolution(
+        promptName: promptName,
         lastAssistantIndex: previous?.index,
         prevJson: previous?.json,
       );
@@ -1237,11 +1428,36 @@ class SessionService {
   TutorControlState _deriveNextControlState({
     required TutorControlState current,
     required String actionMode,
+    required String promptName,
     required Map<String, dynamic>? parsed,
+    required String displayText,
+    required String? reviewQuestionDifficulty,
+    required Set<String> availableReviewDifficulties,
     required String helpBias,
   }) {
     final resolvedHelpBias =
         TutorHelpBias.fromWire(helpBias) ?? current.helpBias;
+    if (actionMode == 'review' &&
+        promptName == PromptVariableRegistry.reviewInitPrompt) {
+      final difficulty = _clampReviewDifficulty(
+        reviewQuestionDifficulty ??
+            _normalizeLevel(current.currentReviewDifficulty) ??
+            'medium',
+        availableLevels: availableReviewDifficulties,
+      );
+      return current.copyWith(
+        mode: TutorMode.review,
+        step: TutorTurnStep.continueTurn,
+        turnFinished: false,
+        helpBias: resolvedHelpBias,
+        recommendedAction: null,
+        activeReviewQuestion: _buildInitialActiveReviewQuestion(
+          text: displayText,
+          difficulty: difficulty,
+        ),
+        currentReviewDifficulty: difficulty,
+      );
+    }
     if (parsed == null) {
       if (actionMode == 'learn') {
         return current.copyWith(
@@ -1255,25 +1471,35 @@ class SessionService {
       }
       return current.copyWith(helpBias: resolvedHelpBias);
     }
-    if (actionMode == 'review') {
+    if (actionMode == 'review' &&
+        promptName == PromptVariableRegistry.reviewContPrompt) {
       final finished = parsed['finished'];
       if (finished is bool) {
+        final currentQuestionDifficulty =
+            _normalizeLevel(current.activeReviewQuestion?['difficulty']) ??
+                _normalizeLevel(reviewQuestionDifficulty) ??
+                _normalizeLevel(current.currentReviewDifficulty) ??
+                'medium';
+        final nextDifficulty = _applyReviewDifficultyAdjustment(
+          currentDifficulty: currentQuestionDifficulty,
+          adjustment: parsed['difficulty_adjustment'],
+          availableLevels: availableReviewDifficulties,
+        );
         final nextQuestion = finished
             ? null
             : _buildActiveReviewQuestion(
                 currentQuestion: current.activeReviewQuestion,
                 parsed: parsed,
+                fallbackDifficulty: currentQuestionDifficulty,
               );
-        final nextAction = TutorFinishedAction.fromWire(
-          _normalizeNextAction(parsed['next_action'])?.toUpperCase(),
-        );
         return current.copyWith(
           mode: TutorMode.review,
           step: finished ? TutorTurnStep.newTurn : TutorTurnStep.continueTurn,
           turnFinished: finished,
           helpBias: resolvedHelpBias,
-          recommendedAction: nextAction,
+          recommendedAction: null,
           activeReviewQuestion: nextQuestion,
+          currentReviewDifficulty: nextDifficulty,
         );
       }
     }
@@ -1300,16 +1526,15 @@ class SessionService {
   Map<String, dynamic>? _buildActiveReviewQuestion({
     required Map<String, dynamic>? currentQuestion,
     required Map<String, dynamic> parsed,
+    required String fallbackDifficulty,
   }) {
     final next = <String, dynamic>{};
     if (currentQuestion != null) {
       next.addAll(currentQuestion);
     }
-    final text = (parsed['text'] as String?)?.trim();
-    if (text != null && text.isNotEmpty) {
-      next['text'] = text;
-    }
-    final difficultyLevel = _normalizeLevel(parsed['difficulty']);
+    final difficultyLevel = _normalizeLevel(next['difficulty']) ??
+        _normalizeLevel(parsed['difficulty']) ??
+        _normalizeLevel(fallbackDifficulty);
     if (difficultyLevel != null) {
       next['difficulty'] = difficultyLevel;
     }
@@ -1322,6 +1547,17 @@ class SessionService {
           .toList(growable: false);
     }
     return next.isEmpty ? null : next;
+  }
+
+  Map<String, dynamic> _buildInitialActiveReviewQuestion({
+    required String text,
+    required String difficulty,
+  }) {
+    final trimmedText = text.trim();
+    return <String, dynamic>{
+      if (trimmedText.isNotEmpty) 'text': trimmedText,
+      'difficulty': difficulty,
+    };
   }
 
   TutorControlState _loadSessionControlState(
@@ -1548,6 +1784,25 @@ class SessionService {
       return normalized;
     }
     return 'UNCHANGED';
+  }
+
+  Map<String, dynamic>? _augmentReviewParsedJsonForPersistence({
+    required _TutorRequestContext request,
+    required Map<String, dynamic>? parsed,
+  }) {
+    if (parsed == null ||
+        request.promptName != PromptVariableRegistry.reviewContPrompt) {
+      return parsed;
+    }
+    final passedLevel =
+        _normalizeLevel(parsed['difficulty']) ?? request.reviewPassedLevel;
+    if (passedLevel == null) {
+      return parsed;
+    }
+    return <String, dynamic>{
+      ...parsed,
+      'difficulty': passedLevel,
+    };
   }
 
   Future<void> _updateReviewProgressIfNeeded({
@@ -1903,13 +2158,13 @@ class SessionService {
   }
 
   bool _isStructuredPrompt(String promptName) {
-    return promptName == 'review';
+    return promptName == PromptVariableRegistry.reviewContPrompt;
   }
 
   Future<Map<String, dynamic>?> _loadStructuredSchema(String promptName) async {
     switch (promptName) {
-      case 'review':
-        return _promptRepository.loadSchema('review');
+      case PromptVariableRegistry.reviewContPrompt:
+        return _promptRepository.loadSchema('review_cont');
       default:
         return null;
     }

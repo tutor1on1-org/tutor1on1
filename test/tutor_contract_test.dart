@@ -12,6 +12,7 @@ void main() {
       helpBias: TutorHelpBias.unchanged,
       recommendedAction: TutorFinishedAction.review,
       activeReviewQuestion: null,
+      currentReviewDifficulty: 'hard',
       justPassedKpEvent: TutorJustPassedKpEvent(
         easyPassedCount: 1,
         mediumPassedCount: 2,
@@ -24,6 +25,7 @@ void main() {
     expect(decoded?.justPassedKpEvent?.easyPassedCount, equals(1));
     expect(decoded?.justPassedKpEvent?.mediumPassedCount, equals(2));
     expect(decoded?.justPassedKpEvent?.hardPassedCount, equals(3));
+    expect(decoded?.currentReviewDifficulty, equals('hard'));
   });
 
   test('control state copyWith can clear recommended action', () {
@@ -35,6 +37,7 @@ void main() {
       helpBias: TutorHelpBias.unchanged,
       recommendedAction: TutorFinishedAction.review,
       activeReviewQuestion: null,
+      currentReviewDifficulty: 'medium',
       justPassedKpEvent: null,
     );
 
@@ -53,11 +56,34 @@ void main() {
       'allowed_actions': <String>['REVIEW'],
       'recommended_action': 'REVIEW',
       'active_review_question': null,
+      'current_review_difficulty': 'easy',
       'just_passed_kp_event': null,
     });
 
     expect(decoded?.recommendedAction, equals(TutorFinishedAction.review));
+    expect(decoded?.currentReviewDifficulty, equals('easy'));
     expect(decoded?.toJson().containsKey('allowed_actions'), isFalse);
+  });
+
+  test('control state copyWith can update current review difficulty', () {
+    const control = TutorControlState(
+      version: TutorControlState.currentVersion,
+      mode: TutorMode.review,
+      step: TutorTurnStep.continueTurn,
+      turnFinished: false,
+      helpBias: TutorHelpBias.unchanged,
+      recommendedAction: null,
+      activeReviewQuestion: <String, dynamic>{
+        'text': 'Question?',
+        'difficulty': 'medium',
+      },
+      currentReviewDifficulty: 'medium',
+      justPassedKpEvent: null,
+    );
+
+    final updated = control.copyWith(currentReviewDifficulty: 'hard');
+
+    expect(updated.currentReviewDifficulty, equals('hard'));
   });
 
   test('rebuilds evidence counts from finished review turns', () {

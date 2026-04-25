@@ -7,20 +7,18 @@ void main() {
   test('validator rejects missing, unknown, and non-English variables', () {
     final validator = PromptTemplateValidator();
     final result = validator.validate(
-      promptName: 'review',
+      promptName: 'review_cont',
       content: '''
 {{kp_description}}
-{{active_review_question_json}}
 {{conversation_history}}
 {{session_history}}
 {{target_difficulty}}
-{{presented_questions}}
 {{bad_name}}
 {{学生输入}}
 ''',
     );
 
-    expect(result.missingVariables, contains('student_input'));
+    expect(result.missingVariables, contains('active_review_question_json'));
     expect(
       result.unknownVariables,
       containsAll(['target_difficulty', 'bad_name']),
@@ -58,7 +56,11 @@ void main() {
     expect(runtimeKeys, contains('conversation_history'));
     expect(runtimeKeys, contains('session_history'));
     expect(
-      validator.allowedVariables('review'),
+      validator.allowedVariables('review_cont'),
+      containsAll(['conversation_history', 'session_history']),
+    );
+    expect(
+      validator.allowedVariables('review_init'),
       containsAll(['conversation_history', 'session_history']),
     );
   });

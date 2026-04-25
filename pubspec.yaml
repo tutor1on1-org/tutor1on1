@@ -55,8 +55,8 @@ flutter:
   generate: true
   assets:
     - assets/prompts/learn.prompt.txt
-    - assets/prompts/review.prompt.txt
-    - assets/schemas/learn.schema.json
-    - assets/schemas/review.schema.json
+    - assets/prompts/review_init.prompt.txt
+    - assets/prompts/review_cont.prompt.txt
+    - assets/schemas/review_cont.schema.json
     - assets/textbooks/math_outline_y5_y12.txt
     - assets/teachers/

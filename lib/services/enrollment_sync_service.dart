@@ -3355,7 +3355,11 @@ class EnrollmentSyncService {
     );
 
     await _db.transaction(() async {
-      for (final promptName in const <String>['learn', 'review']) {
+      for (final promptName in const <String>[
+        'learn',
+        'review_init',
+        'review_cont',
+      ]) {
         await _db.clearActivePromptTemplates(
           teacherId: course.teacherId,
           promptName: promptName,

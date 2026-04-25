@@ -5,6 +5,8 @@ Historical timeline. Keep active runbook details in `WORKLOG.md`. Entries that m
 - Simplified the bundled `learn` tutor prompt to plain student-visible text using `conversation_history`, `lesson_content`, compact `student_context`, and `error_book_summary`, with no JSON contract.
 - Updated runtime handling so `learn` no longer loads a structured schema, no longer retries on missing JSON keys, streams/persists raw visible text, and still closes the learn turn cleanly; `review` remains the structured JSON prompt.
 - Added prompt asset/session regressions for the plain learn path and validated with targeted prompt/session tests plus `scripts/validate_project.ps1 -NoPostHook`.
+- Split review into `review_init` and `review_cont`: init emits one plain student-visible question, continuation emits `{text,mistakes,finished,difficulty_adjustment}` JSON, and `next_action`/prompt-chosen difficulty were removed from the review contract.
+- Moved per-KP review difficulty ownership into the app with persisted `current_review_difficulty`/`question_level`, clamped question-bank selection to available `easy/medium/hard` files, and added hard-only coverage. Validated with targeted prompt/schema/session tests, `flutter analyze`, and local `flutter build windows --release`; no publish was run.
 
 ## 2026-04-13
 - Added student local-wins sync recovery: the client now exposes `Take This Device Copy`, force-pushes local `student_kp` sessions/progress with explicit `overwrite_server=true`, and resolves local delete conflicts through the new backend `/api/artifacts/delete` route.

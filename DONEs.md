@@ -1,9 +1,10 @@
 # DONES
-Last updated: 2026-04-11
+Last updated: 2026-04-25
 
 Recent completions only. Detailed historical delivery records live in `LOGBOOK.md`.
 
-- Simplified the bundled `learn` tutor prompt to plain student-visible text, added compact `student_context`, and changed app handling so only `review` uses structured JSON schema validation/retry while learn streams/persists plain text.
+- Simplified the bundled `learn` tutor prompt to plain student-visible text, added compact `student_context`, and changed app handling so learn streams/persists plain text without structured JSON schema validation/retry.
+- Split review into plain `review_init` and structured `review_cont`, removed prompt-owned `next_action`/difficulty selection, and made the app persist/clamp per-KP current review difficulty based on available question-bank files. Validated with targeted prompt/schema/session tests, `flutter analyze`, and a local Windows release build.
 - Fixed marketplace course/bundle deletion failures caused by dependent subject-label, quit-request, moderation, and artifact-manifest rows: full-course delete, single bundle-version delete, and automatic prune now clear those rows before deleting `bundle_versions` or `courses`. Validated remote Go tests and deployed the rebuilt API binary to production.
 - Fixed teacher skill-tree target-student timing: teacher view now stores the route/assignment target student before awaiting on-demand `student_kp` materialization, so KP taps do not show a false `No assigned student` while materialization is pending. Added `test/skill_tree_page_test.dart` coverage for the pending-materialization path.
 - Fixed course KP natural ordering: parser children, skill-tree search/detail lists, and persisted `course_nodes.order_index` now share dotted numeric comparison so `1.2` sorts before `1.10`. Added parser and course-import regression coverage for `1.1`, `1.2`, `1.10`, and `1.11`.
