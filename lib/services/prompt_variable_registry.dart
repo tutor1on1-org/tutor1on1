@@ -30,6 +30,7 @@ class PromptVariableRegistry {
   static const String sessionHistory = 'session_history';
   static const String helpBias = 'help_bias';
   static const String studentSummary = 'student_summary';
+  static const String studentContext = 'student_context';
   static const String studentProfile = 'student_profile';
   static const String studentPreferences = 'student_preferences';
   static const String lessonContent = 'lesson_content';
@@ -62,7 +63,7 @@ class PromptVariableRegistry {
       name: studentInput,
       description: 'Latest student input text in this session.',
       promptNames: {learnPrompt, reviewPrompt},
-      requiredFor: {learnPrompt, reviewPrompt},
+      requiredFor: {reviewPrompt},
     ),
     PromptVariableDefinition(
       name: recentChat,
@@ -91,6 +92,12 @@ class PromptVariableRegistry {
       promptNames: {learnPrompt, reviewPrompt},
     ),
     PromptVariableDefinition(
+      name: studentContext,
+      description:
+          'Compact tutor-facing adaptation notes combining help bias, profile, and preferences.',
+      promptNames: {learnPrompt, reviewPrompt},
+    ),
+    PromptVariableDefinition(
       name: studentProfile,
       description:
           'Resolved student profile from teacher-defined fields such as level, language, interests, and support notes.',
@@ -110,7 +117,8 @@ class PromptVariableRegistry {
     ),
     PromptVariableDefinition(
       name: errorBookSummary,
-      description: 'Aggregated mistake counts and tags for this knowledge point.',
+      description:
+          'Aggregated mistake counts and tags for this knowledge point.',
       promptNames: {learnPrompt, reviewPrompt},
     ),
     PromptVariableDefinition(
@@ -144,7 +152,8 @@ class PromptVariableRegistry {
     ),
     PromptVariableDefinition(
       name: reviewAttemptTotal,
-      description: 'Number of closed review questions attempted in this session.',
+      description:
+          'Number of closed review questions attempted in this session.',
       promptNames: {reviewPrompt},
     ),
   ];
@@ -189,6 +198,7 @@ class PromptVariableRegistry {
     required Object? conversationHistory,
     required Object? helpBias,
     required Object? studentSummary,
+    required Object? studentContext,
     required Object? studentProfile,
     required Object? studentPreferences,
     required Object? lessonContent,
@@ -209,6 +219,7 @@ class PromptVariableRegistry {
       PromptVariableRegistry.sessionHistory: conversationHistory,
       PromptVariableRegistry.helpBias: helpBias,
       PromptVariableRegistry.studentSummary: studentSummary,
+      PromptVariableRegistry.studentContext: studentContext,
       PromptVariableRegistry.studentProfile: studentProfile,
       PromptVariableRegistry.studentPreferences: studentPreferences,
       PromptVariableRegistry.lessonContent: lessonContent,

@@ -41,6 +41,7 @@ void main() {
       conversationHistory: '',
       helpBias: '',
       studentSummary: '',
+      studentContext: '',
       studentProfile: '',
       studentPreferences: '',
       lessonContent: '',

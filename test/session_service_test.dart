@@ -543,12 +543,7 @@ void main() {
       llmService.queueCall(
         Future<LlmCallResult>.value(
           _llmOk(
-            responseText: jsonEncode(<String, Object?>{
-              'text': 'Bundle-backed response.',
-              'difficulty': 'easy',
-              'mistakes': <String>[],
-              'next_action': 'review',
-            }),
+            responseText: 'Bundle-backed response.',
           ),
         ),
       );
@@ -576,18 +571,13 @@ void main() {
     }
   });
 
-  test('learn turn persists visible text and recommended next action',
+  test('learn turn persists plain visible text without structured schema',
       () async {
     final fixture = await _createTutorFixture(db: db, service: service);
     llmService.queueCall(
       Future<LlmCallResult>.value(
         _llmOk(
-          responseText: jsonEncode(<String, Object?>{
-            'text': 'Start by thinking of zero as the middle point.',
-            'difficulty': 'easy',
-            'mistakes': <String>[],
-            'next_action': 'review',
-          }),
+          responseText: 'Start by thinking of zero as the middle point.',
         ),
       ),
     );
@@ -606,13 +596,14 @@ void main() {
     final message = await _latestAssistantMessage(db, fixture.sessionId);
 
     expect(llmService.callInvocations.single.promptName, equals('learn'));
+    expect(llmService.callInvocations.single.schemaMap, isNull);
     expect(
       llmService.callInvocations.single.renderedPrompt,
       contains('Teach me simply.'),
     );
     expect(message.content,
         equals('Start by thinking of zero as the middle point.'));
-    expect(control.recommendedAction, equals(TutorFinishedAction.review));
+    expect(control.recommendedAction, isNull);
     expect(control.activeReviewQuestion, isNull);
     expect(control.turnFinished, isTrue);
     expect(evidence.reviewCorrectTotal, equals(0));
@@ -625,12 +616,7 @@ void main() {
     llmService.queueCall(
       Future<LlmCallResult>.value(
         _llmOk(
-          responseText: jsonEncode(<String, Object?>{
-            'text': '<think>hidden chain of thought</think>Visible answer.',
-            'difficulty': 'easy',
-            'mistakes': <String>[],
-            'next_action': 'review',
-          }),
+          responseText: '<think>hidden chain of thought</think>Visible answer.',
         ),
       ),
     );
@@ -813,8 +799,7 @@ void main() {
     expect(session?.summaryLit, isTrue);
   });
 
-  test('invalid structured learn payload retries and persists the valid retry',
-      () async {
+  test('learn payload does not require structured retry', () async {
     final fixture = await _createTutorFixture(db: db, service: service);
     llmService.queueCall(
       Future<LlmCallResult>.value(
@@ -825,19 +810,6 @@ void main() {
             'mistakes': <String>[],
           }),
           callHash: 'invalid_learn',
-        ),
-      ),
-    );
-    llmService.queueCall(
-      Future<LlmCallResult>.value(
-        _llmOk(
-          responseText: jsonEncode(<String, Object?>{
-            'text': 'Recovered after retry.',
-            'difficulty': 'easy',
-            'mistakes': <String>[],
-            'next_action': 'review',
-          }),
-          callHash: 'valid_learn',
         ),
       ),
     );
@@ -853,16 +825,13 @@ void main() {
 
     final message = await _latestAssistantMessage(db, fixture.sessionId);
 
-    expect(llmService.callInvocations.length, equals(2));
-    expect(message.content, equals('Recovered after retry.'));
+    expect(llmService.callInvocations.length, equals(1));
+    expect(message.content, equals('This payload is missing next_action.'));
     expect(
       llmLogRepository.entries.any(
-        (entry) =>
-            entry.promptName == 'learn' &&
-            entry.status == 'retry' &&
-            (entry.retryReason ?? '').contains('missing keys'),
+        (entry) => entry.promptName == 'learn' && entry.status == 'retry',
       ),
-      isTrue,
+      isFalse,
     );
     expect(
       llmLogRepository.entries.any(

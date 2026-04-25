@@ -1,6 +1,10 @@
 PROJECT CONTEXT SUMMARY
 =======================
 
+Historical note: this file describes an older structured-prompt design. The
+current runtime uses a plain-text `learn` prompt and a structured JSON `review`
+prompt; see `LESSONS.md` for the current contract.
+
 The goal of is to design and refine the interaction protocol between:
 - an education App (state machine + persistence, no semantic understanding)
 - and an LLM acting as a one-on-one tutor

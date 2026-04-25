@@ -398,6 +398,11 @@ class SessionService {
       conversationHistory: history,
       helpBias: resolvedHelpBias,
       studentSummary: progress?.summaryText ?? session?.summaryText ?? '',
+      studentContext: _buildStudentContext(
+        helpBias: resolvedHelpBias,
+        studentProfile: studentPromptContext.profileText,
+        studentPreferences: studentPromptContext.preferencesText,
+      ),
       studentProfile: studentPromptContext.profileText,
       studentPreferences: studentPromptContext.preferencesText,
       lessonContent: '',
@@ -921,32 +926,6 @@ class SessionService {
         'Response preview: ${_summarizeResponseForError(responseText)}',
       );
     }
-    if (promptName == 'learn') {
-      final difficulty = _normalizeLevel(parsed['difficulty']);
-      if (difficulty == null) {
-        throw StateError(
-          'LLM response for "$promptName" has invalid "difficulty". '
-          'Response preview: ${_summarizeResponseForError(responseText)}',
-        );
-      }
-      final mistakes = parsed['mistakes'];
-      if (mistakes is! List ||
-          mistakes.any(
-            (item) => item is! String || item.trim().isEmpty,
-          )) {
-        throw StateError(
-          'LLM response for "$promptName" has invalid "mistakes". '
-          'Response preview: ${_summarizeResponseForError(responseText)}',
-        );
-      }
-      final nextAction = _normalizeNextAction(parsed['next_action']);
-      if (nextAction == null) {
-        throw StateError(
-          'LLM response for "$promptName" has invalid "next_action". '
-          'Response preview: ${_summarizeResponseForError(responseText)}',
-        );
-      }
-    }
     if (promptName == 'review') {
       final finished = parsed['finished'];
       if (finished is! bool) {
@@ -984,13 +963,6 @@ class SessionService {
 
   Set<String> _requiredStructuredKeys(String promptName) {
     switch (promptName) {
-      case 'learn':
-        return {
-          'text',
-          'difficulty',
-          'mistakes',
-          'next_action',
-        };
       case 'review':
         return {
           'text',
@@ -1067,6 +1039,28 @@ class SessionService {
       'medium': evidenceState.mediumFailedCount,
       'hard': evidenceState.hardFailedCount,
     };
+  }
+
+  String _buildStudentContext({
+    required String helpBias,
+    required String studentProfile,
+    required String studentPreferences,
+  }) {
+    final lines = <String>[];
+    final normalizedHelpBias = helpBias.trim();
+    if (normalizedHelpBias.isNotEmpty &&
+        normalizedHelpBias != TutorHelpBias.unchanged.wireValue) {
+      lines.add('Help bias: $normalizedHelpBias');
+    }
+    final profile = studentProfile.trim();
+    if (profile.isNotEmpty) {
+      lines.add('Profile: $profile');
+    }
+    final preferences = studentPreferences.trim();
+    if (preferences.isNotEmpty) {
+      lines.add('Preferences: $preferences');
+    }
+    return lines.join('\n');
   }
 
   String? _reviewPassedLevelForPrompt({
@@ -1249,6 +1243,16 @@ class SessionService {
     final resolvedHelpBias =
         TutorHelpBias.fromWire(helpBias) ?? current.helpBias;
     if (parsed == null) {
+      if (actionMode == 'learn') {
+        return current.copyWith(
+          mode: TutorMode.learn,
+          step: TutorTurnStep.newTurn,
+          turnFinished: true,
+          helpBias: resolvedHelpBias,
+          recommendedAction: null,
+          activeReviewQuestion: null,
+        );
+      }
       return current.copyWith(helpBias: resolvedHelpBias);
     }
     if (actionMode == 'review') {
@@ -1899,13 +1903,11 @@ class SessionService {
   }
 
   bool _isStructuredPrompt(String promptName) {
-    return promptName == 'learn' || promptName == 'review';
+    return promptName == 'review';
   }
 
   Future<Map<String, dynamic>?> _loadStructuredSchema(String promptName) async {
     switch (promptName) {
-      case 'learn':
-        return _promptRepository.loadSchema('learn');
       case 'review':
         return _promptRepository.loadSchema('review');
       default:
