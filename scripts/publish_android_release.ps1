@@ -226,8 +226,13 @@ try {
       flutter build apk --config-only --no-pub
     }
     Repair-GeneratedPluginRegistrantForRelease -RepoRoot $repoRoot
-    Invoke-Checked -Label 'flutter build apk --release' -Action {
-      flutter build apk --release --no-pub
+    Invoke-Checked -Label 'gradlew assembleRelease' -Action {
+      Push-Location (Join-Path $repoRoot 'android')
+      try {
+        .\gradlew.bat assembleRelease
+      } finally {
+        Pop-Location
+      }
     }
   } else {
     Write-Host '==> Skip build requested'

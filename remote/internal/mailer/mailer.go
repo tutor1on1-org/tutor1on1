@@ -34,6 +34,28 @@ func (s *Service) SendRecoveryEmail(to string, token string, expiresMinutes int)
 	return s.send(to, subject, body)
 }
 
+func (s *Service) SendApprovalRequestEmail(to string) error {
+	if strings.TrimSpace(to) == "" {
+		return fmt.Errorf("recipient is required")
+	}
+	subject := "Tutor1on1 approval request"
+	body := "You have a Tutor1on1 approval request waiting for review."
+	return s.send(to, subject, body)
+}
+
+func (s *Service) SendApprovalDecisionEmail(to string, approved bool) error {
+	if strings.TrimSpace(to) == "" {
+		return fmt.Errorf("recipient is required")
+	}
+	status := "rejected"
+	if approved {
+		status = "approved"
+	}
+	subject := "Tutor1on1 request " + status
+	body := "Your Tutor1on1 request was " + status + "."
+	return s.send(to, subject, body)
+}
+
 func (s *Service) send(to string, subject string, body string) error {
 	cfg := s.cfg
 	fromHeader := cfg.SMTPFrom

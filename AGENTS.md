@@ -28,3 +28,4 @@
 - Website localization keeps English at `/`, Simplified Chinese at `/zh/`, and other locales under `/<locale>/` static paths; keep detection, explicit-locale path handling, and dropdown switching centralized in `/site.js` instead of duplicating per-page logic.
 - Public macOS downloads must stay off the website until there is a runnable Release build. When macOS is ready, publish only a signed `Developer ID Application` build with Hardened Runtime and notarization; do not publish raw `flutter build macos` output.
 - Course KP ordering must use dotted numeric comparison, not plain string comparison; keep parser, UI, and persisted `orderIndex` ordering aligned.
+- Approval email rule: backend moderation/enrollment request creation should notify the responsible approver by email, and approve/reject decisions should notify the applicant with a one-sentence email when SMTP is enabled.

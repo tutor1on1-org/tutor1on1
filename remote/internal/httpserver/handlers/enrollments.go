@@ -111,7 +111,17 @@ func (h *EnrollmentHandler) CreateRequest(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "request lookup failed")
 	}
 
-	result, err := h.cfg.Store.DB.Exec(
+	tx, err := h.cfg.Store.DB.Begin()
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	result, err := tx.Exec(
 		`INSERT INTO enrollment_requests (student_id, teacher_id, course_id, message, status)
 		 VALUES (?, ?, ?, ?, 'pending')`,
 		userID,
@@ -123,6 +133,13 @@ func (h *EnrollmentHandler) CreateRequest(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "request insert failed")
 	}
 	requestID, _ := result.LastInsertId()
+	if err := notifyTeacherApprovalRequest(h.cfg, tx, teacherID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
+	}
+	committed = true
 	return c.JSON(fiber.Map{
 		"request_id": requestID,
 		"status":     "pending",
@@ -184,7 +201,17 @@ func (h *EnrollmentHandler) CreateQuitRequest(c *fiber.Ctx) error {
 	} else if err != sql.ErrNoRows {
 		return fiber.NewError(fiber.StatusInternalServerError, "quit request lookup failed")
 	}
-	result, err := h.cfg.Store.DB.Exec(
+	tx, err := h.cfg.Store.DB.Begin()
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	result, err := tx.Exec(
 		`INSERT INTO course_quit_requests (student_id, teacher_id, course_id, reason, status)
 		 VALUES (?, ?, ?, ?, 'pending')`,
 		userID,
@@ -196,6 +223,13 @@ func (h *EnrollmentHandler) CreateQuitRequest(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "quit request insert failed")
 	}
 	requestID, _ := result.LastInsertId()
+	if err := notifyTeacherApprovalRequest(h.cfg, tx, teacherID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
+	}
+	committed = true
 	return c.JSON(fiber.Map{
 		"request_id": requestID,
 		"status":     "pending",
@@ -738,8 +772,9 @@ func (h *EnrollmentHandler) ApproveRequest(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
 	}
+	committed := false
 	defer func() {
-		if err != nil {
+		if !committed {
 			_ = tx.Rollback()
 		}
 	}()
@@ -789,9 +824,13 @@ func (h *EnrollmentHandler) ApproveRequest(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusInternalServerError, "enrollment insert failed")
 		}
 	}
+	if err := notifyUserApprovalDecision(h.cfg, tx, studentID, true); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
 	}
+	committed = true
 	if err := refreshArtifactStatesForUsers(
 		h.cfg.Store.DB,
 		[]int64{studentID, userID},
@@ -817,7 +856,32 @@ func (h *EnrollmentHandler) RejectRequest(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	result, err := h.cfg.Store.DB.Exec(
+	tx, err := h.cfg.Store.DB.Begin()
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	var studentID int64
+	row := tx.QueryRow(
+		`SELECT student_id
+		 FROM enrollment_requests
+		 WHERE id = ? AND teacher_id = ? AND status = 'pending'
+		 LIMIT 1`,
+		requestID,
+		teacherID,
+	)
+	if err := row.Scan(&studentID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "request not found")
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, "request lookup failed")
+	}
+	result, err := tx.Exec(
 		`UPDATE enrollment_requests
 		 SET status = 'rejected', resolved_at = NOW()
 		 WHERE id = ? AND teacher_id = ? AND status = 'pending'`,
@@ -830,6 +894,13 @@ func (h *EnrollmentHandler) RejectRequest(c *fiber.Ctx) error {
 	if err != nil || affected == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "request not found")
 	}
+	if err := notifyUserApprovalDecision(h.cfg, tx, studentID, false); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
+	}
+	committed = true
 	return c.JSON(fiber.Map{"status": "rejected"})
 }
 
@@ -854,8 +925,9 @@ func (h *EnrollmentHandler) ApproveQuitRequest(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
 	}
+	committed := false
 	defer func() {
-		if err != nil {
+		if !committed {
 			_ = tx.Rollback()
 		}
 	}()
@@ -915,9 +987,13 @@ func (h *EnrollmentHandler) ApproveQuitRequest(c *fiber.Ctx) error {
 	); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "events delete failed")
 	}
+	if err := notifyUserApprovalDecision(h.cfg, tx, studentID, true); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
 	}
+	committed = true
 	if err := refreshArtifactStatesForUsers(
 		h.cfg.Store.DB,
 		[]int64{studentID, userID},
@@ -943,7 +1019,32 @@ func (h *EnrollmentHandler) RejectQuitRequest(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	result, err := h.cfg.Store.DB.Exec(
+	tx, err := h.cfg.Store.DB.Begin()
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	var studentID int64
+	row := tx.QueryRow(
+		`SELECT student_id
+		 FROM course_quit_requests
+		 WHERE id = ? AND teacher_id = ? AND status = 'pending'
+		 LIMIT 1`,
+		requestID,
+		teacherID,
+	)
+	if err := row.Scan(&studentID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "quit request not found")
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, "quit request lookup failed")
+	}
+	result, err := tx.Exec(
 		`UPDATE course_quit_requests
 		 SET status = 'rejected', resolved_at = NOW()
 		 WHERE id = ? AND teacher_id = ? AND status = 'pending'`,
@@ -956,6 +1057,13 @@ func (h *EnrollmentHandler) RejectQuitRequest(c *fiber.Ctx) error {
 	if err != nil || affected == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "quit request not found")
 	}
+	if err := notifyUserApprovalDecision(h.cfg, tx, studentID, false); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
+	}
+	committed = true
 	return c.JSON(fiber.Map{"status": "rejected"})
 }
 

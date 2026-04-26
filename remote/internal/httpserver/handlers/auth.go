@@ -173,8 +173,9 @@ func (h *AuthHandler) RegisterTeacher(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
 	}
+	committed := false
 	defer func() {
-		if err != nil {
+		if !committed {
 			_ = tx.Rollback()
 		}
 	}()
@@ -222,9 +223,22 @@ func (h *AuthHandler) RegisterTeacher(c *fiber.Ctx) error {
 	); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "teacher request insert failed")
 	}
+	notificationDeps := Dependencies{
+		Config: h.cfg,
+		Store:  h.store,
+		Mailer: h.mailer,
+	}
+	if err := notifySubjectAdminsForTeacherRegistrationRequest(
+		notificationDeps,
+		tx,
+		teacherID,
+	); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
 	}
+	committed = true
 	deviceSession, deviceErr := h.createAuthDeviceSession(userID, req.AuthDevicePayload)
 	if deviceErr != nil {
 		if errors.Is(deviceErr, errDeviceLimitReached) {

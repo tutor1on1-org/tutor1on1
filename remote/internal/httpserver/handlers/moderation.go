@@ -422,21 +422,23 @@ func (h *ModerationHandler) ApproveTeacherRegistration(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
 	}
+	committed := false
 	defer func() {
-		if err != nil {
+		if !committed {
 			_ = tx.Rollback()
 		}
 	}()
+	var applicantUserID int64
 	var teacherID int64
 	var status string
 	row := tx.QueryRow(
-		`SELECT teacher_id, status
+		`SELECT user_id, teacher_id, status
 		 FROM teacher_registration_requests
 		 WHERE id = ?
 		 LIMIT 1`,
 		requestID,
 	)
-	if scanErr := row.Scan(&teacherID, &status); scanErr != nil {
+	if scanErr := row.Scan(&applicantUserID, &teacherID, &status); scanErr != nil {
 		if errors.Is(scanErr, sql.ErrNoRows) {
 			return fiber.NewError(fiber.StatusNotFound, "teacher request not found")
 		}
@@ -481,9 +483,13 @@ func (h *ModerationHandler) ApproveTeacherRegistration(c *fiber.Ctx) error {
 	); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "teacher request update failed")
 	}
+	if err := notifyUserApprovalDecision(h.cfg, tx, applicantUserID, true); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
 	}
+	committed = true
 	return c.JSON(fiber.Map{"status": "approved"})
 }
 
@@ -502,16 +508,17 @@ func (h *ModerationHandler) RejectTeacherRegistration(c *fiber.Ctx) error {
 			_ = tx.Rollback()
 		}
 	}()
+	var applicantUserID int64
 	var teacherID int64
 	var status string
 	row := tx.QueryRow(
-		`SELECT teacher_id, status
+		`SELECT user_id, teacher_id, status
 		 FROM teacher_registration_requests
 		 WHERE id = ?
 		 LIMIT 1`,
 		requestID,
 	)
-	if scanErr := row.Scan(&teacherID, &status); scanErr != nil {
+	if scanErr := row.Scan(&applicantUserID, &teacherID, &status); scanErr != nil {
 		if errors.Is(scanErr, sql.ErrNoRows) {
 			return fiber.NewError(fiber.StatusNotFound, "teacher request not found")
 		}
@@ -555,6 +562,9 @@ func (h *ModerationHandler) RejectTeacherRegistration(c *fiber.Ctx) error {
 		requestID,
 	); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "teacher request update failed")
+	}
+	if err := notifyUserApprovalDecision(h.cfg, tx, applicantUserID, false); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
@@ -606,8 +616,9 @@ func (h *ModerationHandler) ApproveCourseUpload(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
 	}
+	committed := false
 	defer func() {
-		if err != nil {
+		if !committed {
 			_ = tx.Rollback()
 		}
 	}()
@@ -677,9 +688,13 @@ func (h *ModerationHandler) ApproveCourseUpload(c *fiber.Ctx) error {
 	); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "course request update failed")
 	}
+	if err := notifyCourseOwnerApprovalDecision(h.cfg, tx, courseID, true); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
 	}
+	committed = true
 	return c.JSON(fiber.Map{"status": "approved"})
 }
 
@@ -698,15 +713,16 @@ func (h *ModerationHandler) RejectCourseUpload(c *fiber.Ctx) error {
 			_ = tx.Rollback()
 		}
 	}()
+	var courseID int64
 	var status string
 	row := tx.QueryRow(
-		`SELECT status
+		`SELECT course_id, status
 		 FROM course_upload_requests
 		 WHERE id = ?
 		 LIMIT 1`,
 		requestID,
 	)
-	if scanErr := row.Scan(&status); scanErr != nil {
+	if scanErr := row.Scan(&courseID, &status); scanErr != nil {
 		if errors.Is(scanErr, sql.ErrNoRows) {
 			return fiber.NewError(fiber.StatusNotFound, "course upload request not found")
 		}
@@ -744,6 +760,9 @@ func (h *ModerationHandler) RejectCourseUpload(c *fiber.Ctx) error {
 		requestID,
 	); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "course reject failed")
+	}
+	if err := notifyCourseOwnerApprovalDecision(h.cfg, tx, courseID, false); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")

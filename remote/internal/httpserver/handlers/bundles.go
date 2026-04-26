@@ -299,6 +299,15 @@ func (h *BundlesHandler) Upload(c *fiber.Ctx) error {
 				_ = h.removeStoredFile(relPath)
 				return fiber.NewError(fiber.StatusInternalServerError, "course upload request save failed")
 			}
+			if err := notifySubjectAdminsForCourseUploadRequest(
+				h.cfg,
+				tx,
+				info.courseID,
+			); err != nil {
+				_ = tx.Rollback()
+				_ = h.removeStoredFile(relPath)
+				return err
+			}
 		}
 		if err = tx.Commit(); err != nil {
 			_ = h.removeStoredFile(relPath)

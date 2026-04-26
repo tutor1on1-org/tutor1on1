@@ -27,12 +27,15 @@ func TestSubjectAdminRejectTeacherRegistrationUpdatesStatus(t *testing.T) {
 		WithArgs(userID).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(44))
 	mock.ExpectBegin()
-	mock.ExpectQuery(`SELECT teacher_id, status
+	mock.ExpectQuery(`SELECT user_id, teacher_id, status
 		 FROM teacher_registration_requests
 		 WHERE id = \?
 		 LIMIT 1`).
 		WithArgs(requestID).
-		WillReturnRows(sqlmock.NewRows([]string{"teacher_id", "status"}).AddRow(teacherID, "pending"))
+		WillReturnRows(
+			sqlmock.NewRows([]string{"user_id", "teacher_id", "status"}).
+				AddRow(int64(1801), teacherID, "pending"),
+		)
 	mock.ExpectQuery(`SELECT 1
 		 FROM teacher_registration_requests trr
 		 JOIN teacher_subject_labels tsl ON tsl.teacher_id = trr.teacher_id
@@ -86,12 +89,15 @@ func TestSubjectAdminRejectTeacherRegistrationRequiresMatchingLabel(t *testing.T
 		WithArgs(userID).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(45))
 	mock.ExpectBegin()
-	mock.ExpectQuery(`SELECT teacher_id, status
+	mock.ExpectQuery(`SELECT user_id, teacher_id, status
 		 FROM teacher_registration_requests
 		 WHERE id = \?
 		 LIMIT 1`).
 		WithArgs(requestID).
-		WillReturnRows(sqlmock.NewRows([]string{"teacher_id", "status"}).AddRow(92, "pending"))
+		WillReturnRows(
+			sqlmock.NewRows([]string{"user_id", "teacher_id", "status"}).
+				AddRow(int64(1802), int64(92), "pending"),
+		)
 	mock.ExpectQuery(`SELECT 1
 		 FROM teacher_registration_requests trr
 		 JOIN teacher_subject_labels tsl ON tsl.teacher_id = trr.teacher_id
@@ -132,12 +138,15 @@ func TestSubjectAdminRejectCourseUploadUpdatesStatus(t *testing.T) {
 		WithArgs(userID).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(46))
 	mock.ExpectBegin()
-	mock.ExpectQuery(`SELECT status
+	mock.ExpectQuery(`SELECT course_id, status
 		 FROM course_upload_requests
 		 WHERE id = \?
 		 LIMIT 1`).
 		WithArgs(requestID).
-		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("pending"))
+		WillReturnRows(
+			sqlmock.NewRows([]string{"course_id", "status"}).
+				AddRow(int64(8801), "pending"),
+		)
 	mock.ExpectQuery(`SELECT 1
 		 FROM course_upload_requests cur
 		 JOIN course_subject_labels csl ON csl.course_id = cur.course_id
