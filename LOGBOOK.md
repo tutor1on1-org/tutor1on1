@@ -1,6 +1,11 @@
 # LOGBOOK
 Historical timeline. Keep active runbook details in `WORKLOG.md`. Entries that mention row-level session/progress/enrollment sync remain historical delivery records only.
 
+## 2026-04-26
+- Added one-sentence approval email notifications for enrollment, quit-course, teacher-registration, and course-upload approval requests, including subject-admin approver notifications and applicant decision notifications when SMTP is enabled.
+- Validated with targeted handler tests, full `go test ./...` under `remote/`, and `scripts/validate_project.ps1 -NoPostHook`; built local release artifacts with scripts: Android APK SHA-256 `273bd41505e5e67e3ed63fc8a6a6823082787fad519edd0acb2b4db3f4fead0b`, Windows ZIP SHA-256 `0d717211d9202e9d290c08eb514d8dc5497cbaaacceeb7b6de87c89981767004`.
+- Deployed the rebuilt Linux amd64 API binary to production with SHA-256 `593745ad71993cc8e0d886809d7778ef74735c92ddfc34e64b2ea35901544d44`, kept backup `/opt/family_teacher_remote/bin/family-teacher-api.bak_20260426_1812_pre_approval_email`, restarted `family-teacher-api.service`, verified `https://api.tutor1on1.org/health`, and checked the service log tail.
+
 ## 2026-04-25
 - Simplified the bundled `learn` tutor prompt to plain student-visible text using `conversation_history`, `lesson_content`, compact `student_context`, and `error_book_summary`, with no JSON contract.
 - Updated runtime handling so `learn` no longer loads a structured schema, no longer retries on missing JSON keys, streams/persists raw visible text, and still closes the learn turn cleanly; `review` remains the structured JSON prompt.
