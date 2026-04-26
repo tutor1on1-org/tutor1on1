@@ -14,12 +14,14 @@ $requiredEntries = @(
   'tutor1on1.exe',
   'data/flutter_assets/AssetManifest.bin',
   'data/flutter_assets/assets/prompts/learn.prompt.txt',
-  'data/flutter_assets/assets/prompts/review.prompt.txt'
+  'data/flutter_assets/assets/prompts/review_init.prompt.txt',
+  'data/flutter_assets/assets/prompts/review_cont.prompt.txt'
 )
 
 $promptEntries = @(
   'data/flutter_assets/assets/prompts/learn.prompt.txt',
-  'data/flutter_assets/assets/prompts/review.prompt.txt'
+  'data/flutter_assets/assets/prompts/review_init.prompt.txt',
+  'data/flutter_assets/assets/prompts/review_cont.prompt.txt'
 )
 
 function Normalize-EntryPath {

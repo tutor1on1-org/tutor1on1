@@ -33,6 +33,36 @@ function Invoke-Checked {
   }
 }
 
+function Invoke-GradleAssembleRelease {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$RepoRoot
+  )
+  Push-Location (Join-Path $RepoRoot 'android')
+  try {
+    .\gradlew.bat assembleRelease --no-daemon
+    return $LASTEXITCODE
+  } finally {
+    Pop-Location
+  }
+}
+
+function Invoke-GradleAssembleReleaseWithRetry {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$RepoRoot
+  )
+  Write-Host '==> gradlew assembleRelease'
+  $exitCode = Invoke-GradleAssembleRelease -RepoRoot $RepoRoot
+  if ($exitCode -ne 0) {
+    Write-Host "==> gradlew assembleRelease failed with exit code $exitCode; retry once"
+    $exitCode = Invoke-GradleAssembleRelease -RepoRoot $RepoRoot
+  }
+  if ($exitCode -ne 0) {
+    throw "gradlew assembleRelease failed with exit code $exitCode."
+  }
+}
+
 function Get-FirstSha256FromOutput {
   param(
     [Parameter(Mandatory = $true)]
@@ -226,14 +256,7 @@ try {
       flutter build apk --config-only --no-pub
     }
     Repair-GeneratedPluginRegistrantForRelease -RepoRoot $repoRoot
-    Invoke-Checked -Label 'gradlew assembleRelease' -Action {
-      Push-Location (Join-Path $repoRoot 'android')
-      try {
-        .\gradlew.bat assembleRelease
-      } finally {
-        Pop-Location
-      }
-    }
+    Invoke-GradleAssembleReleaseWithRetry -RepoRoot $repoRoot
   } else {
     Write-Host '==> Skip build requested'
   }
