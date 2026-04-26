@@ -37,10 +37,18 @@ function Get-GitHubToken {
     return $env:GH_TOKEN.Trim()
   }
 
-  $credentialInput = "protocol=https`nhost=github.com`n`n"
-  $credentialOutput = $credentialInput | git credential fill
-  if ($LASTEXITCODE -ne 0) {
-    throw "git credential fill failed with exit code $LASTEXITCODE."
+  $credentialInputPath = Join-Path ([System.IO.Path]::GetTempPath()) ("github_credential_" + [System.Guid]::NewGuid().ToString('N') + '.txt')
+  try {
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    [System.IO.File]::WriteAllText($credentialInputPath, "protocol=https`nhost=github.com`n`n", $utf8NoBom)
+    $credentialOutput = & cmd.exe /d /c "git credential fill < `"$credentialInputPath`""
+    if ($LASTEXITCODE -ne 0) {
+      throw "git credential fill failed with exit code $LASTEXITCODE."
+    }
+  } finally {
+    if (Test-Path -LiteralPath $credentialInputPath) {
+      Remove-Item -LiteralPath $credentialInputPath -Force
+    }
   }
 
   $passwordLine = @($credentialOutput | Where-Object { $_ -like 'password=*' } | Select-Object -First 1)

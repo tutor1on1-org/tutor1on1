@@ -40,8 +40,9 @@ function Invoke-GradleAssembleRelease {
   )
   Push-Location (Join-Path $RepoRoot 'android')
   try {
-    .\gradlew.bat assembleRelease --no-daemon
-    return $LASTEXITCODE
+    .\gradlew.bat assembleRelease --no-daemon 2>&1 | ForEach-Object { Write-Host $_ }
+    $exitCode = $LASTEXITCODE
+    return $exitCode
   } finally {
     Pop-Location
   }
@@ -125,6 +126,54 @@ function Repair-GeneratedPluginRegistrantForRelease {
   if ($content -notmatch 'com\.it_nomads\.fluttersecurestorage\.FlutterSecureStoragePlugin') {
     throw "GeneratedPluginRegistrant.java is missing flutter_secure_storage registration: $javaRegistrantPath"
   }
+}
+
+function Remove-IntegrationTestFromPluginDependenciesForRelease {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$RepoRoot
+  )
+
+  $pluginDepsPath = Join-Path $RepoRoot '.flutter-plugins-dependencies'
+  if (-not (Test-Path -LiteralPath $pluginDepsPath)) {
+    throw ".flutter-plugins-dependencies not found: $pluginDepsPath"
+  }
+  $originalContent = Get-Content -LiteralPath $pluginDepsPath -Raw
+  $pluginDeps = $originalContent | ConvertFrom-Json
+  $androidPlugins = @($pluginDeps.plugins.android)
+  $filteredAndroidPlugins = @($androidPlugins | Where-Object { $_.name -ne 'integration_test' })
+  $dependencyGraph = @($pluginDeps.dependencyGraph)
+  $filteredDependencyGraph = @($dependencyGraph | Where-Object { $_.name -ne 'integration_test' })
+
+  if ($filteredAndroidPlugins.Count -eq $androidPlugins.Count -and
+      $filteredDependencyGraph.Count -eq $dependencyGraph.Count) {
+    return $originalContent
+  }
+
+  $pluginDeps.plugins.android = $filteredAndroidPlugins
+  $pluginDeps.dependencyGraph = $filteredDependencyGraph
+  $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+  [System.IO.File]::WriteAllText(
+    $pluginDepsPath,
+    ($pluginDeps | ConvertTo-Json -Depth 100 -Compress),
+    $utf8NoBom
+  )
+  Write-Host "==> Remove integration_test from Android plugin dependencies for release build: $pluginDepsPath"
+  return $originalContent
+}
+
+function Restore-PluginDependencies {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$RepoRoot,
+    [Parameter(Mandatory = $true)]
+    [string]$Content
+  )
+
+  $pluginDepsPath = Join-Path $RepoRoot '.flutter-plugins-dependencies'
+  $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+  [System.IO.File]::WriteAllText($pluginDepsPath, $Content, $utf8NoBom)
+  Write-Host "==> Restore plugin dependencies: $pluginDepsPath"
 }
 
 function Assert-AndroidReleasePluginRegistration {
@@ -255,8 +304,13 @@ try {
     Invoke-Checked -Label 'flutter build apk --config-only' -Action {
       flutter build apk --config-only --no-pub
     }
-    Repair-GeneratedPluginRegistrantForRelease -RepoRoot $repoRoot
-    Invoke-GradleAssembleReleaseWithRetry -RepoRoot $repoRoot
+    $pluginDepsBackup = Remove-IntegrationTestFromPluginDependenciesForRelease -RepoRoot $repoRoot
+    try {
+      Repair-GeneratedPluginRegistrantForRelease -RepoRoot $repoRoot
+      Invoke-GradleAssembleReleaseWithRetry -RepoRoot $repoRoot
+    } finally {
+      Restore-PluginDependencies -RepoRoot $repoRoot -Content $pluginDepsBackup
+    }
   } else {
     Write-Host '==> Skip build requested'
   }
