@@ -4,10 +4,7 @@
   <meta charset="UTF-8">
   <meta content="width=device-width, initial-scale=1.0" name="viewport">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta
-    name="description"
-    content="Tutor1on1 help page: personalized tutoring, mistake review, API config, teacher publishing, student enrollment, guided sessions, and sync."
-  >
+  <meta name="description" content="Tutor1on1 help page: personalized tutoring, mistake review, API config, teacher publishing, student enrollment, guided sessions, and sync.">
   <meta content="#f7f9fb" name="theme-color">
   <title>Tutor1on1 Help</title>
   <link rel="apple-touch-icon" href="../icons/Icon-192.png">
@@ -21,24 +18,14 @@
     <header class="topbar">
       <a class="brand" href="/">
         <span class="brand-mark">T1</span>
-        <span class="brand-text">
-          <strong>Tutor1on1</strong>
-          <span>Help</span>
-        </span>
+        <span class="brand-text"><strong>Tutor1on1</strong><span>Help</span></span>
       </a>
       <nav class="topnav" aria-label="Navigation and language">
-        <table class="topnav-table" role="presentation">
-          <tr>
-            <td><a class="nav-link nav-action" href="/">Home</a></td>
-            <td><a class="nav-link nav-action" href="/install/">Install</a></td>
-            <td>
-              <select class="lang-select nav-action" aria-label="Language" data-language-switcher>
-                <option value="en">English</option>
-                <option value="zh">Chinese</option>
-              </select>
-            </td>
-          </tr>
-        </table>
+        <table class="topnav-table" role="presentation"><tr>
+          <td><a class="nav-link nav-action" href="/">Home</a></td>
+          <td><a class="nav-link nav-action" href="/install/">Install</a></td>
+          <td><select class="lang-select nav-action" aria-label="Navigation and language" data-language-switcher><option value="en">English</option></select></td>
+        </tr></table>
       </nav>
     </header>
 
@@ -46,9 +33,7 @@
       <section class="hero hero-compact">
         <p class="eyebrow">Quick start</p>
         <h1>Use Tutor1on1 by role.</h1>
-        <p class="lead">
-          Teachers publish and manage courses. Students request enrollment, download approved content, and receive personalized guidance, targeted practice, and mistake review.
-        </p>
+        <p class="lead">Teachers publish and manage courses. Students request enrollment, download approved content, and receive personalized guidance, targeted practice, and mistake review.</p>
         <div class="actions">
           <a class="button button-primary" href="/install/">Install first</a>
           <a class="button button-ghost" href="#teacher">Teacher flow</a>
@@ -61,93 +46,30 @@
         <article class="role-card teacher" id="teacher">
           <p class="eyebrow">Teacher flow</p>
           <h2>Publish and personalize courses.</h2>
-          <ol class="help-list">
-            <li>Log in as a teacher or register a teacher account.</li>
-            <li>Create or load a local course version.</li>
-            <li>Upload the validated bundle to the marketplace.</li>
-            <li>Approve student enrollment requests.</li>
-            <li>Review each student's progress, recurring mistakes, and synced sessions from the teacher home page.</li>
-          </ol>
+          <ol class="help-list"><li>Log in as a teacher or register a teacher account.</li><li>Create or load a local course version.</li><li>Upload the validated bundle to the marketplace.</li><li>Approve student enrollment requests.</li><li>Review each student&#x27;s progress, recurring mistakes, and synced sessions from the teacher home page.</li></ol>
         </article>
         <article class="role-card student" id="student">
           <p class="eyebrow">Student flow</p>
           <h2>Enroll and study at your pace.</h2>
-          <ol class="help-list">
-            <li>Log in as a student or register a student account.</li>
-            <li>Open the marketplace and request enrollment in a course.</li>
-            <li>Wait for teacher approval.</li>
-            <li>Download the approved course bundle.</li>
-            <li>Open the course and start a Learn or Review session that follows your progress.</li>
-          </ol>
+          <ol class="help-list"><li>Log in as a student or register a student account.</li><li>Open the marketplace and request enrollment in a course.</li><li>Wait for teacher approval.</li><li>Download the approved course bundle.</li><li>Open the course and start a Learn or Review session that follows your progress.</li></ol>
         </article>
       </section>
 
       <section class="content-block">
         <h2>Personalized learning loop</h2>
-        <div class="steps">
-          <article class="step">
-            <span class="step-number">1</span>
-            <div>
-              <h3>Learn</h3>
-              <p>The tutor explains the next concept in the context of the course and the student's current progress.</p>
-            </div>
-          </article>
-          <article class="step">
-            <span class="step-number">2</span>
-            <div>
-              <h3>Practice</h3>
-              <p>Exercises adjust to the student's answers, with hints, simpler examples, and positive feedback when needed.</p>
-            </div>
-          </article>
-          <article class="step">
-            <span class="step-number">3</span>
-            <div>
-              <h3>Review mistakes</h3>
-              <p>Meaningful mistakes are summarized into the mistake book so later review targets real weak spots.</p>
-            </div>
-          </article>
-        </div>
+        <div class="steps"><article class="step"><span class="step-number">1</span><div><h3>Learn</h3><p>The tutor explains the next concept in the context of the course and the student&#x27;s current progress.</p></div></article><article class="step"><span class="step-number">2</span><div><h3>Practice</h3><p>Exercises adjust to the student&#x27;s answers, with hints, simpler examples, and positive feedback when needed.</p></div></article><article class="step"><span class="step-number">3</span><div><h3>Review mistakes</h3><p>Meaningful mistakes are summarized into the mistake book so later review targets real weak spots.</p></div></article></div>
       </section>
 
       <section class="content-block" id="config">
         <h2>API config fields</h2>
-        <ul class="help-list">
-          <li><strong>Provider</strong> chooses the model service, such as OpenAI or SiliconFlow.</li>
-          <li><strong>Base URL</strong> is the provider endpoint used by Tutor1on1. The app shows the URL for the selected provider.</li>
-          <li><strong>API Key</strong> is saved locally and used for tutor, TTS, and STT requests when those features need it.</li>
-          <li><strong>Test API key</strong> calls <code>{baseUrl}/models</code>, verifies the key, and loads the available text, TTS, and STT model lists. It does not download models or auto-select a new model.</li>
-          <li><strong>Text model</strong> powers the tutor conversation. <strong>Thinking effort</strong> appears only for providers that support reasoning controls.</li>
-          <li><strong>TTS model</strong> controls speech output. <strong>STT model</strong> controls speech-to-text input. They can stay empty if you do not use voice features.</li>
-          <li><strong>Saved API configs</strong> store the provider URL, selected models, thinking effort, and a short key hash so you can reuse known-good setups.</li>
-        </ul>
+        <ul class="help-list"><li><strong>Provider</strong> chooses the model service, such as OpenAI or SiliconFlow.</li><li><strong>Base URL</strong> is the provider endpoint used by Tutor1on1. The app shows the URL for the selected provider.</li><li><strong>API Key</strong> is saved locally and used for tutor, TTS, and STT requests when those features need it.</li><li><strong>Test API key</strong> calls <code>{baseUrl}/models</code>, verifies the key, and loads the available text, TTS, and STT model lists. It does not download models or auto-select a new model.</li><li><strong>Text model</strong> powers the tutor conversation. <strong>Thinking effort</strong> appears only for providers that support reasoning controls.</li><li><strong>TTS model</strong> controls speech output. <strong>STT model</strong> controls speech-to-text input. They can stay empty if you do not use voice features.</li><li><strong>Saved API configs</strong> store the provider URL, selected models, thinking effort, and a short key hash so you can reuse known-good setups.</li></ul>
       </section>
 
-      <section class="grid grid-three section-block">
-        <article class="card">
-          <span class="kicker">Marketplace</span>
-          <h2>Course discovery</h2>
-          <p>Teachers publish course listings. Students browse, request enrollment, and download after approval.</p>
-        </article>
-        <article class="card">
-          <span class="kicker">Sessions</span>
-          <h2>Personal feedback</h2>
-          <p>Use Learn for new material and Review for recall practice. Feedback adapts to the student's answer and keeps progress visible.</p>
-        </article>
-        <article class="card">
-          <span class="kicker">Sync</span>
-          <h2>Continuity</h2>
-          <p>Teacher and student home pages sync account-linked enrollment, sessions, progress, and mistake-book signals in the background.</p>
-        </article>
-      </section>
+      <section class="grid grid-three section-block"><article class="card"><span class="kicker">Marketplace</span><h2>Course discovery</h2><p>Teachers publish course listings. Students browse, request enrollment, and download after approval.</p></article><article class="card"><span class="kicker">Sessions</span><h2>Personal feedback</h2><p>Use Learn for new material and Review for recall practice. Feedback adapts to the student&#x27;s answer and keeps progress visible.</p></article><article class="card"><span class="kicker">Sync</span><h2>Continuity</h2><p>Teacher and student home pages sync account-linked enrollment, sessions, progress, and mistake-book signals in the background.</p></article></section>
 
       <section class="content-block">
         <h2>Common problems</h2>
-        <ul class="help-list">
-          <li>If login or course loading fails, check that the app can reach <code>api.tutor1on1.org</code>.</li>
-          <li>If a student cannot enter a course, confirm that enrollment was approved and the bundle was downloaded.</li>
-          <li>If model lists look stale, run Test API key again for the active provider and key.</li>
-          <li>If progress looks stale across devices, wait for sync to finish or run a manual refresh.</li>
-        </ul>
+        <ul class="help-list"><li>If login or course loading fails, check that the app can reach <code>api.tutor1on1.org</code>.</li><li>If a student cannot enter a course, confirm that enrollment was approved and the bundle was downloaded.</li><li>If model lists look stale, run Test API key again for the active provider and key.</li><li>If progress looks stale across devices, wait for sync to finish or run a manual refresh.</li></ul>
       </section>
     </main>
 

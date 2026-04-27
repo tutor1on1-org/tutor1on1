@@ -1,1 +1,86 @@
-<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta content="width=device-width, initial-scale=1.0" name="viewport"><meta content="IE=Edge" http-equiv="X-UA-Compatible"><meta name="description" content="앱을 설치하고 교사 또는 학생으로 로그인한 뒤 config의 각 항목이 무엇을 제어하는지 확인합니다."><meta content="#f7f9fb" name="theme-color"><title>Tutor1on1 도움말</title><link rel="apple-touch-icon" href="../../icons/Icon-192.png"><link rel="icon" type="image/png" href="../../favicon.png"><link rel="manifest" href="../../manifest.json"><link rel="stylesheet" href="../../styles.css"><script src="/site.js"></script></head><body><div class="shell"><header class="topbar"><a class="brand" href="/ko/"><span class="brand-mark">T1</span><span class="brand-text"><strong>Tutor1on1</strong><span>Windows 및 Android 학습 앱</span></span></a><nav class="topnav"><table class="topnav-table" role="presentation"><tr><td><a class="nav-link nav-action" href="/ko/">홈</a></td><td><a class="nav-link nav-action" href="/ko/install/">설치</a></td><td><select class="lang-select nav-action" data-language-switcher><option value="ko">ko</option></select></td></tr></table></nav></header><main class="page"><section class="hero hero-compact"><p class="eyebrow">빠른 시작 및 API config</p><h1>빠른 시작 및 API config</h1><p class="lead">앱을 설치하고 교사 또는 학생으로 로그인한 뒤 config의 각 항목이 무엇을 제어하는지 확인합니다.</p></section><section class="role-strip section-block"><article class="role-card teacher"><h2>교사는 코스를 만들거나 불러오고 검증된 bundle을 업로드하며 등록 요청을 승인하고 학생별 진도와 오답 패턴을 확인합니다.</h2></article><article class="role-card student"><h2>학생은 승인된 코스에서 Learn 및 Review를 진행하고 맞춤 연습을 받으며 오답 노트로 약점을 복습합니다.</h2></article></section><section class="content-block"><h2>API config</h2><ul class="help-list"><li><strong>Provider</strong>: OpenAI 또는 SiliconFlow 같은 API 서비스 프리셋입니다.</li><li><strong>Base URL</strong>: OpenAI-compatible endpoint입니다. Test API key는 baseUrl + /models를 호출합니다.</li><li><strong>API key</strong>: 제공자 key이며 base URL별로 로컬 secure storage에 저장합니다.</li><li><strong>Text model</strong>: 튜터 대화, 설명, 피드백, Review 채점에 사용합니다.</li><li><strong>TTS/STT models</strong>: 선택 음성 출력 및 음성 인식 모델입니다.</li><li><strong>Reasoning effort</strong>: 지원 provider용 선택 설정입니다.</li><li><strong>Test API key</strong>: 접근을 확인하고 모델 목록을 갱신합니다. 모델을 다운로드하지 않고 새 모델을 자동 선택하지 않습니다.</li></ul></section><section class="content-block"><h2>도움말</h2><p class="lead">모델 목록이 오래되었으면 Test API key를 다시 실행하세요. 학생이 코스에 들어가지 못하면 승인과 bundle 다운로드를 확인하세요.</p></section></main><footer class="footer"><p>Tutor1on1</p><p><a class="footer-link" href="/ko/legal/#privacy">개인정보</a></p><p><a class="footer-link" href="/ko/legal/#license">라이선스</a></p></footer></div></body></html>
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta content="width=device-width, initial-scale=1.0" name="viewport">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Tutor1on1 도움말: 개인 맞춤 지도, 오답 복습, API config, 코스 공개, 수강 신청, 세션, 동기화.">
+  <meta content="#f7f9fb" name="theme-color">
+  <title>Tutor1on1 도움말</title>
+  <link rel="apple-touch-icon" href="../../icons/Icon-192.png">
+  <link rel="icon" type="image/png" href="../../favicon.png">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="stylesheet" href="../../styles.css">
+  <script src="/site.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="/ko/">
+        <span class="brand-mark">T1</span>
+        <span class="brand-text"><strong>Tutor1on1</strong><span>도움말</span></span>
+      </a>
+      <nav class="topnav" aria-label="탐색 및 언어">
+        <table class="topnav-table" role="presentation"><tr>
+          <td><a class="nav-link nav-action" href="/ko/">홈</a></td>
+          <td><a class="nav-link nav-action" href="/ko/install/">설치</a></td>
+          <td><select class="lang-select nav-action" aria-label="탐색 및 언어" data-language-switcher><option value="ko">한국어</option></select></td>
+        </tr></table>
+      </nav>
+    </header>
+
+    <main class="page">
+      <section class="hero hero-compact">
+        <p class="eyebrow">빠른 시작</p>
+        <h1>역할에 맞게 Tutor1on1 사용하기.</h1>
+        <p class="lead">교사는 코스를 공개하고 관리합니다. 학생은 수강을 신청하고 승인된 콘텐츠를 다운로드한 뒤, 자신의 진도에 맞는 지도, 연습, 오답 복습을 받습니다.</p>
+        <div class="actions">
+          <a class="button button-primary" href="/ko/install/">먼저 설치</a>
+          <a class="button button-ghost" href="#teacher">교사 흐름</a>
+          <a class="button button-ghost" href="#student">학생 흐름</a>
+          <a class="button button-ghost" href="#config">API config</a>
+        </div>
+      </section>
+
+      <section class="role-strip section-block">
+        <article class="role-card teacher" id="teacher">
+          <p class="eyebrow">교사 흐름</p>
+          <h2>코스를 공개하고 계속 개인화합니다.</h2>
+          <ol class="help-list"><li>교사로 로그인하거나 교사 계정을 등록합니다.</li><li>로컬 코스 버전을 만들거나 불러옵니다.</li><li>검증된 bundle을 marketplace에 업로드합니다.</li><li>학생 수강 신청을 승인합니다.</li><li>교사 홈에서 학생별 진도, 반복 오답, 동기화된 세션을 확인합니다.</li></ol>
+        </article>
+        <article class="role-card student" id="student">
+          <p class="eyebrow">학생 흐름</p>
+          <h2>수강하고 자신의 속도로 공부합니다.</h2>
+          <ol class="help-list"><li>학생으로 로그인하거나 학생 계정을 등록합니다.</li><li>marketplace를 열고 코스 수강을 신청합니다.</li><li>교사 승인을 기다립니다.</li><li>승인된 코스 bundle을 다운로드합니다.</li><li>코스를 열고 진도에 맞는 Learn 또는 Review 세션을 시작합니다.</li></ol>
+        </article>
+      </section>
+
+      <section class="content-block">
+        <h2>개인 맞춤 학습 흐름</h2>
+        <div class="steps"><article class="step"><span class="step-number">1</span><div><h3>학습</h3><p>Tutor는 코스 내용과 학생의 현재 진도를 바탕으로 다음 개념을 설명합니다.</p></div></article><article class="step"><span class="step-number">2</span><div><h3>연습</h3><p>연습은 학생 답변에 맞춰 조정되며 필요할 때 힌트, 더 쉬운 예, 긍정적 피드백을 제공합니다.</p></div></article><article class="step"><span class="step-number">3</span><div><h3>오답 복습</h3><p>의미 있는 오답은 오답 노트에 요약되어 이후 복습이 실제 약점을 겨냥하게 합니다.</p></div></article></div>
+      </section>
+
+      <section class="content-block" id="config">
+        <h2>API config 항목</h2>
+        <ul class="help-list"><li><strong>Provider</strong>는 OpenAI 또는 SiliconFlow 같은 모델 서비스를 선택합니다.</li><li><strong>Base URL</strong>은 Tutor1on1이 모델 서비스에 요청을 보내는 endpoint이며, 선택한 provider에 맞게 표시됩니다.</li><li><strong>API Key</strong>는 로컬에 저장되며 tutor, TTS, STT 등 모델 서비스가 필요한 기능에 사용됩니다.</li><li><strong>Test API key</strong>는 <code>{baseUrl}/models</code>를 호출해 key를 검증하고 사용 가능한 text, TTS, STT 모델 목록을 불러옵니다. 모델을 다운로드하지 않으며 새 모델을 자동 선택하지 않습니다.</li><li><strong>Text model</strong>은 tutor 대화에 사용됩니다. <strong>Thinking effort</strong>는 reasoning control을 지원하는 provider에서만 표시됩니다.</li><li><strong>TTS model</strong>은 음성 출력, <strong>STT model</strong>은 음성 입력 전사를 제어합니다. 음성을 쓰지 않으면 비워 둘 수 있습니다.</li><li><strong>저장된 API config</strong>는 provider URL, 선택한 모델, thinking effort, key hash를 저장해 검증된 설정을 다시 사용할 수 있게 합니다.</li></ul>
+      </section>
+
+      <section class="grid grid-three section-block"><article class="card"><span class="kicker">Marketplace</span><h2>코스 찾기</h2><p>교사는 코스 listing을 공개합니다. 학생은 탐색하고 수강 신청을 하며 승인 후 다운로드합니다.</p></article><article class="card"><span class="kicker">Sessions</span><h2>개인 피드백</h2><p>Learn은 새 내용, Review는 회상 연습에 사용합니다. 피드백은 학생 답변에 맞춰 바뀌며 진도를 보이게 합니다.</p></article><article class="card"><span class="kicker">Sync</span><h2>연속성</h2><p>교사와 학생 홈은 계정에 연결된 수강 상태, 세션, 진도, 오답 노트 신호를 동기화합니다.</p></article></section>
+
+      <section class="content-block">
+        <h2>자주 겪는 문제</h2>
+        <ul class="help-list"><li>로그인이나 코스 로딩이 실패하면 앱이 <code>api.tutor1on1.org</code>에 연결되는지 확인하세요.</li><li>학생이 코스에 들어갈 수 없으면 수강 신청이 승인되었고 bundle이 다운로드되었는지 확인하세요.</li><li>모델 목록이 오래되어 보이면 현재 provider와 key로 Test API key를 다시 실행하세요.</li><li>여러 기기의 진도가 오래되어 보이면 동기화 완료를 기다리거나 수동 새로고침을 실행하세요.</li></ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Tutor1on1 도움말</p>
+      <p><a class="footer-link" href="/ko/">홈</a></p>
+      <p><a class="footer-link" href="/ko/legal/">법률</a></p>
+      <p><a class="footer-link" href="/ko/legal/#privacy">개인정보</a></p>
+      <p><a class="footer-link" href="/ko/legal/#license">라이선스</a></p>
+      <p>교사 공개, 학생 수강, 개인 맞춤 학습.</p>
+    </footer>
+  </div>
+</body>
+</html>

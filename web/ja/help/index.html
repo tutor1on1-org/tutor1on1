@@ -1,1 +1,86 @@
-<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta content="width=device-width, initial-scale=1.0" name="viewport"><meta content="IE=Edge" http-equiv="X-UA-Compatible"><meta name="description" content="アプリをインストールし、先生または生徒としてログインし、config の各項目を理解します。"><meta content="#f7f9fb" name="theme-color"><title>Tutor1on1 ヘルプ</title><link rel="apple-touch-icon" href="../../icons/Icon-192.png"><link rel="icon" type="image/png" href="../../favicon.png"><link rel="manifest" href="../../manifest.json"><link rel="stylesheet" href="../../styles.css"><script src="/site.js"></script></head><body><div class="shell"><header class="topbar"><a class="brand" href="/ja/"><span class="brand-mark">T1</span><span class="brand-text"><strong>Tutor1on1</strong><span>Windows と Android の学習アプリ</span></span></a><nav class="topnav"><table class="topnav-table" role="presentation"><tr><td><a class="nav-link nav-action" href="/ja/">ホーム</a></td><td><a class="nav-link nav-action" href="/ja/install/">インストール</a></td><td><select class="lang-select nav-action" data-language-switcher><option value="ja">ja</option></select></td></tr></table></nav></header><main class="page"><section class="hero hero-compact"><p class="eyebrow">クイックスタートと API config</p><h1>クイックスタートと API config</h1><p class="lead">アプリをインストールし、先生または生徒としてログインし、config の各項目を理解します。</p></section><section class="role-strip section-block"><article class="role-card teacher"><h2>先生はコースを作成または読み込み、検証済み bundle をアップロードし、受講申請を承認し、生徒ごとの進度とミス傾向を確認します。</h2></article><article class="role-card student"><h2>生徒は承認されたコースで Learn と Review を進め、適応練習を受け、ミスノートで弱点を復習します。</h2></article></section><section class="content-block"><h2>API config</h2><ul class="help-list"><li><strong>Provider</strong>: OpenAI や SiliconFlow などの API サービス設定。</li><li><strong>Base URL</strong>: OpenAI-compatible endpoint。Test API key は baseUrl + /models を呼び出します。</li><li><strong>API key</strong>: provider key。base URL ごとにローカル secure storage に保存します。</li><li><strong>Text model</strong>: 会話、説明、フィードバック、Review 採点に使うモデル。</li><li><strong>TTS/STT models</strong>: 任意の音声出力と音声認識モデル。</li><li><strong>Reasoning effort</strong>: 対応 provider 向けの任意設定。</li><li><strong>Test API key</strong>: アクセスを検証しモデル一覧を更新します。モデルをダウンロードせず、新モデルを自動選択しません。</li></ul></section><section class="content-block"><h2>ヘルプ</h2><p class="lead">モデル一覧が古い場合は Test API key を再実行します。生徒がコースに入れない場合は承認と bundle ダウンロードを確認します。</p></section></main><footer class="footer"><p>Tutor1on1</p><p><a class="footer-link" href="/ja/legal/#privacy">プライバシー</a></p><p><a class="footer-link" href="/ja/legal/#license">ライセンス</a></p></footer></div></body></html>
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta content="width=device-width, initial-scale=1.0" name="viewport">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Tutor1on1 ヘルプ: 個別最適化された指導、ミス復習、API config、コース公開、受講申請、セッション、同期。">
+  <meta content="#f7f9fb" name="theme-color">
+  <title>Tutor1on1 ヘルプ</title>
+  <link rel="apple-touch-icon" href="../../icons/Icon-192.png">
+  <link rel="icon" type="image/png" href="../../favicon.png">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="stylesheet" href="../../styles.css">
+  <script src="/site.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="/ja/">
+        <span class="brand-mark">T1</span>
+        <span class="brand-text"><strong>Tutor1on1</strong><span>ヘルプ</span></span>
+      </a>
+      <nav class="topnav" aria-label="ナビゲーションと言語">
+        <table class="topnav-table" role="presentation"><tr>
+          <td><a class="nav-link nav-action" href="/ja/">ホーム</a></td>
+          <td><a class="nav-link nav-action" href="/ja/install/">インストール</a></td>
+          <td><select class="lang-select nav-action" aria-label="ナビゲーションと言語" data-language-switcher><option value="ja">日本語</option></select></td>
+        </tr></table>
+      </nav>
+    </header>
+
+    <main class="page">
+      <section class="hero hero-compact">
+        <p class="eyebrow">クイックスタート</p>
+        <h1>役割ごとに Tutor1on1 を使う。</h1>
+        <p class="lead">先生はコースを公開して管理します。生徒は受講申請を行い、承認済みコンテンツをダウンロードし、進度に合った指導、練習、ミス復習を受けます。</p>
+        <div class="actions">
+          <a class="button button-primary" href="/ja/install/">先にインストール</a>
+          <a class="button button-ghost" href="#teacher">先生の流れ</a>
+          <a class="button button-ghost" href="#student">生徒の流れ</a>
+          <a class="button button-ghost" href="#config">API config</a>
+        </div>
+      </section>
+
+      <section class="role-strip section-block">
+        <article class="role-card teacher" id="teacher">
+          <p class="eyebrow">先生の流れ</p>
+          <h2>コースを公開し、継続的に個別化します。</h2>
+          <ol class="help-list"><li>先生としてログイン、または先生アカウントを登録します。</li><li>ローカルのコース版を作成または読み込みます。</li><li>検証済み bundle を marketplace にアップロードします。</li><li>生徒の受講申請を承認します。</li><li>先生ホームで各生徒の進度、よくあるミス、同期済みセッションを確認します。</li></ol>
+        </article>
+        <article class="role-card student" id="student">
+          <p class="eyebrow">生徒の流れ</p>
+          <h2>受講し、自分のペースで学びます。</h2>
+          <ol class="help-list"><li>生徒としてログイン、または生徒アカウントを登録します。</li><li>marketplace を開き、コースの受講を申請します。</li><li>先生の承認を待ちます。</li><li>承認済みコース bundle をダウンロードします。</li><li>コースを開き、進度に沿った Learn または Review セッションを始めます。</li></ol>
+        </article>
+      </section>
+
+      <section class="content-block">
+        <h2>個別学習の流れ</h2>
+        <div class="steps"><article class="step"><span class="step-number">1</span><div><h3>学ぶ</h3><p>Tutor はコース内容と生徒の現在の進度に合わせて、次の概念を説明します。</p></div></article><article class="step"><span class="step-number">2</span><div><h3>練習する</h3><p>練習は生徒の回答に合わせて変わり、必要なときはヒント、より簡単な例、前向きなフィードバックを返します。</p></div></article><article class="step"><span class="step-number">3</span><div><h3>ミスを復習する</h3><p>意味のあるミスはミスノートに要約され、後の復習が本当の弱点に向かいます。</p></div></article></div>
+      </section>
+
+      <section class="content-block" id="config">
+        <h2>API config の項目</h2>
+        <ul class="help-list"><li><strong>Provider</strong> は OpenAI や SiliconFlow などのモデルサービスを選びます。</li><li><strong>Base URL</strong> は Tutor1on1 がモデルサービスへ送信する endpoint です。選択中の provider に合わせて表示されます。</li><li><strong>API Key</strong> はローカルに保存され、tutor、TTS、STT などモデルサービスが必要な機能で使われます。</li><li><strong>Test API key</strong> は <code>{baseUrl}/models</code> を呼び出して key を検証し、利用可能な text、TTS、STT モデル一覧を読み込みます。モデルはダウンロードせず、新しいモデルを自動選択しません。</li><li><strong>Text model</strong> は tutor 会話に使われます。<strong>Thinking effort</strong> は reasoning control をサポートする provider でのみ表示されます。</li><li><strong>TTS model</strong> は音声出力、<strong>STT model</strong> は音声入力の文字起こしを制御します。音声を使わない場合は空欄で構いません。</li><li><strong>保存済み API config</strong> には provider URL、選択済みモデル、thinking effort、key hash が保存され、検証済み設定を再利用できます。</li></ul>
+      </section>
+
+      <section class="grid grid-three section-block"><article class="card"><span class="kicker">Marketplace</span><h2>コースを見つける</h2><p>先生はコース listing を公開します。生徒は閲覧、受講申請、承認後のダウンロードを行います。</p></article><article class="card"><span class="kicker">Sessions</span><h2>個別フィードバック</h2><p>Learn は新しい内容、Review は想起練習に使います。フィードバックは生徒の回答に合わせて変わり、進歩を見える形にします。</p></article><article class="card"><span class="kicker">Sync</span><h2>継続性</h2><p>先生と生徒のホームは、アカウントに紐づく受講状態、セッション、進度、ミスノート信号を同期します。</p></article></section>
+
+      <section class="content-block">
+        <h2>よくある問題</h2>
+        <ul class="help-list"><li>ログインまたはコース読み込みに失敗する場合は、アプリが <code>api.tutor1on1.org</code> に接続できるか確認します。</li><li>生徒がコースに入れない場合は、受講申請が承認され、bundle がダウンロード済みか確認します。</li><li>モデル一覧が古く見える場合は、現在の provider と key で Test API key を再実行します。</li><li>複数端末の進度が古い場合は、同期完了を待つか手動更新します。</li></ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Tutor1on1 ヘルプ</p>
+      <p><a class="footer-link" href="/ja/">ホーム</a></p>
+      <p><a class="footer-link" href="/ja/legal/">法律</a></p>
+      <p><a class="footer-link" href="/ja/legal/#privacy">プライバシー</a></p>
+      <p><a class="footer-link" href="/ja/legal/#license">ライセンス</a></p>
+      <p>先生の公開、生徒の受講、個別化された学習。</p>
+    </footer>
+  </div>
+</body>
+</html>

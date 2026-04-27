@@ -35,3 +35,5 @@
 - Public website redesigns should make the product visible in the first viewport, keep direct Windows/Android downloads prominent, and derive release labels/download links from `/site.js` release config rather than hard-coding per page.
 - Public legal website pages must not copy internal placeholder legal drafts verbatim; use the current public contact address, distinguish app code license, third-party licenses, and teacher-owned course content, and validate legal paths in `scripts/publish_website_static.ps1`.
 - Website publish HTTP checks should retry non-200 responses explicitly after rsync, because nginx/static path visibility can briefly lag even when the file already exists on the remote host.
+- Public website product screenshots must be captured from the real app with real course/session data; do not use generated or mock screenshot-style UI when representing app screens.
+- Website localization parity must be validated before claiming languages are unified; shared help/home content changes need matching visible copy and section structure across all locale paths.

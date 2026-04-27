@@ -1,1 +1,86 @@
-<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="UTF-8"><meta content="width=device-width, initial-scale=1.0" name="viewport"><meta content="IE=Edge" http-equiv="X-UA-Compatible"><meta name="description" content="安裝應用，按老師或學生身份登入，並理解 config 中每個欄位控制什麼。"><meta content="#f7f9fb" name="theme-color"><title>Tutor1on1 說明</title><link rel="apple-touch-icon" href="../../icons/Icon-192.png"><link rel="icon" type="image/png" href="../../favicon.png"><link rel="manifest" href="../../manifest.json"><link rel="stylesheet" href="../../styles.css"><script src="/site.js"></script></head><body><div class="shell"><header class="topbar"><a class="brand" href="/zh-tw/"><span class="brand-mark">T1</span><span class="brand-text"><strong>Tutor1on1</strong><span>Windows 與 Android 學習應用</span></span></a><nav class="topnav"><table class="topnav-table" role="presentation"><tr><td><a class="nav-link nav-action" href="/zh-tw/">首頁</a></td><td><a class="nav-link nav-action" href="/zh-tw/install/">安裝</a></td><td><select class="lang-select nav-action" data-language-switcher><option value="zh-tw">zh-tw</option></select></td></tr></table></nav></header><main class="page"><section class="hero hero-compact"><p class="eyebrow">快速開始與 API config</p><h1>快速開始與 API config</h1><p class="lead">安裝應用，按老師或學生身份登入，並理解 config 中每個欄位控制什麼。</p></section><section class="role-strip section-block"><article class="role-card teacher"><h2>老師建立或載入課程，上傳已校驗 bundle，審批報名，並查看每位學生的進度與錯題模式。</h2></article><article class="role-card student"><h2>學生報名已批准課程，透過 Learn 與 Review 學習，獲得針對練習，並用錯題集複習薄弱點。</h2></article></section><section class="content-block"><h2>API config</h2><ul class="help-list"><li><strong>Provider</strong>：API 服務預設，例如 OpenAI 或 SiliconFlow。</li><li><strong>Base URL</strong>：OpenAI-compatible endpoint。Test API key 會請求 baseUrl + /models。</li><li><strong>API key</strong>：服務商 key，按 base URL 存在本機 secure storage。</li><li><strong>Text model</strong>：用於 tutor 對話、講解、回饋和 Review 判題。</li><li><strong>TTS/STT models</strong>：可選語音輸出和語音辨識模型。</li><li><strong>Reasoning effort</strong>：部分服務商支援的可選 reasoning 設定。</li><li><strong>Test API key</strong>：驗證訪問並刷新模型下拉列表；不會下載模型，也不會自動選擇新模型。</li></ul></section><section class="content-block"><h2>說明</h2><p class="lead">如果模型列表不新，重新點擊 Test API key。如果學生不能進入課程，確認報名已批准且 bundle 已下載。如果進度不同步，等待同步完成或手動刷新。</p></section></main><footer class="footer"><p>Tutor1on1</p><p><a class="footer-link" href="/zh-tw/legal/#privacy">隱私</a></p><p><a class="footer-link" href="/zh-tw/legal/#license">授權</a></p></footer></div></body></html>
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta content="width=device-width, initial-scale=1.0" name="viewport">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Tutor1on1 說明頁面：個人化教學、錯題複習、API config、課程發布、學生報名、會話與同步。">
+  <meta content="#f7f9fb" name="theme-color">
+  <title>Tutor1on1 說明</title>
+  <link rel="apple-touch-icon" href="../../icons/Icon-192.png">
+  <link rel="icon" type="image/png" href="../../favicon.png">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="stylesheet" href="../../styles.css">
+  <script src="/site.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="/zh-tw/">
+        <span class="brand-mark">T1</span>
+        <span class="brand-text"><strong>Tutor1on1</strong><span>說明</span></span>
+      </a>
+      <nav class="topnav" aria-label="導覽和語言">
+        <table class="topnav-table" role="presentation"><tr>
+          <td><a class="nav-link nav-action" href="/zh-tw/">首頁</a></td>
+          <td><a class="nav-link nav-action" href="/zh-tw/install/">安裝</a></td>
+          <td><select class="lang-select nav-action" aria-label="導覽和語言" data-language-switcher><option value="zh-tw">繁體中文</option></select></td>
+        </tr></table>
+      </nav>
+    </header>
+
+    <main class="page">
+      <section class="hero hero-compact">
+        <p class="eyebrow">快速開始</p>
+        <h1>按角色使用 Tutor1on1。</h1>
+        <p class="lead">老師發布並管理課程；學生申請報名、下載已批准內容，並獲得符合個人進度的指導、練習和錯題複習。</p>
+        <div class="actions">
+          <a class="button button-primary" href="/zh-tw/install/">先安裝</a>
+          <a class="button button-ghost" href="#teacher">老師流程</a>
+          <a class="button button-ghost" href="#student">學生流程</a>
+          <a class="button button-ghost" href="#config">API config</a>
+        </div>
+      </section>
+
+      <section class="role-strip section-block">
+        <article class="role-card teacher" id="teacher">
+          <p class="eyebrow">老師流程</p>
+          <h2>發布並個人化管理課程。</h2>
+          <ol class="help-list"><li>以老師身份登入，或註冊老師帳號。</li><li>建立或載入本機課程版本。</li><li>將已校驗的 bundle 上傳到 marketplace。</li><li>審批學生報名請求。</li><li>在老師首頁查看每位學生的進度、常見錯誤和同步過來的會話。</li></ol>
+        </article>
+        <article class="role-card student" id="student">
+          <p class="eyebrow">學生流程</p>
+          <h2>報名並按自己的節奏學習。</h2>
+          <ol class="help-list"><li>以學生身份登入，或註冊學生帳號。</li><li>打開 marketplace，申請報名課程。</li><li>等待老師批准。</li><li>下載已批准的課程 bundle。</li><li>打開課程，開始跟隨個人進度的 Learn 或 Review 會話。</li></ol>
+        </article>
+      </section>
+
+      <section class="content-block">
+        <h2>個人化學習閉環</h2>
+        <div class="steps"><article class="step"><span class="step-number">1</span><div><h3>學習</h3><p>Tutor 會結合課程內容和學生目前進度，講解下一步知識點。</p></div></article><article class="step"><span class="step-number">2</span><div><h3>練習</h3><p>練習會根據學生回答調整，必要時給提示、更簡單的例子和正向回饋。</p></div></article><article class="step"><span class="step-number">3</span><div><h3>複習錯題</h3><p>有意義的錯誤會進入錯題集，讓後續複習真正針對薄弱點。</p></div></article></div>
+      </section>
+
+      <section class="content-block" id="config">
+        <h2>API config 內的內容</h2>
+        <ul class="help-list"><li><strong>Provider</strong> 選擇模型服務，例如 OpenAI 或 SiliconFlow。</li><li><strong>Base URL</strong> 是 Tutor1on1 請求模型服務的地址，應用會按目前提供方顯示。</li><li><strong>API Key</strong> 保存在本機，用於 tutor、TTS、STT 等需要模型服務的功能。</li><li><strong>Test API key</strong> 會請求 <code>{baseUrl}/models</code>，驗證 key，並載入可用的文字、TTS、STT 模型列表。它不會下載模型，也不會自動選擇新模型。</li><li><strong>Text model</strong> 用於對話式 tutor。<strong>Thinking effort</strong> 只在提供方支援 reasoning 控制時顯示。</li><li><strong>TTS model</strong> 控制語音輸出；<strong>STT model</strong> 控制語音轉文字。如果不用語音，可以留空。</li><li><strong>已儲存的 API config</strong> 保存 provider URL、選擇的模型、thinking effort 和 key hash，方便重用已驗證配置。</li></ul>
+      </section>
+
+      <section class="grid grid-three section-block"><article class="card"><span class="kicker">Marketplace</span><h2>課程發現</h2><p>老師發布課程展示；學生瀏覽課程、申請報名，並在批准後下載。</p></article><article class="card"><span class="kicker">Sessions</span><h2>個人回饋</h2><p>Learn 用於新內容，Review 用於回憶練習。回饋會根據學生回答調整，並保持進步可見。</p></article><article class="card"><span class="kicker">Sync</span><h2>連續學習</h2><p>老師和學生首頁會同步已連接帳號的報名、會話、進度和錯題信號。</p></article></section>
+
+      <section class="content-block">
+        <h2>常見問題</h2>
+        <ul class="help-list"><li>如果登入或課程載入失敗，先確認應用能連到 <code>api.tutor1on1.org</code>。</li><li>如果學生無法進入課程，先確認報名已批准，並且 bundle 已下載。</li><li>如果模型列表看起來過期，對目前 provider 和 key 重新執行「Test API key」。</li><li>如果多裝置進度不同步，等待同步完成，或手動刷新一次。</li></ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Tutor1on1 說明</p>
+      <p><a class="footer-link" href="/zh-tw/">首頁</a></p>
+      <p><a class="footer-link" href="/zh-tw/legal/">法律</a></p>
+      <p><a class="footer-link" href="/zh-tw/legal/#privacy">隱私</a></p>
+      <p><a class="footer-link" href="/zh-tw/legal/#license">授權</a></p>
+      <p>老師發布課程，學生報名學習，個人化會話。</p>
+    </footer>
+  </div>
+</body>
+</html>

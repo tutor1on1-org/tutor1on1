@@ -1,1 +1,86 @@
-<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta content="width=device-width, initial-scale=1.0" name="viewport"><meta content="IE=Edge" http-equiv="X-UA-Compatible"><meta name="description" content="Installez l app, connectez vous comme professeur ou eleve, puis comprenez le role de chaque champ de config."><meta content="#f7f9fb" name="theme-color"><title>Aide Tutor1on1</title><link rel="apple-touch-icon" href="../../icons/Icon-192.png"><link rel="icon" type="image/png" href="../../favicon.png"><link rel="manifest" href="../../manifest.json"><link rel="stylesheet" href="../../styles.css"><script src="/site.js"></script></head><body><div class="shell"><header class="topbar"><a class="brand" href="/fr/"><span class="brand-mark">T1</span><span class="brand-text"><strong>Tutor1on1</strong><span>Application apprentissage Windows et Android</span></span></a><nav class="topnav"><table class="topnav-table" role="presentation"><tr><td><a class="nav-link nav-action" href="/fr/">Accueil</a></td><td><a class="nav-link nav-action" href="/fr/install/">Installer</a></td><td><select class="lang-select nav-action" data-language-switcher><option value="fr">fr</option></select></td></tr></table></nav></header><main class="page"><section class="hero hero-compact"><p class="eyebrow">Demarrage rapide et API config</p><h1>Demarrage rapide et API config</h1><p class="lead">Installez l app, connectez vous comme professeur ou eleve, puis comprenez le role de chaque champ de config.</p></section><section class="role-strip section-block"><article class="role-card teacher"><h2>Les professeurs creent ou chargent un cours, televersent un bundle valide, approuvent les inscriptions et suivent progres et erreurs par eleve.</h2></article><article class="role-card student"><h2>Les eleves entrent dans un cours approuve, etudient avec Learn et Review, recoivent des exercices adaptes et utilisent le carnet erreurs.</h2></article></section><section class="content-block"><h2>API config</h2><ul class="help-list"><li><strong>Provider</strong>: preset du service API, comme OpenAI ou SiliconFlow.</li><li><strong>Base URL</strong>: endpoint compatible OpenAI. Test API key appelle baseUrl + /models.</li><li><strong>API key</strong>: cle du fournisseur gardee localement dans secure storage pour ce base URL.</li><li><strong>Text model</strong>: conversation, guidage, feedback et evaluation Review.</li><li><strong>TTS/STT models</strong>: modeles optionnels de voix et reconnaissance.</li><li><strong>Reasoning effort</strong>: reglage optionnel pour fournisseurs compatibles.</li><li><strong>Test API key</strong>: verifie acces et actualise les modeles. Ne telecharge pas de modele et ne selectionne pas automatiquement un nouveau modele.</li></ul></section><section class="content-block"><h2>Aide</h2><p class="lead">Si la liste semble ancienne, relancez Test API key. Si un eleve ne peut pas entrer dans un cours, verifiez approbation et bundle.</p></section></main><footer class="footer"><p>Tutor1on1</p><p><a class="footer-link" href="/fr/legal/#privacy">Confidentialite</a></p><p><a class="footer-link" href="/fr/legal/#license">Licence</a></p></footer></div></body></html>
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta content="width=device-width, initial-scale=1.0" name="viewport">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Aide Tutor1on1 : tutorat personnalisé, révision des erreurs, API config, publication de cours, inscriptions, sessions et synchronisation.">
+  <meta content="#f7f9fb" name="theme-color">
+  <title>Aide Tutor1on1</title>
+  <link rel="apple-touch-icon" href="../../icons/Icon-192.png">
+  <link rel="icon" type="image/png" href="../../favicon.png">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="stylesheet" href="../../styles.css">
+  <script src="/site.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="/fr/">
+        <span class="brand-mark">T1</span>
+        <span class="brand-text"><strong>Tutor1on1</strong><span>Aide</span></span>
+      </a>
+      <nav class="topnav" aria-label="Navigation et langue">
+        <table class="topnav-table" role="presentation"><tr>
+          <td><a class="nav-link nav-action" href="/fr/">Accueil</a></td>
+          <td><a class="nav-link nav-action" href="/fr/install/">Installer</a></td>
+          <td><select class="lang-select nav-action" aria-label="Navigation et langue" data-language-switcher><option value="fr">Français</option></select></td>
+        </tr></table>
+      </nav>
+    </header>
+
+    <main class="page">
+      <section class="hero hero-compact">
+        <p class="eyebrow">Démarrage rapide</p>
+        <h1>Utiliser Tutor1on1 selon le rôle.</h1>
+        <p class="lead">Les enseignants publient et gèrent les cours. Les élèves demandent une inscription, téléchargent le contenu approuvé et reçoivent un guidage, des exercices et une révision des erreurs adaptés à leur progression.</p>
+        <div class="actions">
+          <a class="button button-primary" href="/fr/install/">Installer d&#x27;abord</a>
+          <a class="button button-ghost" href="#teacher">Parcours enseignant</a>
+          <a class="button button-ghost" href="#student">Parcours élève</a>
+          <a class="button button-ghost" href="#config">API config</a>
+        </div>
+      </section>
+
+      <section class="role-strip section-block">
+        <article class="role-card teacher" id="teacher">
+          <p class="eyebrow">Parcours enseignant</p>
+          <h2>Publier et personnaliser les cours.</h2>
+          <ol class="help-list"><li>Connectez-vous comme enseignant ou créez un compte enseignant.</li><li>Créez ou chargez une version locale du cours.</li><li>Téléversez le bundle validé dans le marketplace.</li><li>Approuvez les demandes d&#x27;inscription des élèves.</li><li>Depuis la page enseignant, suivez la progression, les erreurs récurrentes et les sessions synchronisées de chaque élève.</li></ol>
+        </article>
+        <article class="role-card student" id="student">
+          <p class="eyebrow">Parcours élève</p>
+          <h2>S’inscrire et étudier à son rythme.</h2>
+          <ol class="help-list"><li>Connectez-vous comme élève ou créez un compte élève.</li><li>Ouvrez le marketplace et demandez une inscription à un cours.</li><li>Attendez l&#x27;approbation de l&#x27;enseignant.</li><li>Téléchargez le bundle de cours approuvé.</li><li>Ouvrez le cours et lancez une session Learn ou Review qui suit votre progression.</li></ol>
+        </article>
+      </section>
+
+      <section class="content-block">
+        <h2>Boucle d’apprentissage personnalisé</h2>
+        <div class="steps"><article class="step"><span class="step-number">1</span><div><h3>Apprendre</h3><p>Le tutor explique le concept suivant dans le contexte du cours et de la progression actuelle de l&#x27;élève.</p></div></article><article class="step"><span class="step-number">2</span><div><h3>Pratiquer</h3><p>Les exercices s&#x27;adaptent aux réponses de l&#x27;élève, avec indices, exemples plus simples et feedback positif si nécessaire.</p></div></article><article class="step"><span class="step-number">3</span><div><h3>Réviser les erreurs</h3><p>Les erreurs significatives sont résumées dans le carnet d’erreurs afin que la révision cible de vraies faiblesses.</p></div></article></div>
+      </section>
+
+      <section class="content-block" id="config">
+        <h2>Champs API config</h2>
+        <ul class="help-list"><li><strong>Provider</strong> choisit le service de modèles, par exemple OpenAI ou SiliconFlow.</li><li><strong>Base URL</strong> est l’endpoint utilisé par Tutor1on1 pour le provider sélectionné.</li><li><strong>API Key</strong> est gardée localement et utilisée pour tutor, TTS et STT quand ces fonctions en ont besoin.</li><li><strong>Test API key</strong> appelle <code>{baseUrl}/models</code>, vérifie la key et charge les listes de modèles text, TTS et STT disponibles. Il ne télécharge pas de modèle et ne sélectionne pas automatiquement un nouveau modèle.</li><li><strong>Text model</strong> alimente la conversation tutor. <strong>Thinking effort</strong> apparaît seulement pour les providers qui prennent en charge les contrôles de reasoning.</li><li><strong>TTS model</strong> contrôle la sortie vocale. <strong>STT model</strong> contrôle la transcription voix-texte. Ils peuvent rester vides si vous n’utilisez pas la voix.</li><li><strong>Saved API configs</strong> conserve provider URL, modèles choisis, thinking effort et key hash pour réutiliser des configurations validées.</li></ul>
+      </section>
+
+      <section class="grid grid-three section-block"><article class="card"><span class="kicker">Marketplace</span><h2>Découverte des cours</h2><p>Les enseignants publient des fiches de cours. Les élèves consultent, demandent une inscription et téléchargent après approbation.</p></article><article class="card"><span class="kicker">Sessions</span><h2>Feedback personnel</h2><p>Learn sert au nouveau contenu et Review à la pratique de rappel. Le feedback s&#x27;adapte à la réponse de l&#x27;élève et rend la progression visible.</p></article><article class="card"><span class="kicker">Sync</span><h2>Continuité</h2><p>Les pages enseignant et élève synchronisent inscriptions, sessions, progression et signaux du carnet d’erreurs liés au compte.</p></article></section>
+
+      <section class="content-block">
+        <h2>Problèmes fréquents</h2>
+        <ul class="help-list"><li>Si la connexion ou le chargement du cours échoue, vérifiez que l’app atteint <code>api.tutor1on1.org</code>.</li><li>Si un élève ne peut pas entrer dans un cours, confirmez que l’inscription est approuvée et que le bundle est téléchargé.</li><li>Si la liste des modèles semble ancienne, relancez Test API key pour le provider et la key actifs.</li><li>Si la progression semble ancienne entre appareils, attendez la fin de la synchronisation ou lancez une actualisation manuelle.</li></ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Aide Tutor1on1</p>
+      <p><a class="footer-link" href="/fr/">Accueil</a></p>
+      <p><a class="footer-link" href="/fr/legal/">Mentions légales</a></p>
+      <p><a class="footer-link" href="/fr/legal/#privacy">Confidentialité</a></p>
+      <p><a class="footer-link" href="/fr/legal/#license">Licence</a></p>
+      <p>Publication enseignant, inscription élève et étude personnalisée.</p>
+    </footer>
+  </div>
+</body>
+</html>

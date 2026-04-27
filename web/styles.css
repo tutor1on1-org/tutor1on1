@@ -571,6 +571,13 @@ h3 {
 
 .captioned-shot img {
   aspect-ratio: 1200 / 720;
+  object-fit: contain;
+  background: #f4fbf8;
+}
+
+.shot-card .product-shot img {
+  object-fit: contain;
+  background: #f4fbf8;
 }
 
 .captioned-shot figcaption {
