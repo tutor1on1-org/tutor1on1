@@ -6,7 +6,7 @@
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta
     name="description"
-    content="Tutor1on1 帮助页面：按老师和学生角色说明课程发布、报名、引导式会话与同步。"
+    content="Tutor1on1 帮助页面：个性化教学、错题复习、API config、课程发布、学生报名、会话与同步。"
   >
   <meta content="#f7f9fb" name="theme-color">
   <title>Tutor1on1 帮助</title>
@@ -47,65 +47,79 @@
         <p class="eyebrow">快速开始</p>
         <h1>按角色使用 Tutor1on1。</h1>
         <p class="lead">
-          老师发布并管理课程；学生申请报名、下载已批准内容，并通过引导式会话学习。
+          老师发布并管理课程；学生申请报名、下载已批准内容，并获得符合个人进度的指导、练习和错题复习。
         </p>
         <div class="actions">
           <a class="button button-primary" href="/zh/install/">先安装</a>
           <a class="button button-ghost" href="#teacher">老师流程</a>
           <a class="button button-ghost" href="#student">学生流程</a>
+          <a class="button button-ghost" href="#config">API config</a>
         </div>
       </section>
 
       <section class="role-strip section-block">
         <article class="role-card teacher" id="teacher">
           <p class="eyebrow">老师流程</p>
-          <h2>发布并管理课程。</h2>
+          <h2>发布并个性化管理课程。</h2>
           <ol class="help-list">
             <li>以老师身份登录，或注册老师账号。</li>
             <li>创建或加载本地课程版本。</li>
             <li>将已校验的 bundle 上传到 marketplace。</li>
             <li>审批学生报名请求。</li>
-            <li>在老师主页查看学生进度和同步过来的会话。</li>
+            <li>在老师主页查看每个学生的进度、常见错误和同步过来的会话。</li>
           </ol>
         </article>
         <article class="role-card student" id="student">
           <p class="eyebrow">学生流程</p>
-          <h2>报名并开始学习。</h2>
+          <h2>报名并按自己的节奏学习。</h2>
           <ol class="help-list">
             <li>以学生身份登录，或注册学生账号。</li>
             <li>打开 marketplace，申请报名课程。</li>
             <li>等待老师批准。</li>
             <li>下载已批准的课程 bundle。</li>
-            <li>打开课程，开始 Learn 或 Review 会话。</li>
+            <li>打开课程，开始跟随个人进度的 Learn 或 Review 会话。</li>
           </ol>
         </article>
       </section>
 
       <section class="content-block">
-        <h2>首次打开检查项</h2>
+        <h2>个性化学习闭环</h2>
         <div class="steps">
           <article class="step">
             <span class="step-number">1</span>
             <div>
-              <h3>安装</h3>
-              <p>在安装页面选择 Windows 或 Android，然后启动应用。</p>
+              <h3>学习</h3>
+              <p>Tutor 会结合课程内容和学生当前进度，讲解下一步知识点。</p>
             </div>
           </article>
           <article class="step">
             <span class="step-number">2</span>
             <div>
-              <h3>配置</h3>
-              <p>打开设置页，填写 tutor 功能需要的 API 配置，并点击保存。</p>
+              <h3>练习</h3>
+              <p>练习会根据学生回答调整，必要时给提示、更简单的例子和正反馈。</p>
             </div>
           </article>
           <article class="step">
             <span class="step-number">3</span>
             <div>
-              <h3>登录</h3>
-              <p>在欢迎页使用标签页登录，或注册老师/学生账号。</p>
+              <h3>复习错题</h3>
+              <p>有意义的错误会进入错题集，让后续复习真正针对薄弱点。</p>
             </div>
           </article>
         </div>
+      </section>
+
+      <section class="content-block" id="config">
+        <h2>API config 里面的内容</h2>
+        <ul class="help-list">
+          <li><strong>提供方</strong>选择模型服务，例如 OpenAI 或 SiliconFlow。</li>
+          <li><strong>Base URL</strong> 是 Tutor1on1 请求模型服务的地址，应用会按当前提供方显示。</li>
+          <li><strong>API Key</strong> 保存在本机，用于 tutor、TTS、STT 等需要模型服务的功能。</li>
+          <li><strong>测试 API key</strong> 会请求 <code>{baseUrl}/models</code>，验证 key，并加载可用的文本、TTS、STT 模型列表。它不会下载模型，也不会自动选择新模型。</li>
+          <li><strong>文本模型</strong> 用于对话式 tutor。<strong>Thinking effort</strong> 只在提供方支持 reasoning 控制时显示。</li>
+          <li><strong>TTS 模型</strong> 控制语音输出；<strong>STT 模型</strong> 控制语音转文字。如果不用语音，可以留空。</li>
+          <li><strong>已保存的 API 配置</strong> 保存 provider URL、选择的模型、thinking effort 和 key hash，方便复用已验证配置。</li>
+        </ul>
       </section>
 
       <section class="grid grid-three section-block">
@@ -116,13 +130,13 @@
         </article>
         <article class="card">
           <span class="kicker">Sessions</span>
-          <h2>学习、复习、总结</h2>
-          <p>Learn 用于新内容，Review 用于回忆练习，Summary 用于更新掌握结果。</p>
+          <h2>个人反馈</h2>
+          <p>Learn 用于新内容，Review 用于回忆练习。反馈会根据学生回答调整，并保持进步可见。</p>
         </article>
         <article class="card">
           <span class="kicker">Sync</span>
           <h2>连续学习</h2>
-          <p>老师和学生主页会同步已连接账号的报名、会话和进度。</p>
+          <p>老师和学生主页会同步已连接账号的报名、会话、进度和错题信号。</p>
         </article>
       </section>
 
@@ -131,8 +145,8 @@
         <ul class="help-list">
           <li>如果登录或课程加载失败，先确认应用能连到 <code>api.tutor1on1.org</code>。</li>
           <li>如果学生无法进入课程，先确认报名已批准，并且 bundle 已下载。</li>
+          <li>如果模型列表看起来过期，对当前 provider 和 key 重新运行“测试 API key”。</li>
           <li>如果多设备进度不同步，等待同步完成，或手动刷新一次。</li>
-          <li>如果学习会话中断，重新打开同一门课程并继续已有会话。</li>
         </ul>
       </section>
     </main>
@@ -140,7 +154,10 @@
     <footer class="footer">
       <p>Tutor1on1 帮助</p>
       <p><a class="footer-link" href="/zh/">首页</a></p>
-      <p>老师发布课程，学生报名学习，引导式会话。</p>
+      <p><a class="footer-link" href="/zh/legal/">法律</a></p>
+      <p><a class="footer-link" href="/zh/legal/privacy/">隐私</a></p>
+      <p><a class="footer-link" href="/zh/legal/license/">许可</a></p>
+      <p>老师发布课程，学生报名学习，个性化会话。</p>
     </footer>
   </div>
 </body>

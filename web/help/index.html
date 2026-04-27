@@ -6,7 +6,7 @@
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta
     name="description"
-    content="Tutor1on1 help page: role-based quick start for teachers, students, marketplace enrollment, guided sessions, and sync."
+    content="Tutor1on1 help page: personalized tutoring, mistake review, API config, teacher publishing, student enrollment, guided sessions, and sync."
   >
   <meta content="#f7f9fb" name="theme-color">
   <title>Tutor1on1 Help</title>
@@ -34,7 +34,7 @@
             <td>
               <select class="lang-select nav-action" aria-label="Language" data-language-switcher>
                 <option value="en">English</option>
-                <option value="zh">中文</option>
+                <option value="zh">Chinese</option>
               </select>
             </td>
           </tr>
@@ -47,65 +47,79 @@
         <p class="eyebrow">Quick start</p>
         <h1>Use Tutor1on1 by role.</h1>
         <p class="lead">
-          Teachers publish and manage courses. Students request enrollment, download approved content, and study through guided sessions.
+          Teachers publish and manage courses. Students request enrollment, download approved content, and receive personalized guidance, targeted practice, and mistake review.
         </p>
         <div class="actions">
           <a class="button button-primary" href="/install/">Install first</a>
           <a class="button button-ghost" href="#teacher">Teacher flow</a>
           <a class="button button-ghost" href="#student">Student flow</a>
+          <a class="button button-ghost" href="#config">API config</a>
         </div>
       </section>
 
       <section class="role-strip section-block">
         <article class="role-card teacher" id="teacher">
           <p class="eyebrow">Teacher flow</p>
-          <h2>Publish and manage courses.</h2>
+          <h2>Publish and personalize courses.</h2>
           <ol class="help-list">
             <li>Log in as a teacher or register a teacher account.</li>
             <li>Create or load a local course version.</li>
             <li>Upload the validated bundle to the marketplace.</li>
             <li>Approve student enrollment requests.</li>
-            <li>Review student progress and synced sessions from the teacher home page.</li>
+            <li>Review each student's progress, recurring mistakes, and synced sessions from the teacher home page.</li>
           </ol>
         </article>
         <article class="role-card student" id="student">
           <p class="eyebrow">Student flow</p>
-          <h2>Enroll and study.</h2>
+          <h2>Enroll and study at your pace.</h2>
           <ol class="help-list">
             <li>Log in as a student or register a student account.</li>
             <li>Open the marketplace and request enrollment in a course.</li>
             <li>Wait for teacher approval.</li>
             <li>Download the approved course bundle.</li>
-            <li>Open the course and start a learn or review session.</li>
+            <li>Open the course and start a Learn or Review session that follows your progress.</li>
           </ol>
         </article>
       </section>
 
       <section class="content-block">
-        <h2>First launch checklist</h2>
+        <h2>Personalized learning loop</h2>
         <div class="steps">
           <article class="step">
             <span class="step-number">1</span>
             <div>
-              <h3>Install</h3>
-              <p>Choose Windows or Android from the install page and launch the app.</p>
+              <h3>Learn</h3>
+              <p>The tutor explains the next concept in the context of the course and the student's current progress.</p>
             </div>
           </article>
           <article class="step">
             <span class="step-number">2</span>
             <div>
-              <h3>Configure</h3>
-              <p>Open Settings, add the API configuration required for tutor features, and save it.</p>
+              <h3>Practice</h3>
+              <p>Exercises adjust to the student's answers, with hints, simpler examples, and positive feedback when needed.</p>
             </div>
           </article>
           <article class="step">
             <span class="step-number">3</span>
             <div>
-              <h3>Sign in</h3>
-              <p>Use the welcome page tabs to log in, register as a teacher, or register as a student.</p>
+              <h3>Review mistakes</h3>
+              <p>Meaningful mistakes are summarized into the mistake book so later review targets real weak spots.</p>
             </div>
           </article>
         </div>
+      </section>
+
+      <section class="content-block" id="config">
+        <h2>API config fields</h2>
+        <ul class="help-list">
+          <li><strong>Provider</strong> chooses the model service, such as OpenAI or SiliconFlow.</li>
+          <li><strong>Base URL</strong> is the provider endpoint used by Tutor1on1. The app shows the URL for the selected provider.</li>
+          <li><strong>API Key</strong> is saved locally and used for tutor, TTS, and STT requests when those features need it.</li>
+          <li><strong>Test API key</strong> calls <code>{baseUrl}/models</code>, verifies the key, and loads the available text, TTS, and STT model lists. It does not download models or auto-select a new model.</li>
+          <li><strong>Text model</strong> powers the tutor conversation. <strong>Thinking effort</strong> appears only for providers that support reasoning controls.</li>
+          <li><strong>TTS model</strong> controls speech output. <strong>STT model</strong> controls speech-to-text input. They can stay empty if you do not use voice features.</li>
+          <li><strong>Saved API configs</strong> store the provider URL, selected models, thinking effort, and a short key hash so you can reuse known-good setups.</li>
+        </ul>
       </section>
 
       <section class="grid grid-three section-block">
@@ -116,13 +130,13 @@
         </article>
         <article class="card">
           <span class="kicker">Sessions</span>
-          <h2>Learn, review, summarize</h2>
-          <p>Use Learn for new material, Review for recall practice, and Summary when the session should update mastery.</p>
+          <h2>Personal feedback</h2>
+          <p>Use Learn for new material and Review for recall practice. Feedback adapts to the student's answer and keeps progress visible.</p>
         </article>
         <article class="card">
           <span class="kicker">Sync</span>
           <h2>Continuity</h2>
-          <p>Teacher and student home pages sync account-linked enrollment, sessions, and progress in the background.</p>
+          <p>Teacher and student home pages sync account-linked enrollment, sessions, progress, and mistake-book signals in the background.</p>
         </article>
       </section>
 
@@ -131,8 +145,8 @@
         <ul class="help-list">
           <li>If login or course loading fails, check that the app can reach <code>api.tutor1on1.org</code>.</li>
           <li>If a student cannot enter a course, confirm that enrollment was approved and the bundle was downloaded.</li>
+          <li>If model lists look stale, run Test API key again for the active provider and key.</li>
           <li>If progress looks stale across devices, wait for sync to finish or run a manual refresh.</li>
-          <li>If a session is interrupted, reopen the same course and continue the existing session.</li>
         </ul>
       </section>
     </main>
@@ -140,7 +154,10 @@
     <footer class="footer">
       <p>Tutor1on1 Help</p>
       <p><a class="footer-link" href="/">Home</a></p>
-      <p>Teacher publishing, student enrollment, guided study.</p>
+      <p><a class="footer-link" href="/legal/">Legal</a></p>
+      <p><a class="footer-link" href="/legal/privacy/">Privacy</a></p>
+      <p><a class="footer-link" href="/legal/license/">License</a></p>
+      <p>Teacher publishing, student enrollment, personalized study.</p>
     </footer>
   </div>
 </body>
