@@ -18,6 +18,7 @@ import '../services/marketplace_api_service.dart';
 import '../services/model_list_service.dart';
 import '../services/student_server_copy_service.dart';
 import '../services/sync_progress.dart';
+import '../services/text_model_selection.dart';
 import '../state/auth_controller.dart';
 import '../state/settings_controller.dart';
 import 'app_close_button.dart';
@@ -27,6 +28,7 @@ import 'pages/llm_logs_page.dart';
 import 'pages/tts_logs_page.dart';
 import 'widgets/language_selector.dart';
 import 'widgets/restart_widget.dart';
+import 'widgets/searchable_model_picker.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -1096,23 +1098,19 @@ class _SettingsPageState extends State<SettingsPage> {
     required AppSetting settings,
     required List<ApiConfig> configs,
   }) {
-    final options = <String>{
-      if (_modelsLoaded) ..._textModelOptions,
-      ...provider.models.map((model) => model.trim()).where(
-            (model) => model.isNotEmpty,
-          ),
-      ...configs
+    return TextModelSelection.buildOptions(
+      modelsLoaded: _modelsLoaded,
+      loadedModels: _textModelOptions,
+      defaultModels: provider.models,
+      savedModels: configs
           .where(
             (config) =>
                 _normalizeBaseUrl(config.baseUrl) ==
                 _normalizeBaseUrl(provider.baseUrl),
           )
-          .map((config) => config.model.trim())
-          .where((model) => model.isNotEmpty),
-      if (settings.model.trim().isNotEmpty) settings.model.trim(),
-    }.toList()
-      ..sort();
-    return options;
+          .map((config) => config.model),
+      settingsModel: settings.model,
+    );
   }
 
   List<String> _buildAudioModelOptions({
@@ -1139,6 +1137,12 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   String _resolveTextModel(LlmProvider provider, AppSetting settings) {
+    if (_modelsLoaded) {
+      return TextModelSelection.resolveModel(
+        availableOptions: _textModelOptions,
+        selection: _textModelSelection,
+      );
+    }
     return (_textModelSelection ?? '').trim().isNotEmpty
         ? _textModelSelection!.trim()
         : (settings.model.trim().isNotEmpty
@@ -1230,23 +1234,14 @@ class _SettingsPageState extends State<SettingsPage> {
     final selection = options.contains(trimmed)
         ? trimmed
         : (allowEmpty && trimmed.isEmpty ? '' : options.first);
-    return DropdownButtonFormField<String>(
-      key: ValueKey('$label-$selection'),
-      initialValue: selection,
-      decoration: InputDecoration(labelText: label),
-      items: [
-        if (allowEmpty)
-          DropdownMenuItem(
-            value: '',
-            child: Text(emptyLabel),
-          ),
-        ...options.map(
-          (model) => DropdownMenuItem(
-            value: model,
-            child: Text(model),
-          ),
-        ),
-      ],
+    return SearchableModelPicker(
+      key: ValueKey('$label-$selection-${options.length}'),
+      label: label,
+      options: options,
+      value: selection,
+      emptyMessage: emptyMessage,
+      allowEmpty: allowEmpty,
+      emptyLabel: emptyLabel,
       onChanged: onChanged,
     );
   }
@@ -1289,6 +1284,10 @@ class _SettingsPageState extends State<SettingsPage> {
       models: result.models,
       provider: provider,
     );
+    final textSelection = TextModelSelection.resolveModel(
+      availableOptions: lists.textModels,
+      selection: _textModelSelection,
+    );
     setState(() {
       _apiTesting = false;
       _modelsLoaded = true;
@@ -1296,6 +1295,7 @@ class _SettingsPageState extends State<SettingsPage> {
       _textModelOptions = lists.textModels;
       _ttsModelOptions = lists.ttsModels;
       _sttModelOptions = lists.sttModels;
+      _textModelSelection = textSelection;
     });
   }
 

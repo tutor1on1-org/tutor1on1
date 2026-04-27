@@ -42,5 +42,30 @@ void main() {
         equals(const <String>['gpt-4o-mini-transcribe']),
       );
     });
+
+    test('keeps SiliconFlow DeepSeek V4 models in text models', () {
+      final provider = LlmProviders.findById(
+        LlmProviders.defaultProviders(),
+        'siliconflow',
+      )!;
+
+      final lists = ModelListService.splitModels(
+        provider: provider,
+        models: const <ApiModelInfo>[
+          ApiModelInfo(id: 'deepseek-ai/DeepSeek-V4-Flash'),
+          ApiModelInfo(id: 'FunAudioLLM/SenseVoiceSmall'),
+          ApiModelInfo(id: 'FunAudioLLM/CosyVoice2-0.5B'),
+        ],
+      );
+
+      expect(
+        lists.textModels,
+        equals(const <String>['deepseek-ai/DeepSeek-V4-Flash']),
+      );
+      expect(lists.sttModels,
+          equals(const <String>['FunAudioLLM/SenseVoiceSmall']));
+      expect(lists.ttsModels,
+          equals(const <String>['FunAudioLLM/CosyVoice2-0.5B']));
+    });
   });
 }
