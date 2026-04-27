@@ -228,4 +228,80 @@ void main() {
 
     await db.close();
   });
+
+  test('migration to v32 deduplicates api configs with null audio models',
+      () async {
+    final tempDir = await Directory.systemTemp.createTemp('tutor1on1');
+    final dbFile = File(p.join(tempDir.path, 'test.db'));
+
+    final rawDb = sqlite3.sqlite3.open(dbFile.path);
+    rawDb.execute('''
+      CREATE TABLE api_configs (
+        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        base_url TEXT NOT NULL,
+        model TEXT NOT NULL,
+        reasoning_effort TEXT NOT NULL DEFAULT 'medium',
+        tts_model TEXT NULL,
+        stt_model TEXT NULL,
+        api_key_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+    ''');
+    rawDb.execute('''
+      INSERT INTO api_configs (
+        base_url,
+        model,
+        reasoning_effort,
+        tts_model,
+        stt_model,
+        api_key_hash,
+        created_at
+      ) VALUES
+      (
+        'https://API.openai.com/v1',
+        'gpt-test',
+        'HIGH',
+        NULL,
+        NULL,
+        'hash_1',
+        '2026-04-27T00:00:00.000'
+      ),
+      (
+        'https://api.openai.com/v1',
+        'gpt-test',
+        'high',
+        NULL,
+        NULL,
+        'hash_1',
+        '2026-04-27T00:01:00.000'
+      );
+    ''');
+    rawDb.execute('PRAGMA user_version = 31;');
+    rawDb.dispose();
+
+    final db = AppDatabase.forTesting(NativeDatabase(dbFile));
+    await db.customSelect('SELECT 1').get();
+
+    final rows =
+        await db.customSelect('SELECT id FROM api_configs ORDER BY id').get();
+    final indexes =
+        await db.customSelect('PRAGMA index_list(api_configs)').get();
+    final duplicate = await db.insertApiConfig(
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-test',
+      reasoningEffort: 'high',
+      ttsModel: '',
+      sttModel: '',
+      apiKeyHash: 'hash_1',
+    );
+
+    expect(rows, hasLength(1));
+    expect(
+      indexes.map((row) => row.data['name']),
+      contains('uq_api_configs_normalized'),
+    );
+    expect(duplicate, isFalse);
+
+    await db.close();
+  });
 }

@@ -3,6 +3,17 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tutor1on1/ui/pages/llm_log_view_data.dart';
 
 void main() {
+  test('display formatter expands escaped newline sequences', () {
+    expect(
+      expandEscapedNewlinesForLlmLogDisplay(r'{"text":"first\nsecond"}'),
+      equals('{"text":"first\nsecond"}'),
+    );
+    expect(
+      expandEscapedNewlinesForLlmLogDisplay(r'{"text":"first\\nsecond"}'),
+      equals('{"text":"first\nsecond"}'),
+    );
+  });
+
   test(
       'groups APP retry rows with surrounding model attempts for one logical call',
       () {

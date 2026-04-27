@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:tutor1on1/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../db/app_database.dart' as db;
@@ -336,6 +337,11 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
     _ViewLlmLogEntry entry,
     AppLocalizations l10n,
   ) async {
+    final displayText = _prettyJson(
+      entry.toExchangeRecord(),
+      expandEscapedNewlines: true,
+    );
+    final rawLogText = _prettyJson(entry.toJsonRecord());
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
@@ -360,12 +366,25 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
                 if ((entry.action ?? '').isNotEmpty)
                   Text(l10n.llmActionLabel(entry.action!)),
                 const SizedBox(height: 12),
-                SelectableText(_prettyJson(entry.toExchangeRecord())),
+                SelectableText(displayText),
               ],
             ),
           ),
         ),
         actions: [
+          TextButton.icon(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: rawLogText));
+              if (!mounted) {
+                return;
+              }
+              ScaffoldMessenger.of(this.context).showSnackBar(
+                SnackBar(content: Text(l10n.copySuccess)),
+              );
+            },
+            icon: const Icon(Icons.copy),
+            label: Text(l10n.copyTooltip),
+          ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
             child: Text(l10n.closeButton),
@@ -375,7 +394,10 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
     );
   }
 
-  String _prettyJson(Map<String, dynamic> value) {
+  String _prettyJson(
+    Map<String, dynamic> value, {
+    bool expandEscapedNewlines = false,
+  }) {
     final cleaned = <String, dynamic>{};
     value.forEach((key, dynamic fieldValue) {
       if (fieldValue == null) {
@@ -386,7 +408,10 @@ class _LlmLogsPageState extends State<LlmLogsPage> {
       }
       cleaned[key] = fieldValue;
     });
-    return const JsonEncoder.withIndent('  ').convert(cleaned);
+    final encoded = const JsonEncoder.withIndent('  ').convert(cleaned);
+    return expandEscapedNewlines
+        ? expandEscapedNewlinesForLlmLogDisplay(encoded)
+        : encoded;
   }
 
   String _teacherLabel(_ViewLlmLogEntry entry, AppLocalizations l10n) {

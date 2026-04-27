@@ -550,3 +550,11 @@ String _joinUnique(Iterable<String> values) {
   }
   return unique.join(' + ');
 }
+
+String expandEscapedNewlinesForLlmLogDisplay(String text) {
+  return text
+      .replaceAll(r'\\r\\n', '\n')
+      .replaceAll(r'\\n', '\n')
+      .replaceAll(r'\r\n', '\n')
+      .replaceAll(r'\n', '\n');
+}

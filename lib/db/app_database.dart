@@ -497,7 +497,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 31;
+  int get schemaVersion => 32;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -509,6 +509,7 @@ class AppDatabase extends _$AppDatabase {
             'ON users(remote_user_id) '
             'WHERE remote_user_id IS NOT NULL',
           );
+          await _ensureApiConfigNormalizedUniqueIndex();
         },
         onUpgrade: (m, from, to) async {
           if (from < 2) {
@@ -732,8 +733,50 @@ ORDER BY id
           if (from < 31) {
             await customStatement('DELETE FROM prompt_templates');
           }
+          if (from < 32 && await _apiConfigsTableExists()) {
+            await _deduplicateApiConfigs();
+            await _ensureApiConfigNormalizedUniqueIndex();
+          }
         },
       );
+
+  Future<bool> _apiConfigsTableExists() async {
+    final rows = await customSelect(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='api_configs'",
+    ).get();
+    return rows.isNotEmpty;
+  }
+
+  Future<void> _deduplicateApiConfigs() async {
+    await customStatement('''
+DELETE FROM api_configs
+WHERE id NOT IN (
+  SELECT MIN(id)
+  FROM api_configs
+  GROUP BY
+    lower(trim(base_url)),
+    trim(model),
+    lower(trim(coalesce(reasoning_effort, 'medium'))),
+    coalesce(trim(tts_model), ''),
+    coalesce(trim(stt_model), ''),
+    trim(api_key_hash)
+)
+''');
+  }
+
+  Future<void> _ensureApiConfigNormalizedUniqueIndex() async {
+    await customStatement('''
+CREATE UNIQUE INDEX IF NOT EXISTS uq_api_configs_normalized
+ON api_configs (
+  lower(trim(base_url)),
+  trim(model),
+  lower(trim(coalesce(reasoning_effort, 'medium'))),
+  coalesce(trim(tts_model), ''),
+  coalesce(trim(stt_model), ''),
+  trim(api_key_hash)
+)
+''');
+  }
 
   Future<User?> findUserByUsername(String username) {
     return (select(users)..where((tbl) => tbl.username.equals(username)))
@@ -1817,29 +1860,81 @@ ORDER BY l.created_at DESC
     return row.read(apiConfigs.id.count()) ?? 0;
   }
 
-  Future<int> insertApiConfig({
+  Future<bool> insertApiConfig({
     required String baseUrl,
     required String model,
     required String reasoningEffort,
     required String ttsModel,
     required String sttModel,
     required String apiKeyHash,
-  }) {
-    return into(apiConfigs).insert(
-      ApiConfigsCompanion.insert(
-        baseUrl: baseUrl.trim(),
-        model: model.trim(),
-        reasoningEffort: Value(
-          reasoningEffort.trim().isEmpty
-              ? 'medium'
-              : reasoningEffort.trim().toLowerCase(),
+  }) async {
+    final normalizedBaseUrl = baseUrl.trim();
+    final normalizedModel = model.trim();
+    final normalizedReasoningEffort = reasoningEffort.trim().isEmpty
+        ? 'medium'
+        : reasoningEffort.trim().toLowerCase();
+    final normalizedTtsModel = ttsModel.trim();
+    final normalizedSttModel = sttModel.trim();
+    final normalizedApiKeyHash = apiKeyHash.trim();
+
+    return transaction(() async {
+      if (await _apiConfigExists(
+        baseUrl: normalizedBaseUrl,
+        model: normalizedModel,
+        reasoningEffort: normalizedReasoningEffort,
+        ttsModel: normalizedTtsModel,
+        sttModel: normalizedSttModel,
+        apiKeyHash: normalizedApiKeyHash,
+      )) {
+        return false;
+      }
+      await into(apiConfigs).insert(
+        ApiConfigsCompanion.insert(
+          baseUrl: normalizedBaseUrl,
+          model: normalizedModel,
+          reasoningEffort: Value(normalizedReasoningEffort),
+          ttsModel:
+              Value(normalizedTtsModel.isEmpty ? null : normalizedTtsModel),
+          sttModel:
+              Value(normalizedSttModel.isEmpty ? null : normalizedSttModel),
+          apiKeyHash: normalizedApiKeyHash,
         ),
-        ttsModel: Value(ttsModel.trim().isEmpty ? null : ttsModel.trim()),
-        sttModel: Value(sttModel.trim().isEmpty ? null : sttModel.trim()),
-        apiKeyHash: apiKeyHash.trim(),
-      ),
-      mode: InsertMode.insertOrIgnore,
-    );
+      );
+      return true;
+    });
+  }
+
+  Future<bool> _apiConfigExists({
+    required String baseUrl,
+    required String model,
+    required String reasoningEffort,
+    required String ttsModel,
+    required String sttModel,
+    required String apiKeyHash,
+  }) async {
+    final rows = await customSelect(
+      '''
+SELECT id
+FROM api_configs
+WHERE lower(trim(base_url)) = lower(trim(?))
+  AND trim(model) = trim(?)
+  AND lower(trim(coalesce(reasoning_effort, 'medium'))) = lower(trim(?))
+  AND coalesce(trim(tts_model), '') = trim(?)
+  AND coalesce(trim(stt_model), '') = trim(?)
+  AND trim(api_key_hash) = trim(?)
+LIMIT 1
+''',
+      variables: [
+        Variable.withString(baseUrl),
+        Variable.withString(model),
+        Variable.withString(reasoningEffort),
+        Variable.withString(ttsModel),
+        Variable.withString(sttModel),
+        Variable.withString(apiKeyHash),
+      ],
+      readsFrom: {apiConfigs},
+    ).get();
+    return rows.isNotEmpty;
   }
 
   Future<void> backfillApiConfigModels({

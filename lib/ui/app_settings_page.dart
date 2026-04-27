@@ -970,7 +970,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 await services.secureStorage
                     .writeApiKeyForBaseUrl(provider.baseUrl, apiKey);
                 final hash = sha256Hex(apiKey);
-                await services.db.insertApiConfig(
+                final inserted = await services.db.insertApiConfig(
                   baseUrl: provider.baseUrl,
                   model: model,
                   reasoningEffort: _reasoningEffortSelection,
@@ -987,7 +987,12 @@ class _SettingsPageState extends State<SettingsPage> {
                   apiKeyHash: hash,
                 );
                 if (context.mounted) {
-                  _showMessage(context, l10n.configSavedMessage);
+                  _showMessage(
+                    context,
+                    inserted
+                        ? l10n.configSavedMessage
+                        : l10n.configAlreadySavedMessage,
+                  );
                 }
               },
               child: Text(l10n.saveApiConfigButton),
