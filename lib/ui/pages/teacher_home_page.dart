@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 import 'package:tutor1on1/l10n/app_localizations.dart';
 
@@ -51,6 +53,7 @@ class _TeacherHomePageState extends State<TeacherHomePage>
   Timer? _resumeSyncTimer;
   final Set<int> _uploadingCourseIds = {};
   final Set<int> _pullingCourseIds = {};
+  final Set<int> _savingCourseIds = {};
   String? _persistentMessage;
   bool _persistentMessageIsError = false;
   late MarketplaceApiService _marketplaceApi;
@@ -409,6 +412,7 @@ class _TeacherHomePageState extends State<TeacherHomePage>
                             isUploading:
                                 _uploadingCourseIds.contains(course.id),
                             isPulling: _pullingCourseIds.contains(course.id),
+                            isSaving: _savingCourseIds.contains(course.id),
                             onReload: () {
                               Navigator.of(context).push(
                                 MaterialPageRoute(
@@ -426,6 +430,7 @@ class _TeacherHomePageState extends State<TeacherHomePage>
                                 _editCourseSubjectLabels(course),
                             onPullLatest: () =>
                                 _pullLatestServerBundle(teacher, course),
+                            onSave: () => _saveCourseToFolder(course),
                             onUpload: isLoaded
                                 ? () =>
                                     _uploadCourseToMarketplace(teacher, course)
@@ -734,6 +739,201 @@ class _TeacherHomePageState extends State<TeacherHomePage>
         setState(() {
           _pullingCourseIds.remove(course.id);
         });
+      }
+    }
+  }
+
+  Future<void> _saveCourseToFolder(CourseVersion course) async {
+    if (_savingCourseIds.contains(course.id)) {
+      return;
+    }
+    setState(() {
+      _savingCourseIds.add(course.id);
+    });
+
+    String? temporarySourcePath;
+    Directory? targetDir;
+    try {
+      final services = context.read<AppServices>();
+      final destinationRoot = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: 'Choose folder to save course',
+      );
+      if (destinationRoot == null || destinationRoot.trim().isEmpty) {
+        return;
+      }
+      final source = await _resolveSaveSourcePath(
+        services: services,
+        course: course,
+      );
+      if (source.deleteAfterCopy) {
+        temporarySourcePath = source.path;
+      }
+      targetDir = await _createUniqueCourseSaveDirectory(
+        parentPath: destinationRoot,
+        courseName: course.subject,
+      );
+      await _copyDirectoryContents(
+        sourcePath: source.path,
+        targetPath: targetDir.path,
+      );
+      _setPersistentMessage(
+        'Saved "${course.subject}" course files to ${targetDir.path}.',
+      );
+    } catch (error) {
+      if (targetDir != null && targetDir.existsSync()) {
+        await targetDir.delete(recursive: true);
+      }
+      _setPersistentMessage(
+        'Failed to save "${course.subject}" course files: $error',
+      );
+    } finally {
+      if (temporarySourcePath != null) {
+        final temporarySource = Directory(temporarySourcePath);
+        if (temporarySource.existsSync()) {
+          await temporarySource.delete(recursive: true);
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _savingCourseIds.remove(course.id);
+        });
+      }
+    }
+  }
+
+  Future<_ResolvedCourseSaveSource> _resolveSaveSourcePath({
+    required AppServices services,
+    required CourseVersion course,
+  }) async {
+    final cachedArtifacts =
+        await services.courseArtifactService.readCourseArtifacts(course.id);
+    final cachedBundlePath = cachedArtifacts?.contentBundlePath.trim() ?? '';
+    if (cachedBundlePath.isNotEmpty && File(cachedBundlePath).existsSync()) {
+      final materializedPath =
+          await services.courseArtifactService.materializeStoredContentBundle(
+        courseVersionId: course.id,
+        courseName: course.subject,
+      );
+      return _ResolvedCourseSaveSource(
+        path: materializedPath,
+        deleteAfterCopy: true,
+      );
+    }
+
+    final sourcePath = (course.sourcePath ?? '').trim();
+    if (sourcePath.isNotEmpty) {
+      final preview = await services.courseService.previewCourseLoad(
+        folderPath: sourcePath,
+        courseVersionId: course.id,
+      );
+      if (preview.success) {
+        return _ResolvedCourseSaveSource(
+          path: sourcePath,
+          deleteAfterCopy: false,
+        );
+      }
+    }
+
+    throw StateError(
+      'No cached course bundle or reloadable source folder is available. '
+      'Pull latest server bundle or reload the course first.',
+    );
+  }
+
+  Future<Directory> _createUniqueCourseSaveDirectory({
+    required String parentPath,
+    required String courseName,
+  }) async {
+    final parent = Directory(parentPath);
+    if (!parent.existsSync()) {
+      await parent.create(recursive: true);
+    }
+    final baseName = _sanitizeCourseSaveFolderName(courseName);
+    var candidate = Directory(p.join(parent.path, baseName));
+    if (!candidate.existsSync()) {
+      await candidate.create(recursive: true);
+      return candidate;
+    }
+
+    final timestamp = DateTime.now()
+        .toUtc()
+        .toIso8601String()
+        .replaceAll(RegExp(r'[:.]'), '-');
+    candidate = Directory(p.join(parent.path, '${baseName}_$timestamp'));
+    await candidate.create(recursive: true);
+    return candidate;
+  }
+
+  String _sanitizeCourseSaveFolderName(String value) {
+    var safe = value
+        .trim()
+        .replaceAll(RegExp(r'[<>:"/\\|?*\x00-\x1F]'), '_')
+        .replaceAll(RegExp(r'\s+'), '_')
+        .replaceAll(RegExp(r'_+'), '_');
+    safe = safe.replaceAll(RegExp(r'^[. ]+|[. ]+$'), '');
+    if (safe.isEmpty) {
+      safe = 'course';
+    }
+    const reserved = {
+      'CON',
+      'PRN',
+      'AUX',
+      'NUL',
+      'COM1',
+      'COM2',
+      'COM3',
+      'COM4',
+      'COM5',
+      'COM6',
+      'COM7',
+      'COM8',
+      'COM9',
+      'LPT1',
+      'LPT2',
+      'LPT3',
+      'LPT4',
+      'LPT5',
+      'LPT6',
+      'LPT7',
+      'LPT8',
+      'LPT9',
+    };
+    if (reserved.contains(safe.toUpperCase())) {
+      safe = '${safe}_course';
+    }
+    return safe;
+  }
+
+  Future<void> _copyDirectoryContents({
+    required String sourcePath,
+    required String targetPath,
+  }) async {
+    final source = Directory(sourcePath);
+    if (!source.existsSync()) {
+      throw StateError('Source course folder not found: $sourcePath');
+    }
+    final target = Directory(targetPath);
+    final normalizedSource = p.normalize(source.absolute.path);
+    final normalizedTarget = p.normalize(target.absolute.path);
+    if (p.equals(normalizedSource, normalizedTarget) ||
+        p.isWithin(normalizedSource, normalizedTarget)) {
+      throw StateError('Target folder cannot be inside the source folder.');
+    }
+
+    await target.create(recursive: true);
+    await for (final entity
+        in source.list(recursive: true, followLinks: false)) {
+      final relativePath = p.relative(entity.path, from: source.path);
+      if (relativePath == '.') {
+        continue;
+      }
+      final outputPath = p.join(target.path, relativePath);
+      if (entity is Directory) {
+        await Directory(outputPath).create(recursive: true);
+      } else if (entity is File) {
+        final outputFile = File(outputPath);
+        await outputFile.parent.create(recursive: true);
+        await entity.copy(outputFile.path);
       }
     }
   }
@@ -1149,6 +1349,16 @@ class _TeacherHomePageState extends State<TeacherHomePage>
   }
 }
 
+class _ResolvedCourseSaveSource {
+  const _ResolvedCourseSaveSource({
+    required this.path,
+    required this.deleteAfterCopy,
+  });
+
+  final String path;
+  final bool deleteAfterCopy;
+}
+
 class _CourseTile extends StatelessWidget {
   const _CourseTile({
     required this.course,
@@ -1156,11 +1366,13 @@ class _CourseTile extends StatelessWidget {
     required this.isLoaded,
     required this.isUploading,
     required this.isPulling,
+    required this.isSaving,
     required this.onReload,
     required this.onDelete,
     required this.onVersions,
     required this.onEditLabels,
     required this.onPullLatest,
+    required this.onSave,
     required this.onUpload,
   });
 
@@ -1169,11 +1381,13 @@ class _CourseTile extends StatelessWidget {
   final bool isLoaded;
   final bool isUploading;
   final bool isPulling;
+  final bool isSaving;
   final VoidCallback onReload;
   final VoidCallback onDelete;
   final VoidCallback onVersions;
   final VoidCallback onEditLabels;
   final VoidCallback onPullLatest;
+  final VoidCallback onSave;
   final VoidCallback? onUpload;
 
   @override
@@ -1222,6 +1436,10 @@ class _CourseTile extends StatelessWidget {
                   child: Text(
                     isPulling ? 'Pulling...' : 'Pull Latest Server',
                   ),
+                ),
+                TextButton(
+                  onPressed: isSaving ? null : onSave,
+                  child: Text(isSaving ? 'Saving...' : 'Save'),
                 ),
                 TextButton(
                   onPressed: onVersions,
