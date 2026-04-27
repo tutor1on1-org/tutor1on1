@@ -86,6 +86,67 @@ void main() {
   );
 
   test(
+    'extractBundleScaffoldFromFile releases large bundle before caller cleanup',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'course_bundle_scaffold_release_test_',
+      );
+      try {
+        await _withMockTempDir(tempDir.path, () async {
+          final zipFile = File(p.join(tempDir.path, 'large_bundle.zip'));
+          final archive = Archive();
+
+          final contentsBytes = Uint8List.fromList(
+            '1 Root branch\n1.1 Intro lesson\n'.codeUnits,
+          );
+          archive.addFile(
+            ArchiveFile('contents.txt', contentsBytes.length, contentsBytes),
+          );
+
+          final lectureBytes =
+              Uint8List.fromList('This is the lecture body.'.codeUnits);
+          archive.addFile(
+            ArchiveFile('1_lecture.txt', lectureBytes.length, lectureBytes),
+          );
+          archive.addFile(
+            ArchiveFile('1.1_lecture.txt', lectureBytes.length, lectureBytes),
+          );
+
+          final random = Random(20260427);
+          final filler = Uint8List.fromList(
+            List<int>.generate(
+              2 * 1024 * 1024,
+              (_) => random.nextInt(256),
+            ),
+          );
+          archive.addFile(
+            ArchiveFile('filler/random.bin', filler.length, filler),
+          );
+
+          final encoded = ZipEncoder().encode(archive);
+          expect(encoded, isNotNull);
+          await zipFile.writeAsBytes(encoded!, flush: true);
+
+          final service = CourseBundleService();
+          final scaffoldPath = await service.extractBundleScaffoldFromFile(
+            bundleFile: zipFile,
+            courseName: 'Math Deep',
+          );
+          expect(
+              File(p.join(scaffoldPath, 'contents.txt')).existsSync(), isTrue);
+
+          await expectLater(zipFile.delete(), completes);
+          expect(zipFile.existsSync(), isFalse);
+        });
+      } finally {
+        if (tempDir.existsSync()) {
+          await tempDir.delete(recursive: true);
+        }
+      }
+    },
+  );
+
+  test(
     'extractBundleFromFile returns an import-ready course root immediately',
     () async {
       final tempDir = await Directory.systemTemp.createTemp(

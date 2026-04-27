@@ -1,6 +1,10 @@
 # LOGBOOK
 Historical timeline. Keep active runbook details in `WORKLOG.md`. Entries that mention row-level session/progress/enrollment sync remain historical delivery records only.
 
+## 2026-04-27
+- Fixed Windows enrollment-sync temp bundle cleanup failures where `bundle_<course>_*.zip` could stay locked after login sync. ZIP archive readers now clear lazy entry streams after use, scaffold extraction no longer returns lazy `ArchiveFile` entries beyond archive lifetime, and temporary enrollment bundle deletion is treated as cleanup warning instead of sync failure.
+- Added regression coverage for immediate deletion after `extractBundleScaffoldFromFile`, recorded the lesson in `BUGS.md`, cleared stale local `bundle_math_deep_*.zip` temp files, and validated with targeted bundle/enrollment tests, `flutter analyze`, `scripts/validate_project.ps1 -NoPostHook`, `flutter build apk --config-only`, `flutter build apk --release`, and `flutter build windows --release`.
+
 ## 2026-04-26
 - Added one-sentence approval email notifications for enrollment, quit-course, teacher-registration, and course-upload approval requests, including subject-admin approver notifications and applicant decision notifications when SMTP is enabled.
 - Validated with targeted handler tests, full `go test ./...` under `remote/`, and `scripts/validate_project.ps1 -NoPostHook`; built local release artifacts with scripts: Android APK SHA-256 `273bd41505e5e67e3ed63fc8a6a6823082787fad519edd0acb2b4db3f4fead0b`, Windows ZIP SHA-256 `0d717211d9202e9d290c08eb514d8dc5497cbaaacceeb7b6de87c89981767004`.

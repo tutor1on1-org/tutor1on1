@@ -104,13 +104,15 @@ class CourseBundleService {
     final targetDir = Directory(targetPath);
     targetDir.createSync(recursive: true);
     final input = InputFileStream(bundleFile.path);
+    Archive? archive;
     try {
-      final archive = ZipDecoder().decodeBuffer(input);
+      archive = ZipDecoder().decodeBuffer(input);
       _validateArchivePaths(archive);
       // archive.extractArchiveToDisk is async in archive 3.x. Must await to
       // avoid returning before contents/context files are written.
       await extractArchiveToDisk(archive, targetPath);
     } finally {
+      archive?.clearSync();
       input.close();
     }
     return _resolveExtractedCourseRoot(targetPath);
@@ -132,19 +134,19 @@ class CourseBundleService {
     final targetDir = Directory(targetPath);
     targetDir.createSync(recursive: true);
     final indexed = _indexBundleArchive(bundleFile.path);
-    final contentsEntry = indexed.entryByName[indexed.selectedContentsName];
-    if (contentsEntry == null) {
+    final contentsBytes = indexed.entryByName[indexed.selectedContentsName];
+    if (contentsBytes == null) {
       throw StateError('Bundle is missing contents.txt or context.txt.');
     }
     await File(p.join(targetPath, 'contents.txt')).writeAsBytes(
-      _entryBytes(contentsEntry),
+      contentsBytes,
       flush: true,
     );
     if (indexed.selectedContextName.isNotEmpty) {
-      final contextEntry = indexed.entryByName[indexed.selectedContextName];
-      if (contextEntry != null) {
+      final contextBytes = indexed.entryByName[indexed.selectedContextName];
+      if (contextBytes != null) {
         await File(p.join(targetPath, 'context.txt')).writeAsBytes(
-          _entryBytes(contextEntry),
+          contextBytes,
           flush: true,
         );
       }
@@ -260,19 +262,20 @@ class CourseBundleService {
             (value) => _normalizeArchivePath('${indexed.selectedRoot}/$value')),
     };
     for (final name in candidateNames) {
-      final entry = indexed.entryByName[name];
-      if (entry == null) {
+      final entryBytes = indexed.entryByName[name];
+      if (entryBytes == null) {
         continue;
       }
-      return utf8.decode(_entryBytes(entry));
+      return utf8.decode(entryBytes);
     }
     return null;
   }
 
   Map<String, dynamic>? _readPromptMetadataFromPath(String bundlePath) {
     final input = InputFileStream(bundlePath);
+    Archive? archive;
     try {
-      final archive = ZipDecoder().decodeBuffer(input);
+      archive = ZipDecoder().decodeBuffer(input);
       for (final file in archive) {
         if (!file.isFile) {
           continue;
@@ -290,14 +293,16 @@ class CourseBundleService {
       }
       return null;
     } finally {
+      archive?.clearSync();
       input.close();
     }
   }
 
   void _validateBundleForImportPath(String bundlePath) {
     final input = InputFileStream(bundlePath);
+    Archive? archive;
     try {
-      final archive = ZipDecoder().decodeBuffer(input);
+      archive = ZipDecoder().decodeBuffer(input);
       _validateArchivePaths(archive);
 
       final fileEntries = archive.files.where((entry) {
@@ -400,6 +405,7 @@ class CourseBundleService {
         );
       }
     } finally {
+      archive?.clearSync();
       input.close();
     }
   }
@@ -409,8 +415,9 @@ class CourseBundleService {
     Map<String, dynamic>? promptMetadataOverride,
   }) {
     final input = InputFileStream(bundlePath);
+    Archive? archive;
     try {
-      final archive = ZipDecoder().decodeBuffer(input);
+      archive = ZipDecoder().decodeBuffer(input);
       final files = <_BundleSemanticFile>[];
       var sawPromptMetadata = false;
       for (final entry in archive.files) {
@@ -475,6 +482,7 @@ class CourseBundleService {
       }
       return digest.toString();
     } finally {
+      archive?.clearSync();
       input.close();
     }
   }
@@ -485,9 +493,11 @@ class CourseBundleService {
     Map<String, dynamic>? promptMetadata,
   }) {
     final input = InputFileStream(sourcePath);
+    Archive? sourceArchive;
+    Archive? archive;
     try {
-      final sourceArchive = ZipDecoder().decodeBuffer(input);
-      final archive = Archive();
+      sourceArchive = ZipDecoder().decodeBuffer(input);
+      archive = Archive();
       for (final entry in sourceArchive.files) {
         if (!entry.isFile) {
           continue;
@@ -532,6 +542,8 @@ class CourseBundleService {
       }
       File(targetPath).writeAsBytesSync(bytes, flush: true);
     } finally {
+      archive?.clearSync();
+      sourceArchive?.clearSync();
       input.close();
     }
   }
@@ -606,10 +618,11 @@ class CourseBundleService {
 
   _IndexedBundleArchive _indexBundleArchive(String bundlePath) {
     final input = InputFileStream(bundlePath);
+    Archive? archive;
     try {
-      final archive = ZipDecoder().decodeBuffer(input);
+      archive = ZipDecoder().decodeBuffer(input);
       _validateArchivePaths(archive);
-      final entryByName = <String, ArchiveFile>{};
+      final entryByName = <String, List<int>>{};
       for (final entry in archive.files) {
         if (!entry.isFile) {
           continue;
@@ -624,7 +637,7 @@ class CourseBundleService {
         if (_hasAppleDoubleSegment(name)) {
           continue;
         }
-        entryByName[name] = entry;
+        entryByName[name] = _entryBytes(entry);
       }
       if (entryByName.isEmpty) {
         throw StateError('Bundle is empty or contains only metadata files.');
@@ -668,6 +681,7 @@ class CourseBundleService {
         selectedContextName: selectedContextName,
       );
     } finally {
+      archive?.clearSync();
       input.close();
     }
   }
@@ -1252,8 +1266,9 @@ class CourseBundleService {
     }
 
     final input = InputFileStream(bundleFile.path);
+    Archive? archive;
     try {
-      final archive = ZipDecoder().decodeBuffer(input);
+      archive = ZipDecoder().decodeBuffer(input);
       _validateArchivePaths(archive);
       final entryByName = <String, ArchiveFile>{};
       for (final entry in archive.files) {
@@ -1360,6 +1375,7 @@ class CourseBundleService {
 
       return _CourseKpSnapshot(kpFingerprints: fingerprints);
     } finally {
+      archive?.clearSync();
       input.close();
     }
   }
@@ -1486,7 +1502,7 @@ class _IndexedBundleArchive {
     required this.selectedContextName,
   });
 
-  final Map<String, ArchiveFile> entryByName;
+  final Map<String, List<int>> entryByName;
   final String selectedRoot;
   final String selectedContentsName;
   final String selectedContextName;

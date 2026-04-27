@@ -1208,7 +1208,7 @@ class EnrollmentSyncService {
     await bundleFile.writeAsBytes(downloaded.bytes, flush: true);
     final computedHash = await bundleService.computeBundleByteHash(bundleFile);
     if (expectedHash.isNotEmpty && computedHash != expectedHash) {
-      await bundleFile.delete();
+      await _deleteTemporaryBundleFile(bundleFile);
       throw StateError(
         'Downloaded course artifact sha256 mismatch for $artifactId. '
         'expected=$expectedHash actual=$computedHash',
@@ -1216,7 +1216,7 @@ class EnrollmentSyncService {
     }
     final echoedHash = downloaded.sha256.trim();
     if (echoedHash.isNotEmpty && echoedHash != computedHash) {
-      await bundleFile.delete();
+      await _deleteTemporaryBundleFile(bundleFile);
       throw StateError(
         'Downloaded course artifact file sha256 mismatch for $artifactId. '
         'header=$echoedHash computed=$computedHash',
@@ -1353,9 +1353,7 @@ class EnrollmentSyncService {
       }
       return result.course!;
     } finally {
-      if (bundleFile != null && bundleFile.existsSync()) {
-        await bundleFile.delete();
-      }
+      await _deleteTemporaryBundleFile(bundleFile);
     }
   }
 
@@ -2871,9 +2869,21 @@ class EnrollmentSyncService {
       );
       return result.course!;
     } finally {
-      if (bundleFile != null && bundleFile.existsSync()) {
-        await bundleFile.delete();
-      }
+      await _deleteTemporaryBundleFile(bundleFile);
+    }
+  }
+
+  Future<void> _deleteTemporaryBundleFile(File? bundleFile) async {
+    if (bundleFile == null || !bundleFile.existsSync()) {
+      return;
+    }
+    try {
+      await bundleFile.delete();
+    } on FileSystemException catch (error) {
+      stderr.writeln(
+        'Warning: failed to delete temporary enrollment bundle '
+        '${bundleFile.path}: $error',
+      );
     }
   }
 

@@ -78,6 +78,11 @@ Last updated: 2026-04-27
 - Root cause: local auth persisted users by username only, while sync placeholder flows could also create local users keyed by the same `remoteUserId`; because local `users.remoteUserId` was not unique, multiple rows could exist for one remote account and `findUserByRemoteId(...).getSingleOrNull()` exploded.
 - Prevention: enforce uniqueness for non-null `users.remoteUserId`, reconcile auth logins by remote id before username-only create/update, and run a local cleanup pass that merges pre-existing duplicate users before adding the unique index.
 
+15. Windows temp bundle delete after enrollment sync
+- Symptom: login enrollment sync fails at cleanup with `PathAccessException: Cannot delete file ... bundle_<course>_*.zip` on Windows.
+- Root cause: archive package entries keep lazy `InputFileStream` clones for ZIP raw content; reading entries after the original stream was closed could reopen the temp ZIP and leave entry streams alive until the archive is cleared.
+- Prevention: after every `ZipDecoder().decodeBuffer(InputFileStream(...))` path, call `archive.clearSync()` in `finally` after all entry reads finish, and never return lazy `ArchiveFile` objects beyond the archive lifetime. Treat temporary bundle cleanup failures as warnings, not sync failures, after the sync work has completed.
+
 15. Windows packaged STT recording fails at start with AAC encoder
 - Symptom: packaged Windows app shows `Recording start failed.` when voice input begins.
 - Root cause: the app requested `AudioEncoder.aacLc` from `record_windows`; encoder support may appear present, but the Windows sink-writer start path for AAC can still fail in packaged environments, while the plugin's WAV/PCM path is the stable capture path.
