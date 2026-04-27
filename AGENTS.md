@@ -34,3 +34,4 @@
 - API model lists must have one local source of truth: successful `Test API key` calls cache `/models` by normalized `baseUrl + apiKeyHash`, and all settings/session model pickers should read that cache before falling back to static provider defaults.
 - Public website redesigns should make the product visible in the first viewport, keep direct Windows/Android downloads prominent, and derive release labels/download links from `/site.js` release config rather than hard-coding per page.
 - Public legal website pages must not copy internal placeholder legal drafts verbatim; use the current public contact address, distinguish app code license, third-party licenses, and teacher-owned course content, and validate legal paths in `scripts/publish_website_static.ps1`.
+- Website publish HTTP checks should retry non-200 responses explicitly after rsync, because nginx/static path visibility can briefly lag even when the file already exists on the remote host.

@@ -30,14 +30,25 @@ function Assert-Http200 {
     [Parameter(Mandatory = $true)]
     [string]$Url
   )
-  $headers = & curl.exe -k -I --max-time 20 --retry 3 --retry-all-errors --retry-delay 2 $Url
-  if ($LASTEXITCODE -ne 0) {
-    throw "curl header check failed for $Url with exit code $LASTEXITCODE."
+  $headers = @()
+  $exitCode = 0
+  for ($attempt = 1; $attempt -le 5; $attempt++) {
+    $headers = & curl.exe -k -I --max-time 20 --retry 2 --retry-all-errors --retry-delay 2 $Url
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -eq 0 -and ($headers -match 'HTTP/\d\.\d 200 OK')) {
+      $headers | ForEach-Object { Write-Host $_ }
+      return
+    }
+    if ($attempt -lt 5) {
+      Write-Host "HTTP 200 check attempt $attempt failed for $Url; retrying..."
+      Start-Sleep -Seconds 3
+    }
   }
   $headers | ForEach-Object { Write-Host $_ }
-  if (-not ($headers -match 'HTTP/\d\.\d 200 OK')) {
-    throw "URL check failed. Expected HTTP 200: $Url"
+  if ($exitCode -ne 0) {
+    throw "curl header check failed for $Url with exit code $exitCode."
   }
+  throw "URL check failed. Expected HTTP 200: $Url"
 }
 
 function Assert-BodyContains {
