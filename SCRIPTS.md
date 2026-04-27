@@ -334,3 +334,26 @@ curl https://api.tutor1on1.org/health
 - Add Dart unit tests under `test/` and run target file first, then full `flutter test`.
 - Add API regression tests under `remote/` and run `go test ./...`.
 - For bug fixes, script the repro path first, then validate fixed path and one adjacent path.
+
+## Public release shortcuts
+Use the public release script by default:
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\release_public.ps1 -CommitMessage "Update default prompt"
+```
+It bumps the patch version, validates, stages/commits, tags, pushes to `github`, publishes Android APK and Windows ZIP artifacts, and refreshes GitHub Release assets. Website publishing is opt-in:
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\release_public.ps1 -CommitMessage "Update default prompt" -PublishWebsite
+```
+
+For local prompt/build checks only:
+```powershell
+flutter test test\prompt_assets_integrity_test.dart
+powershell -ExecutionPolicy Bypass -File scripts\validate_project.ps1 -NoPostHook
+flutter build apk --release
+flutter build windows --release
+```
+
+For Windows-only publishing:
+```powershell
+powershell -ExecutionPolicy Bypass -File skills\windows_release_publish\scripts\publish_windows_release.ps1
+```
