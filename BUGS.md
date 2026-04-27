@@ -1,5 +1,5 @@
 # BUGS
-Last updated: 2026-04-13
+Last updated: 2026-04-27
 
 ## Active watch
 - Student import race after bundle download (monitoring): fixed by awaiting archive extraction in client bundle service (`f77e7e0`); keep watching for recurrence in production-like flow.
@@ -302,3 +302,8 @@ Last updated: 2026-04-13
 - Symptom: Prompt Settings preview could show a full resolved prompt, while editing a course/student scope opened only an append fragment, making it unclear whether the teacher was editing the base prompt or adding a rule.
 - Root cause: the prompt model had two meanings for `prompt_templates.content`: teacher default rows were full prompt overrides, but course/student rows were append fragments that were concatenated at runtime.
 - Prevention: treat every active prompt-template row as a full prompt override. Unmodified child scopes should have no row and inherit dynamically from the nearest active parent override; resetting a scope clears its active row. Delete legacy append rows during the schema migration instead of trying to reinterpret them.
+
+59. SQLite UNIQUE constraints do not deduplicate NULL fields
+- Symptom: saving the same API config repeatedly could create duplicate rows when TTS/STT model fields were empty.
+- Root cause: `api_configs` used a multi-column UNIQUE key that included nullable `tts_model` and `stt_model`; SQLite treats `NULL` values as distinct for UNIQUE checks.
+- Prevention: enforce optional-field uniqueness with a normalized expression index using `coalesce(trim(...), '')`, deduplicate existing rows during migration, and make save UI report an existing config instead of always saying it saved.
