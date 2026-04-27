@@ -784,28 +784,20 @@ h3 {
 
   .topnav {
     width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
     overflow-x: visible;
   }
 
-  .topnav-table {
-    display: block;
-    width: 100%;
-  }
-
-  .topnav-table tbody {
-    display: block;
-    width: 100%;
-  }
-
+  .topnav-table,
+  .topnav-table tbody,
   .topnav-table tr {
-    display: flex;
-    gap: 8px;
-    width: 100%;
+    display: contents;
   }
 
   .topnav-table td {
     display: block;
-    flex: 1 1 0;
     min-width: 0;
     width: auto;
   }
