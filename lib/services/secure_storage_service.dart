@@ -31,6 +31,7 @@ class SecureStorageService {
   static const _apiKeyKey = 'openai_api_key';
   static const _apiKeyPrefix = 'openai_api_key:';
   static const _apiKeyBasePrefix = 'api_key_base:';
+  static const _oauthCredentialsPrefix = 'oauth_credentials:';
   static const _authAccessTokenKey = 'auth_access_token';
   static const _authRefreshTokenKey = 'auth_refresh_token';
   static const _authDeviceKey = 'auth_device_key';
@@ -165,6 +166,21 @@ class SecureStorageService {
 
   Future<void> deleteApiKeyForHash(String hash) {
     return _storage.delete(key: '$_apiKeyPrefix$hash');
+  }
+
+  Future<String?> readOAuthCredentials(String providerId) {
+    return _storage.read(key: _oauthCredentialsKey(providerId));
+  }
+
+  Future<void> writeOAuthCredentials(String providerId, String value) {
+    return _storage.write(
+      key: _oauthCredentialsKey(providerId),
+      value: value.trim(),
+    );
+  }
+
+  Future<void> deleteOAuthCredentials(String providerId) {
+    return _storage.delete(key: _oauthCredentialsKey(providerId));
   }
 
   Future<String?> readAuthAccessToken() =>
@@ -488,6 +504,10 @@ class SecureStorageService {
   String _baseUrlKey(String baseUrl) {
     final normalized = baseUrl.trim().toLowerCase();
     return '$_apiKeyBasePrefix${sha256Hex(normalized)}';
+  }
+
+  String _oauthCredentialsKey(String providerId) {
+    return '$_oauthCredentialsPrefix${providerId.trim().toLowerCase()}';
   }
 
   String _syncItemStateKey({

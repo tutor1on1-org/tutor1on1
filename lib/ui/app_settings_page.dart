@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -16,6 +17,7 @@ import '../services/app_version_service.dart';
 import '../services/audio_model_selection.dart';
 import '../services/marketplace_api_service.dart';
 import '../services/model_list_service.dart';
+import '../services/openai_codex_oauth_service.dart';
 import '../services/student_server_copy_service.dart';
 import '../services/sync_progress.dart';
 import '../services/text_model_selection.dart';
@@ -61,7 +63,10 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _modelsLoaded = false;
   bool _deviceNameLoaded = false;
   bool _apiTesting = false;
+  bool _oauthLoginInProgress = false;
   String? _apiTestError;
+  OpenAiCodexOAuthCredentials? _openAiCodexOAuthCredentials;
+  String? _openAiCodexOAuthLoadedForProvider;
   bool _serverCopyInProgress = false;
   String? _serverCopyMessage;
   String? _serverCopyDetail;
@@ -148,7 +153,11 @@ class _SettingsPageState extends State<SettingsPage> {
     _maybeLoadDeviceName(services);
 
     final provider = _resolveProvider(providers, settings);
-    _maybeLoadApiKey(services, provider.baseUrl);
+    if (provider.usesOpenAiCodexOAuth) {
+      _maybeLoadOpenAiCodexOAuth(services, provider.id);
+    } else {
+      _maybeLoadApiKey(services, provider.baseUrl);
+    }
 
     return DefaultTabController(
       length: 2,
@@ -216,12 +225,39 @@ class _SettingsPageState extends State<SettingsPage> {
     });
   }
 
+  void _maybeLoadOpenAiCodexOAuth(AppServices services, String providerId) {
+    if (_openAiCodexOAuthLoadedForProvider == providerId) {
+      return;
+    }
+    _openAiCodexOAuthLoadedForProvider = providerId;
+    Future.microtask(() async {
+      final credentials = await OpenAiCodexOAuthService(services.secureStorage)
+          .readCredentials();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _apiKeyController.clear();
+        _openAiCodexOAuthCredentials = credentials;
+      });
+    });
+  }
+
   String? _activeApiKeyHash() {
     final apiKey = _apiKeyController.text.trim();
     if (apiKey.isEmpty) {
       return null;
     }
     return sha256Hex(apiKey);
+  }
+
+  String? _activeCredentialHash(LlmProvider provider) {
+    if (provider.usesOpenAiCodexOAuth) {
+      return OpenAiCodexOAuthService.credentialHash(
+        _openAiCodexOAuthCredentials,
+      );
+    }
+    return _activeApiKeyHash();
   }
 
   void _maybeLoadDeviceName(AppServices services) {
@@ -736,7 +772,7 @@ class _SettingsPageState extends State<SettingsPage> {
             final cachedModelLists = AppDatabase.cachedModelListsFor(
               modelCaches,
               baseUrl: provider.baseUrl,
-              apiKeyHash: _activeApiKeyHash(),
+              apiKeyHash: _activeCredentialHash(provider),
             );
             final modelsLoaded = cachedModelLists != null;
             final textOptions = _buildTextModelOptions(
@@ -836,7 +872,12 @@ class _SettingsPageState extends State<SettingsPage> {
                       _ttsModelOverride = false;
                       _sttModelOverride = false;
                     });
-                    _maybeLoadApiKey(services, next.baseUrl);
+                    if (next.usesOpenAiCodexOAuth) {
+                      _openAiCodexOAuthLoadedForProvider = null;
+                      _maybeLoadOpenAiCodexOAuth(services, next.id);
+                    } else {
+                      _maybeLoadApiKey(services, next.baseUrl);
+                    }
                   },
                 ),
                 const SizedBox(height: 8),
@@ -845,55 +886,66 @@ class _SettingsPageState extends State<SettingsPage> {
                   child: SelectableText(provider.baseUrl),
                 ),
                 const SizedBox(height: 8),
-                TextField(
-                  controller: _apiKeyController,
-                  obscureText: true,
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(labelText: l10n.apiKeyLabel),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    ElevatedButton(
-                      onPressed: _apiTesting
-                          ? null
-                          : () => _testApiKey(
-                                context: context,
-                                l10n: l10n,
-                                provider: provider,
-                                baseUrl: provider.baseUrl,
-                                services: services,
-                              ),
-                      child: _apiTesting
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : Text(l10n.testApiKeyButton),
-                    ),
-                    const SizedBox(width: 12),
-                    TextButton(
-                      onPressed: () async {
-                        final baseUrl = provider.baseUrl;
-                        await services.secureStorage
-                            .deleteApiKeyForBaseUrl(baseUrl);
-                        if (context.mounted) {
-                          setState(() {
-                            _apiKeyController.clear();
-                          });
-                          _showMessage(context, l10n.apiKeyClearedMessage);
-                        }
-                      },
-                      child: Text(l10n.clearKeyButton),
-                    ),
-                  ],
-                ),
+                if (provider.usesOpenAiCodexOAuth)
+                  _buildOpenAiCodexOAuthControls(
+                    context: context,
+                    provider: provider,
+                    services: services,
+                  )
+                else ...[
+                  TextField(
+                    controller: _apiKeyController,
+                    obscureText: true,
+                    onChanged: (_) => setState(() {}),
+                    decoration: InputDecoration(labelText: l10n.apiKeyLabel),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      ElevatedButton(
+                        onPressed: _apiTesting
+                            ? null
+                            : () => _testApiKey(
+                                  context: context,
+                                  l10n: l10n,
+                                  provider: provider,
+                                  baseUrl: provider.baseUrl,
+                                  services: services,
+                                ),
+                        child: _apiTesting
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : Text(l10n.testApiKeyButton),
+                      ),
+                      const SizedBox(width: 12),
+                      TextButton(
+                        onPressed: () async {
+                          final baseUrl = provider.baseUrl;
+                          await services.secureStorage
+                              .deleteApiKeyForBaseUrl(baseUrl);
+                          if (context.mounted) {
+                            setState(() {
+                              _apiKeyController.clear();
+                            });
+                            _showMessage(context, l10n.apiKeyClearedMessage);
+                          }
+                        },
+                        child: Text(l10n.clearKeyButton),
+                      ),
+                    ],
+                  ),
+                ],
                 if ((_apiTestError ?? '').isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
                     child: Text(
-                      l10n.apiKeyTestFailed(_apiTestError!),
+                      provider.usesOpenAiCodexOAuth
+                          ? _apiTestError!
+                          : l10n.apiKeyTestFailed(_apiTestError!),
                       style: const TextStyle(color: Colors.redAccent),
                     ),
                   ),
@@ -952,13 +1004,19 @@ class _SettingsPageState extends State<SettingsPage> {
                 ElevatedButton(
                   onPressed: () async {
                     final apiKey = _apiKeyController.text.trim();
+                    final credentialHash = _activeCredentialHash(provider);
                     final model = _resolveTextModel(
                       provider,
                       settings,
                       textOptions,
                     );
-                    if (apiKey.isEmpty) {
+                    if (!provider.usesOpenAiCodexOAuth && apiKey.isEmpty) {
                       _showMessage(context, l10n.apiKeyMissingMessage);
+                      return;
+                    }
+                    if (provider.usesOpenAiCodexOAuth &&
+                        (credentialHash ?? '').isEmpty) {
+                      _showMessage(context, 'Sign in with ChatGPT first.');
                       return;
                     }
                     if (model.trim().isEmpty) {
@@ -1009,9 +1067,10 @@ class _SettingsPageState extends State<SettingsPage> {
                       sttAutoSend: _sttAutoSend,
                       enterToSend: Platform.isAndroid ? false : _enterToSend,
                     );
-                    await services.secureStorage
-                        .writeApiKeyForBaseUrl(provider.baseUrl, apiKey);
-                    final hash = sha256Hex(apiKey);
+                    if (!provider.usesOpenAiCodexOAuth) {
+                      await services.secureStorage
+                          .writeApiKeyForBaseUrl(provider.baseUrl, apiKey);
+                    }
                     final inserted = await services.db.insertApiConfig(
                       baseUrl: provider.baseUrl,
                       model: model,
@@ -1028,7 +1087,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         options: sttOptions,
                         modelsLoaded: modelsLoaded,
                       ),
-                      apiKeyHash: hash,
+                      apiKeyHash: credentialHash!,
                     );
                     if (context.mounted) {
                       _showMessage(
@@ -1104,18 +1163,34 @@ class _SettingsPageState extends State<SettingsPage> {
                                   _modelsLoaded = false;
                                   _apiTestError = null;
                                 });
-                                final key = await services.secureStorage
-                                    .readApiKeyForBaseUrl(config.baseUrl);
-                                if (key == null || key.trim().isEmpty) {
-                                  _apiKeyController.clear();
-                                  if (context.mounted) {
+                                if (provider.usesOpenAiCodexOAuth) {
+                                  final credentials =
+                                      await OpenAiCodexOAuthService(
+                                    services.secureStorage,
+                                  ).readCredentials();
+                                  _openAiCodexOAuthCredentials = credentials;
+                                  _openAiCodexOAuthLoadedForProvider =
+                                      provider.id;
+                                  if (credentials == null && context.mounted) {
                                     _showMessage(
                                       context,
-                                      l10n.apiKeyMissingForConfig,
+                                      'Sign in with ChatGPT first.',
                                     );
                                   }
                                 } else {
-                                  _apiKeyController.text = key;
+                                  final key = await services.secureStorage
+                                      .readApiKeyForBaseUrl(config.baseUrl);
+                                  if (key == null || key.trim().isEmpty) {
+                                    _apiKeyController.clear();
+                                    if (context.mounted) {
+                                      _showMessage(
+                                        context,
+                                        l10n.apiKeyMissingForConfig,
+                                      );
+                                    }
+                                  } else {
+                                    _apiKeyController.text = key;
+                                  }
                                 }
                                 if (context.mounted) {
                                   setState(() {});
@@ -1146,6 +1221,299 @@ class _SettingsPageState extends State<SettingsPage> {
         );
       },
     );
+  }
+
+  Widget _buildOpenAiCodexOAuthControls({
+    required BuildContext context,
+    required LlmProvider provider,
+    required AppServices services,
+  }) {
+    final credentials = _openAiCodexOAuthCredentials;
+    final signedInLabel = credentials == null
+        ? 'Not signed in'
+        : 'Signed in: ${(credentials.email ?? credentials.accountId).trim()}';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InputDecorator(
+          decoration: const InputDecoration(labelText: 'Auth'),
+          child: Text(signedInLabel),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 12,
+          runSpacing: 8,
+          children: [
+            ElevatedButton(
+              onPressed: _oauthLoginInProgress
+                  ? null
+                  : () => _loginOpenAiCodexOAuth(
+                        context: context,
+                        provider: provider,
+                        services: services,
+                      ),
+              child: _oauthLoginInProgress
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Login with ChatGPT'),
+            ),
+            OutlinedButton(
+              onPressed: _apiTesting || credentials == null
+                  ? null
+                  : () => _refreshOpenAiCodexOAuthModels(
+                        context: context,
+                        provider: provider,
+                        services: services,
+                      ),
+              child: _apiTesting
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Refresh models'),
+            ),
+            TextButton(
+              onPressed: credentials == null
+                  ? null
+                  : () async {
+                      await OpenAiCodexOAuthService(
+                        services.secureStorage,
+                      ).deleteCredentials();
+                      if (!context.mounted) {
+                        return;
+                      }
+                      setState(() {
+                        _openAiCodexOAuthCredentials = null;
+                        _modelsLoaded = false;
+                        _textModelOptions = const [];
+                        _ttsModelOptions = const [];
+                        _sttModelOptions = const [];
+                      });
+                      _showMessage(context, 'ChatGPT OAuth login cleared.');
+                    },
+              child: const Text('Logout'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Future<void> _loginOpenAiCodexOAuth({
+    required BuildContext context,
+    required LlmProvider provider,
+    required AppServices services,
+  }) async {
+    setState(() {
+      _oauthLoginInProgress = true;
+      _apiTestError = null;
+    });
+    final oauth = OpenAiCodexOAuthService(services.secureStorage);
+    OpenAiCodexOAuthLoginAttempt? attempt;
+    try {
+      attempt = await oauth.createLoginAttempt();
+      await oauth.openInBrowser(attempt.authUrl);
+      if (!context.mounted) {
+        return;
+      }
+      final input = await _showOpenAiCodexOAuthDialog(
+        context: context,
+        attempt: attempt,
+      );
+      if (input == null || input.trim().isEmpty) {
+        return;
+      }
+      final credentials = await oauth.exchangeAuthorizationInput(
+        input: input,
+        verifier: attempt.verifier,
+        expectedState: attempt.state,
+      );
+      await oauth.writeCredentials(credentials);
+      await _cacheOpenAiCodexModels(
+        services: services,
+        provider: provider,
+        credentials: credentials,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _openAiCodexOAuthCredentials = credentials;
+        _openAiCodexOAuthLoadedForProvider = provider.id;
+        _apiTestError = null;
+      });
+      _showMessage(context, 'ChatGPT OAuth login saved.');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _apiTestError = '$error';
+      });
+    } finally {
+      await attempt?.close();
+      if (mounted) {
+        setState(() => _oauthLoginInProgress = false);
+      }
+    }
+  }
+
+  Future<void> _refreshOpenAiCodexOAuthModels({
+    required BuildContext context,
+    required LlmProvider provider,
+    required AppServices services,
+  }) async {
+    setState(() {
+      _apiTesting = true;
+      _apiTestError = null;
+    });
+    try {
+      final oauth = OpenAiCodexOAuthService(services.secureStorage);
+      final credentials = await oauth.resolveValidCredentials();
+      await _cacheOpenAiCodexModels(
+        services: services,
+        provider: provider,
+        credentials: credentials,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _openAiCodexOAuthCredentials = credentials;
+        _openAiCodexOAuthLoadedForProvider = provider.id;
+        _apiTestError = null;
+      });
+      _showMessage(context, 'OAuth models refreshed.');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _apiTestError = '$error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _apiTesting = false);
+      }
+    }
+  }
+
+  Future<String?> _showOpenAiCodexOAuthDialog({
+    required BuildContext context,
+    required OpenAiCodexOAuthLoginAttempt attempt,
+  }) async {
+    final controller = TextEditingController();
+    BuildContext? dialogContext;
+    String? callbackCode;
+    void popWithCallbackCodeIfReady() {
+      final activeContext = dialogContext;
+      final code = callbackCode?.trim() ?? '';
+      if (code.isEmpty || activeContext == null) {
+        return;
+      }
+      if (!activeContext.mounted || !Navigator.of(activeContext).canPop()) {
+        return;
+      }
+      Navigator.of(activeContext).pop(code);
+    }
+
+    try {
+      unawaited(
+        attempt.waitForCode().then((code) {
+          callbackCode = code;
+          if (dialogContext != null) {
+            popWithCallbackCodeIfReady();
+          }
+        }).catchError((_) {}),
+      );
+      return showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) {
+          dialogContext = context;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            popWithCallbackCodeIfReady();
+          });
+          return AlertDialog(
+            title: const Text('ChatGPT OAuth'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Complete login in the browser. If it does not return '
+                  'automatically, paste the final redirect URL or code below.',
+                ),
+                const SizedBox(height: 8),
+                SelectableText(attempt.authUrl),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: controller,
+                  decoration: const InputDecoration(
+                    labelText: 'Redirect URL or authorization code',
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(controller.text),
+                child: const Text('Complete'),
+              ),
+            ],
+          );
+        },
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<void> _cacheOpenAiCodexModels({
+    required AppServices services,
+    required LlmProvider provider,
+    required OpenAiCodexOAuthCredentials credentials,
+  }) async {
+    final hash = OpenAiCodexOAuthService.credentialHash(credentials);
+    if (hash == null || hash.isEmpty) {
+      throw StateError('ChatGPT OAuth identity is missing.');
+    }
+    final models = provider.models
+        .map((model) => ApiModelInfo(id: model))
+        .toList(growable: false);
+    final lists = ModelListService.splitModels(
+      models: models,
+      provider: provider,
+    );
+    await services.db.upsertApiModelCache(
+      baseUrl: provider.baseUrl,
+      apiKeyHash: hash,
+      textModels: lists.textModels,
+      ttsModels: lists.ttsModels,
+      sttModels: lists.sttModels,
+    );
+    if (!mounted) {
+      return;
+    }
+    final textSelection = TextModelSelection.resolveModel(
+      availableOptions: lists.textModels,
+      selection: _textModelSelection,
+    );
+    setState(() {
+      _modelsLoaded = true;
+      _textModelOptions = lists.textModels;
+      _ttsModelOptions = lists.ttsModels;
+      _sttModelOptions = lists.sttModels;
+      _textModelSelection = textSelection;
+    });
   }
 
   List<String> _buildTextModelOptions({

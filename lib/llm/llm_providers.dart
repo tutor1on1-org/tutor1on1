@@ -6,7 +6,13 @@ enum MaxTokensParam {
 
 enum LlmApiFormat {
   openAiChatCompletions,
+  openAiCodexResponses,
   anthropicMessages,
+}
+
+enum LlmAuthMode {
+  apiKey,
+  openAiCodexOAuth,
 }
 
 enum ReasoningControlStyle {
@@ -32,6 +38,7 @@ class LlmProvider {
     this.authPrefix = 'Bearer ',
     this.chatPath = '/chat/completions',
     this.apiFormat = LlmApiFormat.openAiChatCompletions,
+    this.authMode = LlmAuthMode.apiKey,
     this.reasoningControlStyle = ReasoningControlStyle.unsupported,
     this.supportsStructuredOutputs = false,
     this.extraHeaders = const <String, String>{},
@@ -49,6 +56,7 @@ class LlmProvider {
   final String authPrefix;
   final String chatPath;
   final LlmApiFormat apiFormat;
+  final LlmAuthMode authMode;
   final ReasoningControlStyle reasoningControlStyle;
   final bool supportsStructuredOutputs;
   final Map<String, String> extraHeaders;
@@ -83,6 +91,8 @@ class LlmProvider {
 
   bool get supportsReasoning =>
       reasoningControlStyle != ReasoningControlStyle.unsupported;
+
+  bool get usesOpenAiCodexOAuth => authMode == LlmAuthMode.openAiCodexOAuth;
 }
 
 class LlmProviders {
@@ -103,6 +113,23 @@ class LlmProviders {
         maxTokensParam: MaxTokensParam.auto,
         supportsTts: true,
         supportsStt: true,
+        noTemperatureModelPrefixes: ['gpt-'],
+        reasoningControlStyle: ReasoningControlStyle.openAiEffort,
+        supportsStructuredOutputs: true,
+      ),
+      const LlmProvider(
+        id: 'openai-codex',
+        label: 'OpenAI Codex (ChatGPT OAuth)',
+        baseUrl: 'https://chatgpt.com/backend-api',
+        models: [
+          'gpt-5.5',
+          'gpt-5.4',
+          'gpt-5.4-mini',
+        ],
+        maxTokensParam: MaxTokensParam.maxTokens,
+        authMode: LlmAuthMode.openAiCodexOAuth,
+        chatPath: '/codex/responses',
+        apiFormat: LlmApiFormat.openAiCodexResponses,
         noTemperatureModelPrefixes: ['gpt-'],
         reasoningControlStyle: ReasoningControlStyle.openAiEffort,
         supportsStructuredOutputs: true,

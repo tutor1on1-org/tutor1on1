@@ -85,11 +85,15 @@ class LlmReasoningSupport {
   }) {
     final responseText = switch (provider.apiFormat) {
       LlmApiFormat.anthropicMessages => _extractAnthropicText(payload),
+      LlmApiFormat.openAiCodexResponses =>
+        _extractOpenAiCompatibleText(payload),
       LlmApiFormat.openAiChatCompletions =>
         _extractOpenAiCompatibleText(payload),
     };
     final reasoningText = switch (provider.apiFormat) {
       LlmApiFormat.anthropicMessages => _extractAnthropicReasoning(payload),
+      LlmApiFormat.openAiCodexResponses =>
+        _extractOpenAiCompatibleReasoning(payload),
       LlmApiFormat.openAiChatCompletions =>
         _extractOpenAiCompatibleReasoning(payload),
     };

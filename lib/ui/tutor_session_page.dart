@@ -15,6 +15,7 @@ import '../models/tutor_action.dart';
 import '../models/tutor_contract.dart';
 import '../security/hash_utils.dart';
 import '../services/app_services.dart';
+import '../services/openai_codex_oauth_service.dart';
 import '../services/stt_service.dart';
 import '../services/text_model_selection.dart';
 import '../services/tts_chunker.dart';
@@ -1877,7 +1878,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       builder: (context, snapshot) {
         final configs = snapshot.data ?? [];
         return FutureBuilder<String?>(
-          future: _apiKeyHashForBaseUrl(activeBaseUrl),
+          future: _credentialHashForProvider(provider, activeBaseUrl),
           builder: (context, hashSnapshot) {
             final apiKeyHash = hashSnapshot.data;
             return StreamBuilder<List<ApiModelCache>>(
@@ -1946,9 +1947,19 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     );
   }
 
-  Future<String?> _apiKeyHashForBaseUrl(String baseUrl) {
-    final normalized = _normalizeBaseUrl(baseUrl).toLowerCase();
+  Future<String?> _credentialHashForProvider(
+    LlmProvider provider,
+    String baseUrl,
+  ) {
+    final normalized =
+        '${provider.id}:${_normalizeBaseUrl(baseUrl)}'.toLowerCase();
     return _apiKeyHashFutures.putIfAbsent(normalized, () async {
+      if (provider.usesOpenAiCodexOAuth) {
+        final credentials = await OpenAiCodexOAuthService(
+          _services.secureStorage,
+        ).readCredentials();
+        return OpenAiCodexOAuthService.credentialHash(credentials);
+      }
       final apiKey = await _services.secureStorage.readApiKeyForBaseUrl(
         baseUrl,
       );

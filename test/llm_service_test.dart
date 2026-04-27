@@ -12,6 +12,7 @@ import 'package:tutor1on1/llm/llm_service.dart';
 import 'package:tutor1on1/llm/schema_validator.dart';
 import 'package:tutor1on1/services/llm_call_repository.dart';
 import 'package:tutor1on1/services/llm_log_repository.dart';
+import 'package:tutor1on1/services/openai_codex_oauth_service.dart';
 import 'package:tutor1on1/services/secure_storage_service.dart';
 import 'package:tutor1on1/services/settings_repository.dart';
 
@@ -21,6 +22,17 @@ class _FakeSecureStorage implements SecureStorageService {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FakeCodexOAuthService extends OpenAiCodexOAuthService {
+  _FakeCodexOAuthService(this.credentials) : super(_FakeSecureStorage());
+
+  final OpenAiCodexOAuthCredentials credentials;
+
+  @override
+  Future<OpenAiCodexOAuthCredentials> resolveValidCredentials() async {
+    return credentials;
+  }
 }
 
 class _FakeLlmLogRepository implements LlmLogRepository {
@@ -59,12 +71,17 @@ class _FakeLlmLogRepository implements LlmLogRepository {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-Future<void> _seedSettings(AppDatabase db) async {
+Future<void> _seedSettings(
+  AppDatabase db, {
+  String providerId = 'openai',
+  String baseUrl = 'https://api.openai.com/v1',
+  String model = 'gpt-4o-mini',
+}) async {
   await db.into(db.appSettings).insert(
         AppSettingsCompanion.insert(
-          baseUrl: 'https://api.openai.com/v1',
-          providerId: const Value('openai'),
-          model: 'gpt-4o-mini',
+          baseUrl: baseUrl,
+          providerId: Value(providerId),
+          model: model,
           timeoutSeconds: 30,
           maxTokens: 4000,
           ttsInitialDelayMs: const Value(1000),
@@ -140,6 +157,87 @@ void main() {
     expect(requestCount, equals(2));
     expect(chunks, equals(<String>['Recovered']));
     expect(result.responseText, equals('Recovered'));
+    expect(logRepository.statuses, equals(<String>['ok']));
+  });
+
+  test('OpenAI Codex OAuth streams through Codex Responses endpoint', () async {
+    await db.delete(db.appSettings).go();
+    await _seedSettings(
+      db,
+      providerId: 'openai-codex',
+      baseUrl: OpenAiCodexOAuthService.baseUrl,
+      model: 'gpt-5.5',
+    );
+
+    final service = LlmService(
+      SettingsRepository(db),
+      _FakeSecureStorage(),
+      LlmCallRepository(db),
+      logRepository,
+      SchemaValidator(),
+      codexOAuthService: _FakeCodexOAuthService(
+        OpenAiCodexOAuthCredentials(
+          accessToken: 'oauth-access-token',
+          refreshToken: 'oauth-refresh-token',
+          expiresAtMs: DateTime.now().millisecondsSinceEpoch + 3600000,
+          accountId: 'acct_123',
+          email: 'user@example.com',
+        ),
+      ),
+      clientFactory: () => MockClient((request) async {
+        expect(request.method, equals('POST'));
+        expect(
+          request.url.toString(),
+          equals('https://chatgpt.com/backend-api/codex/responses'),
+        );
+        final headers = <String, String>{
+          for (final entry in request.headers.entries)
+            entry.key.toLowerCase(): entry.value,
+        };
+        expect(headers['authorization'], equals('Bearer oauth-access-token'));
+        expect(headers['chatgpt-account-id'], equals('acct_123'));
+        expect(headers['originator'], equals('pi'));
+        expect(headers['openai-beta'], equals('responses=experimental'));
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(body['model'], equals('gpt-5.5'));
+        expect(body['stream'], isTrue);
+        expect(body['store'], isFalse);
+        expect(body['max_output_tokens'], equals(4000));
+        expect(
+          body['text'],
+          containsPair('verbosity', 'medium'),
+        );
+        final input = body['input'] as List<dynamic>;
+        final firstInput = input.single as Map<String, dynamic>;
+        final content = firstInput['content'] as List<dynamic>;
+        expect(
+          (content.single as Map<String, dynamic>)['text'],
+          equals('Explain fractions.'),
+        );
+        return http.Response(
+          'data: {"type":"response.output_text.delta","delta":"OAuth"}\r\n\r\n'
+          'data: {"type":"response.output_text.delta","delta":" result"}\r\n\r\n'
+          'data: {"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"output_text","text":"OAuth result"}]}]}}\r\n\r\n'
+          'data: [DONE]\r\n\r\n',
+          200,
+          headers: <String, String>{
+            'content-type': 'text/event-stream',
+          },
+        );
+      }),
+    );
+
+    final chunks = <String>[];
+    final handle = service.startStreamingCall(
+      promptName: 'learn',
+      renderedPrompt: 'Explain fractions.',
+      onChunk: chunks.add,
+    );
+
+    final result = await handle.future;
+
+    expect(chunks, equals(<String>['OAuth', ' result']));
+    expect(result.responseText, equals('OAuth result'));
     expect(logRepository.statuses, equals(<String>['ok']));
   });
 }

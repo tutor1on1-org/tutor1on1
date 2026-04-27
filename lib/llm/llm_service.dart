@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import '../services/llm_call_repository.dart';
 import '../services/llm_log_repository.dart';
+import '../services/openai_codex_oauth_service.dart';
 import '../services/secure_storage_service.dart';
 import '../services/settings_repository.dart';
 import '../services/transport_retry_policy.dart';
@@ -24,7 +25,10 @@ class LlmService {
     this._logRepository,
     this._validator, {
     http.Client Function()? clientFactory,
-  }) : _clientFactory = clientFactory ?? (() => http.Client());
+    OpenAiCodexOAuthService? codexOAuthService,
+  })  : _clientFactory = clientFactory ?? (() => http.Client()),
+        _codexOAuthService =
+            codexOAuthService ?? OpenAiCodexOAuthService(_secureStorage);
 
   final SettingsRepository _settingsRepository;
   final SecureStorageService _secureStorage;
@@ -32,6 +36,7 @@ class LlmService {
   final LlmLogRepository _logRepository;
   final SchemaValidator _validator;
   final http.Client Function() _clientFactory;
+  final OpenAiCodexOAuthService _codexOAuthService;
 
   LlmRequestHandle startCall({
     required String promptName,
@@ -161,10 +166,10 @@ class LlmService {
       );
     }
 
-    final apiKey = await _secureStorage.readApiKeyForBaseUrl(settings.baseUrl);
-    if ((apiKey ?? '').isEmpty) {
-      throw StateError('Missing API key. Set it in Settings.');
-    }
+    final credential = await _resolveCredential(
+      provider: provider,
+      baseUrl: settings.baseUrl,
+    );
 
     final stopwatch = Stopwatch()..start();
     try {
@@ -175,7 +180,7 @@ class LlmService {
         provider: provider,
         promptName: promptName,
         model: modelToUse,
-        apiKey: apiKey!,
+        credential: credential,
         renderedPrompt: renderedPrompt,
         schemaMap: schemaMap,
         timeoutSeconds: settings.timeoutSeconds,
@@ -370,10 +375,10 @@ class LlmService {
       );
     }
 
-    final apiKey = await _secureStorage.readApiKeyForBaseUrl(settings.baseUrl);
-    if ((apiKey ?? '').isEmpty) {
-      throw StateError('Missing API key. Set it in Settings.');
-    }
+    final credential = await _resolveCredential(
+      provider: provider,
+      baseUrl: settings.baseUrl,
+    );
 
     final stopwatch = Stopwatch()..start();
     try {
@@ -384,7 +389,7 @@ class LlmService {
         provider: provider,
         promptName: promptName,
         model: modelToUse,
-        apiKey: apiKey!,
+        credential: credential,
         renderedPrompt: renderedPrompt,
         schemaMap: schemaMap,
         timeoutSeconds: settings.timeoutSeconds,
@@ -540,6 +545,24 @@ class LlmService {
     );
   }
 
+  Future<_LlmCredential> _resolveCredential({
+    required LlmProvider provider,
+    required String baseUrl,
+  }) async {
+    if (provider.usesOpenAiCodexOAuth) {
+      final credentials = await _codexOAuthService.resolveValidCredentials();
+      return _LlmCredential(
+        accessToken: credentials.accessToken,
+        codexAccountId: credentials.accountId,
+      );
+    }
+    final apiKey = await _secureStorage.readApiKeyForBaseUrl(baseUrl);
+    if ((apiKey ?? '').trim().isEmpty) {
+      throw StateError('Missing API key. Set it in Settings.');
+    }
+    return _LlmCredential(accessToken: apiKey!.trim());
+  }
+
   Future<LlmPreparedResponse> _postChatCompletion({
     required http.Client client,
     required String baseUrl,
@@ -547,13 +570,29 @@ class LlmService {
     required String promptName,
     required String model,
     required String reasoningEffort,
-    required String apiKey,
+    required _LlmCredential credential,
     required String renderedPrompt,
     required Map<String, dynamic>? schemaMap,
     required int timeoutSeconds,
     required int maxTokens,
     required bool Function() isCancelled,
   }) async {
+    if (provider.apiFormat == LlmApiFormat.openAiCodexResponses) {
+      return _postOpenAiCodexResponsesStream(
+        reasoningEffort: reasoningEffort,
+        client: client,
+        baseUrl: baseUrl,
+        provider: provider,
+        promptName: promptName,
+        model: model,
+        credential: credential,
+        renderedPrompt: renderedPrompt,
+        schemaMap: schemaMap,
+        timeoutSeconds: timeoutSeconds,
+        maxTokens: maxTokens,
+        isCancelled: isCancelled,
+      );
+    }
     final url = Uri.parse('${_normalizeBaseUrl(baseUrl)}${provider.chatPath}');
     final bodyMap = _buildRequestBody(
       provider: provider,
@@ -573,7 +612,10 @@ class LlmService {
       () => client
           .post(
             url,
-            headers: _buildHeaders(provider: provider, apiKey: apiKey),
+            headers: _buildHeaders(
+              provider: provider,
+              credential: credential,
+            ),
             body: body,
           )
           .timeout(Duration(seconds: timeoutSeconds)),
@@ -612,7 +654,7 @@ class LlmService {
     required String promptName,
     required String model,
     required String reasoningEffort,
-    required String apiKey,
+    required _LlmCredential credential,
     required String renderedPrompt,
     required Map<String, dynamic>? schemaMap,
     required int timeoutSeconds,
@@ -620,6 +662,23 @@ class LlmService {
     required bool Function() isCancelled,
     required void Function(String chunk) onChunk,
   }) async {
+    if (provider.apiFormat == LlmApiFormat.openAiCodexResponses) {
+      return _postOpenAiCodexResponsesStream(
+        reasoningEffort: reasoningEffort,
+        client: client,
+        baseUrl: baseUrl,
+        provider: provider,
+        promptName: promptName,
+        model: model,
+        credential: credential,
+        renderedPrompt: renderedPrompt,
+        schemaMap: schemaMap,
+        timeoutSeconds: timeoutSeconds,
+        maxTokens: maxTokens,
+        isCancelled: isCancelled,
+        onChunk: onChunk,
+      );
+    }
     if (provider.apiFormat == LlmApiFormat.anthropicMessages) {
       return _postAnthropicStream(
         client: client,
@@ -628,7 +687,7 @@ class LlmService {
         promptName: promptName,
         model: model,
         reasoningEffort: reasoningEffort,
-        apiKey: apiKey,
+        credential: credential,
         renderedPrompt: renderedPrompt,
         schemaMap: schemaMap,
         timeoutSeconds: timeoutSeconds,
@@ -654,7 +713,10 @@ class LlmService {
           .send(
             _buildJsonPostRequest(
               url: url,
-              headers: _buildHeaders(provider: provider, apiKey: apiKey),
+              headers: _buildHeaders(
+                provider: provider,
+                credential: credential,
+              ),
               bodyMap: bodyMap,
             ),
           )
@@ -746,6 +808,270 @@ class LlmService {
     );
   }
 
+  Future<LlmPreparedResponse> _postOpenAiCodexResponsesStream({
+    required http.Client client,
+    required String baseUrl,
+    required LlmProvider provider,
+    required String promptName,
+    required String model,
+    required String reasoningEffort,
+    required _LlmCredential credential,
+    required String renderedPrompt,
+    required Map<String, dynamic>? schemaMap,
+    required int timeoutSeconds,
+    required int maxTokens,
+    required bool Function() isCancelled,
+    void Function(String chunk)? onChunk,
+  }) async {
+    final url = Uri.parse('${_normalizeBaseUrl(baseUrl)}${provider.chatPath}');
+    final bodyMap = _buildOpenAiCodexResponsesBody(
+      provider: provider,
+      promptName: promptName,
+      model: model,
+      renderedPrompt: renderedPrompt,
+      schemaMap: schemaMap,
+      maxTokens: maxTokens,
+      reasoningEffort: reasoningEffort,
+    );
+    Future<http.StreamedResponse> send() {
+      return client
+          .send(
+            _buildJsonPostRequest(
+              url: url,
+              headers: _buildOpenAiCodexHeaders(credential),
+              bodyMap: bodyMap,
+            ),
+          )
+          .timeout(Duration(seconds: timeoutSeconds));
+    }
+
+    final response = await _sendStreamWithRetry(
+      send,
+      isCancelled: isCancelled,
+    );
+
+    if (isCancelled()) {
+      throw StateError('Request cancelled.');
+    }
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final body = await response.stream.bytesToString();
+      throw HttpException('HTTP ${response.statusCode}: $body');
+    }
+
+    return _readOpenAiCodexSse(
+      response: response,
+      provider: provider,
+      isCancelled: isCancelled,
+      onChunk: onChunk,
+    );
+  }
+
+  Map<String, dynamic> _buildOpenAiCodexResponsesBody({
+    required LlmProvider provider,
+    required String promptName,
+    required String model,
+    required String renderedPrompt,
+    required Map<String, dynamic>? schemaMap,
+    required int maxTokens,
+    required String reasoningEffort,
+  }) {
+    final bodyMap = <String, dynamic>{
+      'model': model,
+      'store': false,
+      'stream': true,
+      'text': <String, dynamic>{
+        'verbosity': 'medium',
+      },
+      'input': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'role': 'user',
+          'content': <Map<String, String>>[
+            <String, String>{
+              'type': 'input_text',
+              'text': renderedPrompt,
+            },
+          ],
+        },
+      ],
+      'max_output_tokens': maxTokens,
+    };
+    final normalizedEffort =
+        LlmReasoningSupport.normalizeEffort(reasoningEffort);
+    if (normalizedEffort != ReasoningEffort.none) {
+      bodyMap['reasoning'] = <String, dynamic>{
+        'effort': normalizedEffort,
+        'summary': 'auto',
+      };
+    }
+    if (_shouldUseOpenAiStructuredOutputs(
+      provider: provider,
+      baseUrl: OpenAiCodexOAuthService.baseUrl,
+      schemaMap: schemaMap,
+    )) {
+      final text = bodyMap['text'] as Map<String, dynamic>;
+      text['format'] = <String, dynamic>{
+        'type': 'json_schema',
+        'name': _buildStructuredOutputName(promptName),
+        'strict': true,
+        'schema': _stripSchemaMeta(schemaMap!),
+      };
+    }
+    return bodyMap;
+  }
+
+  Map<String, String> _buildOpenAiCodexHeaders(_LlmCredential credential) {
+    final accountId = credential.codexAccountId?.trim() ?? '';
+    if (accountId.isEmpty) {
+      throw StateError('ChatGPT OAuth token is missing account id.');
+    }
+    return <String, String>{
+      'Authorization': 'Bearer ${credential.accessToken}',
+      'chatgpt-account-id': accountId,
+      'originator': 'pi',
+      'OpenAI-Beta': 'responses=experimental',
+      'Accept': 'text/event-stream',
+      'Content-Type': 'application/json',
+    };
+  }
+
+  Future<LlmPreparedResponse> _readOpenAiCodexSse({
+    required http.StreamedResponse response,
+    required LlmProvider provider,
+    required bool Function() isCancelled,
+    void Function(String chunk)? onChunk,
+  }) async {
+    final responseBuffer = StringBuffer();
+    final reasoningBuffer = StringBuffer();
+    Map<String, dynamic>? finalPayload;
+    var pending = '';
+    final stream = response.stream.transform(utf8.decoder);
+    await for (final chunk in stream) {
+      if (isCancelled()) {
+        throw StateError('Request cancelled.');
+      }
+      pending += chunk.replaceAll('\r\n', '\n');
+      while (true) {
+        final eventBreak = pending.indexOf('\n\n');
+        if (eventBreak == -1) {
+          break;
+        }
+        final event = pending.substring(0, eventBreak);
+        pending = pending.substring(eventBreak + 2);
+        final data = _extractSseData(event);
+        if (data == null || data.isEmpty) {
+          continue;
+        }
+        if (data == '[DONE]') {
+          return _finalizeOpenAiCodexResponse(
+            provider: provider,
+            responseBuffer: responseBuffer,
+            reasoningBuffer: reasoningBuffer,
+            finalPayload: finalPayload,
+          );
+        }
+        final decoded = jsonDecode(data);
+        if (decoded is! Map<String, dynamic>) {
+          continue;
+        }
+        final type = (decoded['type'] as String?)?.trim() ?? '';
+        if (type == 'error') {
+          throw StateError(
+            'Codex error: ${decoded['message'] ?? jsonEncode(decoded)}',
+          );
+        }
+        if (type == 'response.failed') {
+          final responseObject = decoded['response'];
+          final message = responseObject is Map<String, dynamic>
+              ? responseObject['error']?.toString()
+              : null;
+          throw StateError(message ?? 'Codex response failed.');
+        }
+        if (type == 'response.output_text.delta') {
+          final delta = (decoded['delta'] as String?) ?? '';
+          if (delta.isNotEmpty) {
+            final normalized =
+                LlmReasoningSupport.appendJsonAwareFragmentAndReturnDelta(
+              responseBuffer,
+              delta,
+            );
+            if (normalized.isNotEmpty) {
+              onChunk?.call(normalized);
+            }
+          }
+          continue;
+        }
+        if (type == 'response.reasoning_summary_text.delta' ||
+            type == 'response.reasoning_text.delta') {
+          final delta = (decoded['delta'] as String?) ?? '';
+          LlmReasoningSupport.appendReasoningFragment(reasoningBuffer, delta);
+          continue;
+        }
+        if (type == 'response.completed' ||
+            type == 'response.done' ||
+            type == 'response.incomplete') {
+          final responseObject = decoded['response'];
+          if (responseObject is Map<String, dynamic>) {
+            finalPayload = responseObject;
+          }
+        }
+      }
+    }
+    return _finalizeOpenAiCodexResponse(
+      provider: provider,
+      responseBuffer: responseBuffer,
+      reasoningBuffer: reasoningBuffer,
+      finalPayload: finalPayload,
+    );
+  }
+
+  String? _extractSseData(String event) {
+    final lines = event.split('\n');
+    final dataLines = <String>[];
+    for (final line in lines) {
+      final trimmed = line.trimRight();
+      if (trimmed.startsWith('data:')) {
+        dataLines.add(trimmed.substring(5).trimLeft());
+      }
+    }
+    if (dataLines.isEmpty) {
+      return null;
+    }
+    return dataLines.join('\n').trim();
+  }
+
+  LlmPreparedResponse _finalizeOpenAiCodexResponse({
+    required LlmProvider provider,
+    required StringBuffer responseBuffer,
+    required StringBuffer reasoningBuffer,
+    required Map<String, dynamic>? finalPayload,
+  }) {
+    var responseText = responseBuffer.toString();
+    var reasoningText = reasoningBuffer.toString();
+    int? reasoningTokens;
+    if (finalPayload != null) {
+      final extracted = LlmReasoningSupport.extractResponse(
+        payload: finalPayload,
+        provider: provider,
+      );
+      if (responseText.trim().isEmpty) {
+        responseText = extracted.responseText;
+      }
+      if (reasoningText.trim().isEmpty) {
+        reasoningText = extracted.reasoningText ?? '';
+      }
+      reasoningTokens = extracted.reasoningTokens;
+    }
+    if (responseText.trim().isEmpty) {
+      throw StateError('LLM response missing content.');
+    }
+    return LlmPreparedResponse(
+      responseText: responseText,
+      reasoningText: reasoningText.trim().isEmpty ? null : reasoningText,
+      reasoningTokens: reasoningTokens,
+    );
+  }
+
   String _normalizeBaseUrl(String value) {
     var trimmed = value.trim();
     if (trimmed.endsWith('/')) {
@@ -811,11 +1137,11 @@ class LlmService {
 
   Map<String, String> _buildHeaders({
     required LlmProvider provider,
-    required String apiKey,
+    required _LlmCredential credential,
   }) {
     return <String, String>{
       'Content-Type': 'application/json',
-      provider.authHeader: '${provider.authPrefix}$apiKey',
+      provider.authHeader: '${provider.authPrefix}${credential.accessToken}',
       ...provider.extraHeaders,
     };
   }
@@ -838,7 +1164,7 @@ class LlmService {
     required String promptName,
     required String model,
     required String reasoningEffort,
-    required String apiKey,
+    required _LlmCredential credential,
     required String renderedPrompt,
     required Map<String, dynamic>? schemaMap,
     required int timeoutSeconds,
@@ -852,7 +1178,10 @@ class LlmService {
           .send(
             _buildJsonPostRequest(
               url: url,
-              headers: _buildHeaders(provider: provider, apiKey: apiKey),
+              headers: _buildHeaders(
+                provider: provider,
+                credential: credential,
+              ),
               bodyMap: _buildRequestBody(
                 provider: provider,
                 baseUrl: baseUrl,
@@ -1037,7 +1366,8 @@ class LlmService {
     if (schemaMap == null) {
       return false;
     }
-    if (provider.apiFormat != LlmApiFormat.openAiChatCompletions) {
+    if (provider.apiFormat != LlmApiFormat.openAiChatCompletions &&
+        provider.apiFormat != LlmApiFormat.openAiCodexResponses) {
       return false;
     }
     if (!provider.supportsStructuredOutputs) {
@@ -1061,4 +1391,14 @@ class LlmService {
     stripped.remove(r'$schema');
     return stripped;
   }
+}
+
+class _LlmCredential {
+  const _LlmCredential({
+    required this.accessToken,
+    this.codexAccountId,
+  });
+
+  final String accessToken;
+  final String? codexAccountId;
 }

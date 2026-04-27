@@ -58,6 +58,19 @@ void main() {
       expect(openAi!.supportsTts, isTrue);
       expect(openAi.supportsStt, isTrue);
 
+      final openAiCodex = LlmProviders.findById(providers, 'openai-codex');
+      expect(openAiCodex, isNotNull);
+      expect(
+        openAiCodex!.baseUrl,
+        equals('https://chatgpt.com/backend-api'),
+      );
+      expect(openAiCodex.authMode, equals(LlmAuthMode.openAiCodexOAuth));
+      expect(
+        openAiCodex.apiFormat,
+        equals(LlmApiFormat.openAiCodexResponses),
+      );
+      expect(openAiCodex.models, contains('gpt-5.5'));
+
       final siliconflow = LlmProviders.findById(providers, 'siliconflow');
       expect(siliconflow!.supportsTts, isTrue);
       expect(siliconflow.supportsStt, isTrue);

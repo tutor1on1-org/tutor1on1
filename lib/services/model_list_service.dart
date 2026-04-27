@@ -48,6 +48,13 @@ class ModelListService {
     required String baseUrl,
     required String apiKey,
   }) async {
+    if (provider.usesOpenAiCodexOAuth) {
+      return ModelListResult(
+        models: provider.models
+            .map((model) => ApiModelInfo(id: model))
+            .toList(growable: false),
+      );
+    }
     final normalized = _normalizeBaseUrl(baseUrl);
     final url = Uri.parse('$normalized/models');
     final headers = <String, String>{
