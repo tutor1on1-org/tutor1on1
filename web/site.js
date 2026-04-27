@@ -85,6 +85,7 @@
   document.addEventListener('DOMContentLoaded', () => {
     const languageSwitcher = document.querySelector('[data-language-switcher]')
     applyReleaseLinks()
+    applyReleaseMetadata()
     appendContactEmail()
 
     if (!languageSwitcher) {
@@ -353,6 +354,32 @@
 
     replaceVisibleText('Tutor1on1.apk', releaseConfig.assets.android)
     replaceVisibleText('Tutor1on1.zip', releaseConfig.assets.windows)
+  }
+
+  function applyReleaseMetadata() {
+    const downloadBaseUrl = String(releaseConfig.downloadBaseUrl || '').replace(
+      /\/+$/,
+      ''
+    )
+
+    document.querySelectorAll('[data-release-version]').forEach((node) => {
+      node.textContent = releaseConfig.appVersion
+    })
+
+    document.querySelectorAll('[data-release-tag]').forEach((node) => {
+      node.textContent = releaseConfig.releaseTag
+    })
+
+    document.querySelectorAll('[data-download-href]').forEach((link) => {
+      const assetKey = String(link.getAttribute('data-download-href') || '')
+      const assetName = releaseConfig.assets[assetKey]
+
+      if (!assetName) {
+        return
+      }
+
+      link.setAttribute('href', `${downloadBaseUrl}/${assetName}`)
+    })
   }
 
   function replaceVisibleText(searchValue, replaceValue) {

@@ -6,9 +6,9 @@
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta
     name="description"
-    content="Tutor1on1 install guide: choose Windows or Android and follow the platform-specific download and launch steps."
+    content="Tutor1on1 install guide: download the Windows ZIP or Android APK and follow the platform-specific launch steps."
   >
-  <meta content="#f5f0e7" name="theme-color">
+  <meta content="#f7f9fb" name="theme-color">
   <title>Install Tutor1on1</title>
   <link rel="apple-touch-icon" href="../icons/Icon-192.png">
   <link rel="icon" type="image/png" href="../favicon.png">
@@ -33,7 +33,7 @@
             <td><a class="nav-link nav-action" href="/help/">Help</a></td>
             <td>
               <select class="lang-select nav-action" aria-label="Language" data-language-switcher>
-                <option value="en">EN</option>
+                <option value="en">English</option>
                 <option value="zh">中文</option>
               </select>
             </td>
@@ -45,46 +45,65 @@
     <main class="page">
       <section class="hero hero-compact">
         <p class="eyebrow">Choose your platform</p>
-        <h1>Install Tutor1on1 the right way for your device.</h1>
+        <h1>Install Tutor1on1 on Windows or Android.</h1>
         <p class="lead">
-          Each platform has its own download format and launch flow. Open the
-          platform page below instead of guessing from the file name alone.
+          Download the current public build, then follow the short platform checklist. The release links are pulled from the same website release config used by publishing.
         </p>
       </section>
 
-      <section class="grid grid-two">
-        <article class="card">
-          <span class="kicker">Windows</span>
-          <h2>Portable ZIP build</h2>
-          <p>Download the ZIP, extract it to a normal folder, and run <code>tutor1on1.exe</code>.</p>
+      <section class="install-options">
+        <article class="download-card">
+          <div class="platform-header">
+            <div>
+              <p class="eyebrow">Windows</p>
+              <h2>Portable ZIP</h2>
+            </div>
+            <span class="muted" data-release-tag>v1.0.41</span>
+          </div>
+          <p>Use this when you want Tutor1on1 on a Windows desktop or laptop.</p>
+          <div class="download-meta">
+            <span>File: <code>Tutor1on1.zip</code></span>
+            <span>Launch: extract first, then run <code>tutor1on1.exe</code></span>
+          </div>
           <div class="actions">
-            <a class="button button-primary" href="/install/windows/">Windows steps</a>
+            <a class="button button-primary" data-download-href="windows" href="https://api.tutor1on1.org/downloads/Tutor1on1.zip">Download Windows ZIP</a>
+            <a class="button button-ghost" href="/install/windows/">View steps</a>
           </div>
         </article>
-        <article class="card">
-          <span class="kicker">Android</span>
-          <h2>APK download</h2>
-          <p>Download the APK, allow installation from the selected source, then open Tutor1on1 from the app drawer.</p>
+        <article class="download-card">
+          <div class="platform-header">
+            <div>
+              <p class="eyebrow">Android</p>
+              <h2>Direct APK</h2>
+            </div>
+            <span class="muted" data-release-tag>v1.0.41</span>
+          </div>
+          <p>Use this when you want Tutor1on1 on an Android phone or tablet.</p>
+          <div class="download-meta">
+            <span>File: <code>Tutor1on1.apk</code></span>
+            <span>Launch: install the APK, then open the app from the launcher</span>
+          </div>
           <div class="actions">
-            <a class="button button-primary" href="/install/android/">Android steps</a>
+            <a class="button button-primary" data-download-href="android" href="https://api.tutor1on1.org/downloads/Tutor1on1.apk">Download Android APK</a>
+            <a class="button button-ghost" href="/install/android/">View steps</a>
           </div>
         </article>
       </section>
 
       <section class="content-block">
-        <h2>Download host</h2>
-        <ul class="help-list">
-          <li>Website pages are served from <code>www.tutor1on1.org</code>.</li>
-          <li>Install files are served from <code>api.tutor1on1.org/downloads/</code>.</li>
-          <li>That split is intentional: the site and the downloadable artifacts live on different virtual hosts.</li>
-        </ul>
+        <h2>Before first use</h2>
+        <ol class="help-list">
+          <li>Open the app and choose your language if needed.</li>
+          <li>Open Settings and save the API configuration required for tutor features.</li>
+          <li>Log in, register as a teacher, or register as a student from the welcome page.</li>
+        </ol>
       </section>
     </main>
 
     <footer class="footer">
       <p>Tutor1on1 Install</p>
       <p><a class="footer-link" href="/">Home</a></p>
-      <p>Windows and Android install guides.</p>
+      <p>Windows ZIP and Android APK downloads.</p>
     </footer>
   </div>
 </body>

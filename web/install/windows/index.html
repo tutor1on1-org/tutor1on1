@@ -8,7 +8,7 @@
     name="description"
     content="Tutor1on1 for Windows: download the ZIP, extract it, and run tutor1on1.exe."
   >
-  <meta content="#f5f0e7" name="theme-color">
+  <meta content="#f7f9fb" name="theme-color">
   <title>Install Tutor1on1 on Windows</title>
   <link rel="apple-touch-icon" href="../../icons/Icon-192.png">
   <link rel="icon" type="image/png" href="../../favicon.png">
@@ -33,7 +33,7 @@
             <td><a class="nav-link nav-action" href="/install/">Install</a></td>
             <td>
               <select class="lang-select nav-action" aria-label="Language" data-language-switcher>
-                <option value="en">EN</option>
+                <option value="en">English</option>
                 <option value="zh">中文</option>
               </select>
             </td>
@@ -45,34 +45,50 @@
     <main class="page">
       <section class="hero hero-compact">
         <p class="eyebrow">Windows</p>
-        <h1>Download the ZIP, extract it, then run the app.</h1>
-        <p class="lead">
-          Tutor1on1 on Windows is currently distributed as a portable ZIP. There
-          is no separate installer.
-        </p>
-        <div class="actions">
-          <a class="button button-primary" href="https://api.tutor1on1.org/downloads/Tutor1on1.zip">
-            Download Windows ZIP
-          </a>
+        <div class="platform-header">
+          <div>
+            <h1>Download the ZIP, extract it, then run the app.</h1>
+            <p class="lead">
+              Tutor1on1 on Windows is distributed as a portable ZIP. Extract before launching so the app can access its bundled files.
+            </p>
+          </div>
+          <a class="button button-primary" data-download-href="windows" href="https://api.tutor1on1.org/downloads/Tutor1on1.zip">Download Windows ZIP</a>
         </div>
       </section>
 
       <section class="content-block">
         <h2>Install steps</h2>
-        <ol class="help-list">
-          <li>Download <code>Tutor1on1.zip</code>.</li>
-          <li>Extract the ZIP to a normal folder such as <code>Downloads\Tutor1on1</code> or <code>C:\Apps\Tutor1on1</code>.</li>
-          <li>Open the extracted folder and run <code>tutor1on1.exe</code>.</li>
-          <li>If Windows SmartScreen appears, review the prompt and continue only if you trust the build source.</li>
-        </ol>
+        <div class="steps">
+          <article class="step">
+            <span class="step-number">1</span>
+            <div>
+              <h3>Download</h3>
+              <p>Save <code>Tutor1on1.zip</code> from the download button above.</p>
+            </div>
+          </article>
+          <article class="step">
+            <span class="step-number">2</span>
+            <div>
+              <h3>Extract</h3>
+              <p>Extract the ZIP to a normal folder such as <code>Downloads\Tutor1on1</code> or <code>C:\Apps\Tutor1on1</code>.</p>
+            </div>
+          </article>
+          <article class="step">
+            <span class="step-number">3</span>
+            <div>
+              <h3>Run</h3>
+              <p>Open the extracted folder and launch <code>tutor1on1.exe</code>.</p>
+            </div>
+          </article>
+        </div>
       </section>
 
       <section class="content-block">
-        <h2>Run later</h2>
+        <h2>Notes</h2>
         <ul class="help-list">
-          <li>You can run the app again by opening <code>tutor1on1.exe</code> from the extracted folder.</li>
-          <li>If you want a shortcut, create one manually after extraction.</li>
-          <li>Do not run it directly from inside the ZIP viewer. Extract first.</li>
+          <li>If Windows SmartScreen appears, review the prompt and continue only if you trust the build source.</li>
+          <li>Do not run Tutor1on1 directly from inside the ZIP viewer. Extract first.</li>
+          <li>Create a shortcut manually after extraction if you want one.</li>
         </ul>
       </section>
     </main>

@@ -6,9 +6,9 @@
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta
     name="description"
-    content="Tutor1on1 Android 安装说明：下载 APK，允许当前来源安装，然后打开应用。"
+    content="Tutor1on1 Android 安装：下载 APK，允许当前来源安装，然后打开应用。"
   >
-  <meta content="#f5f0e7" name="theme-color">
+  <meta content="#f7f9fb" name="theme-color">
   <title>在 Android 上安装 Tutor1on1</title>
   <link rel="apple-touch-icon" href="../../../icons/Icon-192.png">
   <link rel="icon" type="image/png" href="../../../favicon.png">
@@ -26,14 +26,14 @@
           <span>Android 安装</span>
         </span>
       </a>
-      <nav class="topnav" aria-label="Navigation and language">
+      <nav class="topnav" aria-label="导航和语言">
         <table class="topnav-table" role="presentation">
           <tr>
             <td><a class="nav-link nav-action" href="/zh/">首页</a></td>
             <td><a class="nav-link nav-action" href="/zh/install/">安装</a></td>
             <td>
               <select class="lang-select nav-action" aria-label="语言" data-language-switcher>
-                <option value="en">EN</option>
+                <option value="en">English</option>
                 <option value="zh">中文</option>
               </select>
             </td>
@@ -45,32 +45,49 @@
     <main class="page">
       <section class="hero hero-compact">
         <p class="eyebrow">Android</p>
-        <h1>安装 APK，然后像普通应用一样打开 Tutor1on1。</h1>
-        <p class="lead">
-          Android 版目前以 APK 直链形式发布，采用手动安装流程。
-        </p>
-        <div class="actions">
-          <a class="button button-primary" href="https://api.tutor1on1.org/downloads/Tutor1on1.apk">
-            下载 Android APK
-          </a>
+        <div class="platform-header">
+          <div>
+            <h1>安装 APK，然后从应用列表打开 Tutor1on1。</h1>
+            <p class="lead">
+              Android 版 Tutor1on1 通过 APK 直接下载，需要手动安装。
+            </p>
+          </div>
+          <a class="button button-primary" data-download-href="android" href="https://api.tutor1on1.org/downloads/Tutor1on1.apk">下载 Android APK</a>
         </div>
       </section>
 
       <section class="content-block">
         <h2>安装步骤</h2>
-        <ol class="help-list">
-          <li>下载 <code>Tutor1on1.apk</code> 到手机或平板。</li>
-          <li>从浏览器下载列表或文件管理器中打开 APK。</li>
-          <li>如果 Android 阻止安装，临时允许该来源安装应用。</li>
-          <li>安装完成后，从确认页或应用抽屉中打开 Tutor1on1。</li>
-        </ol>
+        <div class="steps">
+          <article class="step">
+            <span class="step-number">1</span>
+            <div>
+              <h3>下载</h3>
+              <p>把 <code>Tutor1on1.apk</code> 保存到手机或平板。</p>
+            </div>
+          </article>
+          <article class="step">
+            <span class="step-number">2</span>
+            <div>
+              <h3>允许安装</h3>
+              <p>从浏览器下载列表或文件管理器打开 APK。如果 Android 拦截安装，请允许当前来源安装。</p>
+            </div>
+          </article>
+          <article class="step">
+            <span class="step-number">3</span>
+            <div>
+              <h3>启动</h3>
+              <p>安装完成后，从确认页面或应用列表打开 Tutor1on1。</p>
+            </div>
+          </article>
+        </div>
       </section>
 
       <section class="content-block">
-        <h2>以后如何运行</h2>
+        <h2>注意</h2>
         <ul class="help-list">
-          <li>安装完成后，像普通 Android 应用一样从启动器打开 Tutor1on1。</li>
-          <li>安装完成后，APK 文件本身不再是正常启动所必需的。</li>
+          <li>APK 文件只用于安装。安装完成后，正常从应用图标启动。</li>
+          <li>如果安装被拦截，请确认允许的是刚才下载 APK 的浏览器或文件管理器。</li>
         </ul>
       </section>
     </main>

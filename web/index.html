@@ -6,17 +6,17 @@
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta
     name="description"
-    content="Tutor1on1 is a Windows and Android learning app where teachers publish structured courses and students study through guided tutor sessions, enrollment workflows, and private progress sync."
+    content="Tutor1on1 is a Windows and Android learning app for teacher-led course publishing, student enrollment, guided tutor sessions, and private progress sync."
   >
   <meta
     name="keywords"
     content="Tutor1on1, Windows app, Android app, structured courses, AI tutoring, teacher workflow, student review"
   >
-  <meta content="#f4efe6" name="theme-color">
+  <meta content="#f7f9fb" name="theme-color">
   <meta property="og:title" content="Tutor1on1">
   <meta
     property="og:description"
-    content="Structured course publishing, guided tutor sessions, and progress sync across Windows and Android."
+    content="Teacher-led course publishing, student enrollment, guided tutor sessions, and private progress sync."
   >
   <meta property="og:type" content="website">
 
@@ -45,7 +45,7 @@
             <td><a class="nav-link nav-action" href="/install/">Install</a></td>
             <td>
               <select class="lang-select nav-action" aria-label="Language" data-language-switcher>
-                <option value="en">EN</option>
+                <option value="en">English</option>
                 <option value="zh">中文</option>
               </select>
             </td>
@@ -55,76 +55,144 @@
     </header>
 
     <main>
-      <section class="hero">
-        <p class="eyebrow">Structured tutoring for real courses</p>
-        <h1>Teach with a course. Learn with a guided session.</h1>
-        <p class="lead">
-          Tutor1on1 connects course publishing, enrollment, guided tutoring, and
-          private progress sync in one product for Windows and Android.
-        </p>
-        <div class="actions">
-          <a class="button button-primary" href="/install/">Open install guide</a>
-          <a class="button button-secondary" href="#workflow">See workflow</a>
+      <section class="hero hero-product">
+        <div class="hero-media" aria-hidden="true">
+          <img src="/images/product-workspace.png" alt="">
+        </div>
+        <div class="hero-inner">
+          <p class="eyebrow">Structured tutoring for real courses</p>
+          <h1>Tutor1on1</h1>
+          <p class="lead">
+            Publish teacher-built courses, approve student enrollment, and run guided learning sessions with private progress sync on Windows and Android.
+          </p>
+          <div class="actions">
+            <a class="button button-primary" data-download-href="windows" href="https://api.tutor1on1.org/downloads/Tutor1on1.zip">Download Windows</a>
+            <a class="button button-light" data-download-href="android" href="https://api.tutor1on1.org/downloads/Tutor1on1.apk">Download Android</a>
+            <a class="button button-light" href="/install/">Install guide</a>
+          </div>
+          <div class="proof-strip" aria-label="Product status">
+            <div class="proof-item">
+              <strong>v<span data-release-version>1.0.41</span></strong>
+              <span>Current public build</span>
+            </div>
+            <div class="proof-item">
+              <strong>2 platforms</strong>
+              <span>Windows and Android</span>
+            </div>
+            <div class="proof-item">
+              <strong>Teacher + student</strong>
+              <span>One shared workflow</span>
+            </div>
+          </div>
         </div>
       </section>
 
-      <section class="grid grid-three" id="workflow">
-        <article class="card">
-          <span class="kicker">01</span>
-          <h2>Teacher workflow</h2>
-          <p>
-            Prepare local course versions, upload validated bundles, approve
-            enrollments, and monitor progress.
-          </p>
+      <section class="metric-grid band" aria-label="Key capabilities">
+        <article class="metric">
+          <strong>Publish</strong>
+          <span>Upload validated course bundles and control marketplace presentation.</span>
         </article>
-        <article class="card">
-          <span class="kicker">02</span>
-          <h2>Student workflow</h2>
-          <p>
-            Browse a catalog, request enrollment, download approved content, and
-            move through learn and review sessions.
-          </p>
+        <article class="metric">
+          <strong>Enroll</strong>
+          <span>Students request access; teachers approve before download.</span>
         </article>
-        <article class="card">
-          <span class="kicker">03</span>
-          <h2>Private continuity</h2>
-          <p>
-            Keep session payloads encrypted while still supporting multi-device
-            sync and durable progress.
-          </p>
+        <article class="metric">
+          <strong>Study</strong>
+          <span>Learn, review, and summarize inside guided tutor sessions.</span>
+        </article>
+        <article class="metric">
+          <strong>Sync</strong>
+          <span>Keep sessions and progress continuous across devices.</span>
         </article>
       </section>
 
-      <section class="grid grid-two section-block">
-        <article class="panel panel-warm">
+      <section class="screenshot-band" id="workflow">
+        <div>
+          <p class="eyebrow">Product workflow</p>
+          <h2>Built around the course lifecycle, not a generic chat box.</h2>
+          <div class="feature-list">
+            <div class="feature-row">
+              <span class="feature-icon">1</span>
+              <div>
+                <h3>Teachers publish structured material</h3>
+                <p>Course bundles keep lectures, questions, review prompts, and version metadata together.</p>
+              </div>
+            </div>
+            <div class="feature-row">
+              <span class="feature-icon">2</span>
+              <div>
+                <h3>Students request enrollment</h3>
+                <p>The marketplace handles discovery, approval, and approved bundle downloads.</p>
+              </div>
+            </div>
+            <div class="feature-row">
+              <span class="feature-icon">3</span>
+              <div>
+                <h3>Sessions preserve progress</h3>
+                <p>Guided tutor work produces durable progress that can sync back to the account.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figure class="product-shot">
+          <img src="/images/product-workspace.png" alt="Tutor1on1 teacher workspace and student tutor session preview">
+        </figure>
+      </section>
+
+      <section class="role-strip section-block">
+        <article class="role-card teacher">
           <p class="eyebrow">For teachers</p>
-          <h2>Publish once, teach repeatedly.</h2>
-          <ul>
-            <li>Structured course bundles</li>
-            <li>Validated uploads</li>
-            <li>Enrollment approval flow</li>
-            <li>Course and progress management</li>
-          </ul>
+          <h2>Publish once, manage continuously.</h2>
+          <p>Prepare local course versions, upload validated bundles, approve enrollments, and review student progress.</p>
         </article>
-        <article class="panel panel-cool">
+        <article class="role-card student">
           <p class="eyebrow">For students</p>
-          <h2>Move from exposure to review with less friction.</h2>
-          <ul>
-            <li>Guided learn and review sessions</li>
-            <li>Local-first Windows and Android usage</li>
-            <li>Downloadable approved bundles</li>
-            <li>Cross-device continuity when sync is enabled</li>
-          </ul>
+          <h2>Study from approved course content.</h2>
+          <p>Browse the catalog, request enrollment, download approved bundles, and continue learn or review sessions.</p>
+        </article>
+        <article class="role-card sync">
+          <p class="eyebrow">For continuity</p>
+          <h2>Keep the learning state connected.</h2>
+          <p>Sync enrollment state, session history, and progress while keeping account workflows clear.</p>
+        </article>
+      </section>
+
+      <section class="install-options" id="download">
+        <article class="download-card">
+          <p class="eyebrow">Windows</p>
+          <h2>Portable ZIP</h2>
+          <p>Download, extract, then run <code>tutor1on1.exe</code>. No separate installer is required.</p>
+          <div class="download-meta">
+            <span>Current version: <strong data-release-tag>v1.0.41</strong></span>
+            <span>File: <code>Tutor1on1.zip</code></span>
+          </div>
+          <div class="actions">
+            <a class="button button-primary" data-download-href="windows" href="https://api.tutor1on1.org/downloads/Tutor1on1.zip">Download Windows ZIP</a>
+            <a class="button button-ghost" href="/install/windows/">Windows steps</a>
+          </div>
+        </article>
+        <article class="download-card">
+          <p class="eyebrow">Android</p>
+          <h2>Direct APK</h2>
+          <p>Download the APK, allow installation from the selected source, then open Tutor1on1.</p>
+          <div class="download-meta">
+            <span>Current version: <strong data-release-tag>v1.0.41</strong></span>
+            <span>File: <code>Tutor1on1.apk</code></span>
+          </div>
+          <div class="actions">
+            <a class="button button-primary" data-download-href="android" href="https://api.tutor1on1.org/downloads/Tutor1on1.apk">Download Android APK</a>
+            <a class="button button-ghost" href="/install/android/">Android steps</a>
+          </div>
         </article>
       </section>
 
       <section class="cta">
         <div class="cta-card">
           <div>
-            <p class="eyebrow">Choose your platform</p>
-            <h2>Install Tutor1on1 on Windows or Android.</h2>
+            <p class="eyebrow">Need help after install?</p>
+            <h2>Use the role-based quick start.</h2>
           </div>
-          <a class="button button-primary" href="/install/">Open install guide</a>
+          <a class="button button-primary" href="/help/">Open help</a>
         </div>
       </section>
     </main>

@@ -32,3 +32,4 @@
 - Exit and logout final sync must stay on the same `AppQuitFlow._runFinalSync` path, and forced final sync must wait for any active background sync before uploading local session artifacts.
 - Marketplace course descriptions are live course metadata: update `courses.description` through a teacher-owned metadata endpoint and refresh course lists; catalog marketplace cards/search already consume `description`.
 - API model lists must have one local source of truth: successful `Test API key` calls cache `/models` by normalized `baseUrl + apiKeyHash`, and all settings/session model pickers should read that cache before falling back to static provider defaults.
+- Public website redesigns should make the product visible in the first viewport, keep direct Windows/Android downloads prominent, and derive release labels/download links from `/site.js` release config rather than hard-coding per page.

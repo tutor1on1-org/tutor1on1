@@ -6,9 +6,9 @@
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta
     name="description"
-    content="Tutor1on1 help page: learn how teachers publish courses, how students enroll and study, and how Windows and Android sync workflows work."
+    content="Tutor1on1 help page: role-based quick start for teachers, students, marketplace enrollment, guided sessions, and sync."
   >
-  <meta content="#f5f0e7" name="theme-color">
+  <meta content="#f7f9fb" name="theme-color">
   <title>Tutor1on1 Help</title>
   <link rel="apple-touch-icon" href="../icons/Icon-192.png">
   <link rel="icon" type="image/png" href="../favicon.png">
@@ -33,7 +33,7 @@
             <td><a class="nav-link nav-action" href="/install/">Install</a></td>
             <td>
               <select class="lang-select nav-action" aria-label="Language" data-language-switcher>
-                <option value="en">EN</option>
+                <option value="en">English</option>
                 <option value="zh">中文</option>
               </select>
             </td>
@@ -44,105 +44,96 @@
 
     <main class="page">
       <section class="hero hero-compact">
-        <p class="eyebrow">How to use Tutor1on1</p>
-        <h1>Quick help for teachers and students.</h1>
+        <p class="eyebrow">Quick start</p>
+        <h1>Use Tutor1on1 by role.</h1>
         <p class="lead">
-          Tutor1on1 is available on Windows and Android. Teachers publish structured
-          courses. Students enroll, download approved content, and study through
-          guided sessions.
+          Teachers publish and manage courses. Students request enrollment, download approved content, and study through guided sessions.
         </p>
+        <div class="actions">
+          <a class="button button-primary" href="/install/">Install first</a>
+          <a class="button button-ghost" href="#teacher">Teacher flow</a>
+          <a class="button button-ghost" href="#student">Student flow</a>
+        </div>
       </section>
 
-      <section class="content-block">
-        <h2>1. First launch</h2>
-        <ol class="help-list">
-          <li>Open the install guide and choose Windows or Android.</li>
-          <li>Choose a language if needed.</li>
-          <li>Open Settings and configure the required API keys, then save them before you start using tutor features.</li>
-          <li>Use the tabs on the welcome page to log in, register as a teacher, or register as a student.</li>
-          <li>Teacher registration asks for profile fields and subject labels. Student registration is simpler.</li>
-        </ol>
-      </section>
-
-      <section class="content-block">
-        <h2>Marketplace and courses</h2>
-        <ul class="help-list">
-          <li>The marketplace entry is the small icon near the top-right corner of the app.</li>
-          <li>Teachers use it to work with remote course publishing and related marketplace flows.</li>
-          <li>Students use it to browse courses, request enrollment, and start the download flow after approval.</li>
-        </ul>
-      </section>
-
-      <section class="grid grid-two section-block">
-        <article class="panel panel-warm">
-          <p class="eyebrow">Teacher quick start</p>
+      <section class="role-strip section-block">
+        <article class="role-card teacher" id="teacher">
+          <p class="eyebrow">Teacher flow</p>
           <h2>Publish and manage courses.</h2>
           <ol class="help-list">
-            <li>Log in as a teacher.</li>
+            <li>Log in as a teacher or register a teacher account.</li>
             <li>Create or load a local course version.</li>
             <li>Upload the validated bundle to the marketplace.</li>
-            <li>Approve enrollment requests from students.</li>
+            <li>Approve student enrollment requests.</li>
             <li>Review student progress and synced sessions from the teacher home page.</li>
           </ol>
         </article>
-        <article class="panel panel-cool">
-          <p class="eyebrow">Student quick start</p>
+        <article class="role-card student" id="student">
+          <p class="eyebrow">Student flow</p>
           <h2>Enroll and study.</h2>
           <ol class="help-list">
-            <li>Log in as a student.</li>
-            <li>Browse the marketplace and request enrollment in a course.</li>
+            <li>Log in as a student or register a student account.</li>
+            <li>Open the marketplace and request enrollment in a course.</li>
             <li>Wait for teacher approval.</li>
             <li>Download the approved course bundle.</li>
-            <li>Open the course and start a learning session.</li>
+            <li>Open the course and start a learn or review session.</li>
           </ol>
         </article>
       </section>
 
       <section class="content-block">
-        <h2>2. Study session modes</h2>
-        <div class="grid grid-three">
-          <article class="card">
-            <span class="kicker">Learn</span>
-            <p>Use Learn to work through new material with the tutor.</p>
+        <h2>First launch checklist</h2>
+        <div class="steps">
+          <article class="step">
+            <span class="step-number">1</span>
+            <div>
+              <h3>Install</h3>
+              <p>Choose Windows or Android from the install page and launch the app.</p>
+            </div>
           </article>
-          <article class="card">
-            <span class="kicker">Review</span>
-            <p>Use Review to answer questions and strengthen recall on existing knowledge points.</p>
+          <article class="step">
+            <span class="step-number">2</span>
+            <div>
+              <h3>Configure</h3>
+              <p>Open Settings, add the API configuration required for tutor features, and save it.</p>
+            </div>
           </article>
-          <article class="card">
-            <span class="kicker">Summary</span>
-            <p>Use Summary when you want the session to update the current mastery outcome for that topic.</p>
+          <article class="step">
+            <span class="step-number">3</span>
+            <div>
+              <h3>Sign in</h3>
+              <p>Use the welcome page tabs to log in, register as a teacher, or register as a student.</p>
+            </div>
           </article>
         </div>
       </section>
 
-      <section class="content-block">
-        <h2>3. Sync and continuity</h2>
-        <ul class="help-list">
-          <li>Teacher and student home pages run sync in the background when the account is linked to the server.</li>
-          <li>Enrollment state, sessions, and progress can move across devices.</li>
-          <li>There is also a force-download option on the student side when you need to refresh from the server copy.</li>
-        </ul>
+      <section class="grid grid-three section-block">
+        <article class="card">
+          <span class="kicker">Marketplace</span>
+          <h2>Course discovery</h2>
+          <p>Teachers publish course listings. Students browse, request enrollment, and download after approval.</p>
+        </article>
+        <article class="card">
+          <span class="kicker">Sessions</span>
+          <h2>Learn, review, summarize</h2>
+          <p>Use Learn for new material, Review for recall practice, and Summary when the session should update mastery.</p>
+        </article>
+        <article class="card">
+          <span class="kicker">Sync</span>
+          <h2>Continuity</h2>
+          <p>Teacher and student home pages sync account-linked enrollment, sessions, and progress in the background.</p>
+        </article>
       </section>
 
       <section class="content-block">
-        <h2>4. Common problems</h2>
+        <h2>Common problems</h2>
         <ul class="help-list">
-          <li>If login or course loading fails, first check that the app can reach `api.tutor1on1.org`.</li>
-          <li>If a student cannot enter a course, confirm that enrollment was approved and the bundle was downloaded successfully.</li>
+          <li>If login or course loading fails, check that the app can reach <code>api.tutor1on1.org</code>.</li>
+          <li>If a student cannot enter a course, confirm that enrollment was approved and the bundle was downloaded.</li>
           <li>If progress looks stale across devices, wait for sync to finish or run a manual refresh.</li>
           <li>If a session is interrupted, reopen the same course and continue the existing session.</li>
         </ul>
-      </section>
-
-      <section class="cta">
-        <div class="cta-card">
-          <div>
-            <p class="eyebrow">Need the app first</p>
-            <h2>Open the platform install guide.</h2>
-          </div>
-          <a class="button button-primary" href="/install/">Install Tutor1on1</a>
-        </div>
       </section>
     </main>
 

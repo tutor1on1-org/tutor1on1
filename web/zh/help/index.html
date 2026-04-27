@@ -6,9 +6,9 @@
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta
     name="description"
-    content="Tutor1on1 帮助页面：老师如何发布课程，学生如何报名学习，以及 Windows 与 Android 上的同步如何工作。"
+    content="Tutor1on1 帮助页面：按老师和学生角色说明课程发布、报名、引导式会话与同步。"
   >
-  <meta content="#f5f0e7" name="theme-color">
+  <meta content="#f7f9fb" name="theme-color">
   <title>Tutor1on1 帮助</title>
   <link rel="apple-touch-icon" href="../../icons/Icon-192.png">
   <link rel="icon" type="image/png" href="../../favicon.png">
@@ -26,14 +26,14 @@
           <span>帮助</span>
         </span>
       </a>
-      <nav class="topnav" aria-label="Navigation and language">
+      <nav class="topnav" aria-label="导航和语言">
         <table class="topnav-table" role="presentation">
           <tr>
             <td><a class="nav-link nav-action" href="/zh/">首页</a></td>
             <td><a class="nav-link nav-action" href="/zh/install/">安装</a></td>
             <td>
               <select class="lang-select nav-action" aria-label="语言" data-language-switcher>
-                <option value="en">EN</option>
+                <option value="en">English</option>
                 <option value="zh">中文</option>
               </select>
             </td>
@@ -44,103 +44,96 @@
 
     <main class="page">
       <section class="hero hero-compact">
-        <p class="eyebrow">如何使用 Tutor1on1</p>
-        <h1>给老师和学生的快速帮助页。</h1>
+        <p class="eyebrow">快速开始</p>
+        <h1>按角色使用 Tutor1on1。</h1>
         <p class="lead">
-          Tutor1on1 提供 Windows 与 Android 版本。老师发布结构化课程，学生报名、下载已批准内容，并通过引导式会话学习。
+          老师发布并管理课程；学生申请报名、下载已批准内容，并通过引导式会话学习。
         </p>
+        <div class="actions">
+          <a class="button button-primary" href="/zh/install/">先安装</a>
+          <a class="button button-ghost" href="#teacher">老师流程</a>
+          <a class="button button-ghost" href="#student">学生流程</a>
+        </div>
       </section>
 
-      <section class="content-block">
-        <h2>1. 首次打开</h2>
-        <ol class="help-list">
-          <li>先打开安装指南，再选择 Windows 或 Android。</li>
-          <li>如有需要先切换语言。</li>
-          <li>先打开设置页，填写需要的 API key，并点击保存，然后再开始使用 tutor 相关功能。</li>
-          <li>在欢迎页使用标签页进行登录、老师注册或学生注册。</li>
-          <li>老师注册会填写资料并选择学科标签，学生注册流程更简单。</li>
-        </ol>
-      </section>
-
-      <section class="content-block">
-        <h2>Marketplace 与课程</h2>
-        <ul class="help-list">
-          <li>Marketplace 入口是应用右上角附近的那个小图标。</li>
-          <li>老师可以在那里处理远端课程发布和相关 marketplace 流程。</li>
-          <li>学生可以在那里浏览课程、申请报名，并在批准后开始下载流程。</li>
-        </ul>
-      </section>
-
-      <section class="grid grid-two section-block">
-        <article class="panel panel-warm">
-          <p class="eyebrow">老师快速开始</p>
+      <section class="role-strip section-block">
+        <article class="role-card teacher" id="teacher">
+          <p class="eyebrow">老师流程</p>
           <h2>发布并管理课程。</h2>
           <ol class="help-list">
-            <li>以老师身份登录。</li>
+            <li>以老师身份登录，或注册老师账号。</li>
             <li>创建或加载本地课程版本。</li>
             <li>将已校验的 bundle 上传到 marketplace。</li>
             <li>审批学生报名请求。</li>
             <li>在老师主页查看学生进度和同步过来的会话。</li>
           </ol>
         </article>
-        <article class="panel panel-cool">
-          <p class="eyebrow">学生快速开始</p>
+        <article class="role-card student" id="student">
+          <p class="eyebrow">学生流程</p>
           <h2>报名并开始学习。</h2>
           <ol class="help-list">
-            <li>以学生身份登录。</li>
-            <li>浏览 marketplace 并申请课程报名。</li>
+            <li>以学生身份登录，或注册学生账号。</li>
+            <li>打开 marketplace，申请报名课程。</li>
             <li>等待老师批准。</li>
             <li>下载已批准的课程 bundle。</li>
-            <li>打开课程并开始学习会话。</li>
+            <li>打开课程，开始 Learn 或 Review 会话。</li>
           </ol>
         </article>
       </section>
 
       <section class="content-block">
-        <h2>2. 学习会话模式</h2>
-        <div class="grid grid-three">
-          <article class="card">
-            <span class="kicker">Learn</span>
-            <p>Learn 用于学习新内容，由 tutor 带着你走完整个知识点。</p>
+        <h2>首次打开检查项</h2>
+        <div class="steps">
+          <article class="step">
+            <span class="step-number">1</span>
+            <div>
+              <h3>安装</h3>
+              <p>在安装页面选择 Windows 或 Android，然后启动应用。</p>
+            </div>
           </article>
-          <article class="card">
-            <span class="kicker">Review</span>
-            <p>Review 用于做题和回忆，强化已经接触过的知识点。</p>
+          <article class="step">
+            <span class="step-number">2</span>
+            <div>
+              <h3>配置</h3>
+              <p>打开设置页，填写 tutor 功能需要的 API 配置，并点击保存。</p>
+            </div>
           </article>
-          <article class="card">
-            <span class="kicker">Summary</span>
-            <p>Summary 用于总结本次会话，并更新当前知识点的掌握结果。</p>
+          <article class="step">
+            <span class="step-number">3</span>
+            <div>
+              <h3>登录</h3>
+              <p>在欢迎页使用标签页登录，或注册老师/学生账号。</p>
+            </div>
           </article>
         </div>
       </section>
 
-      <section class="content-block">
-        <h2>3. 同步与连续性</h2>
-        <ul class="help-list">
-          <li>当账号连接到服务器时，老师主页和学生主页会在后台自动同步。</li>
-          <li>报名状态、会话和进度可以在多设备之间延续。</li>
-          <li>学生端还提供强制从服务器拉取的选项，用于刷新服务器副本。</li>
-        </ul>
+      <section class="grid grid-three section-block">
+        <article class="card">
+          <span class="kicker">Marketplace</span>
+          <h2>课程发现</h2>
+          <p>老师发布课程展示；学生浏览课程、申请报名，并在批准后下载。</p>
+        </article>
+        <article class="card">
+          <span class="kicker">Sessions</span>
+          <h2>学习、复习、总结</h2>
+          <p>Learn 用于新内容，Review 用于回忆练习，Summary 用于更新掌握结果。</p>
+        </article>
+        <article class="card">
+          <span class="kicker">Sync</span>
+          <h2>连续学习</h2>
+          <p>老师和学生主页会同步已连接账号的报名、会话和进度。</p>
+        </article>
       </section>
 
       <section class="content-block">
-        <h2>4. 常见问题</h2>
+        <h2>常见问题</h2>
         <ul class="help-list">
-          <li>如果登录或课程加载失败，先确认应用能连到 `api.tutor1on1.org`。</li>
-          <li>如果学生无法进入课程，先检查报名是否已批准，以及课程 bundle 是否下载成功。</li>
+          <li>如果登录或课程加载失败，先确认应用能连到 <code>api.tutor1on1.org</code>。</li>
+          <li>如果学生无法进入课程，先确认报名已批准，并且 bundle 已下载。</li>
           <li>如果多设备进度不同步，等待同步完成，或手动刷新一次。</li>
           <li>如果学习会话中断，重新打开同一门课程并继续已有会话。</li>
         </ul>
-      </section>
-
-      <section class="cta">
-        <div class="cta-card">
-          <div>
-            <p class="eyebrow">如果你还没安装</p>
-            <h2>先打开平台安装指南。</h2>
-          </div>
-          <a class="button button-primary" href="/zh/install/">安装 Tutor1on1</a>
-        </div>
       </section>
     </main>
 

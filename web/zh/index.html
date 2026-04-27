@@ -6,13 +6,13 @@
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta
     name="description"
-    content="Tutor1on1 是一款支持 Windows 与 Android 的学习应用，把课程发布、选课审批、引导式辅导和私密进度同步整合到一起。"
+    content="Tutor1on1 是一款支持 Windows 与 Android 的学习应用，把老师课程发布、学生报名审批、引导式辅导和私密进度同步整合到一起。"
   >
-  <meta content="#f5f0e7" name="theme-color">
+  <meta content="#f7f9fb" name="theme-color">
   <meta property="og:title" content="Tutor1on1">
   <meta
     property="og:description"
-    content="课程发布、引导式学习、进度同步，一套支持 Windows 与 Android 的教学流程。"
+    content="老师发布课程，学生报名学习，引导式会话与私密进度同步。"
   >
   <meta property="og:type" content="website">
 
@@ -41,7 +41,7 @@
             <td><a class="nav-link nav-action" href="/zh/install/">安装</a></td>
             <td>
               <select class="lang-select nav-action" aria-label="语言" data-language-switcher>
-                <option value="en">EN</option>
+                <option value="en">English</option>
                 <option value="zh">中文</option>
               </select>
             </td>
@@ -51,72 +51,144 @@
     </header>
 
     <main>
-      <section class="hero">
-        <p class="eyebrow">为真实课程设计的结构化辅导</p>
-        <h1>老师按课程教学，学生按引导式流程学习。</h1>
-        <p class="lead">
-          Tutor1on1 把课程发布、报名审批、学习与复习、以及私密进度同步放进同一套 Windows 与 Android 产品里。
-        </p>
-        <div class="actions">
-          <a class="button button-primary" href="/zh/install/">打开安装指南</a>
-          <a class="button button-secondary" href="#workflow">查看流程</a>
+      <section class="hero hero-product">
+        <div class="hero-media" aria-hidden="true">
+          <img src="/images/product-workspace.png" alt="">
+        </div>
+        <div class="hero-inner">
+          <p class="eyebrow">为真实课程设计的结构化辅导</p>
+          <h1>Tutor1on1</h1>
+          <p class="lead">
+            老师发布结构化课程，审批学生报名；学生在 Windows 与 Android 上下载课程，通过引导式会话学习，并保持私密进度同步。
+          </p>
+          <div class="actions">
+            <a class="button button-primary" data-download-href="windows" href="https://api.tutor1on1.org/downloads/Tutor1on1.zip">下载 Windows 版</a>
+            <a class="button button-light" data-download-href="android" href="https://api.tutor1on1.org/downloads/Tutor1on1.apk">下载 Android 版</a>
+            <a class="button button-light" href="/zh/install/">安装说明</a>
+          </div>
+          <div class="proof-strip" aria-label="产品状态">
+            <div class="proof-item">
+              <strong>v<span data-release-version>1.0.41</span></strong>
+              <span>当前公开版本</span>
+            </div>
+            <div class="proof-item">
+              <strong>2 个平台</strong>
+              <span>Windows 与 Android</span>
+            </div>
+            <div class="proof-item">
+              <strong>老师 + 学生</strong>
+              <span>同一套课程流程</span>
+            </div>
+          </div>
         </div>
       </section>
 
-      <section class="grid grid-three" id="workflow">
-        <article class="card">
-          <span class="kicker">01</span>
-          <h2>老师端</h2>
-          <p>
-            本地准备课程版本，上传并校验 bundle，审批报名，持续查看学生进度。
-          </p>
+      <section class="metric-grid band" aria-label="核心能力">
+        <article class="metric">
+          <strong>发布</strong>
+          <span>老师上传已校验的课程 bundle，并管理 marketplace 展示。</span>
         </article>
-        <article class="card">
-          <span class="kicker">02</span>
-          <h2>学生端</h2>
-          <p>
-            浏览课程目录，申请报名，下载已批准内容，并在学习与复习模式之间切换。
-          </p>
+        <article class="metric">
+          <strong>报名</strong>
+          <span>学生申请课程，老师批准后才能下载。</span>
         </article>
-        <article class="card">
-          <span class="kicker">03</span>
-          <h2>私密同步</h2>
-          <p>
-            会话内容保持加密，同时支持多设备连续学习和可持续的进度记录。
-          </p>
+        <article class="metric">
+          <strong>学习</strong>
+          <span>在 Learn、Review、Summary 会话中完成学习闭环。</span>
+        </article>
+        <article class="metric">
+          <strong>同步</strong>
+          <span>报名状态、会话和进度可以跨设备延续。</span>
         </article>
       </section>
 
-      <section class="grid grid-two section-block">
-        <article class="panel panel-warm">
-          <p class="eyebrow">适合老师</p>
-          <h2>一次发布，多次教学。</h2>
-          <ul>
-            <li>结构化课程 bundle</li>
-            <li>上传前校验</li>
-            <li>报名审批流程</li>
-            <li>课程与进度管理</li>
-          </ul>
+      <section class="screenshot-band" id="workflow">
+        <div>
+          <p class="eyebrow">产品流程</p>
+          <h2>围绕课程生命周期，而不是普通聊天框。</h2>
+          <div class="feature-list">
+            <div class="feature-row">
+              <span class="feature-icon">1</span>
+              <div>
+                <h3>老师发布结构化材料</h3>
+                <p>课程 bundle 把 lecture、question、review prompt 和版本信息放在一起。</p>
+              </div>
+            </div>
+            <div class="feature-row">
+              <span class="feature-icon">2</span>
+              <div>
+                <h3>学生申请报名</h3>
+                <p>Marketplace 负责课程发现、报名审批和已批准 bundle 的下载。</p>
+              </div>
+            </div>
+            <div class="feature-row">
+              <span class="feature-icon">3</span>
+              <div>
+                <h3>会话沉淀进度</h3>
+                <p>引导式 tutor 会话会留下可同步的学习记录和掌握进度。</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figure class="product-shot">
+          <img src="/images/product-workspace.png" alt="Tutor1on1 老师工作台与学生学习会话预览">
+        </figure>
+      </section>
+
+      <section class="role-strip section-block">
+        <article class="role-card teacher">
+          <p class="eyebrow">老师端</p>
+          <h2>一次发布，持续管理。</h2>
+          <p>本地准备课程版本，上传已校验 bundle，审批学生报名，并查看学生进度。</p>
         </article>
-        <article class="panel panel-cool">
-          <p class="eyebrow">适合学生</p>
-          <h2>从初学到复习，流程更顺。</h2>
-          <ul>
-            <li>引导式学习与复习</li>
-            <li>Windows 与 Android 本地优先</li>
-            <li>下载已批准课程内容</li>
-            <li>开启同步后支持多设备连续学习</li>
-          </ul>
+        <article class="role-card student">
+          <p class="eyebrow">学生端</p>
+          <h2>基于已批准课程学习。</h2>
+          <p>浏览课程目录，申请报名，下载已批准 bundle，并继续 Learn 或 Review 会话。</p>
+        </article>
+        <article class="role-card sync">
+          <p class="eyebrow">连续性</p>
+          <h2>学习状态保持连接。</h2>
+          <p>报名状态、会话历史和进度可以跟随账号同步，流程更清楚。</p>
+        </article>
+      </section>
+
+      <section class="install-options" id="download">
+        <article class="download-card">
+          <p class="eyebrow">Windows</p>
+          <h2>便携 ZIP</h2>
+          <p>下载 ZIP，解压后运行 <code>tutor1on1.exe</code>。不需要单独安装器。</p>
+          <div class="download-meta">
+            <span>当前版本：<strong data-release-tag>v1.0.41</strong></span>
+            <span>文件：<code>Tutor1on1.zip</code></span>
+          </div>
+          <div class="actions">
+            <a class="button button-primary" data-download-href="windows" href="https://api.tutor1on1.org/downloads/Tutor1on1.zip">下载 Windows ZIP</a>
+            <a class="button button-ghost" href="/zh/install/windows/">Windows 步骤</a>
+          </div>
+        </article>
+        <article class="download-card">
+          <p class="eyebrow">Android</p>
+          <h2>直接 APK</h2>
+          <p>下载 APK，允许当前来源安装，然后打开 Tutor1on1。</p>
+          <div class="download-meta">
+            <span>当前版本：<strong data-release-tag>v1.0.41</strong></span>
+            <span>文件：<code>Tutor1on1.apk</code></span>
+          </div>
+          <div class="actions">
+            <a class="button button-primary" data-download-href="android" href="https://api.tutor1on1.org/downloads/Tutor1on1.apk">下载 Android APK</a>
+            <a class="button button-ghost" href="/zh/install/android/">Android 步骤</a>
+          </div>
         </article>
       </section>
 
       <section class="cta">
         <div class="cta-card">
           <div>
-            <p class="eyebrow">开始使用</p>
-            <h2>先打开平台安装指南。</h2>
+            <p class="eyebrow">安装后需要帮助？</p>
+            <h2>查看按角色整理的快速开始。</h2>
           </div>
-          <a class="button button-primary" href="/zh/install/">安装 Tutor1on1</a>
+          <a class="button button-primary" href="/zh/help/">打开帮助</a>
         </div>
       </section>
     </main>

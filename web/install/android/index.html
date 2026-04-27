@@ -8,7 +8,7 @@
     name="description"
     content="Tutor1on1 for Android: download the APK, allow installation from the selected source, and open the app."
   >
-  <meta content="#f5f0e7" name="theme-color">
+  <meta content="#f7f9fb" name="theme-color">
   <title>Install Tutor1on1 on Android</title>
   <link rel="apple-touch-icon" href="../../icons/Icon-192.png">
   <link rel="icon" type="image/png" href="../../favicon.png">
@@ -33,7 +33,7 @@
             <td><a class="nav-link nav-action" href="/install/">Install</a></td>
             <td>
               <select class="lang-select nav-action" aria-label="Language" data-language-switcher>
-                <option value="en">EN</option>
+                <option value="en">English</option>
                 <option value="zh">中文</option>
               </select>
             </td>
@@ -45,33 +45,49 @@
     <main class="page">
       <section class="hero hero-compact">
         <p class="eyebrow">Android</p>
-        <h1>Install the APK, then launch Tutor1on1 like a normal app.</h1>
-        <p class="lead">
-          Tutor1on1 on Android is distributed as a direct APK download for manual
-          installation.
-        </p>
-        <div class="actions">
-          <a class="button button-primary" href="https://api.tutor1on1.org/downloads/Tutor1on1.apk">
-            Download Android APK
-          </a>
+        <div class="platform-header">
+          <div>
+            <h1>Install the APK, then open Tutor1on1 from your launcher.</h1>
+            <p class="lead">
+              Tutor1on1 on Android is distributed as a direct APK download for manual installation.
+            </p>
+          </div>
+          <a class="button button-primary" data-download-href="android" href="https://api.tutor1on1.org/downloads/Tutor1on1.apk">Download Android APK</a>
         </div>
       </section>
 
       <section class="content-block">
         <h2>Install steps</h2>
-        <ol class="help-list">
-          <li>Download <code>Tutor1on1.apk</code> to your phone or tablet.</li>
-          <li>Open the APK from the browser downloads list or your Files app.</li>
-          <li>If Android blocks the install, temporarily allow installation from that source.</li>
-          <li>Finish the install, then open Tutor1on1 from the confirmation screen or app drawer.</li>
-        </ol>
+        <div class="steps">
+          <article class="step">
+            <span class="step-number">1</span>
+            <div>
+              <h3>Download</h3>
+              <p>Save <code>Tutor1on1.apk</code> to your phone or tablet.</p>
+            </div>
+          </article>
+          <article class="step">
+            <span class="step-number">2</span>
+            <div>
+              <h3>Allow install</h3>
+              <p>Open the APK from your browser downloads or Files app. If Android blocks it, allow installation from that source.</p>
+            </div>
+          </article>
+          <article class="step">
+            <span class="step-number">3</span>
+            <div>
+              <h3>Launch</h3>
+              <p>Finish installation, then open Tutor1on1 from the confirmation screen or app drawer.</p>
+            </div>
+          </article>
+        </div>
       </section>
 
       <section class="content-block">
-        <h2>Run later</h2>
+        <h2>Notes</h2>
         <ul class="help-list">
-          <li>After installation, open Tutor1on1 from your launcher like any other Android app.</li>
-          <li>The APK file itself is no longer needed for normal launching after install completes.</li>
+          <li>The APK file is only needed for installation. After that, use the installed app icon.</li>
+          <li>If the install is blocked, confirm that you selected the same app or browser that downloaded the APK.</li>
         </ul>
       </section>
     </main>
