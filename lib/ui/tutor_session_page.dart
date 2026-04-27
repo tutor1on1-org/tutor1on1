@@ -406,75 +406,84 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                   final hasAudio = audioPath != null &&
                                       File(audioPath).existsSync() &&
                                       File(audioPath).lengthSync() > 0;
-                                  return StreamBuilder<TtsPlaybackState>(
-                                    stream: ttsService.playbackStream,
-                                    builder: (context, playbackSnapshot) {
-                                      final playback = playbackSnapshot.data;
-                                      final isPlaying =
-                                          playback?.messageId == message.id &&
-                                              playback?.isPlaying == true;
-                                      final isPaused =
-                                          playback?.messageId == message.id &&
-                                              playback?.isPaused == true;
-                                      final duration = playback?.duration;
-                                      final position =
-                                          playback?.position ?? Duration.zero;
-                                      final progressValue = (duration == null ||
-                                              duration.inMilliseconds <= 0)
-                                          ? null
-                                          : (position.inMilliseconds /
-                                                  duration.inMilliseconds)
-                                              .clamp(0.0, 1.0);
-                                      final showProgress =
-                                          playback?.messageId == message.id &&
-                                              duration != null &&
-                                              duration.inMilliseconds > 0;
-                                      final contentWidget = message.role ==
-                                              'assistant'
-                                          ? MathMarkdownView(
-                                              key:
-                                                  ValueKey('msg_${message.id}'),
-                                              content: message.content,
-                                              textStyle: contentStyle,
-                                            )
-                                          : SelectableText(
-                                              message.content,
-                                              style: contentStyle,
-                                            );
-                                      final messageBody = showProgress
-                                          ? Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                contentWidget,
-                                                Padding(
-                                                  padding:
-                                                      const EdgeInsets.only(
-                                                          top: 6),
-                                                  child:
-                                                      LinearProgressIndicator(
-                                                    value: progressValue,
-                                                  ),
-                                                ),
-                                              ],
-                                            )
-                                          : contentWidget;
-                                      final actions = _buildMessageActions(
-                                        message,
-                                        lastUserId,
-                                        l10n,
-                                        hasAudio: hasAudio,
-                                        audioPath: audioPath,
-                                        isPlaying: isPlaying,
-                                        isPaused: isPaused,
-                                      );
-                                      final actionStrip = Wrap(
-                                        spacing: 4,
-                                        runSpacing: 4,
-                                        children: actions,
-                                      );
-                                      final messageSubtitle =
-                                          isNarrow && actions.isNotEmpty
+                                  return Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      StreamBuilder<TtsPlaybackState>(
+                                        stream: ttsService.playbackStream,
+                                        builder: (context, playbackSnapshot) {
+                                          final playback =
+                                              playbackSnapshot.data;
+                                          final isPlaying =
+                                              playback?.messageId ==
+                                                      message.id &&
+                                                  playback?.isPlaying == true;
+                                          final isPaused =
+                                              playback?.messageId ==
+                                                      message.id &&
+                                                  playback?.isPaused == true;
+                                          final duration = playback?.duration;
+                                          final position = playback?.position ??
+                                              Duration.zero;
+                                          final progressValue = (duration ==
+                                                      null ||
+                                                  duration.inMilliseconds <= 0)
+                                              ? null
+                                              : (position.inMilliseconds /
+                                                      duration.inMilliseconds)
+                                                  .clamp(0.0, 1.0);
+                                          final showProgress =
+                                              playback?.messageId ==
+                                                      message.id &&
+                                                  duration != null &&
+                                                  duration.inMilliseconds > 0;
+                                          final contentWidget =
+                                              message.role == 'assistant'
+                                                  ? MathMarkdownView(
+                                                      key: ValueKey(
+                                                          'msg_${message.id}'),
+                                                      content: message.content,
+                                                      textStyle: contentStyle,
+                                                    )
+                                                  : SelectableText(
+                                                      message.content,
+                                                      style: contentStyle,
+                                                    );
+                                          final messageBody = showProgress
+                                              ? Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    contentWidget,
+                                                    Padding(
+                                                      padding:
+                                                          const EdgeInsets.only(
+                                                              top: 6),
+                                                      child:
+                                                          LinearProgressIndicator(
+                                                        value: progressValue,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                )
+                                              : contentWidget;
+                                          final actions = _buildMessageActions(
+                                            message,
+                                            lastUserId,
+                                            l10n,
+                                            hasAudio: hasAudio,
+                                            audioPath: audioPath,
+                                            isPlaying: isPlaying,
+                                            isPaused: isPaused,
+                                          );
+                                          final actionStrip = Wrap(
+                                            spacing: 4,
+                                            runSpacing: 4,
+                                            children: actions,
+                                          );
+                                          final messageSubtitle = isNarrow &&
+                                                  actions.isNotEmpty
                                               ? Column(
                                                   crossAxisAlignment:
                                                       CrossAxisAlignment.start,
@@ -489,20 +498,30 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                                   ],
                                                 )
                                               : messageBody;
-                                      return ListTile(
-                                        title: Text(
-                                          '$label - $timeLabel',
-                                          style: labelStyle,
-                                        ),
-                                        subtitle: messageSubtitle,
-                                        trailing: isNarrow || actions.isEmpty
-                                            ? null
-                                            : Row(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: actions,
-                                              ),
-                                      );
-                                    },
+                                          return ListTile(
+                                            title: Text(
+                                              '$label - $timeLabel',
+                                              style: labelStyle,
+                                            ),
+                                            subtitle: messageSubtitle,
+                                            trailing:
+                                                isNarrow || actions.isEmpty
+                                                    ? null
+                                                    : Row(
+                                                        mainAxisSize:
+                                                            MainAxisSize.min,
+                                                        children: actions,
+                                                      ),
+                                          );
+                                        },
+                                      ),
+                                      const Divider(
+                                        height: 1,
+                                        thickness: 1,
+                                        indent: 0,
+                                        endIndent: 0,
+                                      ),
+                                    ],
                                   );
                                 },
                               );
