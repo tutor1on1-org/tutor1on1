@@ -28,6 +28,10 @@ type publishCourseRequest struct {
 	Visibility string `json:"visibility"`
 }
 
+type updateCourseMetadataRequest struct {
+	Description string `json:"description"`
+}
+
 type teacherCourseSummary struct {
 	CourseID              int64                 `json:"course_id"`
 	Subject               string                `json:"subject"`
@@ -415,6 +419,47 @@ func (h *TeacherCoursesHandler) UpdateCourseSubjectLabels(c *fiber.Ctx) error {
 		"course_id":      courseID,
 		"subject_labels": labels,
 		"status":         "updated",
+	})
+}
+
+func (h *TeacherCoursesHandler) UpdateCourseMetadata(c *fiber.Ctx) error {
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	}
+	teacherID, err := getTeacherAccountID(h.cfg.Store.DB, userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return fiber.NewError(fiber.StatusForbidden, "teacher account required")
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, "teacher lookup failed")
+	}
+	courseID, err := parseInt64Param(c, "id")
+	if err != nil {
+		return err
+	}
+	var req updateCourseMetadataRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+	}
+	description := strings.TrimSpace(req.Description)
+	result, err := h.cfg.Store.DB.Exec(
+		`UPDATE courses SET description = ? WHERE id = ? AND teacher_id = ?`,
+		nullableString(description),
+		courseID,
+		teacherID,
+	)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "course metadata update failed")
+	}
+	affected, err := result.RowsAffected()
+	if err != nil || affected == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "course not found")
+	}
+	return c.JSON(fiber.Map{
+		"course_id":   courseID,
+		"description": description,
+		"status":      "updated",
 	})
 }
 

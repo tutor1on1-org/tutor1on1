@@ -1270,6 +1270,30 @@ class MarketplaceApiService {
     });
   }
 
+  Future<TeacherCourseSummary> updateCourseMetadata({
+    required int courseId,
+    required String description,
+  }) async {
+    final trimmedDescription = description.trim();
+    final response = await _post('/api/teacher/courses/$courseId/metadata', {
+      'description': trimmedDescription,
+    });
+    if (response is! Map<String, dynamic>) {
+      throw MarketplaceApiException('Unexpected response format.');
+    }
+    return TeacherCourseSummary(
+      courseId: (response['course_id'] as num?)?.toInt() ?? courseId,
+      subject: '',
+      grade: '',
+      description: (response['description'] as String?) ?? trimmedDescription,
+      visibility: 'private',
+      publishedAt: '',
+      latestBundleVersionId: null,
+      status: (response['status'] as String?) ?? 'updated',
+      approvalStatus: '',
+    );
+  }
+
   Future<TeacherCourseSummary> updateCourseSubjectLabels({
     required int courseId,
     required List<int> subjectLabelIds,

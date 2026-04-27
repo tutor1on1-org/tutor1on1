@@ -143,6 +143,47 @@ func TestCreateCourseInitialApprovalStatusIsDraft(t *testing.T) {
 	assertSQLMockExpectations(t, mock)
 }
 
+func TestUpdateCourseMetadataUpdatesDescription(t *testing.T) {
+	db, mock := newHandlerSQLMock(t)
+	defer db.Close()
+
+	userID := int64(1705)
+	teacherID := int64(2705)
+	courseID := int64(77)
+
+	mock.ExpectQuery(`SELECT id FROM teacher_accounts WHERE user_id = \? AND status = 'active' LIMIT 1`).
+		WithArgs(userID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(teacherID))
+	mock.ExpectExec(`UPDATE courses SET description = \? WHERE id = \? AND teacher_id = \?`).
+		WithArgs(
+			sql.NullString{String: "New marketplace description", Valid: true},
+			courseID,
+			teacherID,
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	app := buildTeacherContractTestApp(db, []string{"test-secret"})
+	token := signTestJWT(t, "test-secret", userID, true)
+	status, body, _ := callAPI(
+		t,
+		app,
+		http.MethodPost,
+		"/api/teacher/courses/77/metadata",
+		token,
+		`{"description":"  New marketplace description  "}`,
+	)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body=%q)", status, http.StatusOK, body)
+	}
+	if !strings.Contains(body, `"description":"New marketplace description"`) {
+		t.Fatalf("body = %q, want trimmed description", body)
+	}
+	if !strings.Contains(body, `"status":"updated"`) {
+		t.Fatalf("body = %q, want updated status", body)
+	}
+	assertSQLMockExpectations(t, mock)
+}
+
 func TestDeleteLastBundleVersionAutoUnpublishesCourse(t *testing.T) {
 	db, mock := newHandlerSQLMock(t)
 	defer db.Close()
@@ -340,6 +381,7 @@ func buildTeacherContractTestApp(db *sql.DB, jwtSecrets []string) *fiber.App {
 
 	app := fiber.New()
 	app.Post("/api/teacher/courses", teacherCourses.CreateCourse)
+	app.Post("/api/teacher/courses/:id/metadata", teacherCourses.UpdateCourseMetadata)
 	app.Get("/api/bundles/latest-info", bundles.GetLatestCourseBundleInfo)
 	app.Post(
 		"/api/teacher/courses/:id/bundle-versions/:versionId/delete",

@@ -197,6 +197,46 @@ void main() {
     );
   });
 
+  test('updateCourseMetadata posts description without refreshing list',
+      () async {
+    final api = MarketplaceApiService(
+      secureStorage: _TokenSecureStorageService(accessToken: 'token'),
+      baseUrl: 'https://example.com',
+      client: MockClient((request) async {
+        expect(request.headers['Authorization'], equals('Bearer token'));
+        expect(
+          request.url.path,
+          equals('/api/teacher/courses/42/metadata'),
+        );
+        expect(
+          jsonDecode(request.body),
+          equals(<String, dynamic>{
+            'description': 'New description',
+          }),
+        );
+        return http.Response(
+          '''
+{
+  "course_id": 42,
+  "description": "New description",
+  "status": "updated"
+}
+''',
+          200,
+        );
+      }),
+    );
+
+    final updated = await api.updateCourseMetadata(
+      courseId: 42,
+      description: '  New description  ',
+    );
+
+    expect(updated.courseId, equals(42));
+    expect(updated.description, equals('New description'));
+    expect(updated.status, equals('updated'));
+  });
+
   test('token refresh retries transient DNS failure with a fresh client',
       () async {
     final storage = _TokenSecureStorageService(

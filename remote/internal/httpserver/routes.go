@@ -64,6 +64,7 @@ func registerRoutes(app *fiber.App, deps handlers.Dependencies) {
 	api.Post("/teacher/students/:studentUserId/study-mode/schedules", studyMode.CreateStudyModeSchedule)
 	api.Post("/teacher/students/:studentUserId/study-mode/schedules/:id/delete", studyMode.DeleteStudyModeSchedule)
 	api.Post("/teacher/courses", teacherCourses.CreateCourse)
+	api.Post("/teacher/courses/:id/metadata", teacherCourses.UpdateCourseMetadata)
 	api.Post("/teacher/courses/:id/subject-labels", teacherCourses.UpdateCourseSubjectLabels)
 	api.Post("/teacher/courses/:id/publish", teacherCourses.PublishCourse)
 	api.Post("/teacher/courses/:id/delete", teacherCourses.DeleteCourse)
