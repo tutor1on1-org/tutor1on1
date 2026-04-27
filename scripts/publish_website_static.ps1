@@ -244,7 +244,9 @@ try {
 
   $bodyChecks = @(
     @{ Path = '/install/'; LiteralText = 'api.tutor1on1.org/downloads/' },
-    @{ Path = '/zh/install/'; LiteralText = 'api.tutor1on1.org/downloads/' }
+    @{ Path = '/zh/install/'; LiteralText = 'api.tutor1on1.org/downloads/' },
+    @{ Path = '/help/'; LiteralText = 'OpenAI Codex (ChatGPT OAuth)' },
+    @{ Path = '/zh/help/'; LiteralText = '不用 API key，改用 ChatGPT OAuth' }
   )
   foreach ($check in $bodyChecks) {
     $url = "$($SiteBaseUrl.TrimEnd('/'))$($check.Path)"

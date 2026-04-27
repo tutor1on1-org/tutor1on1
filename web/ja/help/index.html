@@ -39,6 +39,7 @@
           <a class="button button-ghost" href="#teacher">先生の流れ</a>
           <a class="button button-ghost" href="#student">生徒の流れ</a>
           <a class="button button-ghost" href="#config">API config</a>
+          <a class="button button-ghost" href="#oauth">ChatGPT OAuth</a>
         </div>
       </section>
 
@@ -63,6 +64,12 @@
       <section class="content-block" id="config">
         <h2>API config の項目</h2>
         <ul class="help-list"><li><strong>Provider</strong> は OpenAI や SiliconFlow などのモデルサービスを選びます。</li><li><strong>Base URL</strong> は Tutor1on1 がモデルサービスへ送信する endpoint です。選択中の provider に合わせて表示されます。</li><li><strong>API Key</strong> はローカルに保存され、tutor、TTS、STT などモデルサービスが必要な機能で使われます。</li><li><strong>Test API key</strong> は <code>{baseUrl}/models</code> を呼び出して key を検証し、利用可能な text、TTS、STT モデル一覧を読み込みます。モデルはダウンロードせず、新しいモデルを自動選択しません。</li><li><strong>Text model</strong> は tutor 会話に使われます。<strong>Thinking effort</strong> は reasoning control をサポートする provider でのみ表示されます。</li><li><strong>TTS model</strong> は音声出力、<strong>STT model</strong> は音声入力の文字起こしを制御します。音声を使わない場合は空欄で構いません。</li><li><strong>保存済み API config</strong> には provider URL、選択済みモデル、thinking effort、key hash が保存され、検証済み設定を再利用できます。</li></ul>
+      </section>
+
+      <section class="content-block" id="oauth">
+        <h2>API key の代わりに ChatGPT OAuth を使う</h2>
+        <ol class="help-list"><li>Settings の API Settings を開き、<strong>Provider</strong> で <strong>OpenAI Codex (ChatGPT OAuth)</strong> を選びます。</li><li><strong>Login with ChatGPT</strong> を押し、ブラウザでログインを完了します。自動で戻らない場合は、最後の redirect URL または authorization code をダイアログに貼り付けます。</li><li><strong>Refresh models</strong> を押し、<code>gpt-5.5</code> などの text model を選んで API config を保存します。</li><li>tutor セッションを開始または開き直し、モデル選択で保存済み Codex OAuth モデルを選びます。</li></ol>
+        <p class="muted">この設定は tutor のテキスト会話に ChatGPT/Codex OAuth quota を使います。音声が必要な場合、TTS と STT は引き続き API-key provider を使います。</p>
       </section>
 
       <section class="grid grid-three section-block"><article class="card"><span class="kicker">Marketplace</span><h2>コースを見つける</h2><p>先生はコース listing を公開します。生徒は閲覧、受講申請、承認後のダウンロードを行います。</p></article><article class="card"><span class="kicker">Sessions</span><h2>個別フィードバック</h2><p>Learn は新しい内容、Review は想起練習に使います。フィードバックは生徒の回答に合わせて変わり、進歩を見える形にします。</p></article><article class="card"><span class="kicker">Sync</span><h2>継続性</h2><p>先生と生徒のホームは、アカウントに紐づく受講状態、セッション、進度、ミスノート信号を同期します。</p></article></section>

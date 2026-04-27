@@ -39,6 +39,7 @@
           <a class="button button-ghost" href="#teacher">老师流程</a>
           <a class="button button-ghost" href="#student">学生流程</a>
           <a class="button button-ghost" href="#config">API config</a>
+          <a class="button button-ghost" href="#oauth">ChatGPT OAuth</a>
         </div>
       </section>
 
@@ -63,6 +64,12 @@
       <section class="content-block" id="config">
         <h2>API config 里面的内容</h2>
         <ul class="help-list"><li><strong>提供方</strong>选择模型服务，例如 OpenAI 或 SiliconFlow。</li><li><strong>Base URL</strong> 是 Tutor1on1 请求模型服务的地址，应用会按当前提供方显示。</li><li><strong>API Key</strong> 保存在本机，用于 tutor、TTS、STT 等需要模型服务的功能。</li><li><strong>测试 API key</strong> 会请求 <code>{baseUrl}/models</code>，验证 key，并加载可用的文本、TTS、STT 模型列表。它不会下载模型，也不会自动选择新模型。</li><li><strong>文本模型</strong> 用于对话式 tutor。<strong>Thinking effort</strong> 只在提供方支持 reasoning 控制时显示。</li><li><strong>TTS 模型</strong> 控制语音输出；<strong>STT 模型</strong> 控制语音转文字。如果不用语音，可以留空。</li><li><strong>已保存的 API 配置</strong> 保存 provider URL、选择的模型、thinking effort 和 key hash，方便复用已验证配置。</li></ul>
+      </section>
+
+      <section class="content-block" id="oauth">
+        <h2>不用 API key，改用 ChatGPT OAuth</h2>
+        <ol class="help-list"><li>打开设置里的 API Settings，把 <strong>Provider</strong> 选成 <strong>OpenAI Codex (ChatGPT OAuth)</strong>。</li><li>点击 <strong>Login with ChatGPT</strong>，在浏览器完成登录。如果应用没有自动返回，把最后的 redirect URL 或 authorization code 粘贴到弹窗里。</li><li>点击 <strong>Refresh models</strong>，选择文本模型，例如 <code>gpt-5.5</code>，然后保存 API 配置。</li><li>开始或重新打开 tutor 会话，在模型选择器里选择已保存的 Codex OAuth 模型。</li></ol>
+        <p class="muted">这个选项使用 ChatGPT/Codex OAuth quota 来跑 tutor 文本对话。需要语音时，TTS 和 STT 仍然使用 API-key provider。</p>
       </section>
 
       <section class="grid grid-three section-block"><article class="card"><span class="kicker">Marketplace</span><h2>课程发现</h2><p>老师发布课程展示；学生浏览课程、申请报名，并在批准后下载。</p></article><article class="card"><span class="kicker">Sessions</span><h2>个人反馈</h2><p>Learn 用于新内容，Review 用于回忆练习。反馈会根据学生回答调整，并保持进步可见。</p></article><article class="card"><span class="kicker">Sync</span><h2>连续学习</h2><p>老师和学生主页会同步已连接账号的报名、会话、进度和错题信号。</p></article></section>

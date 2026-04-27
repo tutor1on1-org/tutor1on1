@@ -39,6 +39,7 @@
           <a class="button button-ghost" href="#teacher">Lehrerablauf</a>
           <a class="button button-ghost" href="#student">Schülerablauf</a>
           <a class="button button-ghost" href="#config">API config</a>
+          <a class="button button-ghost" href="#oauth">ChatGPT OAuth</a>
         </div>
       </section>
 
@@ -63,6 +64,12 @@
       <section class="content-block" id="config">
         <h2>API config Felder</h2>
         <ul class="help-list"><li><strong>Provider</strong> wählt den Modelldienst, zum Beispiel OpenAI oder SiliconFlow.</li><li><strong>Base URL</strong> ist der Endpoint, den Tutor1on1 für den gewählten Provider nutzt.</li><li><strong>API Key</strong> wird lokal gespeichert und für Tutor, TTS und STT genutzt, wenn diese Funktionen ihn benötigen.</li><li><strong>Test API key</strong> ruft <code>{baseUrl}/models</code> auf, prüft den key und lädt die verfügbaren Text-, TTS- und STT-Modelllisten. Es lädt keine Modelle herunter und wählt kein neues Modell automatisch aus.</li><li><strong>Text model</strong> steuert die Tutor-Unterhaltung. <strong>Thinking effort</strong> erscheint nur bei Providern, die Reasoning-Kontrollen unterstützen.</li><li><strong>TTS model</strong> steuert Sprachausgabe. <strong>STT model</strong> steuert Sprache-zu-Text. Beide können leer bleiben, wenn Sprache nicht genutzt wird.</li><li><strong>Saved API configs</strong> speichern Provider URL, gewählte Modelle, thinking effort und key hash, damit geprüfte Setups wiederverwendet werden können.</li></ul>
+      </section>
+
+      <section class="content-block" id="oauth">
+        <h2>ChatGPT OAuth statt API key verwenden</h2>
+        <ol class="help-list"><li>Öffnen Sie Settings, API Settings, und wählen Sie <strong>OpenAI Codex (ChatGPT OAuth)</strong> als <strong>Provider</strong>.</li><li>Klicken Sie auf <strong>Login with ChatGPT</strong> und schließen Sie die Anmeldung im Browser ab. Wenn die App nicht automatisch zurückkehrt, fügen Sie den finalen redirect URL oder authorization code in den Dialog ein.</li><li>Klicken Sie auf <strong>Refresh models</strong>, wählen Sie ein text model wie <code>gpt-5.5</code> und speichern Sie die API config.</li><li>Starten oder öffnen Sie eine tutor-Sitzung erneut und wählen Sie im Modellwähler das gespeicherte Codex OAuth Modell.</li></ol>
+        <p class="muted">Diese Option nutzt ChatGPT/Codex OAuth quota für Tutor-Textgespräche. TTS und STT verwenden weiterhin API-key Provider, wenn Sprache benötigt wird.</p>
       </section>
 
       <section class="grid grid-three section-block"><article class="card"><span class="kicker">Marketplace</span><h2>Kurse entdecken</h2><p>Lehrer veröffentlichen Kursangebote. Schüler stöbern, beantragen Einschreibung und laden nach Genehmigung herunter.</p></article><article class="card"><span class="kicker">Sessions</span><h2>Persönliches Feedback</h2><p>Learn dient neuem Stoff und Review der Abrufübung. Feedback passt sich der Antwort des Schülers an und macht Fortschritt sichtbar.</p></article><article class="card"><span class="kicker">Sync</span><h2>Kontinuität</h2><p>Lehrer- und Schüler-Startseiten synchronisieren kontoverknüpfte Einschreibungen, Sitzungen, Fortschritt und Fehlerheft-Signale.</p></article></section>

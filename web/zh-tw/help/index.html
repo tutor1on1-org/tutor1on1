@@ -39,6 +39,7 @@
           <a class="button button-ghost" href="#teacher">老師流程</a>
           <a class="button button-ghost" href="#student">學生流程</a>
           <a class="button button-ghost" href="#config">API config</a>
+          <a class="button button-ghost" href="#oauth">ChatGPT OAuth</a>
         </div>
       </section>
 
@@ -63,6 +64,12 @@
       <section class="content-block" id="config">
         <h2>API config 內的內容</h2>
         <ul class="help-list"><li><strong>Provider</strong> 選擇模型服務，例如 OpenAI 或 SiliconFlow。</li><li><strong>Base URL</strong> 是 Tutor1on1 請求模型服務的地址，應用會按目前提供方顯示。</li><li><strong>API Key</strong> 保存在本機，用於 tutor、TTS、STT 等需要模型服務的功能。</li><li><strong>Test API key</strong> 會請求 <code>{baseUrl}/models</code>，驗證 key，並載入可用的文字、TTS、STT 模型列表。它不會下載模型，也不會自動選擇新模型。</li><li><strong>Text model</strong> 用於對話式 tutor。<strong>Thinking effort</strong> 只在提供方支援 reasoning 控制時顯示。</li><li><strong>TTS model</strong> 控制語音輸出；<strong>STT model</strong> 控制語音轉文字。如果不用語音，可以留空。</li><li><strong>已儲存的 API config</strong> 保存 provider URL、選擇的模型、thinking effort 和 key hash，方便重用已驗證配置。</li></ul>
+      </section>
+
+      <section class="content-block" id="oauth">
+        <h2>不用 API key，改用 ChatGPT OAuth</h2>
+        <ol class="help-list"><li>打開設定中的 API Settings，將 <strong>Provider</strong> 選為 <strong>OpenAI Codex (ChatGPT OAuth)</strong>。</li><li>點擊 <strong>Login with ChatGPT</strong>，在瀏覽器完成登入。如果應用沒有自動返回，請把最後的 redirect URL 或 authorization code 貼到彈窗中。</li><li>點擊 <strong>Refresh models</strong>，選擇文字模型，例如 <code>gpt-5.5</code>，然後保存 API config。</li><li>開始或重新打開 tutor 會話，在模型選擇器中選擇已保存的 Codex OAuth 模型。</li></ol>
+        <p class="muted">這個選項使用 ChatGPT/Codex OAuth quota 跑 tutor 文字對話。需要語音時，TTS 和 STT 仍使用 API-key provider。</p>
       </section>
 
       <section class="grid grid-three section-block"><article class="card"><span class="kicker">Marketplace</span><h2>課程發現</h2><p>老師發布課程展示；學生瀏覽課程、申請報名，並在批准後下載。</p></article><article class="card"><span class="kicker">Sessions</span><h2>個人回饋</h2><p>Learn 用於新內容，Review 用於回憶練習。回饋會根據學生回答調整，並保持進步可見。</p></article><article class="card"><span class="kicker">Sync</span><h2>連續學習</h2><p>老師和學生首頁會同步已連接帳號的報名、會話、進度和錯題信號。</p></article></section>
