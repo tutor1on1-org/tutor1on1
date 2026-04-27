@@ -3,6 +3,7 @@ Last updated: 2026-04-27
 
 Recent completions only. Detailed historical delivery records live in `LOGBOOK.md`.
 
+- Updated the built-in DeepSeek provider to use the official canonical base URL `https://api.deepseek.com` while leaving `/v1` legacy compatibility treated as non-bug behavior.
 - Fixed live API model cache refresh: successful `Test API key` probes now notify active Drift model-cache watchers so settings/session model pickers can refresh from the authoritative `/models` cache. Added active-watcher regression coverage.
 - Simplified the bundled `learn` tutor prompt to plain student-visible text, added compact `student_context`, and changed app handling so learn streams/persists plain text without structured JSON schema validation/retry.
 - Split review into plain `review_init` and structured `review_cont`, removed prompt-owned `next_action`/difficulty selection, and made the app persist/clamp per-KP current review difficulty based on available question-bank files. Validated with targeted prompt/schema/session tests, `flutter analyze`, and a local Windows release build.

@@ -185,7 +185,7 @@ class LlmProviders {
       const LlmProvider(
         id: 'deepseek',
         label: 'DeepSeek',
-        baseUrl: 'https://api.deepseek.com/v1',
+        baseUrl: 'https://api.deepseek.com',
         models: [
           'deepseek-chat',
           'deepseek-reasoner',

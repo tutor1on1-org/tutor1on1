@@ -72,6 +72,9 @@ void main() {
         ]),
       );
       expect(grok.supportsStructuredOutputs, isTrue);
+
+      final deepSeek = LlmProviders.findById(providers, 'deepseek');
+      expect(deepSeek!.baseUrl, equals('https://api.deepseek.com'));
     });
   });
 }
