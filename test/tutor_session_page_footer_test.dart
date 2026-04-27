@@ -397,7 +397,7 @@ void main() {
   );
 
   testWidgets(
-    'session model picker searches same-key saved models and auto-saves',
+    'session model picker searches same-key live model cache and auto-saves',
     (tester) async {
       final db = AppDatabase.forTesting(NativeDatabase.memory());
       try {
@@ -423,6 +423,13 @@ void main() {
           ttsModel: '',
           sttModel: '',
           apiKeyHash: sha256Hex('other-key-secret'),
+        );
+        await db.upsertApiModelCache(
+          baseUrl: baseUrl,
+          apiKeyHash: sha256Hex(currentApiKey),
+          textModels: const <String>['live-model-a', 'live-model-b'],
+          ttsModels: const <String>[],
+          sttModels: const <String>[],
         );
         final services = _FakeAppServices(
           db: db,
@@ -471,16 +478,17 @@ void main() {
 
         await tester.tap(find.byType(SearchableModelPicker));
         await tester.pumpAndSettle();
-        await tester.enterText(find.byType(TextField).last, 'key-model');
+        await tester.enterText(find.byType(TextField).last, 'model');
         await tester.pumpAndSettle();
 
-        expect(find.text('same-key-model'), findsOneWidget);
+        expect(find.text('live-model-b'), findsOneWidget);
+        expect(find.text('same-key-model'), findsNothing);
         expect(find.text('other-key-model'), findsNothing);
 
-        await tester.tap(find.text('same-key-model'));
+        await tester.tap(find.text('live-model-b'));
         await tester.pumpAndSettle();
 
-        expect(settingsController.updatedModel, equals('same-key-model'));
+        expect(settingsController.updatedModel, equals('live-model-b'));
         expect(tester.takeException(), isNull);
       } finally {
         await tester.pumpWidget(

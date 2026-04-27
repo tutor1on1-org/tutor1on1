@@ -31,3 +31,4 @@
 - Approval email rule: backend moderation/enrollment request creation should notify the responsible approver by email, and approve/reject decisions should notify the applicant with a one-sentence email when SMTP is enabled.
 - Exit and logout final sync must stay on the same `AppQuitFlow._runFinalSync` path, and forced final sync must wait for any active background sync before uploading local session artifacts.
 - Marketplace course descriptions are live course metadata: update `courses.description` through a teacher-owned metadata endpoint and refresh course lists; catalog marketplace cards/search already consume `description`.
+- API model lists must have one local source of truth: successful `Test API key` calls cache `/models` by normalized `baseUrl + apiKeyHash`, and all settings/session model pickers should read that cache before falling back to static provider defaults.

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:path/path.dart' as p;
@@ -208,6 +210,33 @@ class ApiConfigs extends Table {
       ];
 }
 
+class ApiModelCaches extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get baseUrl => text()();
+  TextColumn get apiKeyHash => text()();
+  TextColumn get textModelsJson => text()();
+  TextColumn get ttsModelsJson => text()();
+  TextColumn get sttModelsJson => text()();
+  DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+
+  @override
+  List<Set<Column>> get uniqueKeys => [
+        {baseUrl, apiKeyHash},
+      ];
+}
+
+class CachedApiModelLists {
+  const CachedApiModelLists({
+    required this.textModels,
+    required this.ttsModels,
+    required this.sttModels,
+  });
+
+  final List<String> textModels;
+  final List<String> ttsModels;
+  final List<String> sttModels;
+}
+
 class PromptTemplates extends Table {
   IntColumn get id => integer().autoIncrement()();
   IntColumn get teacherId => integer()();
@@ -338,6 +367,7 @@ class SyncedProgressUpsert {
     LlmCalls,
     AppSettings,
     ApiConfigs,
+    ApiModelCaches,
     PromptTemplates,
     StudentPromptProfiles,
     StudentPassConfigs,
@@ -497,7 +527,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 32;
+  int get schemaVersion => 33;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -736,6 +766,9 @@ ORDER BY id
           if (from < 32 && await _apiConfigsTableExists()) {
             await _deduplicateApiConfigs();
             await _ensureApiConfigNormalizedUniqueIndex();
+          }
+          if (from < 33) {
+            await m.createTable(apiModelCaches);
           }
         },
       );
@@ -1973,6 +2006,104 @@ LIMIT 1
     }
   }
 
+  Stream<List<ApiModelCache>> watchApiModelCaches() {
+    return (select(apiModelCaches)
+          ..orderBy([
+            (tbl) => OrderingTerm(
+                  expression: tbl.updatedAt,
+                  mode: OrderingMode.desc,
+                ),
+          ]))
+        .watch();
+  }
+
+  Future<void> upsertApiModelCache({
+    required String baseUrl,
+    required String apiKeyHash,
+    required Iterable<String> textModels,
+    required Iterable<String> ttsModels,
+    required Iterable<String> sttModels,
+  }) async {
+    final normalizedBaseUrl = _normalizeBaseUrl(baseUrl).toLowerCase();
+    final normalizedApiKeyHash = apiKeyHash.trim();
+    if (normalizedBaseUrl.isEmpty) {
+      throw ArgumentError.value(baseUrl, 'baseUrl', 'baseUrl is required');
+    }
+    if (normalizedApiKeyHash.isEmpty) {
+      throw ArgumentError.value(
+        apiKeyHash,
+        'apiKeyHash',
+        'apiKeyHash is required',
+      );
+    }
+    await customStatement(
+      '''
+INSERT INTO api_model_caches (
+  base_url,
+  api_key_hash,
+  text_models_json,
+  tts_models_json,
+  stt_models_json,
+  updated_at
+) VALUES (?, ?, ?, ?, ?, CAST(strftime('%s', 'now') AS INTEGER))
+ON CONFLICT(base_url, api_key_hash) DO UPDATE SET
+  text_models_json = excluded.text_models_json,
+  tts_models_json = excluded.tts_models_json,
+  stt_models_json = excluded.stt_models_json,
+  updated_at = excluded.updated_at
+''',
+      [
+        normalizedBaseUrl,
+        normalizedApiKeyHash,
+        jsonEncode(_normalizeModelList(textModels)),
+        jsonEncode(_normalizeModelList(ttsModels)),
+        jsonEncode(_normalizeModelList(sttModels)),
+      ],
+    );
+  }
+
+  static CachedApiModelLists? cachedModelListsFor(
+    List<ApiModelCache> caches, {
+    required String baseUrl,
+    required String? apiKeyHash,
+  }) {
+    final normalizedBaseUrl = _normalizeBaseUrlValue(baseUrl).toLowerCase();
+    final normalizedApiKeyHash = apiKeyHash?.trim() ?? '';
+    if (normalizedBaseUrl.isEmpty || normalizedApiKeyHash.isEmpty) {
+      return null;
+    }
+    for (final cache in caches) {
+      if (_normalizeBaseUrlValue(cache.baseUrl).toLowerCase() !=
+          normalizedBaseUrl) {
+        continue;
+      }
+      if (cache.apiKeyHash.trim() != normalizedApiKeyHash) {
+        continue;
+      }
+      return CachedApiModelLists(
+        textModels: _decodeModelList(cache.textModelsJson),
+        ttsModels: _decodeModelList(cache.ttsModelsJson),
+        sttModels: _decodeModelList(cache.sttModelsJson),
+      );
+    }
+    return null;
+  }
+
+  static List<String> _normalizeModelList(Iterable<String> models) {
+    return <String>{
+      ...models.map((model) => model.trim()).where((model) => model.isNotEmpty),
+    }.toList()
+      ..sort();
+  }
+
+  static List<String> _decodeModelList(String raw) {
+    final decoded = jsonDecode(raw);
+    if (decoded is! List) {
+      throw StateError('Cached model list is not a JSON array.');
+    }
+    return _normalizeModelList(decoded.map((model) => model.toString()));
+  }
+
   Future<void> upsertProgressBatchFromSync({
     required List<SyncedProgressUpsert> rows,
   }) async {
@@ -2415,6 +2546,10 @@ HAVING COUNT(*) > 1
   }
 
   String _normalizeBaseUrl(String value) {
+    return _normalizeBaseUrlValue(value);
+  }
+
+  static String _normalizeBaseUrlValue(String value) {
     var trimmed = value.trim();
     if (trimmed.endsWith('/')) {
       trimmed = trimmed.substring(0, trimmed.length - 1);

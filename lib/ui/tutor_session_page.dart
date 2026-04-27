@@ -1880,34 +1880,46 @@ class _ChatSessionPageState extends State<ChatSessionPage>
           future: _apiKeyHashForBaseUrl(activeBaseUrl),
           builder: (context, hashSnapshot) {
             final apiKeyHash = hashSnapshot.data;
-            final savedModels = configs
-                .where(
-                  (config) =>
-                      _sameBaseUrl(config.baseUrl, activeBaseUrl) &&
-                      apiKeyHash != null &&
-                      config.apiKeyHash.trim() == apiKeyHash,
-                )
-                .map((config) => config.model);
-            final models = TextModelSelection.buildOptions(
-              modelsLoaded: false,
-              loadedModels: const <String>[],
-              defaultModels: provider.models,
-              savedModels: savedModels,
-              settingsModel: currentModel,
-            );
-            final selected = TextModelSelection.resolveModel(
-              availableOptions: models,
-              selection: _sessionModel,
-              fallback: currentModel,
-            );
-            return SearchableModelPicker(
-              key: ValueKey('session_model_${selected}_${models.length}'),
-              label: l10n.modelLabel,
-              options: models,
-              value: selected,
-              emptyMessage: l10n.modelsNotLoadedMessage,
-              enabled: !_sending,
-              onChanged: (value) => _selectSessionModel(value, provider),
+            return StreamBuilder<List<ApiModelCache>>(
+              stream: db.watchApiModelCaches(),
+              builder: (context, modelCacheSnapshot) {
+                final modelCaches = modelCacheSnapshot.data ?? [];
+                final cachedModelLists = AppDatabase.cachedModelListsFor(
+                  modelCaches,
+                  baseUrl: activeBaseUrl,
+                  apiKeyHash: apiKeyHash,
+                );
+                final savedModels = configs
+                    .where(
+                      (config) =>
+                          _sameBaseUrl(config.baseUrl, activeBaseUrl) &&
+                          apiKeyHash != null &&
+                          config.apiKeyHash.trim() == apiKeyHash,
+                    )
+                    .map((config) => config.model);
+                final models = TextModelSelection.buildOptions(
+                  modelsLoaded: cachedModelLists != null,
+                  loadedModels:
+                      cachedModelLists?.textModels ?? const <String>[],
+                  defaultModels: provider.models,
+                  savedModels: savedModels,
+                  settingsModel: currentModel,
+                );
+                final selected = TextModelSelection.resolveModel(
+                  availableOptions: models,
+                  selection: _sessionModel,
+                  fallback: currentModel,
+                );
+                return SearchableModelPicker(
+                  key: ValueKey('session_model_${selected}_${models.length}'),
+                  label: l10n.modelLabel,
+                  options: models,
+                  value: selected,
+                  emptyMessage: l10n.modelsNotLoadedMessage,
+                  enabled: !_sending,
+                  onChanged: (value) => _selectSessionModel(value, provider),
+                );
+              },
             );
           },
         );

@@ -304,4 +304,24 @@ void main() {
 
     await db.close();
   });
+
+  test('migration to v33 creates api model cache table', () async {
+    final tempDir = await Directory.systemTemp.createTemp('tutor1on1');
+    final dbFile = File(p.join(tempDir.path, 'test.db'));
+
+    final rawDb = sqlite3.sqlite3.open(dbFile.path);
+    rawDb.execute('PRAGMA user_version = 32;');
+    rawDb.dispose();
+
+    final db = AppDatabase.forTesting(NativeDatabase(dbFile));
+    final rows = await db
+        .customSelect(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'api_model_caches'",
+        )
+        .get();
+
+    expect(rows, hasLength(1));
+
+    await db.close();
+  });
 }

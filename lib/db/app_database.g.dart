@@ -6351,6 +6351,405 @@ class ApiConfigsCompanion extends UpdateCompanion<ApiConfig> {
   }
 }
 
+class $ApiModelCachesTable extends ApiModelCaches
+    with TableInfo<$ApiModelCachesTable, ApiModelCache> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $ApiModelCachesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+      'id', aliasedName, false,
+      hasAutoIncrement: true,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('PRIMARY KEY AUTOINCREMENT'));
+  static const VerificationMeta _baseUrlMeta =
+      const VerificationMeta('baseUrl');
+  @override
+  late final GeneratedColumn<String> baseUrl = GeneratedColumn<String>(
+      'base_url', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _apiKeyHashMeta =
+      const VerificationMeta('apiKeyHash');
+  @override
+  late final GeneratedColumn<String> apiKeyHash = GeneratedColumn<String>(
+      'api_key_hash', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _textModelsJsonMeta =
+      const VerificationMeta('textModelsJson');
+  @override
+  late final GeneratedColumn<String> textModelsJson = GeneratedColumn<String>(
+      'text_models_json', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _ttsModelsJsonMeta =
+      const VerificationMeta('ttsModelsJson');
+  @override
+  late final GeneratedColumn<String> ttsModelsJson = GeneratedColumn<String>(
+      'tts_models_json', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _sttModelsJsonMeta =
+      const VerificationMeta('sttModelsJson');
+  @override
+  late final GeneratedColumn<String> sttModelsJson = GeneratedColumn<String>(
+      'stt_models_json', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _updatedAtMeta =
+      const VerificationMeta('updatedAt');
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+      'updated_at', aliasedName, false,
+      type: DriftSqlType.dateTime,
+      requiredDuringInsert: false,
+      defaultValue: currentDateAndTime);
+  @override
+  List<GeneratedColumn> get $columns => [
+        id,
+        baseUrl,
+        apiKeyHash,
+        textModelsJson,
+        ttsModelsJson,
+        sttModelsJson,
+        updatedAt
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'api_model_caches';
+  @override
+  VerificationContext validateIntegrity(Insertable<ApiModelCache> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('base_url')) {
+      context.handle(_baseUrlMeta,
+          baseUrl.isAcceptableOrUnknown(data['base_url']!, _baseUrlMeta));
+    } else if (isInserting) {
+      context.missing(_baseUrlMeta);
+    }
+    if (data.containsKey('api_key_hash')) {
+      context.handle(
+          _apiKeyHashMeta,
+          apiKeyHash.isAcceptableOrUnknown(
+              data['api_key_hash']!, _apiKeyHashMeta));
+    } else if (isInserting) {
+      context.missing(_apiKeyHashMeta);
+    }
+    if (data.containsKey('text_models_json')) {
+      context.handle(
+          _textModelsJsonMeta,
+          textModelsJson.isAcceptableOrUnknown(
+              data['text_models_json']!, _textModelsJsonMeta));
+    } else if (isInserting) {
+      context.missing(_textModelsJsonMeta);
+    }
+    if (data.containsKey('tts_models_json')) {
+      context.handle(
+          _ttsModelsJsonMeta,
+          ttsModelsJson.isAcceptableOrUnknown(
+              data['tts_models_json']!, _ttsModelsJsonMeta));
+    } else if (isInserting) {
+      context.missing(_ttsModelsJsonMeta);
+    }
+    if (data.containsKey('stt_models_json')) {
+      context.handle(
+          _sttModelsJsonMeta,
+          sttModelsJson.isAcceptableOrUnknown(
+              data['stt_models_json']!, _sttModelsJsonMeta));
+    } else if (isInserting) {
+      context.missing(_sttModelsJsonMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(_updatedAtMeta,
+          updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+        {baseUrl, apiKeyHash},
+      ];
+  @override
+  ApiModelCache map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return ApiModelCache(
+      id: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}id'])!,
+      baseUrl: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}base_url'])!,
+      apiKeyHash: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}api_key_hash'])!,
+      textModelsJson: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}text_models_json'])!,
+      ttsModelsJson: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}tts_models_json'])!,
+      sttModelsJson: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}stt_models_json'])!,
+      updatedAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}updated_at'])!,
+    );
+  }
+
+  @override
+  $ApiModelCachesTable createAlias(String alias) {
+    return $ApiModelCachesTable(attachedDatabase, alias);
+  }
+}
+
+class ApiModelCache extends DataClass implements Insertable<ApiModelCache> {
+  final int id;
+  final String baseUrl;
+  final String apiKeyHash;
+  final String textModelsJson;
+  final String ttsModelsJson;
+  final String sttModelsJson;
+  final DateTime updatedAt;
+  const ApiModelCache(
+      {required this.id,
+      required this.baseUrl,
+      required this.apiKeyHash,
+      required this.textModelsJson,
+      required this.ttsModelsJson,
+      required this.sttModelsJson,
+      required this.updatedAt});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['base_url'] = Variable<String>(baseUrl);
+    map['api_key_hash'] = Variable<String>(apiKeyHash);
+    map['text_models_json'] = Variable<String>(textModelsJson);
+    map['tts_models_json'] = Variable<String>(ttsModelsJson);
+    map['stt_models_json'] = Variable<String>(sttModelsJson);
+    map['updated_at'] = Variable<DateTime>(updatedAt);
+    return map;
+  }
+
+  ApiModelCachesCompanion toCompanion(bool nullToAbsent) {
+    return ApiModelCachesCompanion(
+      id: Value(id),
+      baseUrl: Value(baseUrl),
+      apiKeyHash: Value(apiKeyHash),
+      textModelsJson: Value(textModelsJson),
+      ttsModelsJson: Value(ttsModelsJson),
+      sttModelsJson: Value(sttModelsJson),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory ApiModelCache.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return ApiModelCache(
+      id: serializer.fromJson<int>(json['id']),
+      baseUrl: serializer.fromJson<String>(json['baseUrl']),
+      apiKeyHash: serializer.fromJson<String>(json['apiKeyHash']),
+      textModelsJson: serializer.fromJson<String>(json['textModelsJson']),
+      ttsModelsJson: serializer.fromJson<String>(json['ttsModelsJson']),
+      sttModelsJson: serializer.fromJson<String>(json['sttModelsJson']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'baseUrl': serializer.toJson<String>(baseUrl),
+      'apiKeyHash': serializer.toJson<String>(apiKeyHash),
+      'textModelsJson': serializer.toJson<String>(textModelsJson),
+      'ttsModelsJson': serializer.toJson<String>(ttsModelsJson),
+      'sttModelsJson': serializer.toJson<String>(sttModelsJson),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  ApiModelCache copyWith(
+          {int? id,
+          String? baseUrl,
+          String? apiKeyHash,
+          String? textModelsJson,
+          String? ttsModelsJson,
+          String? sttModelsJson,
+          DateTime? updatedAt}) =>
+      ApiModelCache(
+        id: id ?? this.id,
+        baseUrl: baseUrl ?? this.baseUrl,
+        apiKeyHash: apiKeyHash ?? this.apiKeyHash,
+        textModelsJson: textModelsJson ?? this.textModelsJson,
+        ttsModelsJson: ttsModelsJson ?? this.ttsModelsJson,
+        sttModelsJson: sttModelsJson ?? this.sttModelsJson,
+        updatedAt: updatedAt ?? this.updatedAt,
+      );
+  ApiModelCache copyWithCompanion(ApiModelCachesCompanion data) {
+    return ApiModelCache(
+      id: data.id.present ? data.id.value : this.id,
+      baseUrl: data.baseUrl.present ? data.baseUrl.value : this.baseUrl,
+      apiKeyHash:
+          data.apiKeyHash.present ? data.apiKeyHash.value : this.apiKeyHash,
+      textModelsJson: data.textModelsJson.present
+          ? data.textModelsJson.value
+          : this.textModelsJson,
+      ttsModelsJson: data.ttsModelsJson.present
+          ? data.ttsModelsJson.value
+          : this.ttsModelsJson,
+      sttModelsJson: data.sttModelsJson.present
+          ? data.sttModelsJson.value
+          : this.sttModelsJson,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('ApiModelCache(')
+          ..write('id: $id, ')
+          ..write('baseUrl: $baseUrl, ')
+          ..write('apiKeyHash: $apiKeyHash, ')
+          ..write('textModelsJson: $textModelsJson, ')
+          ..write('ttsModelsJson: $ttsModelsJson, ')
+          ..write('sttModelsJson: $sttModelsJson, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(id, baseUrl, apiKeyHash, textModelsJson,
+      ttsModelsJson, sttModelsJson, updatedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is ApiModelCache &&
+          other.id == this.id &&
+          other.baseUrl == this.baseUrl &&
+          other.apiKeyHash == this.apiKeyHash &&
+          other.textModelsJson == this.textModelsJson &&
+          other.ttsModelsJson == this.ttsModelsJson &&
+          other.sttModelsJson == this.sttModelsJson &&
+          other.updatedAt == this.updatedAt);
+}
+
+class ApiModelCachesCompanion extends UpdateCompanion<ApiModelCache> {
+  final Value<int> id;
+  final Value<String> baseUrl;
+  final Value<String> apiKeyHash;
+  final Value<String> textModelsJson;
+  final Value<String> ttsModelsJson;
+  final Value<String> sttModelsJson;
+  final Value<DateTime> updatedAt;
+  const ApiModelCachesCompanion({
+    this.id = const Value.absent(),
+    this.baseUrl = const Value.absent(),
+    this.apiKeyHash = const Value.absent(),
+    this.textModelsJson = const Value.absent(),
+    this.ttsModelsJson = const Value.absent(),
+    this.sttModelsJson = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+  });
+  ApiModelCachesCompanion.insert({
+    this.id = const Value.absent(),
+    required String baseUrl,
+    required String apiKeyHash,
+    required String textModelsJson,
+    required String ttsModelsJson,
+    required String sttModelsJson,
+    this.updatedAt = const Value.absent(),
+  })  : baseUrl = Value(baseUrl),
+        apiKeyHash = Value(apiKeyHash),
+        textModelsJson = Value(textModelsJson),
+        ttsModelsJson = Value(ttsModelsJson),
+        sttModelsJson = Value(sttModelsJson);
+  static Insertable<ApiModelCache> custom({
+    Expression<int>? id,
+    Expression<String>? baseUrl,
+    Expression<String>? apiKeyHash,
+    Expression<String>? textModelsJson,
+    Expression<String>? ttsModelsJson,
+    Expression<String>? sttModelsJson,
+    Expression<DateTime>? updatedAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (baseUrl != null) 'base_url': baseUrl,
+      if (apiKeyHash != null) 'api_key_hash': apiKeyHash,
+      if (textModelsJson != null) 'text_models_json': textModelsJson,
+      if (ttsModelsJson != null) 'tts_models_json': ttsModelsJson,
+      if (sttModelsJson != null) 'stt_models_json': sttModelsJson,
+      if (updatedAt != null) 'updated_at': updatedAt,
+    });
+  }
+
+  ApiModelCachesCompanion copyWith(
+      {Value<int>? id,
+      Value<String>? baseUrl,
+      Value<String>? apiKeyHash,
+      Value<String>? textModelsJson,
+      Value<String>? ttsModelsJson,
+      Value<String>? sttModelsJson,
+      Value<DateTime>? updatedAt}) {
+    return ApiModelCachesCompanion(
+      id: id ?? this.id,
+      baseUrl: baseUrl ?? this.baseUrl,
+      apiKeyHash: apiKeyHash ?? this.apiKeyHash,
+      textModelsJson: textModelsJson ?? this.textModelsJson,
+      ttsModelsJson: ttsModelsJson ?? this.ttsModelsJson,
+      sttModelsJson: sttModelsJson ?? this.sttModelsJson,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (baseUrl.present) {
+      map['base_url'] = Variable<String>(baseUrl.value);
+    }
+    if (apiKeyHash.present) {
+      map['api_key_hash'] = Variable<String>(apiKeyHash.value);
+    }
+    if (textModelsJson.present) {
+      map['text_models_json'] = Variable<String>(textModelsJson.value);
+    }
+    if (ttsModelsJson.present) {
+      map['tts_models_json'] = Variable<String>(ttsModelsJson.value);
+    }
+    if (sttModelsJson.present) {
+      map['stt_models_json'] = Variable<String>(sttModelsJson.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('ApiModelCachesCompanion(')
+          ..write('id: $id, ')
+          ..write('baseUrl: $baseUrl, ')
+          ..write('apiKeyHash: $apiKeyHash, ')
+          ..write('textModelsJson: $textModelsJson, ')
+          ..write('ttsModelsJson: $ttsModelsJson, ')
+          ..write('sttModelsJson: $sttModelsJson, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $PromptTemplatesTable extends PromptTemplates
     with TableInfo<$PromptTemplatesTable, PromptTemplate> {
   @override
@@ -8972,6 +9371,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $LlmCallsTable llmCalls = $LlmCallsTable(this);
   late final $AppSettingsTable appSettings = $AppSettingsTable(this);
   late final $ApiConfigsTable apiConfigs = $ApiConfigsTable(this);
+  late final $ApiModelCachesTable apiModelCaches = $ApiModelCachesTable(this);
   late final $PromptTemplatesTable promptTemplates =
       $PromptTemplatesTable(this);
   late final $StudentPromptProfilesTable studentPromptProfiles =
@@ -8999,6 +9399,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         llmCalls,
         appSettings,
         apiConfigs,
+        apiModelCaches,
         promptTemplates,
         studentPromptProfiles,
         studentPassConfigs,
@@ -11911,6 +12312,208 @@ typedef $$ApiConfigsTableProcessedTableManager = ProcessedTableManager<
     (ApiConfig, BaseReferences<_$AppDatabase, $ApiConfigsTable, ApiConfig>),
     ApiConfig,
     PrefetchHooks Function()>;
+typedef $$ApiModelCachesTableCreateCompanionBuilder = ApiModelCachesCompanion
+    Function({
+  Value<int> id,
+  required String baseUrl,
+  required String apiKeyHash,
+  required String textModelsJson,
+  required String ttsModelsJson,
+  required String sttModelsJson,
+  Value<DateTime> updatedAt,
+});
+typedef $$ApiModelCachesTableUpdateCompanionBuilder = ApiModelCachesCompanion
+    Function({
+  Value<int> id,
+  Value<String> baseUrl,
+  Value<String> apiKeyHash,
+  Value<String> textModelsJson,
+  Value<String> ttsModelsJson,
+  Value<String> sttModelsJson,
+  Value<DateTime> updatedAt,
+});
+
+class $$ApiModelCachesTableFilterComposer
+    extends Composer<_$AppDatabase, $ApiModelCachesTable> {
+  $$ApiModelCachesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get baseUrl => $composableBuilder(
+      column: $table.baseUrl, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get apiKeyHash => $composableBuilder(
+      column: $table.apiKeyHash, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get textModelsJson => $composableBuilder(
+      column: $table.textModelsJson,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get ttsModelsJson => $composableBuilder(
+      column: $table.ttsModelsJson, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get sttModelsJson => $composableBuilder(
+      column: $table.sttModelsJson, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+      column: $table.updatedAt, builder: (column) => ColumnFilters(column));
+}
+
+class $$ApiModelCachesTableOrderingComposer
+    extends Composer<_$AppDatabase, $ApiModelCachesTable> {
+  $$ApiModelCachesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get baseUrl => $composableBuilder(
+      column: $table.baseUrl, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get apiKeyHash => $composableBuilder(
+      column: $table.apiKeyHash, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get textModelsJson => $composableBuilder(
+      column: $table.textModelsJson,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get ttsModelsJson => $composableBuilder(
+      column: $table.ttsModelsJson,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get sttModelsJson => $composableBuilder(
+      column: $table.sttModelsJson,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+      column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
+}
+
+class $$ApiModelCachesTableAnnotationComposer
+    extends Composer<_$AppDatabase, $ApiModelCachesTable> {
+  $$ApiModelCachesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get baseUrl =>
+      $composableBuilder(column: $table.baseUrl, builder: (column) => column);
+
+  GeneratedColumn<String> get apiKeyHash => $composableBuilder(
+      column: $table.apiKeyHash, builder: (column) => column);
+
+  GeneratedColumn<String> get textModelsJson => $composableBuilder(
+      column: $table.textModelsJson, builder: (column) => column);
+
+  GeneratedColumn<String> get ttsModelsJson => $composableBuilder(
+      column: $table.ttsModelsJson, builder: (column) => column);
+
+  GeneratedColumn<String> get sttModelsJson => $composableBuilder(
+      column: $table.sttModelsJson, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$ApiModelCachesTableTableManager extends RootTableManager<
+    _$AppDatabase,
+    $ApiModelCachesTable,
+    ApiModelCache,
+    $$ApiModelCachesTableFilterComposer,
+    $$ApiModelCachesTableOrderingComposer,
+    $$ApiModelCachesTableAnnotationComposer,
+    $$ApiModelCachesTableCreateCompanionBuilder,
+    $$ApiModelCachesTableUpdateCompanionBuilder,
+    (
+      ApiModelCache,
+      BaseReferences<_$AppDatabase, $ApiModelCachesTable, ApiModelCache>
+    ),
+    ApiModelCache,
+    PrefetchHooks Function()> {
+  $$ApiModelCachesTableTableManager(
+      _$AppDatabase db, $ApiModelCachesTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$ApiModelCachesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$ApiModelCachesTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$ApiModelCachesTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<int> id = const Value.absent(),
+            Value<String> baseUrl = const Value.absent(),
+            Value<String> apiKeyHash = const Value.absent(),
+            Value<String> textModelsJson = const Value.absent(),
+            Value<String> ttsModelsJson = const Value.absent(),
+            Value<String> sttModelsJson = const Value.absent(),
+            Value<DateTime> updatedAt = const Value.absent(),
+          }) =>
+              ApiModelCachesCompanion(
+            id: id,
+            baseUrl: baseUrl,
+            apiKeyHash: apiKeyHash,
+            textModelsJson: textModelsJson,
+            ttsModelsJson: ttsModelsJson,
+            sttModelsJson: sttModelsJson,
+            updatedAt: updatedAt,
+          ),
+          createCompanionCallback: ({
+            Value<int> id = const Value.absent(),
+            required String baseUrl,
+            required String apiKeyHash,
+            required String textModelsJson,
+            required String ttsModelsJson,
+            required String sttModelsJson,
+            Value<DateTime> updatedAt = const Value.absent(),
+          }) =>
+              ApiModelCachesCompanion.insert(
+            id: id,
+            baseUrl: baseUrl,
+            apiKeyHash: apiKeyHash,
+            textModelsJson: textModelsJson,
+            ttsModelsJson: ttsModelsJson,
+            sttModelsJson: sttModelsJson,
+            updatedAt: updatedAt,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$ApiModelCachesTableProcessedTableManager = ProcessedTableManager<
+    _$AppDatabase,
+    $ApiModelCachesTable,
+    ApiModelCache,
+    $$ApiModelCachesTableFilterComposer,
+    $$ApiModelCachesTableOrderingComposer,
+    $$ApiModelCachesTableAnnotationComposer,
+    $$ApiModelCachesTableCreateCompanionBuilder,
+    $$ApiModelCachesTableUpdateCompanionBuilder,
+    (
+      ApiModelCache,
+      BaseReferences<_$AppDatabase, $ApiModelCachesTable, ApiModelCache>
+    ),
+    ApiModelCache,
+    PrefetchHooks Function()>;
 typedef $$PromptTemplatesTableCreateCompanionBuilder = PromptTemplatesCompanion
     Function({
   Value<int> id,
@@ -13245,6 +13848,8 @@ class $AppDatabaseManager {
       $$AppSettingsTableTableManager(_db, _db.appSettings);
   $$ApiConfigsTableTableManager get apiConfigs =>
       $$ApiConfigsTableTableManager(_db, _db.apiConfigs);
+  $$ApiModelCachesTableTableManager get apiModelCaches =>
+      $$ApiModelCachesTableTableManager(_db, _db.apiModelCaches);
   $$PromptTemplatesTableTableManager get promptTemplates =>
       $$PromptTemplatesTableTableManager(_db, _db.promptTemplates);
   $$StudentPromptProfilesTableTableManager get studentPromptProfiles =>
