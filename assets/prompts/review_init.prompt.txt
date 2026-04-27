@@ -18,5 +18,6 @@ Rules:
 - Ask exactly one question.
 - Prefer a suitable unused question from presented_questions.
 - If presented_questions is empty, exhausted, or unsuitable, create a similar question from this knowledge point.
+- MUST NOT REPEAT. Make significant modifications to the question if needed.
 - Do not include the answer, hint, explanation, JSON, or a difficulty label.
 - Keep it concise and plain.
