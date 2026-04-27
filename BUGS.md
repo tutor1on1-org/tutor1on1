@@ -332,3 +332,8 @@ Last updated: 2026-04-27
 - Symptom: a Windows backend upload regression test failed with `bundle save failed` while saving a valid bundle to local test storage.
 - Root cause: `storage.writeRelativePath` called `os.Rename(tmpPath, absPath)` while the temp file handle was still open. Linux allows this pattern, but Windows rejects renaming an open file.
 - Prevention: after writing and syncing temp storage files, close the file handle before overwrite cleanup and rename. Keep local Windows upload tests exercising the real storage service.
+
+64. API model cache writes must notify Drift watchers
+- Symptom: after pressing `Test API key`, the settings/session model picker could keep showing stale/default model options even though the provider `/models` probe succeeded.
+- Root cause: successful probes wrote `api_model_caches` with `customStatement`, which Drift explicitly does not use to update active select streams. The APIS tab had been changed to read `watchApiModelCaches()`, so the local `_textModelOptions` set by the probe no longer refreshed the picker.
+- Prevention: write API model cache upserts through a Drift custom write that marks `apiModelCaches` as updated, and keep a regression test that subscribes to `watchApiModelCaches()` before calling `upsertApiModelCache`.

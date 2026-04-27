@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -75,5 +77,46 @@ void main() {
     expect(cached!.textModels, equals(const <String>['gpt-live-c']));
     expect(cached.ttsModels, isEmpty);
     expect(cached.sttModels, isEmpty);
+  });
+
+  test('upsertApiModelCache refreshes active model cache watchers', () async {
+    final initialSeen = Completer<void>();
+    final updateSeen = Completer<List<ApiModelCache>>();
+    late final StreamSubscription<List<ApiModelCache>> subscription;
+    subscription = db.watchApiModelCaches().listen((rows) {
+      if (!initialSeen.isCompleted) {
+        expect(rows, isEmpty);
+        initialSeen.complete();
+        return;
+      }
+      if (!updateSeen.isCompleted) {
+        updateSeen.complete(rows);
+      }
+    });
+
+    try {
+      await initialSeen.future.timeout(const Duration(seconds: 1));
+      await db.upsertApiModelCache(
+        baseUrl: 'https://api.openai.com/v1',
+        apiKeyHash: 'hash_1',
+        textModels: const <String>['gpt-live-refresh'],
+        ttsModels: const <String>[],
+        sttModels: const <String>[],
+      );
+
+      final rows = await updateSeen.future.timeout(const Duration(seconds: 1));
+      final cached = AppDatabase.cachedModelListsFor(
+        rows,
+        baseUrl: 'https://api.openai.com/v1',
+        apiKeyHash: 'hash_1',
+      );
+
+      expect(cached, isNotNull);
+      expect(cached!.textModels, equals(const <String>['gpt-live-refresh']));
+      expect(cached.ttsModels, isEmpty);
+      expect(cached.sttModels, isEmpty);
+    } finally {
+      await subscription.cancel();
+    }
   });
 }

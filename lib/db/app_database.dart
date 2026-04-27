@@ -2036,7 +2036,7 @@ LIMIT 1
         'apiKeyHash is required',
       );
     }
-    await customStatement(
+    await customInsert(
       '''
 INSERT INTO api_model_caches (
   base_url,
@@ -2052,13 +2052,14 @@ ON CONFLICT(base_url, api_key_hash) DO UPDATE SET
   stt_models_json = excluded.stt_models_json,
   updated_at = excluded.updated_at
 ''',
-      [
-        normalizedBaseUrl,
-        normalizedApiKeyHash,
-        jsonEncode(_normalizeModelList(textModels)),
-        jsonEncode(_normalizeModelList(ttsModels)),
-        jsonEncode(_normalizeModelList(sttModels)),
+      variables: [
+        Variable.withString(normalizedBaseUrl),
+        Variable.withString(normalizedApiKeyHash),
+        Variable.withString(jsonEncode(_normalizeModelList(textModels))),
+        Variable.withString(jsonEncode(_normalizeModelList(ttsModels))),
+        Variable.withString(jsonEncode(_normalizeModelList(sttModels))),
       ],
+      updates: {apiModelCaches},
     );
   }
 
