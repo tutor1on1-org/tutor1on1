@@ -302,6 +302,16 @@ func (h *BundlesHandler) Upload(c *fiber.Ctx) error {
 				_ = h.removeStoredFile(relPath)
 				return fiber.NewError(fiber.StatusInternalServerError, "course upload request save failed")
 			}
+			if _, err := tx.Exec(
+				`UPDATE course_catalog_entries
+				 SET approval_status = 'pending'
+				 WHERE course_id = ?`,
+				info.courseID,
+			); err != nil {
+				_ = tx.Rollback()
+				_ = h.removeStoredFile(relPath)
+				return fiber.NewError(fiber.StatusInternalServerError, "course approval status update failed")
+			}
 			if err := notifySubjectAdminsForCourseUploadRequest(
 				h.cfg,
 				tx,

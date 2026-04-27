@@ -322,3 +322,13 @@ Last updated: 2026-04-27
 - Symptom: after creating/loading a teacher course such as `Liu_math` but before uploading a bundle, teacher course list and enrollment sync could fail with `course list failed`.
 - Root cause: latest-bundle hash resolution ran even when there was no `bundle_versions` row. The empty `oss_path` resolved to the storage root directory, and hash computation failed on the directory.
 - Prevention: skip stored bundle hash resolution when `bundle_version_id <= 0` or `oss_path` is empty. Keep a regression test with a real storage service and no bundle version.
+
+62. Course approval pending must mean a real upload request exists
+- Symptom: `Liu_math` showed `approval_status=pending`, but subject admins could not see it and no approval email was sent.
+- Root cause: creating a remote course inserted `course_catalog_entries.approval_status='pending'` before any bundle version or `course_upload_requests` row existed. If the later upload path did not complete, the course was an orphan pending catalog entry with nothing for subject admins to review.
+- Prevention: new courses start as `draft`; bundle upload changes the course to `pending` only after saving a bundle version and `course_upload_requests` row, then sends subject-admin email. Repair orphan pending/no-bundle rows back to `draft`.
+
+63. Storage temp-file rename must close the writer first on Windows
+- Symptom: a Windows backend upload regression test failed with `bundle save failed` while saving a valid bundle to local test storage.
+- Root cause: `storage.writeRelativePath` called `os.Rename(tmpPath, absPath)` while the temp file handle was still open. Linux allows this pattern, but Windows rejects renaming an open file.
+- Prevention: after writing and syncing temp storage files, close the file handle before overwrite cleanup and rename. Keep local Windows upload tests exercising the real storage service.

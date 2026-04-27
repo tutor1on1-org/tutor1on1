@@ -71,6 +71,78 @@ func TestCreateCourseReturnsExistingForNormalizedTeacherCourseKey(t *testing.T) 
 	assertSQLMockExpectations(t, mock)
 }
 
+func TestCreateCourseInitialApprovalStatusIsDraft(t *testing.T) {
+	db, mock := newHandlerSQLMock(t)
+	defer db.Close()
+
+	userID := int64(1704)
+	teacherID := int64(2704)
+	courseID := int64(604)
+	labelID := int64(1)
+
+	mock.ExpectQuery(`SELECT id FROM teacher_accounts WHERE user_id = \? AND status = 'active' LIMIT 1`).
+		WithArgs(userID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(teacherID))
+	mock.ExpectQuery(`(?s)SELECT c.id, c.subject, c.grade, c.description,.*WHERE c.teacher_id = \? AND c.course_name_key = \?.*LIMIT 1`).
+		WithArgs(teacherID, "draft math").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO courses`).
+		WithArgs(
+			teacherID,
+			"Draft Math",
+			"draft math",
+			sql.NullString{String: "Grade 5", Valid: true},
+			sql.NullString{String: "Created from test", Valid: true},
+		).
+		WillReturnResult(sqlmock.NewResult(courseID, 1))
+	mock.ExpectExec(`INSERT INTO course_catalog_entries .*'draft'`).
+		WithArgs(courseID, teacherID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT id\s+FROM subject_labels\s+WHERE is_active = TRUE AND id IN \(\?\)`).
+		WithArgs(labelID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(labelID))
+	mock.ExpectExec(`DELETE FROM course_subject_labels WHERE course_id = \?`).
+		WithArgs(courseID).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`INSERT INTO course_subject_labels`).
+		WithArgs(courseID, labelID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	mock.ExpectQuery(`SELECT sl.id, sl.slug, sl.name, sl.is_active\s+FROM course_subject_labels csl`).
+		WithArgs(courseID).
+		WillReturnRows(
+			sqlmock.NewRows([]string{"id", "slug", "name", "is_active"}).
+				AddRow(labelID, "math", "Math", true),
+		)
+
+	app := buildTeacherContractTestApp(db, []string{"test-secret"})
+	token := signTestJWT(t, "test-secret", userID, true)
+	status, body, _ := callAPI(
+		t,
+		app,
+		http.MethodPost,
+		"/api/teacher/courses",
+		token,
+		`{"subject":"Draft Math","grade":"Grade 5","description":"Created from test","subject_label_ids":[1]}`,
+	)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body=%q)", status, http.StatusOK, body)
+	}
+
+	var decoded map[string]interface{}
+	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v (body=%q)", err, body)
+	}
+	if got := decoded["approval_status"].(string); got != "draft" {
+		t.Fatalf("approval_status = %q, want %q", got, "draft")
+	}
+	if got := decoded["status"].(string); got != "created" {
+		t.Fatalf("status = %q, want %q", got, "created")
+	}
+	assertSQLMockExpectations(t, mock)
+}
+
 func TestDeleteLastBundleVersionAutoUnpublishesCourse(t *testing.T) {
 	db, mock := newHandlerSQLMock(t)
 	defer db.Close()

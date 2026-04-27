@@ -108,7 +108,12 @@ func (s *Service) writeRelativePath(relPath string, reader io.Reader, overwrite 
 	if err != nil {
 		return 0, "", err
 	}
-	defer file.Close()
+	closed := false
+	defer func() {
+		if !closed {
+			_ = file.Close()
+		}
+	}()
 
 	limit := s.bundleMaxBytes + 1
 	limited := &io.LimitedReader{R: reader, N: limit}
@@ -126,6 +131,11 @@ func (s *Service) writeRelativePath(relPath string, reader io.Reader, overwrite 
 		_ = os.Remove(tmpPath)
 		return 0, "", err
 	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return 0, "", err
+	}
+	closed = true
 	if overwrite {
 		if err := os.Remove(absPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			_ = os.Remove(tmpPath)

@@ -246,7 +246,7 @@ func (h *TeacherCoursesHandler) CreateCourse(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "course insert failed")
 	}
 	if _, err := tx.Exec(
-		"INSERT INTO course_catalog_entries (course_id, teacher_id, visibility, approval_status) VALUES (?, ?, 'private', 'pending')",
+		"INSERT INTO course_catalog_entries (course_id, teacher_id, visibility, approval_status) VALUES (?, ?, 'private', 'draft')",
 		courseID,
 		teacherID,
 	); err != nil {
@@ -272,7 +272,7 @@ func (h *TeacherCoursesHandler) CreateCourse(c *fiber.Ctx) error {
 		Grade:                 grade,
 		Description:           description,
 		Visibility:            "private",
-		ApprovalStatus:        "pending",
+		ApprovalStatus:        "draft",
 		PublishedAt:           "",
 		LatestBundleVersionID: 0,
 		SubjectLabels:         labels,
@@ -657,7 +657,7 @@ func (h *TeacherCoursesHandler) lookupTeacherCourseByNameKey(
 	row := h.cfg.Store.DB.QueryRow(
 		`SELECT c.id, c.subject, c.grade, c.description,
 		        COALESCE(ce.visibility, 'private') AS visibility,
-		        COALESCE(ce.approval_status, 'pending') AS approval_status,
+		        COALESCE(ce.approval_status, 'draft') AS approval_status,
 		        ce.published_at,
 		        (
 		          SELECT bv.id FROM bundles b
@@ -873,7 +873,7 @@ func (h *TeacherCoursesHandler) resolveOrCreateCourseByName(
 		}
 		if _, insertErr := tx.Exec(
 			`INSERT INTO course_catalog_entries (course_id, teacher_id, visibility, approval_status)
-			 VALUES (?, ?, 'private', 'pending')`,
+			 VALUES (?, ?, 'private', 'draft')`,
 			courseID,
 			teacherID,
 		); insertErr != nil {

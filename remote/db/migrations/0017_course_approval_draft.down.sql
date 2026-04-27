@@ -1,0 +1,2 @@
+-- Data repair migration only. Reverting draft rows to pending would recreate
+-- approval states without matching course_upload_requests rows.

@@ -1399,10 +1399,13 @@ class _CourseTile extends StatelessWidget {
         remoteCourse == null || remoteCourse!.subjectLabels.isEmpty
             ? 'No subject labels'
             : remoteCourse!.subjectLabels.map((label) => label.name).join(', ');
-    final approvalText =
-        remoteCourse == null || remoteCourse!.approvalStatus.isEmpty
-            ? ''
-            : 'Approval: ${remoteCourse!.approvalStatus}';
+    final approvalStatus =
+        remoteCourse == null ? '' : remoteCourse!.approvalStatus.trim();
+    final approvalText = approvalStatus.isEmpty
+        ? ''
+        : approvalStatus == 'draft'
+            ? 'Approval: not submitted'
+            : 'Approval: $approvalStatus';
     final canPullLatest =
         remoteCourse != null && (remoteCourse!.latestBundleVersionId ?? 0) > 0;
     return Card(

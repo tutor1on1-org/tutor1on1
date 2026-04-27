@@ -76,6 +76,7 @@ class TeacherMarketplaceUploadService {
         subjectLabelIds: subjectLabelIds,
       );
       remoteCourseId = created.courseId;
+      resolvedCourse = created;
       await _db.upsertCourseRemoteLink(
         courseVersionId: courseVersionId,
         remoteCourseId: remoteCourseId,
@@ -107,6 +108,7 @@ class TeacherMarketplaceUploadService {
         subjectLabelIds: subjectLabelIds,
       );
       remoteCourseId = created.courseId;
+      resolvedCourse = created;
       await _db.upsertCourseRemoteLink(
         courseVersionId: courseVersionId,
         remoteCourseId: remoteCourseId,
