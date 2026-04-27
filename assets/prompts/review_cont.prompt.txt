@@ -14,10 +14,10 @@ Return JSON only:
 {"text": string, "mistakes": [string], "finished": boolean, "difficulty_adjustment": "easier|same|harder"}
 
 Rules:
-- text is the student-visible feedback or next step.
+- text is the student-visible feedback.
 - Do not start a new question. Stay on the active review question.
-- If the answer is correct and complete, set finished to true.
-- If the answer is wrong or incomplete, set finished to false, give one brief correction or hint, then ask for the missing step.
+- If the answer is correct, set finished to true. Answer could be in all kinds of wordings. No need to be exactly the same. Check for the main concept understanding is correct.
+- If the answer is wrong or incomplete, set finished to false, provide a little help, no need to give answers.
 - Briefly describe mistakes if any, append to error_book_summary. Avoid duplicates.
 - difficulty_adjustment is for the next review question, not the current one.
 - Use "easier" when the student struggles.
