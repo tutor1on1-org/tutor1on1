@@ -152,6 +152,51 @@ void main() {
     expect(factoryCalls, equals(2));
   });
 
+  test('updateCourseSubjectLabels does not refresh full course list', () async {
+    final api = MarketplaceApiService(
+      secureStorage: _TokenSecureStorageService(accessToken: 'token'),
+      baseUrl: 'https://example.com',
+      client: MockClient((request) async {
+        expect(request.headers['Authorization'], equals('Bearer token'));
+        expect(
+          request.url.path,
+          equals('/api/teacher/courses/42/subject-labels'),
+        );
+        expect(
+          jsonDecode(request.body),
+          equals(<String, dynamic>{
+            'subject_label_ids': <int>[1, 2],
+          }),
+        );
+        return http.Response(
+          '''
+{
+  "course_id": 42,
+  "status": "updated",
+  "subject_labels": [
+    {"subject_label_id": 1, "slug": "math", "name": "Math", "is_active": true},
+    {"subject_label_id": 2, "slug": "science", "name": "Science", "is_active": true}
+  ]
+}
+''',
+          200,
+        );
+      }),
+    );
+
+    final updated = await api.updateCourseSubjectLabels(
+      courseId: 42,
+      subjectLabelIds: const <int>[1, 2],
+    );
+
+    expect(updated.courseId, equals(42));
+    expect(updated.status, equals('updated'));
+    expect(
+      updated.subjectLabels.map((label) => label.subjectLabelId),
+      equals(<int>[1, 2]),
+    );
+  });
+
   test('token refresh retries transient DNS failure with a fresh client',
       () async {
     final storage = _TokenSecureStorageService(

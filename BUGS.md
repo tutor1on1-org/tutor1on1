@@ -312,3 +312,8 @@ Last updated: 2026-04-27
 - Symptom: saving the same API config repeatedly could create duplicate rows when TTS/STT model fields were empty.
 - Root cause: `api_configs` used a multi-column UNIQUE key that included nullable `tts_model` and `stt_model`; SQLite treats `NULL` values as distinct for UNIQUE checks.
 - Prevention: enforce optional-field uniqueness with a normalized expression index using `coalesce(trim(...), '')`, deduplicate existing rows during migration, and make save UI report an existing config instead of always saying it saved.
+
+60. Mutation APIs must not fail because a follow-up list refresh fails
+- Symptom: setting course subject labels could show `Failed to update subject labels: course list failed` after the label update endpoint succeeded.
+- Root cause: the client POST helper called `listTeacherCourses()` only to build its return value. Any unrelated course-list failure was reported as a failed label update.
+- Prevention: mutation helpers should trust the mutation endpoint response and leave broad list refreshes to best-effort UI refresh paths. Keep tests that fail if `updateCourseSubjectLabels` performs a second course-list request.

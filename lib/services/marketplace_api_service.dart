@@ -1281,21 +1281,17 @@ class MarketplaceApiService {
     if (response is! Map<String, dynamic>) {
       throw MarketplaceApiException('Unexpected response format.');
     }
-    final refreshed = await listTeacherCourses();
-    return refreshed.firstWhere(
-      (course) => course.courseId == courseId,
-      orElse: () => TeacherCourseSummary(
-        courseId: courseId,
-        subject: '',
-        grade: '',
-        description: '',
-        visibility: 'private',
-        publishedAt: '',
-        latestBundleVersionId: null,
-        status: 'updated',
-        approvalStatus: '',
-        subjectLabels: _decodeSubjectLabelsList(response['subject_labels']),
-      ),
+    return TeacherCourseSummary(
+      courseId: (response['course_id'] as num?)?.toInt() ?? courseId,
+      subject: '',
+      grade: '',
+      description: '',
+      visibility: 'private',
+      publishedAt: '',
+      latestBundleVersionId: null,
+      status: (response['status'] as String?) ?? 'updated',
+      approvalStatus: '',
+      subjectLabels: _decodeSubjectLabelsList(response['subject_labels']),
     );
   }
 
