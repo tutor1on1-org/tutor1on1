@@ -13,8 +13,10 @@ import '../llm/llm_models.dart';
 import '../llm/llm_providers.dart';
 import '../models/tutor_action.dart';
 import '../models/tutor_contract.dart';
+import '../security/hash_utils.dart';
 import '../services/app_services.dart';
 import '../services/stt_service.dart';
+import '../services/text_model_selection.dart';
 import '../services/tts_chunker.dart';
 import '../services/tts_service.dart';
 import '../services/tts_text_sanitizer.dart';
@@ -24,6 +26,7 @@ import 'app_close_button.dart';
 import 'session_progress_display.dart';
 import 'tutor_turn_logic.dart';
 import 'widgets/math_markdown_view.dart';
+import 'widgets/searchable_model_picker.dart';
 
 class ChatSessionPage extends StatefulWidget {
   const ChatSessionPage({
@@ -105,6 +108,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   int _inputLineCount = 1;
   final GlobalKey _sttCancelKey = GlobalKey();
   final LayerLink _sttButtonLink = LayerLink();
+  final Map<String, Future<String?>> _apiKeyHashFutures = {};
 
   @override
   void initState() {
@@ -692,6 +696,9 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                                 db: db,
                                                 currentModel:
                                                     settings?.model ?? '',
+                                                activeBaseUrl:
+                                                    settings?.baseUrl ??
+                                                        provider.baseUrl,
                                                 provider: provider,
                                                 l10n: l10n,
                                               ),
@@ -795,6 +802,9 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                               db: db,
                                               currentModel:
                                                   settings?.model ?? '',
+                                              activeBaseUrl:
+                                                  settings?.baseUrl ??
+                                                      provider.baseUrl,
                                               provider: provider,
                                               l10n: l10n,
                                             ),
@@ -1830,6 +1840,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   Widget _buildModelSelector({
     required AppDatabase db,
     required String currentModel,
+    required String activeBaseUrl,
     required LlmProvider provider,
     required AppLocalizations l10n,
   }) {
@@ -1837,71 +1848,40 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       stream: db.watchApiConfigs(),
       builder: (context, snapshot) {
         final configs = snapshot.data ?? [];
-        final models = <String>{
-          ...provider.models.map((model) => model.trim()).where(
-                (model) => model.isNotEmpty,
-              ),
-          if (currentModel.trim().isNotEmpty) currentModel.trim(),
-          ...configs
-              .where(
-                (config) =>
-                    _normalizeBaseUrl(config.baseUrl) ==
-                    _normalizeBaseUrl(provider.baseUrl),
-              )
-              .map((config) => config.model.trim())
-              .where((m) => m.isNotEmpty),
-        }.toList()
-          ..sort();
-        final selected = (_sessionModel?.trim().isNotEmpty == true)
-            ? _sessionModel!.trim()
-            : currentModel.trim();
-        final value = models.contains(selected)
-            ? selected
-            : (models.isNotEmpty ? models.first : selected);
-        if ((_sessionModel == null ||
-                !_sessionModel!.trim().isNotEmpty ||
-                !models.contains(_sessionModel!.trim())) &&
-            value.isNotEmpty) {
-          _sessionModel = value;
-        }
-        return DropdownButtonFormField<String>(
-          key: ValueKey(value),
-          initialValue: value.isNotEmpty ? value : null,
-          isExpanded: true,
-          decoration: InputDecoration(
-            labelText: l10n.modelLabel,
-            border: const OutlineInputBorder(),
-          ),
-          selectedItemBuilder: (context) => models
-              .map(
-                (model) => Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    model,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              )
-              .toList(),
-          items: models
-              .map(
-                (model) => DropdownMenuItem(
-                  value: model,
-                  child: Text(
-                    model,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              )
-              .toList(),
-          onChanged: _sending
-              ? null
-              : (value) {
-                  if (value == null) {
-                    return;
-                  }
-                  setState(() => _sessionModel = value);
-                },
+        return FutureBuilder<String?>(
+          future: _apiKeyHashForBaseUrl(activeBaseUrl),
+          builder: (context, hashSnapshot) {
+            final apiKeyHash = hashSnapshot.data;
+            final savedModels = configs
+                .where(
+                  (config) =>
+                      _sameBaseUrl(config.baseUrl, activeBaseUrl) &&
+                      apiKeyHash != null &&
+                      config.apiKeyHash.trim() == apiKeyHash,
+                )
+                .map((config) => config.model);
+            final models = TextModelSelection.buildOptions(
+              modelsLoaded: false,
+              loadedModels: const <String>[],
+              defaultModels: provider.models,
+              savedModels: savedModels,
+              settingsModel: currentModel,
+            );
+            final selected = TextModelSelection.resolveModel(
+              availableOptions: models,
+              selection: _sessionModel,
+              fallback: currentModel,
+            );
+            return SearchableModelPicker(
+              key: ValueKey('session_model_${selected}_${models.length}'),
+              label: l10n.modelLabel,
+              options: models,
+              value: selected,
+              emptyMessage: l10n.modelsNotLoadedMessage,
+              enabled: !_sending,
+              onChanged: (value) => _selectSessionModel(value, provider),
+            );
+          },
         );
       },
     );
@@ -1910,94 +1890,82 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   Widget _buildCompactModelSelector({
     required AppDatabase db,
     required String currentModel,
+    required String activeBaseUrl,
     required LlmProvider provider,
     required AppLocalizations l10n,
   }) {
-    return StreamBuilder<List<ApiConfig>>(
-      stream: db.watchApiConfigs(),
-      builder: (context, snapshot) {
-        final configs = snapshot.data ?? [];
-        final models = <String>{
-          ...provider.models.map((model) => model.trim()).where(
-                (model) => model.isNotEmpty,
-              ),
-          if (currentModel.trim().isNotEmpty) currentModel.trim(),
-          ...configs
-              .where(
-                (config) =>
-                    _normalizeBaseUrl(config.baseUrl) ==
-                    _normalizeBaseUrl(provider.baseUrl),
-              )
-              .map((config) => config.model.trim())
-              .where((m) => m.isNotEmpty),
-        }.toList()
-          ..sort();
-        final selected = (_sessionModel?.trim().isNotEmpty == true)
-            ? _sessionModel!.trim()
-            : currentModel.trim();
-        final value = models.contains(selected)
-            ? selected
-            : (models.isNotEmpty ? models.first : selected);
-        if ((_sessionModel == null ||
-                !_sessionModel!.trim().isNotEmpty ||
-                !models.contains(_sessionModel!.trim())) &&
-            value.isNotEmpty) {
-          _sessionModel = value;
-        }
-        return PopupMenuButton<String>(
-          key: ValueKey('compact_model_$value'),
-          enabled: !_sending && models.isNotEmpty,
-          tooltip: l10n.modelLabel,
-          onSelected: (model) {
-            setState(() => _sessionModel = model);
-          },
-          itemBuilder: (context) => models
-              .map(
-                (model) => PopupMenuItem<String>(
-                  value: model,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 280),
-                    child: Text(model, overflow: TextOverflow.ellipsis),
-                  ),
-                ),
-              )
-              .toList(),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              border: Border.all(
-                color: Theme.of(context).colorScheme.outline,
-              ),
-              borderRadius: BorderRadius.circular(20),
-              color: Theme.of(context).colorScheme.surface,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.tune, size: 18),
-                const SizedBox(width: 6),
-                Text(_compactModelLabel(value, l10n.modelLabel)),
-                const SizedBox(width: 4),
-                const Icon(Icons.arrow_drop_down),
-              ],
-            ),
-          ),
-        );
-      },
+    return SizedBox(
+      width: 260,
+      child: _buildModelSelector(
+        db: db,
+        currentModel: currentModel,
+        activeBaseUrl: activeBaseUrl,
+        provider: provider,
+        l10n: l10n,
+      ),
     );
   }
 
-  String _compactModelLabel(String model, String fallback) {
-    final trimmed = model.trim();
-    if (trimmed.isEmpty) {
-      return fallback;
+  Future<String?> _apiKeyHashForBaseUrl(String baseUrl) {
+    final normalized = _normalizeBaseUrl(baseUrl).toLowerCase();
+    return _apiKeyHashFutures.putIfAbsent(normalized, () async {
+      final apiKey = await _services.secureStorage.readApiKeyForBaseUrl(
+        baseUrl,
+      );
+      final trimmed = apiKey?.trim() ?? '';
+      if (trimmed.isEmpty) {
+        return null;
+      }
+      return sha256Hex(trimmed);
+    });
+  }
+
+  Future<void> _selectSessionModel(
+    String? value,
+    LlmProvider provider,
+  ) async {
+    final model = value?.trim() ?? '';
+    if (model.isEmpty) {
+      return;
     }
-    final slashIndex = trimmed.lastIndexOf('/');
-    final base = slashIndex >= 0 ? trimmed.substring(slashIndex + 1) : trimmed;
-    if (base.length <= 22) {
-      return base;
+    setState(() => _sessionModel = model);
+    final settingsController = context.read<SettingsController>();
+    final settings = settingsController.settings;
+    if (settings == null || settings.model.trim() == model) {
+      return;
     }
-    return '${base.substring(0, 22)}...';
+    final l10n = AppLocalizations.of(context)!;
+    try {
+      await settingsController.update(
+        providerId: (settings.providerId ?? '').trim().isNotEmpty
+            ? settings.providerId!.trim()
+            : provider.id,
+        baseUrl: settings.baseUrl.trim().isNotEmpty
+            ? settings.baseUrl
+            : provider.baseUrl,
+        model: model,
+        reasoningEffort: settings.reasoningEffort,
+        ttsModel: settings.ttsModel ?? '',
+        sttModel: settings.sttModel ?? '',
+        timeoutSeconds: settings.timeoutSeconds,
+        maxTokens: settings.maxTokens,
+        ttsInitialDelayMs: settings.ttsInitialDelayMs,
+        ttsTextLeadMs: settings.ttsTextLeadMs,
+        ttsAudioPath: settings.ttsAudioPath ?? '',
+        logDirectory: settings.logDirectory ?? '',
+        llmMode: settings.llmMode,
+        sttAutoSend: settings.sttAutoSend,
+        enterToSend: settings.enterToSend,
+        locale: settings.locale,
+      );
+    } catch (e) {
+      _showPersistentMessage('${l10n.requestFailedTitle}: $e');
+    }
+  }
+
+  bool _sameBaseUrl(String left, String right) {
+    return _normalizeBaseUrl(left).toLowerCase() ==
+        _normalizeBaseUrl(right).toLowerCase();
   }
 
   String _normalizeBaseUrl(String value) {

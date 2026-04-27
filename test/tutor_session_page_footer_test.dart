@@ -8,13 +8,16 @@ import 'package:tutor1on1/db/app_database.dart';
 import 'package:tutor1on1/l10n/app_localizations.dart';
 import 'package:tutor1on1/models/tutor_action.dart';
 import 'package:tutor1on1/models/tutor_contract.dart';
+import 'package:tutor1on1/security/hash_utils.dart';
 import 'package:tutor1on1/services/app_services.dart';
+import 'package:tutor1on1/services/secure_storage_service.dart';
 import 'package:tutor1on1/services/settings_repository.dart';
 import 'package:tutor1on1/services/stt_service.dart';
 import 'package:tutor1on1/services/tts_service.dart';
 import 'package:tutor1on1/state/auth_controller.dart';
 import 'package:tutor1on1/state/settings_controller.dart';
 import 'package:tutor1on1/ui/tutor_session_page.dart';
+import 'package:tutor1on1/ui/widgets/searchable_model_picker.dart';
 
 class _FixedAuthController extends ChangeNotifier implements AuthController {
   _FixedAuthController(this._currentUser);
@@ -35,7 +38,8 @@ class _FixedSettingsController extends ChangeNotifier
     implements SettingsController {
   _FixedSettingsController(this._settings);
 
-  final AppSetting _settings;
+  AppSetting _settings;
+  String? updatedModel;
 
   @override
   AppSetting? get settings => _settings;
@@ -44,7 +48,66 @@ class _FixedSettingsController extends ChangeNotifier
   bool get isLoading => false;
 
   @override
+  Future<void> update({
+    required String providerId,
+    required String baseUrl,
+    required String model,
+    required String reasoningEffort,
+    required String ttsModel,
+    required String sttModel,
+    required int timeoutSeconds,
+    required int maxTokens,
+    required int ttsInitialDelayMs,
+    required int ttsTextLeadMs,
+    required String ttsAudioPath,
+    required String logDirectory,
+    required String llmMode,
+    required bool sttAutoSend,
+    required bool enterToSend,
+    String? locale,
+  }) async {
+    updatedModel = model;
+    _settings = _settings.copyWith(
+      providerId: Value(providerId),
+      baseUrl: baseUrl,
+      model: model,
+      reasoningEffort: reasoningEffort,
+      ttsModel: Value(ttsModel.trim().isEmpty ? null : ttsModel),
+      sttModel: Value(sttModel.trim().isEmpty ? null : sttModel),
+      timeoutSeconds: timeoutSeconds,
+      maxTokens: maxTokens,
+      ttsInitialDelayMs: ttsInitialDelayMs,
+      ttsTextLeadMs: ttsTextLeadMs,
+      ttsAudioPath: Value(ttsAudioPath),
+      sttAutoSend: sttAutoSend,
+      enterToSend: enterToSend,
+      logDirectory: Value(logDirectory),
+      llmMode: llmMode,
+      locale: Value(locale),
+    );
+    notifyListeners();
+  }
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FakeSecureStorage extends SecureStorageService {
+  _FakeSecureStorage({Map<String, String>? apiKeys})
+      : _apiKeys = Map<String, String>.from(apiKeys ?? const {});
+
+  final Map<String, String> _apiKeys;
+
+  @override
+  Future<String?> readApiKeyForBaseUrl(String baseUrl) async {
+    return _apiKeys[baseUrl] ?? _apiKeys[baseUrl.toLowerCase()];
+  }
+
+  @override
+  Future<void> writeApiKeyForBaseUrl(String baseUrl, String value) async {
+    _apiKeys[baseUrl] = value;
+    _apiKeys[baseUrl.toLowerCase()] = value;
+  }
 }
 
 class _FakeTtsService implements TtsService {
@@ -74,15 +137,19 @@ class _FakeAppServices implements AppServices {
   _FakeAppServices({
     required this.db,
     required this.settingsRepository,
+    SecureStorageService? secureStorage,
     required this.ttsService,
     required this.sttService,
-  });
+  }) : secureStorage = secureStorage ?? _FakeSecureStorage();
 
   @override
   final AppDatabase db;
 
   @override
   final SettingsRepository settingsRepository;
+
+  @override
+  final SecureStorageService secureStorage;
 
   @override
   final TtsService ttsService;
@@ -287,7 +354,133 @@ void main() {
           findsOneWidget,
         );
         expect(find.text('2/1/0/75%'), findsOneWidget);
-        expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
+        expect(find.byType(SearchableModelPicker), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      } finally {
+        await tester.pumpWidget(
+          MultiProvider(
+            providers: [
+              Provider<AppDatabase>.value(value: db),
+              Provider<AppServices>.value(
+                value: _FakeAppServices(
+                  db: db,
+                  settingsRepository: SettingsRepository(db),
+                  ttsService: _FakeTtsService(),
+                  sttService: _FakeSttService(),
+                ),
+              ),
+              ChangeNotifierProvider<AuthController>.value(
+                value: _FixedAuthController(
+                  User(
+                    id: 0,
+                    username: 'disposed',
+                    pinHash: 'hash',
+                    role: 'student',
+                    teacherId: null,
+                    remoteUserId: null,
+                    createdAt: DateTime.utc(2026, 3, 23),
+                  ),
+                ),
+              ),
+              ChangeNotifierProvider<SettingsController>.value(
+                value: _FixedSettingsController(_testSettings()),
+              ),
+            ],
+            child: const SizedBox.shrink(),
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 20));
+        await db.close();
+      }
+    },
+  );
+
+  testWidgets(
+    'session model picker searches same-key saved models and auto-saves',
+    (tester) async {
+      final db = AppDatabase.forTesting(NativeDatabase.memory());
+      try {
+        final fixture = await _createFixture(db);
+        final settings = _testSettings();
+        final settingsRepository = SettingsRepository(db);
+        final authController = _FixedAuthController(fixture.student);
+        final settingsController = _FixedSettingsController(settings);
+        final baseUrl = settings.baseUrl;
+        const currentApiKey = 'same-key-secret';
+        await db.insertApiConfig(
+          baseUrl: baseUrl,
+          model: 'same-key-model',
+          reasoningEffort: 'medium',
+          ttsModel: '',
+          sttModel: '',
+          apiKeyHash: sha256Hex(currentApiKey),
+        );
+        await db.insertApiConfig(
+          baseUrl: baseUrl,
+          model: 'other-key-model',
+          reasoningEffort: 'medium',
+          ttsModel: '',
+          sttModel: '',
+          apiKeyHash: sha256Hex('other-key-secret'),
+        );
+        final services = _FakeAppServices(
+          db: db,
+          settingsRepository: settingsRepository,
+          secureStorage: _FakeSecureStorage(
+            apiKeys: <String, String>{baseUrl: currentApiKey},
+          ),
+          ttsService: _FakeTtsService(),
+          sttService: _FakeSttService(),
+        );
+
+        await tester.pumpWidget(
+          MultiProvider(
+            providers: [
+              Provider<AppDatabase>.value(value: db),
+              Provider<AppServices>.value(value: services),
+              ChangeNotifierProvider<AuthController>.value(
+                value: authController,
+              ),
+              ChangeNotifierProvider<SettingsController>.value(
+                value: settingsController,
+              ),
+            ],
+            child: Center(
+              child: SizedBox(
+                width: 720,
+                height: 900,
+                child: MaterialApp(
+                  localizationsDelegates:
+                      AppLocalizations.localizationsDelegates,
+                  supportedLocales: AppLocalizations.supportedLocales,
+                  home: ChatSessionPage(
+                    sessionId: fixture.sessionId,
+                    courseVersion: fixture.courseVersion,
+                    node: fixture.node,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        for (var i = 0; i < 10; i += 1) {
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+
+        await tester.tap(find.byType(SearchableModelPicker));
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextField).last, 'key-model');
+        await tester.pumpAndSettle();
+
+        expect(find.text('same-key-model'), findsOneWidget);
+        expect(find.text('other-key-model'), findsNothing);
+
+        await tester.tap(find.text('same-key-model'));
+        await tester.pumpAndSettle();
+
+        expect(settingsController.updatedModel, equals('same-key-model'));
         expect(tester.takeException(), isNull);
       } finally {
         await tester.pumpWidget(
