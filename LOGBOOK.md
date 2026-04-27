@@ -2,6 +2,7 @@
 Historical timeline. Keep active runbook details in `WORKLOG.md`. Entries that mention row-level session/progress/enrollment sync remain historical delivery records only.
 
 ## 2026-04-27
+- Fixed production `course list failed` for teacher courses without bundle versions, reproduced on `dennis` / `Liu_math`; deployed rebuilt Linux amd64 API binary SHA-256 `7ab55f5d961d0c64aad739a56e6d7eaa34ba158a2208cebdfa6029e86d956321`, restarted `family-teacher-api.service`, verified health, and confirmed `/api/teacher/courses` returns `Liu_math` with empty latest-bundle fields instead of 500.
 - Fixed Windows enrollment-sync temp bundle cleanup failures where `bundle_<course>_*.zip` could stay locked after login sync. ZIP archive readers now clear lazy entry streams after use, scaffold extraction no longer returns lazy `ArchiveFile` entries beyond archive lifetime, and temporary enrollment bundle deletion is treated as cleanup warning instead of sync failure.
 - Added regression coverage for immediate deletion after `extractBundleScaffoldFromFile`, recorded the lesson in `BUGS.md`, cleared stale local `bundle_math_deep_*.zip` temp files, and validated with targeted bundle/enrollment tests, `flutter analyze`, `scripts/validate_project.ps1 -NoPostHook`, `flutter build apk --config-only`, `flutter build apk --release`, and `flutter build windows --release`.
 

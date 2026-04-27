@@ -63,6 +63,9 @@ func ensureStoredBundleHash(
 	relPath string,
 ) (string, bool, int64, error) {
 	hashVal := strings.TrimSpace(currentHash)
+	if bundleVersionID <= 0 || strings.TrimSpace(relPath) == "" {
+		return hashVal, false, 0, nil
+	}
 	if bundleStorage == nil {
 		return hashVal, false, 0, nil
 	}

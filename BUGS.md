@@ -317,3 +317,8 @@ Last updated: 2026-04-27
 - Symptom: setting course subject labels could show `Failed to update subject labels: course list failed` after the label update endpoint succeeded.
 - Root cause: the client POST helper called `listTeacherCourses()` only to build its return value. Any unrelated course-list failure was reported as a failed label update.
 - Prevention: mutation helpers should trust the mutation endpoint response and leave broad list refreshes to best-effort UI refresh paths. Keep tests that fail if `updateCourseSubjectLabels` performs a second course-list request.
+
+61. Courses without bundles must not resolve hashes against the storage root
+- Symptom: after creating/loading a teacher course such as `Liu_math` but before uploading a bundle, teacher course list and enrollment sync could fail with `course list failed`.
+- Root cause: latest-bundle hash resolution ran even when there was no `bundle_versions` row. The empty `oss_path` resolved to the storage root directory, and hash computation failed on the directory.
+- Prevention: skip stored bundle hash resolution when `bundle_version_id <= 0` or `oss_path` is empty. Keep a regression test with a real storage service and no bundle version.

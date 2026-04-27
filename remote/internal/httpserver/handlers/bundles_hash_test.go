@@ -6,7 +6,38 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"family_teacher_remote/internal/storage"
 )
+
+func TestEnsureStoredBundleHashSkipsMissingBundleVersion(t *testing.T) {
+	bundleStorage, err := storage.New(storage.Config{
+		Root:           t.TempDir(),
+		BundleMaxBytes: 1024 * 1024,
+	})
+	if err != nil {
+		t.Fatalf("storage.New() error = %v", err)
+	}
+
+	hash, fileMissing, sizeBytes, err := ensureStoredBundleHash(
+		nil,
+		bundleStorage,
+		0,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatalf("ensureStoredBundleHash() error = %v", err)
+	}
+	if hash != "" || fileMissing || sizeBytes != 0 {
+		t.Fatalf(
+			"unexpected result: hash=%q fileMissing=%v sizeBytes=%d",
+			hash,
+			fileMissing,
+			sizeBytes,
+		)
+	}
+}
 
 func TestComputeBundleSemanticHashIgnoresPromptMetadataTransportFieldsOrderAndLegacyScope(t *testing.T) {
 	tempDir := t.TempDir()
