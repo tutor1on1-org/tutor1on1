@@ -266,7 +266,10 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     if (_loadingSession) {
       return Scaffold(
         appBar: AppBar(
-          actions: buildAppBarActionsWithClose(context),
+          actions: buildAppBarActionsWithClose(
+            context,
+            closeEnabled: !_sending,
+          ),
         ),
         body: const Center(child: CircularProgressIndicator()),
       );
@@ -296,6 +299,12 @@ class _ChatSessionPageState extends State<ChatSessionPage>
               ),
               actions: buildAppBarActionsWithClose(
                 context,
+                closeEnabled: !_sending &&
+                    !_sttPressActive &&
+                    !_sttRecording &&
+                    !_sttTranscribing,
+                disabledCloseTooltip:
+                    'Wait for the current tutor response to finish',
                 actions: [
                   if (!_closed && !widget.readOnly)
                     IconButton(

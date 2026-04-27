@@ -290,6 +290,10 @@ class AppQuitFlow {
     );
     await Future<void>.delayed(Duration.zero);
     try {
+      await services.sessionService.waitForInFlightTutorActions();
+      if (!context.mounted) {
+        return false;
+      }
       await _exitSyncService.syncBeforeExit(
         user: user,
         runSessionSync: ({

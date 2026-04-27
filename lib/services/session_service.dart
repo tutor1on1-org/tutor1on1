@@ -248,6 +248,21 @@ class SessionService {
     }
   }
 
+  Future<void> waitForInFlightTutorActions() async {
+    while (_inflightTutorByKey.isNotEmpty) {
+      final handles = _inflightTutorByKey.values.toList(growable: false);
+      await Future.wait(handles.map(_waitForTutorHandleQuietly));
+    }
+  }
+
+  Future<void> _waitForTutorHandleQuietly(LlmRequestHandle handle) async {
+    try {
+      await handle.future;
+    } catch (_) {
+      // The final sync should still upload the saved user message/error state.
+    }
+  }
+
   Future<LlmRequestHandle> startTutorAction({
     required int sessionId,
     required String mode,

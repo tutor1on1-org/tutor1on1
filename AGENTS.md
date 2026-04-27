@@ -29,3 +29,4 @@
 - Public macOS downloads must stay off the website until there is a runnable Release build. When macOS is ready, publish only a signed `Developer ID Application` build with Hardened Runtime and notarization; do not publish raw `flutter build macos` output.
 - Course KP ordering must use dotted numeric comparison, not plain string comparison; keep parser, UI, and persisted `orderIndex` ordering aligned.
 - Approval email rule: backend moderation/enrollment request creation should notify the responsible approver by email, and approve/reject decisions should notify the applicant with a one-sentence email when SMTP is enabled.
+- Exit and logout final sync must stay on the same `AppQuitFlow._runFinalSync` path, and forced final sync must wait for any active background sync before uploading local session artifacts.

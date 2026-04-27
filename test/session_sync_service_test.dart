@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -69,6 +70,8 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
   int deleteCalls = 0;
   int getState1Calls = 0;
   int getState2Calls = 0;
+  Completer<void>? _blockNextGetState2Started;
+  Completer<void>? _blockNextGetState2Release;
   final List<String> uploadedArtifactIds = <String>[];
   final List<bool> uploadedOverwriteServerFlags = <bool>[];
   final List<String> deletedArtifactIds = <String>[];
@@ -80,9 +83,41 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
         Uint8List.fromList(artifact.bytes);
   }
 
+  void blockNextGetState2() {
+    _blockNextGetState2Started = Completer<void>();
+    _blockNextGetState2Release = Completer<void>();
+  }
+
+  Future<void> waitForBlockedGetState2() {
+    final started = _blockNextGetState2Started;
+    if (started == null) {
+      throw StateError('No blocked getState2 call is configured.');
+    }
+    return started.future;
+  }
+
+  void releaseBlockedGetState2() {
+    final release = _blockNextGetState2Release;
+    if (release == null) {
+      throw StateError('No blocked getState2 call is configured.');
+    }
+    _blockNextGetState2Release = null;
+    release.complete();
+  }
+
   @override
   Future<String> getState2({String? artifactClass}) async {
     getState2Calls++;
+    final started = _blockNextGetState2Started;
+    final release = _blockNextGetState2Release;
+    if (started != null && release != null) {
+      _blockNextGetState2Started = null;
+      started.complete();
+      await release.future;
+      if (identical(_blockNextGetState2Release, release)) {
+        _blockNextGetState2Release = null;
+      }
+    }
     final items = _stateItems(artifactClass ?? '');
     final builder = StringBuffer();
     for (final item in items) {
@@ -1469,6 +1504,114 @@ void main() {
       mode: SessionSyncMode.full,
     );
 
+    expect(stats.uploadedCount, 1);
+    expect(stats.downloadedCount, 0);
+    expect(api.uploadCalls, 1);
+    expect(
+      api.uploadedArtifactIds,
+      equals(<String>['student_kp:3001:200:1.1']),
+    );
+  });
+
+  test('syncNow waits for active periodic sync before final upload', () async {
+    final teacherId = await db.createUser(
+      username: 'teacher',
+      pinHash: 'hash',
+      role: 'teacher',
+      remoteUserId: 901,
+    );
+    final studentId = await db.createUser(
+      username: 'student',
+      pinHash: 'hash',
+      role: 'student',
+      remoteUserId: 3001,
+    );
+    final courseVersionId = await db.createCourseVersion(
+      teacherId: teacherId,
+      subject: 'Chemistry',
+      granularity: 1,
+      textbookText: '',
+    );
+    await db.upsertCourseRemoteLink(
+      courseVersionId: courseVersionId,
+      remoteCourseId: 200,
+    );
+    await db.assignStudent(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+    );
+    await db.into(db.courseNodes).insert(
+          CourseNodesCompanion.insert(
+            courseVersionId: courseVersionId,
+            kpKey: '1.1',
+            title: 'Atoms',
+            description: '',
+            orderIndex: 1,
+          ),
+        );
+
+    final api = _FakeArtifactSyncApiService();
+    final service = SessionSyncService(
+      db: db,
+      api: api,
+      artifactStore: artifactStore,
+    );
+    await service.ensureLocalCutoverInitialized();
+
+    final sessionId = await db.into(db.chatSessions).insert(
+          ChatSessionsCompanion.insert(
+            studentId: studentId,
+            courseVersionId: courseVersionId,
+            kpKey: '1.1',
+            title: const Value('Unsynced Local Session'),
+            startedAt: Value(DateTime.parse('2026-04-10T09:00:00Z')),
+            syncId: const Value('local-session-exit'),
+            syncUpdatedAt: Value(DateTime.parse('2026-04-10T09:05:00Z')),
+          ),
+        );
+    await db.into(db.chatMessages).insert(
+          ChatMessagesCompanion.insert(
+            sessionId: sessionId,
+            role: 'assistant',
+            content: 'latest local message',
+            createdAt: Value(DateTime.parse('2026-04-10T09:00:10Z')),
+          ),
+        );
+    await db.upsertProgressFromSync(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+      kpKey: '1.1',
+      lit: true,
+      litPercent: 75,
+      updatedAt: DateTime.parse('2026-04-10T09:05:30Z'),
+      mergeWithLocal: false,
+    );
+
+    final student = (await db.getUserById(studentId))!;
+    api.blockNextGetState2();
+    final periodicSync = service.syncIfReady(currentUser: student);
+    await api.waitForBlockedGetState2();
+
+    var finalCompleted = false;
+    final finalSync = service
+        .syncNow(
+      currentUser: student,
+      password: 'unused',
+      mode: SessionSyncMode.full,
+    )
+        .then((stats) {
+      finalCompleted = true;
+      return stats;
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(finalCompleted, isFalse);
+
+    api.releaseBlockedGetState2();
+    final periodicStats = await periodicSync;
+    expect(periodicStats.uploadedCount, 0);
+
+    final stats = await finalSync;
+    expect(finalCompleted, isTrue);
     expect(stats.uploadedCount, 1);
     expect(stats.downloadedCount, 0);
     expect(api.uploadCalls, 1);

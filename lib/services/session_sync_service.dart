@@ -33,7 +33,7 @@ class SessionSyncService {
   final RemoteStudentIdentityService _remoteStudentIdentity =
       const RemoteStudentIdentityService();
 
-  bool _syncing = false;
+  Completer<void>? _activeSyncCompleter;
   bool _cutoverInitialized = false;
   int _localMutationSuppressionDepth = 0;
   final Set<int> _pendingRefreshLocalUserIds = <int>{};
@@ -46,6 +46,38 @@ class SessionSyncService {
   static const int _downloadApplyCheckpointInterval = 64;
 
   bool get _localMutationSuppressed => _localMutationSuppressionDepth > 0;
+  bool get _syncing => _activeSyncCompleter != null;
+
+  Future<Completer<void>?> _beginSync({
+    required bool waitForActiveSync,
+  }) async {
+    while (true) {
+      final activeSync = _activeSyncCompleter;
+      if (activeSync == null) {
+        break;
+      }
+      if (!waitForActiveSync) {
+        return null;
+      }
+      await activeSync.future;
+    }
+    final completer = Completer<void>();
+    _activeSyncCompleter = completer;
+    return completer;
+  }
+
+  Future<void> _finishSync(Completer<void> syncCompleter) async {
+    try {
+      await _drainPendingRefreshes();
+    } finally {
+      if (identical(_activeSyncCompleter, syncCompleter)) {
+        _activeSyncCompleter = null;
+      }
+      if (!syncCompleter.isCompleted) {
+        syncCompleter.complete();
+      }
+    }
+  }
 
   Future<T> _runWithLocalMutationSuppressed<T>(
     Future<T> Function() action,
@@ -176,9 +208,6 @@ class SessionSyncService {
     if (currentUser.role != 'student') {
       throw StateError('Take this device copy requires a student user.');
     }
-    if (_syncing) {
-      return stats;
-    }
     final remoteUserId = currentUser.remoteUserId;
     if (remoteUserId == null || remoteUserId <= 0) {
       throw StateError(
@@ -186,7 +215,10 @@ class SessionSyncService {
       );
     }
     await ensureLocalCutoverInitialized();
-    _syncing = true;
+    final syncCompleter = await _beginSync(waitForActiveSync: true);
+    if (syncCompleter == null) {
+      return stats;
+    }
     Object? syncError;
     StackTrace? syncStackTrace;
     try {
@@ -235,8 +267,12 @@ class SessionSyncService {
       syncError = error;
       syncStackTrace = stackTrace;
     } finally {
-      _syncing = false;
-      await _drainPendingRefreshes();
+      try {
+        await _finishSync(syncCompleter);
+      } catch (error, stackTrace) {
+        syncError ??= error;
+        syncStackTrace ??= stackTrace;
+      }
     }
     if (syncError != null) {
       Error.throwWithStackTrace(syncError, syncStackTrace!);
@@ -275,15 +311,15 @@ class SessionSyncService {
     SessionSyncMode mode = SessionSyncMode.downloadOnly,
   }) async {
     final stats = SyncRunStats();
-    if (_syncing) {
-      return stats;
-    }
     final remoteUserId = currentUser.remoteUserId;
     if (remoteUserId == null || remoteUserId <= 0) {
       return stats;
     }
     await ensureLocalCutoverInitialized();
-    _syncing = true;
+    final syncCompleter = await _beginSync(waitForActiveSync: false);
+    if (syncCompleter == null) {
+      return stats;
+    }
     try {
       final serverItems = visibleItems
           .where((item) => item.artifactClass == _artifactClass)
@@ -355,8 +391,7 @@ class SessionSyncService {
       await _artifactStore.saveManifest(manifest);
       return stats;
     } finally {
-      _syncing = false;
-      await _drainPendingRefreshes();
+      await _finishSync(syncCompleter);
     }
   }
 
@@ -608,15 +643,15 @@ class SessionSyncService {
     required bool refreshLocalArtifactsBeforeSync,
   }) async {
     final stats = SyncRunStats();
-    if (_syncing) {
-      return stats;
-    }
     final remoteUserId = currentUser.remoteUserId;
     if (remoteUserId == null || remoteUserId <= 0) {
       return stats;
     }
     await ensureLocalCutoverInitialized();
-    _syncing = true;
+    final syncCompleter = await _beginSync(waitForActiveSync: force);
+    if (syncCompleter == null) {
+      return stats;
+    }
     Object? syncError;
     StackTrace? syncStackTrace;
     try {
@@ -726,8 +761,12 @@ class SessionSyncService {
       syncError = error;
       syncStackTrace = stackTrace;
     } finally {
-      _syncing = false;
-      await _drainPendingRefreshes();
+      try {
+        await _finishSync(syncCompleter);
+      } catch (error, stackTrace) {
+        syncError ??= error;
+        syncStackTrace ??= stackTrace;
+      }
     }
     if (syncError != null) {
       Error.throwWithStackTrace(syncError, syncStackTrace!);
