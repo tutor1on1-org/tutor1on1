@@ -71,7 +71,7 @@ func TestUpdateRecoveryEmailChangesEmail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateFromPassword() error = %v", err)
 	}
-	mock.ExpectQuery(`SELECT password_hash FROM users WHERE id = \? LIMIT 1`).
+	mock.ExpectQuery(`SELECT password_hash FROM users WHERE id = \? AND status <> 'deleted' LIMIT 1`).
 		WithArgs(userID).
 		WillReturnRows(sqlmock.NewRows([]string{"password_hash"}).AddRow(string(passwordHash)))
 	mock.ExpectExec(`UPDATE users SET email = \? WHERE id = \?`).
@@ -103,7 +103,7 @@ func TestUpdateRecoveryEmailRejectsBadPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateFromPassword() error = %v", err)
 	}
-	mock.ExpectQuery(`SELECT password_hash FROM users WHERE id = \? LIMIT 1`).
+	mock.ExpectQuery(`SELECT password_hash FROM users WHERE id = \? AND status <> 'deleted' LIMIT 1`).
 		WithArgs(userID).
 		WillReturnRows(sqlmock.NewRows([]string{"password_hash"}).AddRow(string(passwordHash)))
 

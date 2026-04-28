@@ -114,7 +114,7 @@ class _AdminHomePageState extends State<AdminHomePage> {
       itemCount: _users.length,
       itemBuilder: (context, index) {
         final user = _users[index];
-        final canDeleteTeacher = user.role == 'teacher';
+        final canDeleteUser = user.role != 'admin';
         final subtitle = [
           user.email,
           if (user.teacherSubjectLabels.isNotEmpty)
@@ -125,10 +125,11 @@ class _AdminHomePageState extends State<AdminHomePage> {
             title: Text('${user.username} (${user.role})'),
             subtitle: subtitle.isEmpty ? null : Text(subtitle),
             isThreeLine: subtitle.contains('\n'),
-            trailing: canDeleteTeacher
+            trailing: canDeleteUser
                 ? IconButton(
+                    tooltip: 'Delete user',
                     icon: const Icon(Icons.delete),
-                    onPressed: () => _deleteTeacher(user),
+                    onPressed: () => _deleteUser(user),
                   )
                 : null,
           ),
@@ -274,11 +275,14 @@ class _AdminHomePageState extends State<AdminHomePage> {
     );
   }
 
-  Future<void> _deleteTeacher(AdminUserSummary user) async {
+  Future<void> _deleteUser(AdminUserSummary user) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Delete teacher ${user.username}?'),
+        title: Text('Delete user ${user.username}?'),
+        content: const Text(
+          'This will remove the user from admin lists and revoke their active sessions.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -295,7 +299,7 @@ class _AdminHomePageState extends State<AdminHomePage> {
       return;
     }
     try {
-      await _api.deleteAdminTeacher(user.userId);
+      await _api.deleteAdminUser(user.userId);
       await _load();
     } catch (error) {
       _showError(error);

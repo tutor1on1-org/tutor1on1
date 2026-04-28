@@ -152,52 +152,155 @@ func (h *ModerationHandler) ListAdminUsers(c *fiber.Ctx) error {
 	return c.JSON(results)
 }
 
-func (h *ModerationHandler) DeleteTeacher(c *fiber.Ctx) error {
-	if _, err := requireAdminUserID(c, h.cfg); err != nil {
+func (h *ModerationHandler) DeleteUser(c *fiber.Ctx) error {
+	adminUserID, err := requireAdminUserID(c, h.cfg)
+	if err != nil {
 		return err
 	}
 	userID, err := parseInt64Param(c, "userId")
 	if err != nil {
 		return err
 	}
-	var teacherID int64
-	row := h.cfg.Store.DB.QueryRow(
-		"SELECT id FROM teacher_accounts WHERE user_id = ? LIMIT 1",
-		userID,
-	)
-	if scanErr := row.Scan(&teacherID); scanErr != nil {
-		if errors.Is(scanErr, sql.ErrNoRows) {
-			return fiber.NewError(fiber.StatusNotFound, "teacher not found")
+	if userID == adminUserID {
+		return fiber.NewError(fiber.StatusForbidden, "cannot delete current admin user")
+	}
+
+	tx, err := h.cfg.Store.DB.Begin()
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
 		}
-		return fiber.NewError(fiber.StatusInternalServerError, "teacher lookup failed")
-	}
-	if _, err := h.cfg.Store.DB.Exec(
-		`UPDATE teacher_accounts
-		 SET status = 'rejected'
-		 WHERE id = ?`,
-		teacherID,
-	); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "teacher delete failed")
-	}
-	if _, err := h.cfg.Store.DB.Exec(
-		"DELETE FROM subject_admin_assignments WHERE teacher_user_id = ?",
+	}()
+
+	var currentStatus string
+	if err := tx.QueryRow(
+		"SELECT status FROM users WHERE id = ? LIMIT 1 FOR UPDATE",
 		userID,
-	); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "teacher delete failed")
+	).Scan(&currentStatus); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "user not found")
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, "user lookup failed")
 	}
-	if _, err := h.cfg.Store.DB.Exec(
-		"UPDATE users SET status = 'deleted' WHERE id = ?",
+
+	var targetAdminID int64
+	if err := tx.QueryRow(
+		"SELECT id FROM admin_accounts WHERE user_id = ? LIMIT 1",
 		userID,
-	); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "teacher delete failed")
+	).Scan(&targetAdminID); err == nil {
+		return fiber.NewError(fiber.StatusForbidden, "cannot delete admin user")
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return fiber.NewError(fiber.StatusInternalServerError, "admin lookup failed")
 	}
-	if _, err := h.cfg.Store.DB.Exec(
-		"UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = ? AND revoked_at IS NULL",
-		userID,
-	); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "teacher delete failed")
+
+	deleteSteps := []struct {
+		query string
+		args  []interface{}
+	}{
+		{
+			query: "UPDATE teacher_accounts SET status = 'rejected' WHERE user_id = ?",
+			args:  []interface{}{userID},
+		},
+		{
+			query: "DELETE FROM subject_admin_assignments WHERE teacher_user_id = ?",
+			args:  []interface{}{userID},
+		},
+		{
+			query: `UPDATE teacher_registration_requests
+			 SET status = 'rejected', resolved_at = NOW(), resolved_by_user_id = ?
+			 WHERE user_id = ? AND status = 'pending'`,
+			args: []interface{}{adminUserID, userID},
+		},
+		{
+			query: `UPDATE course_upload_requests cur
+			 JOIN courses c ON c.id = cur.course_id
+			 JOIN teacher_accounts ta ON ta.id = c.teacher_id
+			 SET cur.status = 'rejected',
+			     cur.resolved_at = NOW(),
+			     cur.resolved_by_user_id = ?
+			 WHERE ta.user_id = ? AND cur.status = 'pending'`,
+			args: []interface{}{adminUserID, userID},
+		},
+		{
+			query: `UPDATE enrollment_requests
+			 SET status = 'rejected', resolved_at = NOW()
+			 WHERE status = 'pending'
+			   AND (student_id = ? OR teacher_id IN (
+			     SELECT id FROM teacher_accounts WHERE user_id = ?
+			   ))`,
+			args: []interface{}{userID, userID},
+		},
+		{
+			query: `UPDATE course_quit_requests
+			 SET status = 'rejected', resolved_at = NOW()
+			 WHERE status = 'pending'
+			   AND (student_id = ? OR teacher_id IN (
+			     SELECT id FROM teacher_accounts WHERE user_id = ?
+			   ))`,
+			args: []interface{}{userID, userID},
+		},
+		{
+			query: `UPDATE enrollments
+			 SET status = 'deleted'
+			 WHERE status = 'active'
+			   AND (student_id = ? OR teacher_id IN (
+			     SELECT id FROM teacher_accounts WHERE user_id = ?
+			   ))`,
+			args: []interface{}{userID, userID},
+		},
+		{
+			query: `DELETE FROM teacher_study_mode_overrides
+			 WHERE teacher_user_id = ? OR student_user_id = ?`,
+			args: []interface{}{userID, userID},
+		},
+		{
+			query: `UPDATE teacher_study_mode_schedules
+			 SET status = 'deleted'
+			 WHERE status <> 'deleted'
+			   AND (teacher_user_id = ? OR student_user_id = ?)`,
+			args: []interface{}{userID, userID},
+		},
+		{
+			query: "UPDATE devices SET status = 'deleted' WHERE user_id = ?",
+			args:  []interface{}{userID},
+		},
+		{
+			query: "UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = ? AND revoked_at IS NULL",
+			args:  []interface{}{userID},
+		},
+		{
+			query: "UPDATE app_user_devices SET auth_session_nonce = NULL WHERE user_id = ?",
+			args:  []interface{}{userID},
+		},
 	}
-	return c.JSON(fiber.Map{"status": "deleted"})
+	for _, step := range deleteSteps {
+		if _, err := tx.Exec(step.query, step.args...); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "user delete failed")
+		}
+	}
+
+	result, err := tx.Exec("UPDATE users SET status = 'deleted' WHERE id = ? AND status <> 'deleted'", userID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "user delete failed")
+	}
+	if !strings.EqualFold(strings.TrimSpace(currentStatus), "deleted") {
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "user delete failed")
+		}
+		if affected == 0 {
+			return fiber.NewError(fiber.StatusInternalServerError, "user delete failed")
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
+	}
+	committed = true
+	return c.JSON(fiber.Map{"status": "deleted", "user_id": userID})
 }
 
 func (h *ModerationHandler) ListSubjectLabels(c *fiber.Ctx) error {

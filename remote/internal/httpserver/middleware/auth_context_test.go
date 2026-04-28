@@ -40,6 +40,9 @@ func TestAuthContextAcceptsActiveDeviceSession(t *testing.T) {
 	userID := int64(402)
 	deviceKey := "device-a"
 	sessionNonce := "nonce-a"
+	mock.ExpectQuery(`SELECT 1 FROM users WHERE id = \? AND status <> 'deleted' LIMIT 1`).
+		WithArgs(userID).
+		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
 	mock.ExpectQuery(`SELECT 1
 		 FROM app_user_devices
 		 WHERE user_id = \?
@@ -63,6 +66,28 @@ func TestAuthContextAcceptsActiveDeviceSession(t *testing.T) {
 	}
 }
 
+func TestAuthContextRejectsDeletedUser(t *testing.T) {
+	db, mock := newAuthContextSQLMock(t)
+	defer db.Close()
+
+	userID := int64(404)
+	deviceKey := "device-c"
+	sessionNonce := "nonce-c"
+	mock.ExpectQuery(`SELECT 1 FROM users WHERE id = \? AND status <> 'deleted' LIMIT 1`).
+		WithArgs(userID).
+		WillReturnError(sql.ErrNoRows)
+
+	app := buildAuthContextTestApp(db)
+	token := signAuthContextJWT(t, "secret", userID, deviceKey, sessionNonce)
+	status, body := callAuthContextRoute(t, app, token)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d (body=%q)", status, http.StatusUnauthorized, body)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations not met: %v", err)
+	}
+}
+
 func TestAuthContextRejectsInactiveDeviceSession(t *testing.T) {
 	db, mock := newAuthContextSQLMock(t)
 	defer db.Close()
@@ -70,6 +95,9 @@ func TestAuthContextRejectsInactiveDeviceSession(t *testing.T) {
 	userID := int64(403)
 	deviceKey := "device-b"
 	sessionNonce := "nonce-b"
+	mock.ExpectQuery(`SELECT 1 FROM users WHERE id = \? AND status <> 'deleted' LIMIT 1`).
+		WithArgs(userID).
+		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
 	mock.ExpectQuery(`SELECT 1
 		 FROM app_user_devices
 		 WHERE user_id = \?

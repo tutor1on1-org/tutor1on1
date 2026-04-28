@@ -697,7 +697,10 @@ func (h *AuthHandler) createAuthDeviceSession(
 }
 
 func (h *AuthHandler) getUserAuthByUsername(username string) (int64, string, error) {
-	row := h.store.DB.QueryRow("SELECT id, password_hash FROM users WHERE username = ? LIMIT 1", username)
+	row := h.store.DB.QueryRow(
+		"SELECT id, password_hash FROM users WHERE username = ? AND status <> 'deleted' LIMIT 1",
+		username,
+	)
 	var id int64
 	var hash string
 	if err := row.Scan(&id, &hash); err != nil {
@@ -707,7 +710,10 @@ func (h *AuthHandler) getUserAuthByUsername(username string) (int64, string, err
 }
 
 func (h *AuthHandler) getUserAuthByID(userID int64) (string, error) {
-	row := h.store.DB.QueryRow("SELECT password_hash FROM users WHERE id = ? LIMIT 1", userID)
+	row := h.store.DB.QueryRow(
+		"SELECT password_hash FROM users WHERE id = ? AND status <> 'deleted' LIMIT 1",
+		userID,
+	)
 	var hash string
 	if err := row.Scan(&hash); err != nil {
 		return "", errors.New("not found")

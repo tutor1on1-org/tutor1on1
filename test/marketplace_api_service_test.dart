@@ -422,4 +422,23 @@ void main() {
 
     expect(result.deletedCurrentDevice, isTrue);
   });
+
+  test('deleteAdminUser posts to admin user delete endpoint', () async {
+    final api = MarketplaceApiService(
+      secureStorage: _TokenSecureStorageService(accessToken: 'token'),
+      baseUrl: 'https://example.com',
+      client: MockClient((request) async {
+        expect(request.method, equals('POST'));
+        expect(request.url.path, equals('/api/admin/users/42/delete'));
+        expect(request.headers['Authorization'], equals('Bearer token'));
+        return http.Response(
+          '{"status":"deleted","user_id":42}',
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    await api.deleteAdminUser(42);
+  });
 }

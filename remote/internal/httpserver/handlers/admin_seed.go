@@ -3,19 +3,31 @@ package handlers
 import (
 	"database/sql"
 	"errors"
+	"os"
+	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
 const (
-	defaultAdminUsername = "admin"
-	defaultAdminEmail    = "admin@family-teacher.local"
-	defaultAdminPassword = "dennis_yang_edu"
+	defaultAdminUsername      = "admin"
+	defaultAdminEmail         = "admin@family-teacher.local"
+	bootstrapAdminUsernameEnv = "BOOTSTRAP_ADMIN_USERNAME"
+	bootstrapAdminEmailEnv    = "BOOTSTRAP_ADMIN_EMAIL"
+	bootstrapAdminPasswordEnv = "BOOTSTRAP_ADMIN_PASSWORD"
 )
 
 func EnsureDefaultAdmin(db *sql.DB) error {
 	if db == nil {
 		return errors.New("database required")
+	}
+	username := strings.TrimSpace(os.Getenv(bootstrapAdminUsernameEnv))
+	if username == "" {
+		username = defaultAdminUsername
+	}
+	email := strings.TrimSpace(os.Getenv(bootstrapAdminEmailEnv))
+	if email == "" {
+		email = defaultAdminEmail
 	}
 	var existingID int64
 	row := db.QueryRow(
@@ -24,7 +36,7 @@ func EnsureDefaultAdmin(db *sql.DB) error {
 		 JOIN users u ON u.id = aa.user_id
 		 WHERE u.username = ?
 		 LIMIT 1`,
-		defaultAdminUsername,
+		username,
 	)
 	if err := row.Scan(&existingID); err == nil {
 		return nil
@@ -32,7 +44,11 @@ func EnsureDefaultAdmin(db *sql.DB) error {
 		return err
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(defaultAdminPassword), bcrypt.DefaultCost)
+	password := strings.TrimSpace(os.Getenv(bootstrapAdminPasswordEnv))
+	if password == "" {
+		return nil
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
@@ -48,7 +64,7 @@ func EnsureDefaultAdmin(db *sql.DB) error {
 	}()
 
 	var userID int64
-	userRow := tx.QueryRow("SELECT id FROM users WHERE username = ? LIMIT 1", defaultAdminUsername)
+	userRow := tx.QueryRow("SELECT id FROM users WHERE username = ? LIMIT 1", username)
 	if scanErr := userRow.Scan(&userID); scanErr != nil {
 		if !errors.Is(scanErr, sql.ErrNoRows) {
 			err = scanErr
@@ -56,8 +72,8 @@ func EnsureDefaultAdmin(db *sql.DB) error {
 		}
 		res, insertErr := tx.Exec(
 			"INSERT INTO users (username, email, password_hash, status) VALUES (?, ?, ?, 'active')",
-			defaultAdminUsername,
-			defaultAdminEmail,
+			username,
+			email,
 			string(hash),
 		)
 		if insertErr != nil {
@@ -71,7 +87,7 @@ func EnsureDefaultAdmin(db *sql.DB) error {
 	} else {
 		if _, err = tx.Exec(
 			"UPDATE users SET email = ?, password_hash = ?, status = 'active' WHERE id = ?",
-			defaultAdminEmail,
+			email,
 			string(hash),
 			userID,
 		); err != nil {

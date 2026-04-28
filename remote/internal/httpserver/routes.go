@@ -94,7 +94,7 @@ func registerRoutes(app *fiber.App, deps handlers.Dependencies) {
 	api.Post("/subject-admin/course-upload-requests/:id/reject", moderation.RejectCourseUpload)
 
 	api.Get("/admin/users", moderation.ListAdminUsers)
-	api.Post("/admin/users/:userId/delete", moderation.DeleteTeacher)
+	api.Post("/admin/users/:userId/delete", moderation.DeleteUser)
 	api.Get("/admin/subject-labels", moderation.ListSubjectLabels)
 	api.Post("/admin/subject-labels", moderation.CreateSubjectLabel)
 	api.Post("/admin/subject-labels/:id", moderation.UpdateSubjectLabel)

@@ -1328,7 +1328,7 @@ class MarketplaceApiService {
     return _decodeList(response, (json) => AdminUserSummary.fromJson(json));
   }
 
-  Future<void> deleteAdminTeacher(int userId) async {
+  Future<void> deleteAdminUser(int userId) async {
     await _post('/api/admin/users/$userId/delete', {});
   }
 

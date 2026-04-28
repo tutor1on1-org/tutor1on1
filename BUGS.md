@@ -337,3 +337,13 @@ Last updated: 2026-04-27
 - Symptom: after pressing `Test API key`, the settings/session model picker could keep showing stale/default model options even though the provider `/models` probe succeeded.
 - Root cause: successful probes wrote `api_model_caches` with `customStatement`, which Drift explicitly does not use to update active select streams. The APIS tab had been changed to read `watchApiModelCaches()`, so the local `_textModelOptions` set by the probe no longer refreshed the picker.
 - Prevention: write API model cache upserts through a Drift custom write that marks `apiModelCaches` as updated, and keep a regression test that subscribes to `watchApiModelCaches()` before calling `upsertApiModelCache`.
+
+65. Public GitHub branches can expose backend bootstrap credentials
+- Symptom: the public GitHub repo was reachable anonymously and its `simple` branch contained `remote/`, including the backend admin seed source.
+- Root cause: the private app repo had a public `github` remote branch with backend files, while the admin seed kept a default password literal in source.
+- Prevention: before any public push, verify the target branch tree, keep bootstrap admin passwords only in deployment env (`BOOTSTRAP_ADMIN_PASSWORD`), and rotate production credentials after any public exposure.
+
+66. Soft-deleted users must be blocked by auth, not only hidden from lists
+- Symptom: deleting a user could remove them from admin lists while still leaving re-login or existing device-session paths possible.
+- Root cause: admin delete only set `users.status='deleted'` and revoked refresh tokens; login and auth-context validation did not check `users.status`, and active device session nonces were not cleared.
+- Prevention: admin delete must soft-delete non-admin users, revoke refresh tokens, clear device-session nonces, and login/auth middleware must reject `status='deleted'` users.
