@@ -1,5 +1,5 @@
 # BUGS
-Last updated: 2026-04-27
+Last updated: 2026-04-29
 
 ## Active watch
 - Student import race after bundle download (monitoring): fixed by awaiting archive extraction in client bundle service (`f77e7e0`); keep watching for recurrence in production-like flow.
@@ -347,3 +347,8 @@ Last updated: 2026-04-27
 - Symptom: deleting a user could remove them from admin lists while still leaving re-login or existing device-session paths possible.
 - Root cause: admin delete only set `users.status='deleted'` and revoked refresh tokens; login and auth-context validation did not check `users.status`, and active device session nonces were not cleared.
 - Prevention: admin delete must soft-delete non-admin users, revoke refresh tokens, clear device-session nonces, and login/auth middleware must reject `status='deleted'` users.
+
+67. Approval email delivery must be best-effort
+- Symptom: approving or rejecting a request could fail with `approval decision email failed` and leave the request pending when the recipient email was invalid or SMTP rejected delivery.
+- Root cause: approval notification senders returned SMTP errors into the approval transaction path, turning notification delivery into a hard dependency for database approval/rejection.
+- Prevention: keep approval request/decision emails best-effort, log delivery failures as warnings, and regression-test that approval transactions still commit when SMTP is unreachable.

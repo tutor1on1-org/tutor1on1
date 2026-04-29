@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"log"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -166,7 +167,7 @@ func sendApprovalRequestEmails(deps Dependencies, emails []string) error {
 	}
 	for _, email := range dedupeApprovalEmails(emails) {
 		if err := deps.Mailer.SendApprovalRequestEmail(email); err != nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "approval request email failed")
+			log.Printf("approval request email failed for %q: %v", email, err)
 		}
 	}
 	return nil
@@ -182,7 +183,7 @@ func sendApprovalDecisionEmails(
 	}
 	for _, email := range dedupeApprovalEmails(emails) {
 		if err := deps.Mailer.SendApprovalDecisionEmail(email, approved); err != nil {
-			return fiber.NewError(fiber.StatusServiceUnavailable, "approval decision email failed")
+			log.Printf("approval decision email failed for %q approved=%t: %v", email, approved, err)
 		}
 	}
 	return nil

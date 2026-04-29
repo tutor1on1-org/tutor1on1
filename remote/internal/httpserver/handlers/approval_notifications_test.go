@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"database/sql"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -133,6 +135,52 @@ func TestRejectEnrollmentRequestSendsStudentDecisionEmail(t *testing.T) {
 	assertSQLMockExpectations(t, mock)
 }
 
+func TestRejectEnrollmentRequestCommitsWhenDecisionEmailFails(t *testing.T) {
+	db, mock := newHandlerSQLMock(t)
+	defer db.Close()
+
+	mailService := newUnreachableApprovalNotificationTestMailer(t)
+
+	teacherUserID := int64(1701)
+	teacherID := int64(778)
+	requestID := int64(42)
+	studentID := int64(901)
+	studentEmail := "bad-recipient@example.com"
+	mock.ExpectQuery(`SELECT id FROM teacher_accounts WHERE user_id = \? AND status = 'active' LIMIT 1`).
+		WithArgs(teacherUserID).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(teacherID))
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT student_id\s+FROM enrollment_requests`).
+		WithArgs(requestID, teacherID).
+		WillReturnRows(sqlmock.NewRows([]string{"student_id"}).AddRow(studentID))
+	mock.ExpectExec(`UPDATE enrollment_requests`).
+		WithArgs(requestID, teacherID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`SELECT email\s+FROM users`).
+		WithArgs(studentID).
+		WillReturnRows(sqlmock.NewRows([]string{"email"}).AddRow(studentEmail))
+	mock.ExpectCommit()
+
+	app := buildEnrollmentNotificationTestApp(
+		db,
+		[]string{"test-secret"},
+		mailService,
+	)
+	token := signTestJWT(t, "test-secret", teacherUserID, true)
+	status, body, _ := callAPI(
+		t,
+		app,
+		http.MethodPost,
+		"/api/teacher/enrollment-requests/42/reject",
+		token,
+		`{}`,
+	)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", status, http.StatusOK, body)
+	}
+	assertSQLMockExpectations(t, mock)
+}
+
 func TestNotifySubjectAdminsForTeacherApprovalRequestSendsEmail(t *testing.T) {
 	db, mock := newHandlerSQLMock(t)
 	defer db.Close()
@@ -225,4 +273,33 @@ func newApprovalNotificationTestMailer(
 		SMTPFrom:    "noreply@example.com",
 	}
 	return smtpServer, mailer.New(cfg)
+}
+
+func newUnreachableApprovalNotificationTestMailer(t *testing.T) *mailer.Service {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+	host, port := func() (string, int) {
+		host, port, err := net.SplitHostPort(ln.Addr().String())
+		if err != nil {
+			t.Fatalf("SplitHostPort() error = %v", err)
+		}
+		parsedPort, err := strconv.Atoi(port)
+		if err != nil {
+			t.Fatalf("Atoi(%q) error = %v", port, err)
+		}
+		return host, parsedPort
+	}()
+	if err := ln.Close(); err != nil {
+		t.Fatalf("listener.Close() error = %v", err)
+	}
+	cfg := config.Config{
+		SMTPEnabled: true,
+		SMTPHost:    host,
+		SMTPPort:    port,
+		SMTPFrom:    "noreply@example.com",
+	}
+	return mailer.New(cfg)
 }
