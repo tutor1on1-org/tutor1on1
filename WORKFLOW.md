@@ -77,3 +77,7 @@ For app changes, the default same-turn handoff is: validate, build, git, and pub
 - Run `scripts/hook_memory_update.ps1` after memory markdown edits (or force targets manually) to consolidate memory docs.
 - Direct runs of `scripts/hook_memory_update.ps1` auto-commit and auto-push memory updates when changes are applied.
 - `scripts/post_validate_hook.ps1` remains an optional manual path.
+
+- Public release: use `scripts/release_public.ps1`; website publishing is opt-in with `-PublishWebsite`, and normal releases should refresh Android/Windows downloads plus GitHub Release assets without touching the website unless requested.
+- Public GitHub safety: before pushing to `github`, inspect the target branch tree for backend paths such as `remote/`; keep bootstrap/admin credentials out of source and rotate production credentials after any public exposure.
+- Public website checks should retry HTTP verification after rsync and must validate localized home/help/install/legal pages plus release links from `/site.js`.

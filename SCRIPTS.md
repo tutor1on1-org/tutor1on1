@@ -1,5 +1,5 @@
 # SCRIPTS
-Last updated: 2026-03-25
+Last updated: 2026-04-30
 
 All commands are expected from repository root (`C:\family_teacher\app`) unless stated otherwise.
 
@@ -76,17 +76,19 @@ Required workflow gate: run release build before updating `DONEs.md` after code 
 ## Utility scripts
 ### Consolidated public release
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/release_public.ps1
+powershell -ExecutionPolicy Bypass -File scripts/release_public.ps1 -CommitMessage "Update default prompt"
 ```
 Default behavior:
-- Syncs `web/site.js` release metadata from `pubspec.yaml` before validation/git/publish so website download links stay aligned with the current versioned asset names.
+- Syncs `web/site.js` release metadata from `pubspec.yaml` before validation/git/publish so download metadata stays aligned with the current release.
 - Runs `scripts/validate_project.ps1 -NoPostHook` first.
-- Runs `git add -A`, `git commit`, and pushes the current branch plus release tag to the `github` remote.
-- Publishes Android as `Tutor1on1-<version>.apk`.
-- Publishes Windows as `Tutor1on1-<version>.zip`.
-- Publishes GitHub Release assets for the configured public tag.
-- Republishes the static website after artifacts are live.
+- Stages, commits, tags, and pushes to the `github` remote when git steps are enabled.
+- Publishes Android as canonical `Tutor1on1.apk`.
+- Publishes Windows as canonical `Tutor1on1.zip`.
+- Refreshes GitHub Release assets for the configured public tag.
+- Does not publish the website unless `-PublishWebsite` is supplied.
 Useful flags:
+- `-CommitMessage "..."`
+- `-PublishWebsite`
 - `-SkipValidation`
 - `-SkipGit`
 - `-SkipAndroid`
@@ -96,7 +98,14 @@ Useful flags:
 - `-SkipGitHubRelease`
 - `-SkipPromptAssetTests`
 - `-SkipZipValidation`
-- `-SkipWebsite`
+
+Local prompt/build checks only:
+```powershell
+flutter test test\prompt_assets_integrity_test.dart
+powershell -ExecutionPolicy Bypass -File scripts\validate_project.ps1 -NoPostHook
+flutter build apk --release
+flutter build windows --release
+```
 
 ### Android release publish (build + upload)
 ```powershell
@@ -109,10 +118,9 @@ Optional flags:
 Default safeguards:
 - Runs `flutter build apk --config-only` immediately before the release APK build to refresh Android plugin wiring when the Flutter toolchain regresses on `integration_test` dev dependencies.
 - Publishes candidate first as `Tutor1on1_candidate.apk`.
-- Publishes only the versioned APK such as `Tutor1on1-1.0.8.apk`, deletes older versioned APK aliases, and removes any stale unversioned `Tutor1on1.apk`.
+- Publishes the canonical APK as `Tutor1on1.apk` and cleans stale legacy APK artifacts.
 - Verifies remote SHA-256 against the local APK before promotion.
 - Verifies both candidate and published public download URLs.
-- Cleans old versioned `Tutor1on1-*.apk` and legacy `family_teacher*.apk` artifacts after promotion.
 
 ### Windows release publish (build + zip + upload)
 ```powershell
@@ -129,8 +137,8 @@ Default safeguards:
 - Clears stale `build/windows` output before rebuild so renamed executables do not inherit the old CMake target name.
 - ZIP validator checks required runtime files and prompt asset UTF-8 readability.
 - ZIP packaging uses `System.IO.Compression` for Windows Explorer compatibility.
-- Remote publish uses candidate-first promotion before publishing the versioned ZIP such as `Tutor1on1-1.0.8.zip`.
-- Cleans stale versioned `Tutor1on1-*.zip`, the stale Windows candidate ZIP, legacy `family_teacher*.zip`, and any stale unversioned `Tutor1on1.zip`.
+- Remote publish uses candidate-first promotion before publishing canonical `Tutor1on1.zip`.
+- Cleans stale candidate ZIPs, legacy `family_teacher*.zip`, and stale older Tutor1on1 ZIP artifacts.
 
 ### GitHub Release publish
 ```powershell
@@ -146,7 +154,7 @@ Optional flags:
 - `-SkipWindowsBuild`
 
 Default safeguards:
-- Builds or reuses `Tutor1on1-<version>.apk`, `Tutor1on1-<version>.zip`, and `SHA256SUMS.txt` under `public_release/dist/<tag>/`.
+- Builds or reuses `Tutor1on1.apk`, `Tutor1on1.zip`, and `SHA256SUMS.txt` under `public_release/dist/<tag>/`.
 - Defaults the release tag/name from `pubspec.yaml` when not explicitly provided.
 - Validates the packaged Windows ZIP with the same ZIP checker used by the server publish flow.
 - Resolves a GitHub token from `GITHUB_TOKEN`/`GH_TOKEN` or `git credential fill`.
@@ -160,7 +168,8 @@ Default safeguards:
 - Re-syncs `web/site.js` release metadata from `pubspec.yaml` before upload so standalone website publishes cannot drift from the public release tag.
 - Clears the remote website root before syncing `web/` so deleted public pages are actually removed.
 - Verifies the remote website tree after upload.
-- Verifies localized home/help/install pages return HTTP 200, install pages still reference the download host, `site.js` advertises the current versioned APK/ZIP names, and removed macOS install pages no longer return HTTP 200.
+- Retries HTTP checks after upload because nginx/static visibility can briefly lag behind rsync completion.
+- Verifies localized home/help/install/legal pages return HTTP 200, install pages still reference the download host, `site.js` advertises current APK/ZIP names, and removed macOS install pages no longer return HTTP 200.
 
 ### Future macOS notarized release package
 Do not publish or relink macOS on the website until the app is runnable.
@@ -334,26 +343,3 @@ curl https://api.tutor1on1.org/health
 - Add Dart unit tests under `test/` and run target file first, then full `flutter test`.
 - Add API regression tests under `remote/` and run `go test ./...`.
 - For bug fixes, script the repro path first, then validate fixed path and one adjacent path.
-
-## Public release shortcuts
-Use the public release script by default:
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\release_public.ps1 -CommitMessage "Update default prompt"
-```
-It bumps the patch version, validates, stages/commits, tags, pushes to `github`, publishes Android APK and Windows ZIP artifacts, and refreshes GitHub Release assets. Website publishing is opt-in:
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\release_public.ps1 -CommitMessage "Update default prompt" -PublishWebsite
-```
-
-For local prompt/build checks only:
-```powershell
-flutter test test\prompt_assets_integrity_test.dart
-powershell -ExecutionPolicy Bypass -File scripts\validate_project.ps1 -NoPostHook
-flutter build apk --release
-flutter build windows --release
-```
-
-For Windows-only publishing:
-```powershell
-powershell -ExecutionPolicy Bypass -File skills\windows_release_publish\scripts\publish_windows_release.ps1
-```

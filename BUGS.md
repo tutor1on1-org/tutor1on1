@@ -8,6 +8,7 @@ Last updated: 2026-04-30
 - Current canonical sync model is zip-artifact manifest sync. Bug entries that explicitly target the retired row-level session/progress/enrollment sync model are kept only as historical root-cause references.
 
 ## Recent bug fixes
+- 2026-04-30 OpenAI Codex OAuth `Unsupported parameter: max_output_tokens`: ChatGPT/Codex `/backend-api/codex/responses` is not a drop-in OpenAI Platform Responses endpoint and can reject Platform-supported request fields. Do not send `max_output_tokens` on the `openai-codex` provider path; keep a request-shape test that asserts the OAuth body omits unsupported parameters.
 - 2026-04-30 OpenAI Codex OAuth `Instructions are required`: ChatGPT/Codex `/backend-api/codex/responses` rejects requests without a non-empty top-level `instructions` field even when `input` carries the tutor prompt. Keep a concise stable tutor instruction in the Codex OAuth request body and assert it in provider tests.
 
 ## Lessons learned (do not repeat)

@@ -2,6 +2,7 @@
 Historical timeline. Keep active runbook details in `WORKLOG.md`. Entries that mention row-level session/progress/enrollment sync remain historical delivery records only.
 
 ## 2026-04-30
+- Fixed OpenAI Codex/ChatGPT OAuth LLM requests failing with HTTP 400 `{"detail":"Unsupported parameter: max_output_tokens"}` by removing `max_output_tokens` from the Codex OAuth request body while keeping ordinary OpenAI Platform traffic unchanged. Added OAuth request-shape coverage and validated with the focused LLM service test plus `scripts/validate_project.ps1 -NoPostHook`.
 - Fixed OpenAI Codex/ChatGPT OAuth LLM requests failing with HTTP 400 `{"detail":"Instructions are required"}` by adding a non-empty top-level `instructions` field to the Codex Responses request body while keeping the rendered tutor prompt in the user input message. Added OAuth request-shape coverage and validated with the focused LLM service test plus `scripts/validate_project.ps1 -NoPostHook`.
 
 ## 2026-04-27
