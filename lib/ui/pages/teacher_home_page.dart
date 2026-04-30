@@ -29,6 +29,7 @@ import 'student_sessions_page.dart';
 import 'subject_admin_page.dart';
 import 'teacher_enrollment_requests_page.dart';
 import 'teacher_study_mode_page.dart';
+import '../widgets/action_indicators.dart';
 import '../widgets/server_sync_overlay.dart';
 
 class TeacherHomePage extends StatefulWidget {
@@ -61,6 +62,7 @@ class _TeacherHomePageState extends State<TeacherHomePage>
   late HomeSyncCoordinator _syncCoordinator;
   List<TeacherCourseSummary> _remoteTeacherCourses = [];
   List<SubjectLabelSummary> _subjectLabels = [];
+  int _pendingApprovalCount = 0;
 
   @override
   void initState() {
@@ -209,12 +211,14 @@ class _TeacherHomePageState extends State<TeacherHomePage>
     try {
       final teacherCourses = await _marketplaceApi.listTeacherCourses();
       final subjectLabels = await _marketplaceApi.listSubjectLabels();
+      final pendingApprovalCount = await _loadPendingApprovalCount();
       if (!mounted) {
         return;
       }
       setState(() {
         _remoteTeacherCourses = teacherCourses;
         _subjectLabels = subjectLabels;
+        _pendingApprovalCount = pendingApprovalCount;
       });
     } on MarketplaceApiException catch (error) {
       if (surfaceAuthErrors && _isAuthFailure(error)) {
@@ -228,6 +232,16 @@ class _TeacherHomePageState extends State<TeacherHomePage>
     }
   }
 
+  Future<int> _loadPendingApprovalCount() async {
+    try {
+      final requests = await _marketplaceApi.listTeacherRequests();
+      final quitRequests = await _marketplaceApi.listTeacherQuitRequests();
+      return _countPendingApprovalRequests(requests, quitRequests);
+    } catch (_) {
+      return _pendingApprovalCount;
+    }
+  }
+
   bool _isAuthFailure(MarketplaceApiException error) {
     if (error.statusCode == 401 || error.statusCode == 403) {
       return true;
@@ -235,6 +249,26 @@ class _TeacherHomePageState extends State<TeacherHomePage>
     final message = error.message.toLowerCase();
     return message.contains('missing auth token') ||
         message.contains('unauthorized');
+  }
+
+  int _countPendingApprovalRequests(
+    List<TeacherRequestSummary> requests,
+    List<TeacherQuitRequestSummary> quitRequests,
+  ) {
+    var count = 0;
+    for (final request in requests) {
+      final status = request.status.trim().toLowerCase();
+      if (status.isEmpty || status == 'pending') {
+        count++;
+      }
+    }
+    for (final request in quitRequests) {
+      final status = request.status.trim().toLowerCase();
+      if (status.isEmpty || status == 'pending') {
+        count++;
+      }
+    }
+    return count;
   }
 
   @override
@@ -302,17 +336,27 @@ class _TeacherHomePageState extends State<TeacherHomePage>
                       },
                       child: Text(l10n.createCourseButton),
                     ),
-                    ElevatedButton(
-                      key: const Key('enrollment_requests_button'),
-                      onPressed: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) =>
-                                const TeacherEnrollmentRequestsPage(),
-                          ),
-                        );
-                      },
-                      child: Text(l10n.enrollmentRequestsButton),
+                    PendingCountBadge(
+                      count: _pendingApprovalCount,
+                      badgeKey:
+                          const Key('teacher_pending_approval_count_badge'),
+                      child: ElevatedButton(
+                        key: const Key('enrollment_requests_button'),
+                        onPressed: () async {
+                          await Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  const TeacherEnrollmentRequestsPage(),
+                            ),
+                          );
+                          if (mounted) {
+                            unawaited(_refreshMarketplaceState(
+                              surfaceAuthErrors: false,
+                            ));
+                          }
+                        },
+                        child: Text(l10n.enrollmentRequestsButton),
+                      ),
                     ),
                     ElevatedButton(
                       key: const Key('prompt_settings_button'),

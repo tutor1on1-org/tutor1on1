@@ -17,6 +17,7 @@ import '../app_settings_page.dart';
 import '../app_close_button.dart';
 import '../quit_app_flow.dart';
 import '../progress_display.dart';
+import '../widgets/action_indicators.dart';
 import 'marketplace_page.dart';
 import 'skill_tree_page.dart';
 import '../widgets/server_sync_overlay.dart';
@@ -562,13 +563,24 @@ class _StudentHomePageState extends State<StudentHomePage>
             actions: buildAppBarActionsWithClose(
               context,
               actions: [
-                IconButton(
-                  icon: const Icon(Icons.store),
-                  tooltip: l10n.marketplaceTitle,
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                          builder: (_) => const MarketplacePage()),
+                StreamBuilder<List<CourseVersion>>(
+                  stream: db.watchAssignedCourses(student.id),
+                  builder: (context, snapshot) {
+                    final hasNoSubscribedCourses =
+                        snapshot.hasData && (snapshot.data ?? []).isEmpty;
+                    return AttentionIconButton(
+                      icon: Icons.store,
+                      tooltip: l10n.marketplaceTitle,
+                      highlighted: hasNoSubscribedCourses,
+                      highlightKey:
+                          const Key('student_marketplace_attention_button'),
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const MarketplacePage(),
+                          ),
+                        );
+                      },
                     );
                   },
                 ),
