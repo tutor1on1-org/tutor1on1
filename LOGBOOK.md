@@ -1,6 +1,9 @@
 # LOGBOOK
 Historical timeline. Keep active runbook details in `WORKLOG.md`. Entries that mention row-level session/progress/enrollment sync remain historical delivery records only.
 
+## 2026-04-30
+- Fixed OpenAI Codex/ChatGPT OAuth LLM requests failing with HTTP 400 `{"detail":"Instructions are required"}` by adding a non-empty top-level `instructions` field to the Codex Responses request body while keeping the rendered tutor prompt in the user input message. Added OAuth request-shape coverage and validated with the focused LLM service test plus `scripts/validate_project.ps1 -NoPostHook`.
+
 ## 2026-04-27
 - Fixed orphan course approval pending states: new teacher courses now start as `draft`, bundle upload marks them `pending` only after a real `course_upload_requests` row exists and subject-admin email is sent, the teacher UI labels draft as `not submitted`, and a migration repairs pending courses with no bundle/request back to draft.
 - Added upload regression coverage for draft-course upload request creation and subject-admin email notification; fixed Windows local storage saves by closing temp files before rename. Validated with targeted handler tests, `go test ./...`, `flutter analyze`, `scripts/validate_project.ps1 -NoPostHook`, and `flutter build windows --release`; deployed Linux API SHA-256 `2439c2ef90fd7b4526abb993a58b53c643d393af198df7f7a784805cf99d0b0c`, restarted `family-teacher-api.service`, verified health, and kept DB backup `/home/ecs-user/db_backups/family_teacher_20260427_133222_pre_draft_approval.sql.gz`.

@@ -1,8 +1,9 @@
 # DONES
-Last updated: 2026-04-27
+Last updated: 2026-04-30
 
 Recent completions only. Detailed historical delivery records live in `LOGBOOK.md`.
 
+- Fixed OpenAI Codex/ChatGPT OAuth tutor calls failing with HTTP 400 `Instructions are required` by sending a concise top-level Codex `instructions` field and adding request-shape regression coverage.
 - Updated the public website Help pages with OpenAI Codex/ChatGPT OAuth setup steps across supported locales and added website publish verification for the new OAuth help text.
 - Added built-in OpenAI Codex/ChatGPT OAuth provider support in API Settings: users can log in with ChatGPT, refresh OAuth-backed model options without an API key, save OAuth configs, and run tutor LLM calls through the Codex Responses backend with secure token refresh.
 - Updated the built-in DeepSeek provider to use the official canonical base URL `https://api.deepseek.com` while leaving `/v1` legacy compatibility treated as non-bug behavior.

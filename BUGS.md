@@ -1,11 +1,14 @@
 # BUGS
-Last updated: 2026-04-29
+Last updated: 2026-04-30
 
 ## Active watch
 - Student import race after bundle download (monitoring): fixed by awaiting archive extraction in client bundle service (`f77e7e0`); keep watching for recurrence in production-like flow.
 
 ## Scope note
 - Current canonical sync model is zip-artifact manifest sync. Bug entries that explicitly target the retired row-level session/progress/enrollment sync model are kept only as historical root-cause references.
+
+## Recent bug fixes
+- 2026-04-30 OpenAI Codex OAuth `Instructions are required`: ChatGPT/Codex `/backend-api/codex/responses` rejects requests without a non-empty top-level `instructions` field even when `input` carries the tutor prompt. Keep a concise stable tutor instruction in the Codex OAuth request body and assert it in provider tests.
 
 ## Lessons learned (do not repeat)
 1. Archive extraction race

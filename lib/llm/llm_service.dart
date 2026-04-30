@@ -880,11 +880,14 @@ class LlmService {
       'model': model,
       'store': false,
       'stream': true,
+      'instructions':
+          'You are Tutor1on1, an educational tutor. Follow the user prompt exactly and return only the requested answer format.',
       'text': <String, dynamic>{
         'verbosity': 'medium',
       },
       'input': <Map<String, dynamic>>[
         <String, dynamic>{
+          'type': 'message',
           'role': 'user',
           'content': <Map<String, String>>[
             <String, String>{

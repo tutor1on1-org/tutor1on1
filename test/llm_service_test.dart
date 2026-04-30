@@ -203,12 +203,15 @@ void main() {
         expect(body['stream'], isTrue);
         expect(body['store'], isFalse);
         expect(body['max_output_tokens'], equals(4000));
+        expect(body['instructions'], isA<String>());
+        expect((body['instructions'] as String).trim(), isNotEmpty);
         expect(
           body['text'],
           containsPair('verbosity', 'medium'),
         );
         final input = body['input'] as List<dynamic>;
         final firstInput = input.single as Map<String, dynamic>;
+        expect(firstInput['type'], equals('message'));
         final content = firstInput['content'] as List<dynamic>;
         expect(
           (content.single as Map<String, dynamic>)['text'],
