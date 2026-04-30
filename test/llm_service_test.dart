@@ -202,7 +202,7 @@ void main() {
         expect(body['model'], equals('gpt-5.5'));
         expect(body['stream'], isTrue);
         expect(body['store'], isFalse);
-        expect(body['max_output_tokens'], equals(4000));
+        expect(body, isNot(contains('max_output_tokens')));
         expect(body['instructions'], isA<String>());
         expect((body['instructions'] as String).trim(), isNotEmpty);
         expect(

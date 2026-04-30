@@ -897,7 +897,6 @@ class LlmService {
           ],
         },
       ],
-      'max_output_tokens': maxTokens,
     };
     final normalizedEffort =
         LlmReasoningSupport.normalizeEffort(reasoningEffort);
