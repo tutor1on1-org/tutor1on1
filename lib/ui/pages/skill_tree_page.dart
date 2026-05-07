@@ -16,6 +16,7 @@ import '../../state/auth_controller.dart';
 import '../app_close_button.dart';
 import '../tutor_session_page.dart';
 import '../widgets/pan_scroll_view.dart';
+import 'course_builder_conversation_page.dart';
 
 class SkillTreePage extends StatefulWidget {
   const SkillTreePage({
@@ -23,11 +24,19 @@ class SkillTreePage extends StatefulWidget {
     required this.courseVersionId,
     required this.isTeacherView,
     this.teacherStudentId,
+    this.titleOverride,
+    this.enableSessionNavigation = true,
+    this.enableCourseEditorActions = false,
+    this.allowTextbookOnly = false,
   });
 
   final int courseVersionId;
   final bool isTeacherView;
   final int? teacherStudentId;
+  final String? titleOverride;
+  final bool enableSessionNavigation;
+  final bool enableCourseEditorActions;
+  final bool allowTextbookOnly;
 
   @override
   State<SkillTreePage> createState() => _SkillTreePageState();
@@ -166,7 +175,8 @@ class _SkillTreePageState extends State<SkillTreePage> {
       });
       return;
     }
-    if (course.sourcePath == null || course.sourcePath!.trim().isEmpty) {
+    if (!widget.allowTextbookOnly &&
+        (course.sourcePath == null || course.sourcePath!.trim().isEmpty)) {
       setState(() {
         _error = 'Course not loaded. Load the folder first.';
         _loading = false;
@@ -276,15 +286,17 @@ class _SkillTreePageState extends State<SkillTreePage> {
     final l10n = AppLocalizations.of(context)!;
     final auth = context.read<AuthController>();
     final currentUser = auth.currentUser;
-    final isStudent = currentUser?.role == 'student';
-    final isTeacher = currentUser?.role == 'teacher';
+    final isStudent =
+        widget.enableSessionNavigation && currentUser?.role == 'student';
+    final isTeacher =
+        widget.enableSessionNavigation && currentUser?.role == 'teacher';
     final db = context.read<AppDatabase>();
     final targetStudentId = isStudent ? currentUser?.id : _teacherStudentId;
 
     if (_loading) {
       return Scaffold(
         appBar: AppBar(
-          title: Text(l10n.skillTreeTitle),
+          title: Text(widget.titleOverride ?? l10n.skillTreeTitle),
           actions: buildAppBarActionsWithClose(context),
         ),
         body: const Center(child: CircularProgressIndicator()),
@@ -294,7 +306,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
     if (_parseResult == null) {
       return Scaffold(
         appBar: AppBar(
-          title: Text(l10n.skillTreeTitle),
+          title: Text(widget.titleOverride ?? l10n.skillTreeTitle),
           actions: buildAppBarActionsWithClose(context),
         ),
         body: Padding(
@@ -306,7 +318,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
     if (_parseResult!.nodes.isEmpty) {
       return Scaffold(
         appBar: AppBar(
-          title: Text(l10n.skillTreeTitle),
+          title: Text(widget.titleOverride ?? l10n.skillTreeTitle),
           actions: buildAppBarActionsWithClose(context),
         ),
         body: Padding(
@@ -321,6 +333,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
         ? <SkillNode>[]
         : nodes.values
             .where((node) => !node.isPlaceholder)
+            .where((node) => !_isHiddenInTree(node))
             .where(
               (node) =>
                   node.id.contains(_searchQuery) ||
@@ -336,7 +349,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(l10n.skillTreeTitle),
+        title: Text(widget.titleOverride ?? l10n.skillTreeTitle),
         actions: buildAppBarActionsWithClose(context),
       ),
       body: StreamBuilder<List<ProgressEntry>>(
@@ -426,93 +439,103 @@ class _SkillTreePageState extends State<SkillTreePage> {
                         final background = _nodeColor(node.id, isLit: isLit);
                         final idLabel =
                             node.id == _parseResult!.root.id ? '' : node.id;
-                        return InkWell(
-                          onTap: () => _handleNodeTap(
-                            node,
-                            isStudent,
-                            isTeacher,
-                            db,
-                            currentUser?.id,
-                            targetStudentId,
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 4),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 6,
-                                horizontal: 8,
-                              ),
-                              decoration: BoxDecoration(
-                                color: background,
-                                borderRadius: BorderRadius.circular(6),
-                                border: Border.all(
-                                  color: isActive
-                                      ? Colors.orange
-                                      : Colors.transparent,
-                                  width: isActive ? 2 : 1,
+                        return GestureDetector(
+                          onSecondaryTapDown: widget.enableCourseEditorActions
+                              ? (details) => _showCourseEditorMenu(
+                                    node,
+                                    details.globalPosition,
+                                  )
+                              : null,
+                          child: InkWell(
+                            onTap: () => _handleNodeTap(
+                              node,
+                              isStudent,
+                              isTeacher,
+                              db,
+                              currentUser?.id,
+                              targetStudentId,
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 4),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 6,
+                                  horizontal: 8,
                                 ),
-                              ),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  SizedBox(
-                                    width: 80,
-                                    child: Text(
-                                      idLabel,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w600,
+                                decoration: BoxDecoration(
+                                  color: background,
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(
+                                    color: isActive
+                                        ? Colors.orange
+                                        : Colors.transparent,
+                                    width: isActive ? 2 : 1,
+                                  ),
+                                ),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    SizedBox(
+                                      width: 80,
+                                      child: Text(
+                                        idLabel,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                  Expanded(
-                                    child: Text(text),
-                                  ),
-                                  if (showTeacherControls)
-                                    Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        FilledButton(
-                                          style: FilledButton.styleFrom(
-                                            backgroundColor: isLit
-                                                ? Colors.green
-                                                : Colors.grey,
-                                            foregroundColor: Colors.white,
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 10,
-                                              vertical: 6,
-                                            ),
-                                            minimumSize: const Size(0, 32),
-                                          ),
-                                          onPressed: () => _toggleNodeLit(
-                                            node: node,
-                                            litMap: litMap,
-                                            db: db,
-                                            studentId: studentId,
-                                            includeAll: !_isLeafNode(node),
-                                          ),
-                                          child: const Text('lit'),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        OutlinedButton(
-                                          style: OutlinedButton.styleFrom(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 10,
-                                              vertical: 6,
-                                            ),
-                                            minimumSize: const Size(0, 32),
-                                          ),
-                                          onPressed: () => _toggleNodeLit(
-                                            node: node,
-                                            litMap: litMap,
-                                            db: db,
-                                            studentId: studentId,
-                                            includeAll: true,
-                                          ),
-                                          child: const Text('all'),
-                                        ),
-                                      ],
+                                    Expanded(
+                                      child: Text(text),
                                     ),
-                                ],
+                                    if (showTeacherControls)
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          FilledButton(
+                                            style: FilledButton.styleFrom(
+                                              backgroundColor: isLit
+                                                  ? Colors.green
+                                                  : Colors.grey,
+                                              foregroundColor: Colors.white,
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                horizontal: 10,
+                                                vertical: 6,
+                                              ),
+                                              minimumSize: const Size(0, 32),
+                                            ),
+                                            onPressed: () => _toggleNodeLit(
+                                              node: node,
+                                              litMap: litMap,
+                                              db: db,
+                                              studentId: studentId,
+                                              includeAll: !_isLeafNode(node),
+                                            ),
+                                            child: const Text('lit'),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          OutlinedButton(
+                                            style: OutlinedButton.styleFrom(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                horizontal: 10,
+                                                vertical: 6,
+                                              ),
+                                              minimumSize: const Size(0, 32),
+                                            ),
+                                            onPressed: () => _toggleNodeLit(
+                                              node: node,
+                                              litMap: litMap,
+                                              db: db,
+                                              studentId: studentId,
+                                              includeAll: true,
+                                            ),
+                                            child: const Text('all'),
+                                          ),
+                                        ],
+                                      ),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
@@ -752,8 +775,337 @@ class _SkillTreePageState extends State<SkillTreePage> {
     );
     return GestureDetector(
       onTap: () => _selectNode(node),
+      onSecondaryTapDown: widget.enableCourseEditorActions
+          ? (details) => _showCourseEditorMenu(node, details.globalPosition)
+          : null,
       child: content,
     );
+  }
+
+  Future<void> _showCourseEditorMenu(SkillNode node, Offset position) async {
+    if (node.id == 'math' || node.isPlaceholder || _isHiddenInTree(node)) {
+      return;
+    }
+    _focusNodeForContextMenu(node);
+    final choice = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        position.dx,
+        position.dy,
+        position.dx,
+        position.dy,
+      ),
+      items: const [
+        PopupMenuItem(
+          value: 'ai_edit_content',
+          child: Text('AI edit content'),
+        ),
+        PopupMenuItem(
+          value: 'edit_title',
+          child: Text('Edit title'),
+        ),
+        PopupMenuItem(
+          value: 'add_sub',
+          child: Text('Add sub'),
+        ),
+        PopupMenuItem(
+          value: 'add_sibling',
+          child: Text('Add sibling'),
+        ),
+        PopupMenuItem(
+          value: 'hide',
+          child: Text('Hide'),
+        ),
+      ],
+    );
+    if (!mounted || choice == null) {
+      return;
+    }
+    switch (choice) {
+      case 'ai_edit_content':
+        await _openAiCourseEditor(node);
+        break;
+      case 'edit_title':
+        await _editCourseNodeTitle(node);
+        break;
+      case 'add_sub':
+        await _addCourseNode(parentId: node.id, insertAfterId: node.id);
+        break;
+      case 'add_sibling':
+        await _addCourseNode(parentId: node.parentId, insertAfterId: node.id);
+        break;
+      case 'hide':
+        await _hideCourseNode(node);
+        break;
+    }
+  }
+
+  void _focusNodeForContextMenu(SkillNode node) {
+    setState(() {
+      _selectedId = node.id;
+      _expandToNode(node.id);
+      _graph = _buildGraphForLevel(_levelLimit);
+      _graphRevision++;
+    });
+    _scheduleViewStateSave();
+  }
+
+  Future<void> _openAiCourseEditor(SkillNode node) async {
+    final course = await _db.getCourseVersionById(widget.courseVersionId);
+    if (!mounted || course == null) {
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CourseBuilderConversationPage(
+          courseVersion: course,
+          kpKey: node.id,
+          kpTitle: _nodeDisplayText(node),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _editCourseNodeTitle(SkillNode node) async {
+    final title = await _showCourseTextDialog(
+      title: 'Edit title',
+      label: 'Title',
+      initialValue: _nodeDisplayText(node),
+    );
+    if (title == null) {
+      return;
+    }
+    final next = _replaceCourseNodeLine(
+      nodeId: node.id,
+      title: title,
+      hidden: node.isHidden,
+    );
+    if (next != null) {
+      await _applyCourseContentsEdit(next, selectedId: node.id);
+    }
+  }
+
+  Future<void> _addCourseNode({
+    required String? parentId,
+    required String insertAfterId,
+  }) async {
+    final result = _parseResult;
+    if (result == null) {
+      return;
+    }
+    final newId = _nextCourseNodeId(parentId);
+    final title = await _showCourseTextDialog(
+      title: parentId == null ? 'Add top-level KP' : 'Add KP',
+      label: 'Title',
+      initialValue: '',
+    );
+    if (title == null) {
+      return;
+    }
+    final next = _insertCourseNodeLine(
+      insertAfterId: insertAfterId,
+      newId: newId,
+      title: title,
+    );
+    await _applyCourseContentsEdit(next, selectedId: newId);
+  }
+
+  Future<void> _hideCourseNode(SkillNode node) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Hide KP'),
+        content: Text(
+          'Hide ${node.id} ${_nodeDisplayText(node)} from the course tree?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(AppLocalizations.of(context)!.cancelButton),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Hide'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+    final next = _replaceCourseNodeLine(
+      nodeId: node.id,
+      title: _nodeDisplayText(node),
+      hidden: true,
+    );
+    if (next != null) {
+      await _applyCourseContentsEdit(next, selectedId: node.parentId);
+    }
+  }
+
+  Future<String?> _showCourseTextDialog({
+    required String title,
+    required String label,
+    required String initialValue,
+  }) async {
+    final controller = TextEditingController(text: initialValue);
+    final value = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: InputDecoration(labelText: label),
+          onSubmitted: (_) {
+            final text = controller.text.trim();
+            if (text.isNotEmpty) {
+              Navigator.of(context).pop(text);
+            }
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(AppLocalizations.of(context)!.cancelButton),
+          ),
+          FilledButton(
+            onPressed: () {
+              final text = controller.text.trim();
+              if (text.isNotEmpty) {
+                Navigator.of(context).pop(text);
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    final trimmed = value?.trim();
+    return trimmed == null || trimmed.isEmpty ? null : trimmed;
+  }
+
+  Future<void> _applyCourseContentsEdit(
+    String contents, {
+    required String? selectedId,
+  }) async {
+    final result =
+        await context.read<AppServices>().courseService.applyCourseContentsEdit(
+              courseVersionId: widget.courseVersionId,
+              contents: contents,
+            );
+    if (!mounted) {
+      return;
+    }
+    if (!result.success) {
+      await _showLeafError(result.message);
+      return;
+    }
+    await _loadTree();
+    if (!mounted || selectedId == null) {
+      return;
+    }
+    final node = _nodeById(selectedId);
+    if (node != null) {
+      _focusNodeForContextMenu(node);
+    }
+  }
+
+  String? _replaceCourseNodeLine({
+    required String nodeId,
+    required String title,
+    required bool hidden,
+  }) {
+    final raw = _rawContent;
+    if (raw == null) {
+      return null;
+    }
+    final lines = _splitCourseLines(raw);
+    for (var index = 0; index < lines.length; index++) {
+      if (_lineNodeId(lines[index]) == nodeId) {
+        lines[index] = _formatCourseNodeLine(
+          nodeId: nodeId,
+          title: title,
+          hidden: hidden,
+        );
+        return lines.join('\n');
+      }
+    }
+    return null;
+  }
+
+  String _insertCourseNodeLine({
+    required String insertAfterId,
+    required String newId,
+    required String title,
+  }) {
+    final lines = _splitCourseLines(_rawContent ?? '');
+    final insertAt = _subtreeEndLineIndex(lines, insertAfterId) + 1;
+    lines.insert(
+      insertAt.clamp(0, lines.length),
+      _formatCourseNodeLine(nodeId: newId, title: title),
+    );
+    return lines.join('\n');
+  }
+
+  String _nextCourseNodeId(String? parentId) {
+    final result = _parseResult;
+    if (result == null) {
+      return parentId == null ? '1' : '$parentId.1';
+    }
+    var maxPart = 0;
+    for (final node in result.nodes.values) {
+      if (node.isPlaceholder) {
+        continue;
+      }
+      final currentParent = node.parentId;
+      if (currentParent != parentId) {
+        continue;
+      }
+      final tail = node.id.split('.').last;
+      final number = int.tryParse(tail);
+      if (number != null && number > maxPart) {
+        maxPart = number;
+      }
+    }
+    final nextPart = maxPart + 1;
+    return parentId == null ? '$nextPart' : '$parentId.$nextPart';
+  }
+
+  int _subtreeEndLineIndex(List<String> lines, String nodeId) {
+    var end = -1;
+    for (var index = 0; index < lines.length; index++) {
+      final id = _lineNodeId(lines[index]);
+      if (id == null) {
+        continue;
+      }
+      if (id == nodeId || id.startsWith('$nodeId.')) {
+        end = index;
+      }
+    }
+    return end == -1 ? lines.length - 1 : end;
+  }
+
+  List<String> _splitCourseLines(String raw) {
+    final lines = raw.split(RegExp(r'\r\n|\n|\r'));
+    while (lines.isNotEmpty && lines.last.trim().isEmpty) {
+      lines.removeLast();
+    }
+    return lines;
+  }
+
+  String? _lineNodeId(String line) {
+    final match = RegExp(r'^\s*(\d+(?:\.\d+)*)\s+').firstMatch(line);
+    return match?.group(1);
+  }
+
+  String _formatCourseNodeLine({
+    required String nodeId,
+    required String title,
+    bool hidden = false,
+  }) {
+    final marker = hidden ? '[hidden] ' : '';
+    return '$nodeId $marker${title.trim()}';
   }
 
   Future<void> _handleNodeTap(
@@ -875,14 +1227,14 @@ class _SkillTreePageState extends State<SkillTreePage> {
     final parent = node.parentId == null ? node : _nodeById(node.parentId!);
     if (parent != null) {
       for (final sibling in parent.children) {
-        if (!result.contains(sibling)) {
+        if (!result.contains(sibling) && !_isHiddenInTree(sibling)) {
           result.add(sibling);
         }
       }
     }
     if (node.children.isNotEmpty && _expanded.contains(node.id)) {
       for (final child in node.children) {
-        if (!result.contains(child)) {
+        if (!result.contains(child) && !_isHiddenInTree(child)) {
           result.add(child);
         }
       }
@@ -1136,10 +1488,28 @@ class _SkillTreePageState extends State<SkillTreePage> {
   }
 
   bool _isLeafNode(SkillNode node) {
-    if (node.isPlaceholder) {
+    if (node.isPlaceholder || _isHiddenInTree(node)) {
       return false;
     }
-    return node.children.isEmpty;
+    return node.children.where((child) => !_isHiddenInTree(child)).isEmpty;
+  }
+
+  bool _isHiddenInTree(SkillNode node) {
+    if (node.isHidden) {
+      return true;
+    }
+    var parentId = node.parentId;
+    while (parentId != null) {
+      final parent = _parseResult?.nodes[parentId];
+      if (parent == null) {
+        return false;
+      }
+      if (parent.isHidden) {
+        return true;
+      }
+      parentId = parent.parentId;
+    }
+    return false;
   }
 
   bool _isNodeFullyLit(SkillNode node, Map<String, bool> litMap) {
@@ -1161,6 +1531,9 @@ class _SkillTreePageState extends State<SkillTreePage> {
         return;
       }
       for (final child in current.children) {
+        if (_isHiddenInTree(child)) {
+          continue;
+        }
         walk(child);
       }
     }
@@ -1312,6 +1685,9 @@ class _SkillTreePageState extends State<SkillTreePage> {
 
   bool _hasMatchingDescendant(SkillNode node) {
     for (final child in node.children) {
+      if (_isHiddenInTree(child)) {
+        continue;
+      }
       if (_matchesYear(child)) {
         return true;
       }
@@ -1336,6 +1712,9 @@ class _SkillTreePageState extends State<SkillTreePage> {
   bool _isNodeVisible(SkillNode node) {
     if (node.id == 'math') {
       return true;
+    }
+    if (_isHiddenInTree(node)) {
+      return false;
     }
     if (!_passesFilters(node)) {
       return false;
@@ -1366,7 +1745,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
     }
     final expanded = <String>{'math'};
     for (final node in _parseResult!.nodes.values) {
-      if (node.children.isEmpty) {
+      if (node.children.isEmpty || _isHiddenInTree(node)) {
         continue;
       }
       if (_nodeDepth(node) < level) {

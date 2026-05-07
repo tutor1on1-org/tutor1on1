@@ -23,6 +23,7 @@ class SkillNode {
     this.yearEnd,
     this.parentId,
     this.isPlaceholder = false,
+    this.isHidden = false,
   });
 
   final String id;
@@ -34,6 +35,7 @@ class SkillNode {
   final int? yearEnd;
   String? parentId;
   final bool isPlaceholder;
+  final bool isHidden;
   final List<SkillNode> children = [];
 }
 
@@ -84,6 +86,10 @@ class SkillTreeParser {
       if (rest.startsWith('.')) {
         rest = rest.substring(1).trimLeft();
       }
+      final isHidden = rest.startsWith('[hidden]');
+      if (isHidden) {
+        rest = rest.substring('[hidden]'.length).trimLeft();
+      }
       final isLeaf = _startsWithParen(rest);
       final grade = _extractGrade(trimmed);
       final yearRange = _extractYearRange(trimmed);
@@ -97,6 +103,7 @@ class SkillTreeParser {
         grade: grade,
         yearStart: yearRange?.$1,
         yearEnd: yearRange?.$2,
+        isHidden: isHidden,
       );
     }
 
