@@ -21,6 +21,7 @@ import '../../state/auth_controller.dart';
 import '../app_close_button.dart';
 import '../app_settings_page.dart';
 import '../quit_app_flow.dart';
+import 'course_editor_page.dart';
 import 'course_version_page.dart';
 import 'marketplace_page.dart';
 import 'prompt_settings_page.dart';
@@ -462,6 +463,15 @@ class _TeacherHomePageState extends State<TeacherHomePage>
                                 MaterialPageRoute(
                                   builder: (_) => CourseVersionPage(
                                     teacherId: teacher.id,
+                                    courseVersionId: course.id,
+                                  ),
+                                ),
+                              );
+                            },
+                            onCourseEditor: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => CourseEditorPage(
                                     courseVersionId: course.id,
                                   ),
                                 ),
@@ -1412,6 +1422,7 @@ class _CourseTile extends StatelessWidget {
     required this.isPulling,
     required this.isSaving,
     required this.onReload,
+    required this.onCourseEditor,
     required this.onDelete,
     required this.onVersions,
     required this.onEditLabels,
@@ -1427,6 +1438,7 @@ class _CourseTile extends StatelessWidget {
   final bool isPulling;
   final bool isSaving;
   final VoidCallback onReload;
+  final VoidCallback onCourseEditor;
   final VoidCallback onDelete;
   final VoidCallback onVersions;
   final VoidCallback onEditLabels;
@@ -1473,6 +1485,11 @@ class _CourseTile extends StatelessWidget {
                   key: Key('course_edit_${course.id}'),
                   onPressed: onReload,
                   child: Text(l10n.reloadCourseButton),
+                ),
+                TextButton(
+                  key: Key('course_editor_${course.id}'),
+                  onPressed: onCourseEditor,
+                  child: const Text('Course Editor'),
                 ),
                 TextButton(
                   onPressed: onEditLabels,

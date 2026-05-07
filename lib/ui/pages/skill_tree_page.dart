@@ -16,7 +16,6 @@ import '../../state/auth_controller.dart';
 import '../app_close_button.dart';
 import '../tutor_session_page.dart';
 import '../widgets/pan_scroll_view.dart';
-import '../widgets/teacher_course_builder_panel.dart';
 
 class SkillTreePage extends StatefulWidget {
   const SkillTreePage({
@@ -47,7 +46,6 @@ class _SkillTreePageState extends State<SkillTreePage> {
   final int _baseSubtreeSeparation = 30;
   final Map<Node, SkillNode> _graphNodeData = {};
   SkillTreeParseResult? _parseResult;
-  CourseVersion? _courseVersion;
   String? _rawContent;
   String? _error;
   bool _loading = true;
@@ -242,7 +240,6 @@ class _SkillTreePageState extends State<SkillTreePage> {
       _restoringState = true;
       _searchController.text = searchQuery;
       setState(() {
-        _courseVersion = course;
         _rawContent = content;
         _parseResult = result;
         _maxDepth = maxDepth;
@@ -524,22 +521,6 @@ class _SkillTreePageState extends State<SkillTreePage> {
                     ),
                   ),
                 );
-                final courseVersion = _courseVersion;
-                if (widget.isTeacherView &&
-                    courseVersion != null &&
-                    selectedNode.id != _parseResult!.root.id &&
-                    !selectedNode.isPlaceholder) {
-                  bottomItems.add(
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                      child: TeacherCourseBuilderPanel(
-                        courseVersion: courseVersion,
-                        kpKey: selectedNode.id,
-                        kpTitle: _nodeDisplayText(selectedNode),
-                      ),
-                    ),
-                  );
-                }
               }
 
               final showBottom = bottomItems.isNotEmpty;

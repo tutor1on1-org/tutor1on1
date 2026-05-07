@@ -11,7 +11,7 @@ import '../../services/app_services.dart';
 import '../../services/course_import_service.dart';
 import '../../services/course_service.dart';
 import '../app_close_button.dart';
-import '../pages/skill_tree_page.dart';
+import 'course_editor_page.dart';
 
 class CourseVersionPage extends StatefulWidget {
   const CourseVersionPage({
@@ -133,9 +133,8 @@ class _CourseVersionPageState extends State<CourseVersionPage> {
                     onPressed: () {
                       Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (_) => SkillTreePage(
+                          builder: (_) => CourseEditorPage(
                             courseVersionId: _course!.id,
-                            isTeacherView: true,
                           ),
                         ),
                       );

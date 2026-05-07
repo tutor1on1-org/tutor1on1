@@ -11,11 +11,13 @@ class TeacherCourseBuilderPanel extends StatefulWidget {
     required this.courseVersion,
     required this.kpKey,
     required this.kpTitle,
+    this.messageHeight = 180,
   });
 
   final CourseVersion courseVersion;
   final String kpKey;
   final String kpTitle;
+  final double messageHeight;
 
   @override
   State<TeacherCourseBuilderPanel> createState() =>
@@ -96,7 +98,7 @@ class _TeacherCourseBuilderPanelState extends State<TeacherCourseBuilderPanel> {
             ),
             const SizedBox(height: 8),
             SizedBox(
-              height: 180,
+              height: widget.messageHeight,
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   border: Border.all(color: colorScheme.outlineVariant),
