@@ -185,6 +185,113 @@ class CourseArtifactService {
     final target = File(manifest.contentBundlePath);
     await target.parent.create(recursive: true);
     await bundleFile.copy(target.path);
+    await _deletePreparedUploadBundle(courseVersionId);
+  }
+
+  Future<String> updateStoredTextEntry({
+    required int courseVersionId,
+    required String preferredRelativePath,
+    required List<String> candidateRelativePaths,
+    required String text,
+  }) async {
+    if (courseVersionId <= 0) {
+      throw StateError('Course version id must be positive.');
+    }
+    final preferred = _normalizeArchivePath(preferredRelativePath);
+    if (preferred.isEmpty) {
+      throw StateError('Preferred course entry path must not be empty.');
+    }
+    final candidates = <String>[
+      ...candidateRelativePaths.map(_normalizeArchivePath),
+      preferred,
+    ].where((value) => value.isNotEmpty).toList(growable: false);
+    final manifest = await readCourseArtifacts(courseVersionId);
+    if (manifest == null) {
+      throw StateError(
+        'Cached course artifacts are missing for course version '
+        '$courseVersionId.',
+      );
+    }
+    final contentBundle = File(manifest.contentBundlePath);
+    if (!contentBundle.existsSync()) {
+      throw StateError(
+        'Cached course content bundle is missing: ${contentBundle.path}',
+      );
+    }
+
+    final input = InputFileStream(contentBundle.path);
+    Archive? sourceArchive;
+    Archive? archive;
+    try {
+      sourceArchive = ZipDecoder().decodeBuffer(input);
+      archive = Archive();
+      final existingNames = sourceArchive.files
+          .where((entry) => entry.isFile)
+          .map((entry) => _normalizeArchivePath(entry.name))
+          .where((name) => name.isNotEmpty)
+          .toSet();
+      var targetPath = preferred;
+      for (final candidate in candidates) {
+        if (existingNames.contains(candidate)) {
+          targetPath = candidate;
+          break;
+        }
+        final rooted = existingNames.where(
+          (name) => name.endsWith('/$candidate'),
+        );
+        if (rooted.isNotEmpty) {
+          targetPath = rooted.first;
+          break;
+        }
+      }
+
+      for (final entry in sourceArchive.files) {
+        if (!entry.isFile) {
+          continue;
+        }
+        final normalized = _normalizeArchivePath(entry.name);
+        if (normalized.isEmpty || normalized == targetPath) {
+          continue;
+        }
+        archive.addFile(
+          ArchiveFile(
+            entry.name,
+            entry.size,
+            _entryBytes(entry),
+          ),
+        );
+      }
+      final bytes = utf8.encode(text);
+      archive.addFile(
+        ArchiveFile(
+          targetPath,
+          bytes.length,
+          bytes,
+        ),
+      );
+      final encoded = ZipEncoder().encode(archive);
+      if (encoded == null) {
+        throw StateError('Failed to encode cached course bundle.');
+      }
+      await contentBundle.writeAsBytes(encoded, flush: true);
+      await _deletePreparedUploadBundle(courseVersionId);
+      final updatedManifest = CourseArtifactManifest(
+        courseVersionId: manifest.courseVersionId,
+        folderPath: manifest.folderPath,
+        contentBundlePath: manifest.contentBundlePath,
+        chapters: manifest.chapters,
+        builtAt: DateTime.now().toUtc(),
+      );
+      await _writeManifest(
+        await _resolveCourseArtifactDirectory(courseVersionId),
+        updatedManifest,
+      );
+      return targetPath;
+    } finally {
+      archive?.clearSync();
+      sourceArchive?.clearSync();
+      input.close();
+    }
   }
 
   Future<CourseArtifactManifest> storeImportedContentBundle({
@@ -506,6 +613,19 @@ class CourseArtifactService {
     );
   }
 
+  Future<void> _deletePreparedUploadBundle(int courseVersionId) async {
+    final bundleFile = await _preparedUploadBundleFile(courseVersionId);
+    if (bundleFile.existsSync()) {
+      await bundleFile.delete();
+    }
+    final metadataFile = await _preparedUploadBundleMetadataFile(
+      courseVersionId,
+    );
+    if (metadataFile.existsSync()) {
+      await metadataFile.delete();
+    }
+  }
+
   Future<List<CourseChapterArtifact>> _buildChapterArchives({
     required String folderPath,
     required Directory outputDirectory,
@@ -682,6 +802,14 @@ class CourseArtifactService {
         .normalize(input)
         .replaceAll('\\', '/')
         .replaceFirst(RegExp(r'^/+'), '');
+  }
+
+  List<int> _entryBytes(ArchiveFile file) {
+    final content = file.content;
+    if (content is List<int>) {
+      return List<int>.from(content);
+    }
+    throw StateError('Unsupported archive entry content type.');
   }
 
   Future<Directory> _resolveCourseArtifactDirectory(int courseVersionId) async {

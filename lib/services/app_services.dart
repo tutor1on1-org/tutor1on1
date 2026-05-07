@@ -5,6 +5,7 @@ import '../llm/schema_validator.dart';
 import 'artifact_sync_api_service.dart';
 import 'backup_service.dart';
 import 'course_artifact_service.dart';
+import 'course_builder_service.dart';
 import 'course_service.dart';
 import 'device_identity_service.dart';
 import 'enrollment_sync_service.dart';
@@ -33,6 +34,7 @@ class AppServices {
     required this.llmService,
     required this.backupService,
     required this.courseArtifactService,
+    required this.courseBuilderService,
     required this.courseService,
     required this.sessionService,
     required this.enrollmentSyncService,
@@ -54,6 +56,7 @@ class AppServices {
   final LlmService llmService;
   final BackupService backupService;
   final CourseArtifactService courseArtifactService;
+  final CourseBuilderService courseBuilderService;
   final CourseService courseService;
   final SessionService sessionService;
   final EnrollmentSyncService enrollmentSyncService;
@@ -95,6 +98,12 @@ class AppServices {
     );
     final backupService = BackupService(db);
     final courseArtifactService = CourseArtifactService();
+    final courseBuilderService = CourseBuilderService(
+      db: db,
+      llmService: llmService,
+      promptRepository: promptRepository,
+      courseArtifactService: courseArtifactService,
+    );
     final courseService = CourseService(
       db,
       courseArtifactService: courseArtifactService,
@@ -148,6 +157,7 @@ class AppServices {
       llmService: llmService,
       backupService: backupService,
       courseArtifactService: courseArtifactService,
+      courseBuilderService: courseBuilderService,
       courseService: courseService,
       sessionService: sessionService,
       enrollmentSyncService: enrollmentSyncService,

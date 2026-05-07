@@ -23,6 +23,8 @@ class PromptVariableRegistry {
   static const String reviewPrompt = 'review';
   static const String reviewInitPrompt = 'review_init';
   static const String reviewContPrompt = 'review_cont';
+  static const String courseBuilderContentPrompt = 'course_builder_content';
+  static const String courseBuilderQuestionPrompt = 'course_builder_question';
 
   static const String kpTitle = 'kp_title';
   static const String kpDescription = 'kp_description';
@@ -49,6 +51,8 @@ class PromptVariableRegistry {
     reviewPrompt,
     reviewInitPrompt,
     reviewContPrompt,
+    courseBuilderContentPrompt,
+    courseBuilderQuestionPrompt,
   };
 
   static const List<PromptVariableDefinition> definitions = [
@@ -59,7 +63,9 @@ class PromptVariableRegistry {
         learnPrompt,
         reviewPrompt,
         reviewInitPrompt,
-        reviewContPrompt
+        reviewContPrompt,
+        courseBuilderContentPrompt,
+        courseBuilderQuestionPrompt,
       },
     ),
     PromptVariableDefinition(
@@ -69,7 +75,7 @@ class PromptVariableRegistry {
         learnPrompt,
         reviewPrompt,
         reviewInitPrompt,
-        reviewContPrompt
+        reviewContPrompt,
       },
       requiredFor: {
         learnPrompt,
@@ -96,7 +102,13 @@ class PromptVariableRegistry {
         learnPrompt,
         reviewPrompt,
         reviewInitPrompt,
-        reviewContPrompt
+        reviewContPrompt,
+        courseBuilderContentPrompt,
+        courseBuilderQuestionPrompt,
+      },
+      requiredFor: {
+        courseBuilderContentPrompt,
+        courseBuilderQuestionPrompt,
       },
     ),
     PromptVariableDefinition(
@@ -146,8 +158,8 @@ class PromptVariableRegistry {
     PromptVariableDefinition(
       name: lessonContent,
       description: 'Lesson content for the current knowledge point.',
-      promptNames: {learnPrompt},
-      requiredFor: {learnPrompt},
+      promptNames: {learnPrompt, courseBuilderContentPrompt},
+      requiredFor: {learnPrompt, courseBuilderContentPrompt},
     ),
     PromptVariableDefinition(
       name: errorBookSummary,
@@ -163,8 +175,12 @@ class PromptVariableRegistry {
     PromptVariableDefinition(
       name: presentedQuestions,
       description: 'Candidate question pool provided for review selection.',
-      promptNames: {reviewPrompt, reviewInitPrompt},
-      requiredFor: {reviewInitPrompt},
+      promptNames: {
+        reviewPrompt,
+        reviewInitPrompt,
+        courseBuilderQuestionPrompt,
+      },
+      requiredFor: {reviewInitPrompt, courseBuilderQuestionPrompt},
     ),
     PromptVariableDefinition(
       name: activeReviewQuestionJson,

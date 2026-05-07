@@ -10,6 +10,8 @@ void main() {
     'learn',
     'review_init',
     'review_cont',
+    'course_builder_content',
+    'course_builder_question',
   ];
 
   for (final promptName in requiredPromptNames) {
@@ -18,7 +20,7 @@ void main() {
       final content = await repository.loadBundledSystemPrompt(promptName);
       expect(content.trim(), isNotEmpty);
       expect(content, isNot(contains('%TSD-Header-###%')));
-      expect(content, contains('You are a one-on-one teacher.'));
+      expect(content, contains('You are '));
     });
   }
 
