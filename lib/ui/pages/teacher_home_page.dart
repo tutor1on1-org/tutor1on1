@@ -11,6 +11,8 @@ import 'package:tutor1on1/l10n/app_localizations.dart';
 import '../../db/app_database.dart';
 import '../../services/app_services.dart';
 import '../../services/course_bundle_service.dart';
+import '../../services/course_service.dart';
+import '../../services/course_source_policy.dart';
 import '../../services/home_sync_coordinator.dart';
 import '../../services/marketplace_api_service.dart';
 import '../../services/prompt_bundle_metadata_builder.dart';
@@ -750,8 +752,29 @@ class _TeacherHomePageState extends State<TeacherHomePage>
         sourcePath: source.path,
         targetPath: targetDir.path,
       );
+      final auth = context.read<AuthController>();
+      final teacher = auth.currentUser;
+      if (teacher == null) {
+        throw StateError('Teacher is not signed in.');
+      }
+      final preview = await services.courseService.previewCourseLoad(
+        folderPath: targetDir.path,
+        courseVersionId: course.id,
+      );
+      if (!preview.success) {
+        throw StateError(preview.message);
+      }
+      final loadResult = await services.courseService.applyCourseLoad(
+        teacherId: teacher.id,
+        preview: preview,
+        mode: CourseReloadMode.override,
+      );
+      if (!loadResult.success) {
+        throw StateError(loadResult.message);
+      }
       _setPersistentMessage(
-        'Saved "${course.subject}" course files to ${targetDir.path}.',
+        'Saved "${course.subject}" course files to ${targetDir.path} '
+        'and set it as the editable source folder.',
       );
     } catch (error) {
       if (targetDir != null && targetDir.existsSync()) {
@@ -779,6 +802,21 @@ class _TeacherHomePageState extends State<TeacherHomePage>
     required AppServices services,
     required CourseVersion course,
   }) async {
+    final sourcePath = (course.sourcePath ?? '').trim();
+    if (sourcePath.isNotEmpty &&
+        !CourseSourcePolicy.isDownloadedCoursePath(sourcePath)) {
+      final preview = await services.courseService.previewCourseLoad(
+        folderPath: sourcePath,
+        courseVersionId: course.id,
+      );
+      if (preview.success) {
+        return _ResolvedCourseSaveSource(
+          path: sourcePath,
+          deleteAfterCopy: false,
+        );
+      }
+    }
+
     final cachedArtifacts =
         await services.courseArtifactService.readCourseArtifacts(course.id);
     final cachedBundlePath = cachedArtifacts?.contentBundlePath.trim() ?? '';
@@ -792,20 +830,6 @@ class _TeacherHomePageState extends State<TeacherHomePage>
         path: materializedPath,
         deleteAfterCopy: true,
       );
-    }
-
-    final sourcePath = (course.sourcePath ?? '').trim();
-    if (sourcePath.isNotEmpty) {
-      final preview = await services.courseService.previewCourseLoad(
-        folderPath: sourcePath,
-        courseVersionId: course.id,
-      );
-      if (preview.success) {
-        return _ResolvedCourseSaveSource(
-          path: sourcePath,
-          deleteAfterCopy: false,
-        );
-      }
     }
 
     throw StateError(
