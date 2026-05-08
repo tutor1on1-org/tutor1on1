@@ -1,5 +1,5 @@
 # BUGS
-Last updated: 2026-04-30
+Last updated: 2026-05-08
 
 ## Active watch
 - Student import race after bundle download (monitoring): fixed by awaiting archive extraction in client bundle service (`f77e7e0`); keep watching for recurrence in production-like flow.
@@ -8,6 +8,7 @@ Last updated: 2026-04-30
 - Current canonical sync model is zip-artifact manifest sync. Bug entries that explicitly target the retired row-level session/progress/enrollment sync model are kept only as historical root-cause references.
 
 ## Recent bug fixes
+- 2026-05-08 Teacher AI course builder `Cached course artifacts are missing`: downloaded course scaffolds can exist without an artifact manifest/content bundle. Repair the editable artifact source before prompt generation, diff, and save by pulling the latest server bundle; do not wait until `saveQuestionText` throws.
 - 2026-04-30 OpenAI Codex OAuth `Unsupported parameter: max_output_tokens`: ChatGPT/Codex `/backend-api/codex/responses` is not a drop-in OpenAI Platform Responses endpoint and can reject Platform-supported request fields. Do not send `max_output_tokens` on the `openai-codex` provider path; keep a request-shape test that asserts the OAuth body omits unsupported parameters.
 - 2026-04-30 OpenAI Codex OAuth `Instructions are required`: ChatGPT/Codex `/backend-api/codex/responses` rejects requests without a non-empty top-level `instructions` field even when `input` carries the tutor prompt. Keep a concise stable tutor instruction in the Codex OAuth request body and assert it in provider tests.
 
@@ -356,3 +357,8 @@ Last updated: 2026-04-30
 - Symptom: approving or rejecting a request could fail with `approval decision email failed` and leave the request pending when the recipient email was invalid or SMTP rejected delivery.
 - Root cause: approval notification senders returned SMTP errors into the approval transaction path, turning notification delivery into a hard dependency for database approval/rejection.
 - Prevention: keep approval request/decision emails best-effort, log delivery failures as warnings, and regression-test that approval transactions still commit when SMTP is unreachable.
+
+68. Teacher AI course builder needs artifact repair before editing
+- Symptom: adding a question from AI edit could fail with `Cached course artifacts are missing for course version <id>` on downloaded/server-copy courses such as `special_relativity 1.1.1`.
+- Root cause: the previous downloaded-scaffold fix assumed a cached content bundle already existed. Older or partially repaired local course versions can have only the lightweight scaffold and no artifact manifest, so the builder read empty context and then failed at save time.
+- Prevention: centralize edit readiness in `CourseBuilderService.ensureEditableArtifacts`, run it before prompt generation/diff/save, pull the latest teacher server bundle when downloaded scaffolds lack cached artifacts, and keep regression tests for missing-manifest repair plus the no-repair error path.

@@ -38,3 +38,4 @@
 - Website publish HTTP checks should retry non-200 responses explicitly after rsync, because nginx/static path visibility can briefly lag even when the file already exists on the remote host.
 - Public website product screenshots must be captured from the real app with real course/session data; do not use generated or mock screenshot-style UI when representing app screens.
 - Website localization parity must be validated before claiming languages are unified; shared help/home content changes need matching visible copy and section structure across all locale paths.
+- Teacher AI course-building must call the shared edit-readiness repair before prompt generation, diff, and save; downloaded scaffolds without cached bundles must pull the latest server bundle first, not proceed with empty context and fail later.

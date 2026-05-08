@@ -39,6 +39,50 @@ class CourseBuilderService {
   final CourseArtifactService _courseArtifactService;
   final PromptRenderer _renderer = PromptRenderer();
 
+  Future<CourseVersion> ensureEditableArtifacts({
+    required CourseVersion courseVersion,
+    Future<CourseVersion> Function(CourseVersion courseVersion)?
+        repairFromServer,
+  }) async {
+    final artifacts =
+        await _courseArtifactService.readCourseArtifacts(courseVersion.id);
+    final bundlePath = artifacts?.contentBundlePath.trim() ?? '';
+    if (bundlePath.isNotEmpty && File(bundlePath).existsSync()) {
+      return courseVersion;
+    }
+
+    final editableSource = CourseSourcePolicy.editableSourceDirectory(
+      courseVersion.sourcePath,
+    );
+    if (editableSource != null) {
+      await _courseArtifactService.rebuildCourseArtifacts(
+        courseVersionId: courseVersion.id,
+        folderPath: editableSource.path,
+      );
+      return courseVersion;
+    }
+
+    if (repairFromServer == null) {
+      throw StateError(
+        'Cached course artifacts are missing for course version '
+        '${courseVersion.id}. Pull the latest server bundle or save the course '
+        'as an editable source folder before editing.',
+      );
+    }
+    final repaired = await repairFromServer(courseVersion);
+    final repairedArtifacts =
+        await _courseArtifactService.readCourseArtifacts(repaired.id);
+    final repairedBundlePath =
+        repairedArtifacts?.contentBundlePath.trim() ?? '';
+    if (repairedBundlePath.isEmpty || !File(repairedBundlePath).existsSync()) {
+      throw StateError(
+        'Course artifact repair did not produce a cached content bundle for '
+        'course version ${repaired.id}.',
+      );
+    }
+    return repaired;
+  }
+
   Future<String> generate({
     required CourseVersion courseVersion,
     required String kpKey,

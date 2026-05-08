@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../db/app_database.dart';
 import '../../services/app_services.dart';
 import '../../services/course_builder_service.dart';
+import '../../state/auth_controller.dart';
 
 class TeacherCourseBuilderPanel extends StatefulWidget {
   const TeacherCourseBuilderPanel({
@@ -28,9 +29,16 @@ class _TeacherCourseBuilderPanelState extends State<TeacherCourseBuilderPanel> {
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _messagesController = ScrollController();
   final List<_BuilderMessage> _messages = <_BuilderMessage>[];
+  late CourseVersion _courseVersion;
   CourseBuilderMode _mode = CourseBuilderMode.content;
   bool _sending = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _courseVersion = widget.courseVersion;
+  }
 
   @override
   void dispose() {
@@ -44,6 +52,7 @@ class _TeacherCourseBuilderPanelState extends State<TeacherCourseBuilderPanel> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.courseVersion.id != widget.courseVersion.id ||
         oldWidget.kpKey != widget.kpKey) {
+      _courseVersion = widget.courseVersion;
       _messages.clear();
       _inputController.clear();
       _error = null;
@@ -218,10 +227,11 @@ class _TeacherCourseBuilderPanelState extends State<TeacherCourseBuilderPanel> {
       _inputController.clear();
     });
     _scrollToBottomSoon();
-    final history = _buildConversationHistory();
     try {
+      final courseVersion = await _ensureCourseReadyForEdit();
+      final history = _buildConversationHistory();
       final response = await service.generate(
-        courseVersion: widget.courseVersion,
+        courseVersion: courseVersion,
         kpKey: widget.kpKey,
         kpTitle: widget.kpTitle,
         mode: _mode,
@@ -275,22 +285,68 @@ class _TeacherCourseBuilderPanelState extends State<TeacherCourseBuilderPanel> {
   }
 
   Future<void> _openEditDialog(_BuilderMessage message) async {
+    if (_sending) {
+      return;
+    }
     final service = context.read<AppServices>().courseBuilderService;
-    final saved = await showDialog<bool>(
-      context: context,
-      builder: (context) => _CourseBuilderDiffDialog(
-        service: service,
-        courseVersion: widget.courseVersion,
-        kpKey: widget.kpKey,
-        mode: message.mode,
-        incomingText: message.text,
-      ),
-    );
+    setState(() {
+      _sending = true;
+      _error = null;
+    });
+    bool? saved;
+    try {
+      final courseVersion = await _ensureCourseReadyForEdit();
+      if (!mounted) {
+        return;
+      }
+      saved = await showDialog<bool>(
+        context: context,
+        builder: (context) => _CourseBuilderDiffDialog(
+          service: service,
+          courseVersion: courseVersion,
+          kpKey: widget.kpKey,
+          mode: message.mode,
+          incomingText: message.text,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _error = 'Failed to prepare course for editing: $error';
+      });
+      return;
+    } finally {
+      if (mounted) {
+        setState(() => _sending = false);
+      }
+    }
     if (saved == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Course content saved.')),
       );
     }
+  }
+
+  Future<CourseVersion> _ensureCourseReadyForEdit() async {
+    final services = context.read<AppServices>();
+    final currentUser = context.read<AuthController>().currentUser;
+    if (currentUser == null || currentUser.role != 'teacher') {
+      throw StateError('Teacher is not signed in.');
+    }
+    final courseVersion =
+        await services.courseBuilderService.ensureEditableArtifacts(
+      courseVersion: _courseVersion,
+      repairFromServer: (courseVersion) {
+        return services.enrollmentSyncService.pullLatestTeacherCourse(
+          currentUser: currentUser,
+          course: courseVersion,
+        );
+      },
+    );
+    _courseVersion = courseVersion;
+    return courseVersion;
   }
 }
 

@@ -257,6 +257,98 @@ void main() {
       'Downloaded scaffold update',
     );
   });
+
+  test('ensureEditableArtifacts repairs missing cache before question save',
+      () async {
+    final courseDir = await _createCourseFolder(tempRoot);
+    final bundle = await CourseBundleService().createBundleFromFolder(
+      courseDir.path,
+    );
+    final scaffoldDir = Directory(
+      p.join(tempRoot.path, 'downloaded_courses', 'missing_artifacts'),
+    );
+    await scaffoldDir.create(recursive: true);
+    await File(p.join(scaffoldDir.path, 'contents.txt')).writeAsString(
+      '1 Unit\n1.1 Adding\n',
+    );
+    final courseId = await db.createCourseVersion(
+      teacherId: teacherId,
+      subject: 'Math',
+      sourcePath: scaffoldDir.path,
+      granularity: 2,
+      textbookText: '1 Unit\n1.1 Adding\n',
+    );
+    final course = (await db.getCourseVersionById(courseId))!;
+    var repairCount = 0;
+
+    final repaired = await service.ensureEditableArtifacts(
+      courseVersion: course,
+      repairFromServer: (courseVersion) async {
+        repairCount++;
+        await artifactService.storeImportedContentBundle(
+          courseVersionId: courseVersion.id,
+          folderPath: courseDir.path,
+          bundleFile: bundle,
+          buildChapterArtifacts: false,
+        );
+        return courseVersion;
+      },
+    );
+
+    expect(repaired.id, courseId);
+    expect(repairCount, 1);
+    expect(
+      await artifactService.readStoredTextEntry(
+        courseVersionId: courseId,
+        candidateRelativePaths: const ['1.1_medium.txt'],
+      ),
+      'Original medium question',
+    );
+
+    await service.saveQuestionText(
+      courseVersion: repaired,
+      kpKey: '1.1',
+      level: 'medium',
+      text: 'Updated medium question',
+    );
+    expect(
+      await artifactService.readStoredTextEntry(
+        courseVersionId: courseId,
+        candidateRelativePaths: const ['1.1_medium.txt'],
+      ),
+      'Updated medium question',
+    );
+  });
+
+  test('ensureEditableArtifacts explains missing cache without repair path',
+      () async {
+    final scaffoldDir = Directory(
+      p.join(tempRoot.path, 'downloaded_courses', 'missing_artifacts'),
+    );
+    await scaffoldDir.create(recursive: true);
+    await File(p.join(scaffoldDir.path, 'contents.txt')).writeAsString(
+      '1 Unit\n1.1 Adding\n',
+    );
+    final courseId = await db.createCourseVersion(
+      teacherId: teacherId,
+      subject: 'Math',
+      sourcePath: scaffoldDir.path,
+      granularity: 2,
+      textbookText: '1 Unit\n1.1 Adding\n',
+    );
+    final course = (await db.getCourseVersionById(courseId))!;
+
+    await expectLater(
+      service.ensureEditableArtifacts(courseVersion: course),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains('Pull the latest server bundle'),
+        ),
+      ),
+    );
+  });
 }
 
 Future<Directory> _createCourseFolder(Directory root) async {
