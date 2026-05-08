@@ -28,6 +28,7 @@ class SkillTreePage extends StatefulWidget {
     this.enableSessionNavigation = true,
     this.enableCourseEditorActions = false,
     this.allowTextbookOnly = false,
+    this.embedded = false,
   });
 
   final int courseVersionId;
@@ -37,6 +38,7 @@ class SkillTreePage extends StatefulWidget {
   final bool enableSessionNavigation;
   final bool enableCourseEditorActions;
   final bool allowTextbookOnly;
+  final bool embedded;
 
   @override
   State<SkillTreePage> createState() => _SkillTreePageState();
@@ -294,21 +296,15 @@ class _SkillTreePageState extends State<SkillTreePage> {
     final targetStudentId = isStudent ? currentUser?.id : _teacherStudentId;
 
     if (_loading) {
-      return Scaffold(
-        appBar: AppBar(
-          title: Text(widget.titleOverride ?? l10n.skillTreeTitle),
-          actions: buildAppBarActionsWithClose(context),
-        ),
+      return _wrapPage(
+        context,
         body: const Center(child: CircularProgressIndicator()),
       );
     }
 
     if (_parseResult == null) {
-      return Scaffold(
-        appBar: AppBar(
-          title: Text(widget.titleOverride ?? l10n.skillTreeTitle),
-          actions: buildAppBarActionsWithClose(context),
-        ),
+      return _wrapPage(
+        context,
         body: Padding(
           padding: const EdgeInsets.all(16),
           child: SelectableText(_error ?? l10n.noNodesYet),
@@ -316,11 +312,8 @@ class _SkillTreePageState extends State<SkillTreePage> {
       );
     }
     if (_parseResult!.nodes.isEmpty) {
-      return Scaffold(
-        appBar: AppBar(
-          title: Text(widget.titleOverride ?? l10n.skillTreeTitle),
-          actions: buildAppBarActionsWithClose(context),
-        ),
+      return _wrapPage(
+        context,
         body: Padding(
           padding: const EdgeInsets.all(16),
           child: SelectableText(_rawContent ?? l10n.noNodesYet),
@@ -347,11 +340,8 @@ class _SkillTreePageState extends State<SkillTreePage> {
         : (nodes[_selectedId!] ??
             (_selectedId == 'math' ? _parseResult!.root : null));
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.titleOverride ?? l10n.skillTreeTitle),
-        actions: buildAppBarActionsWithClose(context),
-      ),
+    return _wrapPage(
+      context,
       body: StreamBuilder<List<ProgressEntry>>(
         stream: targetStudentId == null
             ? const Stream.empty()
@@ -703,6 +693,24 @@ class _SkillTreePageState extends State<SkillTreePage> {
           );
         },
       ),
+    );
+  }
+
+  Widget _wrapPage(
+    BuildContext context, {
+    required Widget body,
+  }) {
+    if (widget.embedded) {
+      return body;
+    }
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          widget.titleOverride ?? AppLocalizations.of(context)!.skillTreeTitle,
+        ),
+        actions: buildAppBarActionsWithClose(context),
+      ),
+      body: body,
     );
   }
 

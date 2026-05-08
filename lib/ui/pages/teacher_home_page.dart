@@ -25,8 +25,7 @@ import 'course_editor_page.dart';
 import 'course_version_page.dart';
 import 'marketplace_page.dart';
 import 'prompt_settings_page.dart';
-import 'skill_tree_page.dart';
-import 'student_sessions_page.dart';
+import 'teacher_students_page.dart';
 import 'subject_admin_page.dart';
 import 'teacher_enrollment_requests_page.dart';
 import 'teacher_study_mode_page.dart';
@@ -337,6 +336,19 @@ class _TeacherHomePageState extends State<TeacherHomePage>
                       },
                       child: Text(l10n.createCourseButton),
                     ),
+                    ElevatedButton(
+                      key: const Key('teacher_students_button'),
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => TeacherStudentsPage(
+                              teacherId: teacher.id,
+                            ),
+                          ),
+                        );
+                      },
+                      child: Text(l10n.studentsSection),
+                    ),
                     PendingCountBadge(
                       count: _pendingApprovalCount,
                       badgeKey:
@@ -396,43 +408,6 @@ class _TeacherHomePageState extends State<TeacherHomePage>
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  l10n.studentsSection,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                Expanded(
-                  child: StreamBuilder<List<User>>(
-                    stream: db.watchStudents(teacher.id),
-                    builder: (context, snapshot) {
-                      final students = snapshot.data ?? [];
-                      if (students.isEmpty) {
-                        return Center(child: Text(l10n.noStudents));
-                      }
-                      return ListView.builder(
-                        itemCount: students.length,
-                        itemBuilder: (context, index) {
-                          final student = students[index];
-                          return ListTile(
-                            title: Text(student.username),
-                            trailing: IconButton(
-                              tooltip: l10n.studentSessionsButton,
-                              icon: const Icon(Icons.history),
-                              onPressed: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                        StudentSessionsPage(student: student),
-                                  ),
-                                );
-                              },
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
                   l10n.coursesSection,
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
@@ -489,61 +464,6 @@ class _TeacherHomePageState extends State<TeacherHomePage>
                                 ? () =>
                                     _uploadCourseToMarketplace(teacher, course)
                                 : null,
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Course / Student / Tree',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-                Expanded(
-                  child: StreamBuilder<List<CourseStudentTreeInfo>>(
-                    stream: db.watchCourseStudentTrees(teacher.id),
-                    builder: (context, snapshot) {
-                      final rows = snapshot.data ?? [];
-                      if (rows.isEmpty) {
-                        return const Center(child: Text('No rows yet.'));
-                      }
-                      return ListView.builder(
-                        itemCount: rows.length,
-                        itemBuilder: (context, index) {
-                          final row = rows[index];
-                          return ListTile(
-                            onTap: () async {
-                              final student =
-                                  await db.getUserById(row.studentId);
-                              if (!mounted || student == null) {
-                                return;
-                              }
-                              await Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) => StudentSessionsPage(
-                                    student: student,
-                                    initialCourseVersionId: row.courseVersionId,
-                                  ),
-                                ),
-                              );
-                            },
-                            title: Text(
-                                '${_stripVersionSuffix(row.courseSubject)} / ${row.studentUsername}'),
-                            trailing: TextButton(
-                              onPressed: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) => SkillTreePage(
-                                      courseVersionId: row.courseVersionId,
-                                      isTeacherView: true,
-                                      teacherStudentId: row.studentId,
-                                    ),
-                                  ),
-                                );
-                              },
-                              child: Text(l10n.treeButton),
-                            ),
                           );
                         },
                       );
@@ -1470,14 +1390,31 @@ class _CourseTile extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              displaySubject,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    displaySubject,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Flexible(
+                  child: Text(
+                    'Labels: $labelText',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.end,
+                  ),
+                ),
+                if (approvalText.isNotEmpty) ...[
+                  const SizedBox(width: 12),
+                  Text(approvalText),
+                ],
+              ],
             ),
-            const SizedBox(height: 6),
-            Text('Labels: $labelText'),
-            if (approvalText.isNotEmpty) Text(approvalText),
             const SizedBox(height: 8),
             Row(
               children: [
