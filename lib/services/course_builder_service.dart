@@ -9,6 +9,7 @@ import '../llm/llm_service.dart';
 import '../llm/prompt_renderer.dart';
 import '../llm/prompt_repository.dart';
 import 'course_artifact_service.dart';
+import 'course_source_policy.dart';
 import 'prompt_variable_registry.dart';
 
 enum CourseBuilderMode {
@@ -195,7 +196,7 @@ class CourseBuilderService {
     required CourseVersion courseVersion,
     required List<String> candidateRelativePaths,
   }) async {
-    final source = _resolveSourceDirectory(courseVersion);
+    final source = _resolveEditableSourceDirectory(courseVersion);
     if (source != null) {
       final file = _firstExistingSourceFile(
         sourcePath: source.path,
@@ -218,7 +219,7 @@ class CourseBuilderService {
     required List<String> candidateRelativePaths,
     required String text,
   }) async {
-    final source = _resolveSourceDirectory(courseVersion);
+    final source = _resolveEditableSourceDirectory(courseVersion);
     if (source != null) {
       final file = _firstExistingSourceFile(
             sourcePath: source.path,
@@ -248,16 +249,10 @@ class CourseBuilderService {
     );
   }
 
-  Directory? _resolveSourceDirectory(CourseVersion courseVersion) {
-    final sourcePath = courseVersion.sourcePath?.trim() ?? '';
-    if (sourcePath.isEmpty) {
-      return null;
-    }
-    final directory = Directory(sourcePath);
-    if (!directory.existsSync()) {
-      return null;
-    }
-    return directory;
+  Directory? _resolveEditableSourceDirectory(CourseVersion courseVersion) {
+    return CourseSourcePolicy.editableSourceDirectory(
+      courseVersion.sourcePath,
+    );
   }
 
   File? _firstExistingSourceFile({

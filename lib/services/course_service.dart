@@ -8,6 +8,7 @@ import '../constants.dart';
 import '../db/app_database.dart';
 import '../models/skill_tree.dart';
 import 'course_artifact_service.dart';
+import 'course_source_policy.dart';
 
 class CourseLoadResult {
   CourseLoadResult({
@@ -570,9 +571,10 @@ GROUP BY kp_key
     }
 
     if (_courseArtifactService != null) {
-      final sourcePath = course.sourcePath?.trim() ?? '';
-      final sourceDirectory = Directory(sourcePath);
-      if (sourcePath.isNotEmpty && sourceDirectory.existsSync()) {
+      final sourceDirectory = CourseSourcePolicy.editableSourceDirectory(
+        course.sourcePath,
+      );
+      if (sourceDirectory != null) {
         final contentsFile = File(p.join(sourceDirectory.path, 'contents.txt'));
         final contextFile = File(p.join(sourceDirectory.path, 'context.txt'));
         final targetFile = contentsFile.existsSync()
@@ -751,7 +753,7 @@ GROUP BY kp_key
 
   String _describeMissingLectureRoot(String basePath) {
     final normalizedBasePath = p.normalize(basePath);
-    if (normalizedBasePath.contains('downloaded_courses')) {
+    if (CourseSourcePolicy.isDownloadedCoursePath(normalizedBasePath)) {
       return 'Course folder is not a reloadable source folder: '
           '$normalizedBasePath. This synced scaffold only contains contents.txt. '
           'Choose the original local course folder.';

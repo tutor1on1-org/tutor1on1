@@ -2,13 +2,20 @@ import 'dart:io';
 
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:tutor1on1/db/app_database.dart';
+import 'package:tutor1on1/services/course_artifact_service.dart';
+import 'package:tutor1on1/services/course_bundle_service.dart';
 import 'package:tutor1on1/services/course_service.dart';
 
+const _pathProviderChannel = MethodChannel('plugins.flutter.io/path_provider');
+
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   late AppDatabase db;
   late CourseService service;
   late Directory tempRoot;
@@ -30,9 +37,18 @@ void main() {
       role: 'student',
       teacherId: teacherId,
     );
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_pathProviderChannel, (call) async {
+      if (call.method == 'getTemporaryDirectory') {
+        return p.join(tempRoot.path, 'tmp');
+      }
+      return null;
+    });
   });
 
   tearDown(() async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_pathProviderChannel, null);
     await db.close();
     if (await tempRoot.exists()) {
       await tempRoot.delete(recursive: true);
@@ -193,6 +209,75 @@ void main() {
     expect(
         preview.message, contains('Choose the original local course folder'));
     expect(preview.message, isNot(contains('Missing file:')));
+  });
+
+  test('contents edit updates cached bundle for synced scaffolds', () async {
+    final artifactService = CourseArtifactService(
+      artifactsRootProvider: () async => Directory(
+        p.join(tempRoot.path, 'artifacts'),
+      ),
+    );
+    final serviceWithArtifacts = CourseService(
+      db,
+      courseArtifactService: artifactService,
+    );
+    final sourceDir = await _createCourseFolder(
+      root: tempRoot,
+      folderName: 'complete_source',
+      contents: '''
+1 Unit
+1.1 (Add numbers, Y1)
+''',
+      lectureIds: <String>['1', '1.1'],
+    );
+    final bundle = await CourseBundleService().createBundleFromFolder(
+      sourceDir.path,
+    );
+    final scaffoldDir = Directory(
+      p.join(tempRoot.path, 'downloaded_courses', 'bundle_scaffold'),
+    );
+    await scaffoldDir.create(recursive: true);
+    await File(p.join(scaffoldDir.path, 'contents.txt')).writeAsString('''
+1 Unit
+1.1 (Add numbers, Y1)
+''');
+    final courseId = await db.createCourseVersion(
+      teacherId: teacherId,
+      subject: 'Scaffold Course',
+      sourcePath: scaffoldDir.path,
+      granularity: 2,
+      textbookText: '1 Unit\n1.1 (Add numbers, Y1)\n',
+    );
+    await artifactService.storeImportedContentBundle(
+      courseVersionId: courseId,
+      folderPath: sourceDir.path,
+      bundleFile: bundle,
+      buildChapterArtifacts: false,
+    );
+
+    final result = await serviceWithArtifacts.applyCourseContentsEdit(
+      courseVersionId: courseId,
+      contents: '''
+1 Unit
+1.1 (Add integers, Y1)
+''',
+    );
+
+    expect(result.success, isTrue);
+    expect(
+      await File(p.join(scaffoldDir.path, 'contents.txt')).readAsString(),
+      contains('Add numbers'),
+    );
+    expect(
+      await artifactService.readStoredTextEntry(
+        courseVersionId: courseId,
+        candidateRelativePaths: const ['contents.txt'],
+      ),
+      contains('Add integers'),
+    );
+    final nodes = await db.getCourseNodes(courseId);
+    expect(
+        nodes.singleWhere((node) => node.kpKey == '1.1').title, 'Add integers');
   });
 
   test('override reload deletes sessions for removed nodes and keeps subject',

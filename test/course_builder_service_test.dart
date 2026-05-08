@@ -211,6 +211,52 @@ void main() {
       'New medium question',
     );
   });
+
+  test('save lesson updates cached bundle for downloaded scaffolds', () async {
+    final courseDir = await _createCourseFolder(tempRoot);
+    final bundle = await CourseBundleService().createBundleFromFolder(
+      courseDir.path,
+    );
+    final scaffoldDir = Directory(
+      p.join(tempRoot.path, 'downloaded_courses', 'special_relativity'),
+    );
+    await scaffoldDir.create(recursive: true);
+    await File(p.join(scaffoldDir.path, 'contents.txt')).writeAsString(
+      '1 Unit\n1.1 Adding\n',
+    );
+    final courseId = await db.createCourseVersion(
+      teacherId: teacherId,
+      subject: 'Math',
+      sourcePath: scaffoldDir.path,
+      granularity: 2,
+      textbookText: '1 Unit\n1.1 Adding\n',
+    );
+    await artifactService.storeImportedContentBundle(
+      courseVersionId: courseId,
+      folderPath: courseDir.path,
+      bundleFile: bundle,
+      buildChapterArtifacts: false,
+    );
+    final course = (await db.getCourseVersionById(courseId))!;
+
+    await service.saveLessonContent(
+      courseVersion: course,
+      kpKey: '1.1',
+      text: 'Downloaded scaffold update',
+    );
+
+    expect(
+      File(p.join(scaffoldDir.path, '1.1_lecture.txt')).existsSync(),
+      isFalse,
+    );
+    expect(
+      await artifactService.readStoredTextEntry(
+        courseVersionId: courseId,
+        candidateRelativePaths: const ['1.1_lecture.txt'],
+      ),
+      'Downloaded scaffold update',
+    );
+  });
 }
 
 Future<Directory> _createCourseFolder(Directory root) async {
