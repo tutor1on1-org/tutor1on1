@@ -38,6 +38,7 @@
           <a class="button button-primary" href="/fr/install/">Installer d&#x27;abord</a>
           <a class="button button-ghost" href="#teacher">Parcours enseignant</a>
           <a class="button button-ghost" href="#student">Parcours élève</a>
+          <a class="button button-ghost" href="#course-folder">Dossier cours</a>
           <a class="button button-ghost" href="#config">API config</a>
           <a class="button button-ghost" href="#oauth">ChatGPT OAuth</a>
         </div>
@@ -54,6 +55,25 @@
           <h2>S’inscrire et étudier à son rythme.</h2>
           <ol class="help-list"><li>Connectez-vous comme élève ou créez un compte élève.</li><li>Ouvrez le marketplace et demandez une inscription à un cours.</li><li>Attendez l&#x27;approbation de l&#x27;enseignant.</li><li>Téléchargez le bundle de cours approuvé.</li><li>Ouvrez le cours et lancez une session Learn ou Review qui suit votre progression.</li></ol>
         </article>
+      </section>
+
+      <section class="content-block" id="course-folder">
+        <p class="eyebrow">Créer un cours avec AI</p>
+        <h2>Transformer un PDF, un PPT ou des notes en dossier de cours Tutor1on1.</h2>
+        <p class="muted">Utilisez un agent AI en dehors de l’app pour reformater les supports existants. Tutor1on1 valide, charge, publie et permet ensuite d’ajuster un KP à la fois.</p>
+        <ol class="help-list"><li>Placez PDF, PPT, Word, exercices et notes de réponses dans un dossier source. Pour les scans, faites un OCR puis vérifiez les formules manuellement.</li><li>Demandez d’abord à Codex de proposer seulement le plan <code>contents.txt</code>. Validez l’ordre, les titres et la granularité des KP avant de créer les fichiers.</li><li>Demandez à Codex de créer le dossier de sortie. Chaque id de <code>contents.txt</code> doit avoir son <code>&lt;id&gt;_lecture.txt</code>. Les banques de questions optionnelles utilisent <code>&lt;id&gt;_easy.txt</code>, <code>&lt;id&gt;_medium.txt</code> et <code>&lt;id&gt;_hard.txt</code>.</li><li>Chargez le dossier dans Tutor1on1 comme enseignant. Si l’app signale un fichier manquant ou un id invalide, collez l’erreur dans Codex et demandez une réparation.</li><li>Une fois le cours chargé, utilisez clic droit <strong>AI edit content</strong> sur un KP pour ajuster une leçon ou une banque de questions.</li></ol>
+        <pre class="code-block"><code>special_relativity_course/
+  contents.txt
+  context.txt
+  1_lecture.txt
+  1.1_lecture.txt
+  1.1_easy.txt
+  1.1_medium.txt
+  1.1_hard.txt</code></pre>
+        <h3>Codex web</h3>
+        <ol class="help-list"><li>Créez une tâche : <strong>Generate Tutor1on1 course folder from teaching materials</strong>.</li><li>Téléversez les fichiers PDF/PPT/Word.</li><li>Prompt : <code>Read the uploaded materials and propose a Tutor1on1 contents.txt outline. Use dotted ids like 1, 1.1, 1.2. Do not generate files yet. Wait for my approval.</code></li><li>Après validation du plan, prompt : <code>Create a complete Tutor1on1 course folder with contents.txt, one &lt;id&gt;_lecture.txt for every id, and optional easy/medium/hard question files. Run a self-check and list missing files.</code></li><li>Téléchargez le dossier ou zip, décompressez-le, puis chargez ce dossier dans Tutor1on1.</li></ol>
+        <h3>Codex bureau ou GUI locale</h3>
+        <ol class="help-list"><li>Créez <code>source_materials/</code> pour les documents originaux et un dossier vide comme <code>special_relativity_course/</code>.</li><li>Ouvrez le workspace parent dans Codex.</li><li>Prompt : <code>Use source_materials/ as input. Create a complete Tutor1on1 course folder in special_relativity_course/. Do not modify source_materials/. First generate contents.txt, then generate all lecture and question files. After writing files, check that every contents.txt id has &lt;id&gt;_lecture.txt.</code></li><li>Laissez Codex écrire les fichiers directement. Demandez un rapport final de self-check, puis chargez le dossier de sortie dans Tutor1on1.</li></ol>
       </section>
 
       <section class="content-block">

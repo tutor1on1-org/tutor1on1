@@ -38,6 +38,7 @@
           <a class="button button-primary" href="/ja/install/">先にインストール</a>
           <a class="button button-ghost" href="#teacher">先生の流れ</a>
           <a class="button button-ghost" href="#student">生徒の流れ</a>
+          <a class="button button-ghost" href="#course-folder">コース folder</a>
           <a class="button button-ghost" href="#config">API config</a>
           <a class="button button-ghost" href="#oauth">ChatGPT OAuth</a>
         </div>
@@ -54,6 +55,25 @@
           <h2>受講し、自分のペースで学びます。</h2>
           <ol class="help-list"><li>生徒としてログイン、または生徒アカウントを登録します。</li><li>marketplace を開き、コースの受講を申請します。</li><li>先生の承認を待ちます。</li><li>承認済みコース bundle をダウンロードします。</li><li>コースを開き、進度に沿った Learn または Review セッションを始めます。</li></ol>
         </article>
+      </section>
+
+      <section class="content-block" id="course-folder">
+        <p class="eyebrow">AI でコースを作る</p>
+        <h2>PDF、PPT、授業ノートを Tutor1on1 のコース folder に変換します。</h2>
+        <p class="muted">既存教材は、まず外部の AI agent で Tutor1on1 用の folder に整えます。Tutor1on1 は検証、読み込み、公開、そして KP ごとの微調整を担当します。</p>
+        <ol class="help-list"><li>PDF、PPT、Word、ワークシート、解答メモを source folder に入れます。スキャン資料は先に OCR し、数式と図表を手で確認します。</li><li>最初は Codex に <code>contents.txt</code> の outline だけを作らせます。KP の順序、title、粒度を確認してからファイル生成へ進みます。</li><li>Codex に出力 course folder を作らせます。<code>contents.txt</code> の各 id には必ず対応する <code>&lt;id&gt;_lecture.txt</code> が必要です。任意の問題プールは <code>&lt;id&gt;_easy.txt</code>、<code>&lt;id&gt;_medium.txt</code>、<code>&lt;id&gt;_hard.txt</code> です。</li><li>先生として Tutor1on1 に folder を読み込みます。missing file や id エラーが出たら、そのエラーを Codex に貼り、folder を修正させます。</li><li>読み込み後は、KP を右クリックして <strong>AI edit content</strong> を使い、lesson や問題プールを小さく調整します。</li></ol>
+        <pre class="code-block"><code>special_relativity_course/
+  contents.txt
+  context.txt
+  1_lecture.txt
+  1.1_lecture.txt
+  1.1_easy.txt
+  1.1_medium.txt
+  1.1_hard.txt</code></pre>
+        <h3>Codex web</h3>
+        <ol class="help-list"><li>新しい task を作ります: <strong>Generate Tutor1on1 course folder from teaching materials</strong>.</li><li>PDF/PPT/Word ファイルをアップロードします。</li><li>Prompt: <code>Read the uploaded materials and propose a Tutor1on1 contents.txt outline. Use dotted ids like 1, 1.1, 1.2. Do not generate files yet. Wait for my approval.</code></li><li>outline を承認した後の prompt: <code>Create a complete Tutor1on1 course folder with contents.txt, one &lt;id&gt;_lecture.txt for every id, and optional easy/medium/hard question files. Run a self-check and list missing files.</code></li><li>生成された folder または zip をダウンロードし、展開して Tutor1on1 に読み込みます。</li></ol>
+        <h3>Codex desktop または local GUI</h3>
+        <ol class="help-list"><li>原本用に <code>source_materials/</code>、出力用に空の <code>special_relativity_course/</code> を作ります。</li><li>その親 workspace を Codex で開きます。</li><li>Prompt: <code>Use source_materials/ as input. Create a complete Tutor1on1 course folder in special_relativity_course/. Do not modify source_materials/. First generate contents.txt, then generate all lecture and question files. After writing files, check that every contents.txt id has &lt;id&gt;_lecture.txt.</code></li><li>Codex にファイルを直接書かせます。最後に self-check report を出させ、その出力 folder を Tutor1on1 に読み込みます。</li></ol>
       </section>
 
       <section class="content-block">

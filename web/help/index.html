@@ -38,6 +38,7 @@
           <a class="button button-primary" href="/install/">Install first</a>
           <a class="button button-ghost" href="#teacher">Teacher flow</a>
           <a class="button button-ghost" href="#student">Student flow</a>
+          <a class="button button-ghost" href="#course-folder">Course folder</a>
           <a class="button button-ghost" href="#config">API config</a>
           <a class="button button-ghost" href="#oauth">ChatGPT OAuth</a>
         </div>
@@ -54,6 +55,25 @@
           <h2>Enroll and study at your pace.</h2>
           <ol class="help-list"><li>Log in as a student or register a student account.</li><li>Open the marketplace and request enrollment in a course.</li><li>Wait for teacher approval.</li><li>Download the approved course bundle.</li><li>Open the course and start a Learn or Review session that follows your progress.</li></ol>
         </article>
+      </section>
+
+      <section class="content-block" id="course-folder">
+        <p class="eyebrow">Course creation with AI</p>
+        <h2>Turn PDF, PPT, or teaching notes into a Tutor1on1 course folder.</h2>
+        <p class="muted">Use an AI agent to reformat existing teaching materials outside the app. Tutor1on1 then validates, loads, uploads, and lets you refine one KP at a time.</p>
+        <ol class="help-list"><li>Put the source PDF, PPT, Word files, worksheets, and answer notes into a source folder. If the material is scanned, run OCR first and check formulas manually.</li><li>Ask Codex to propose the <code>contents.txt</code> outline first. Approve the KP order, title, and granularity before asking it to write files.</li><li>Ask Codex to create the output course folder. Every id in <code>contents.txt</code> must have a matching <code>&lt;id&gt;_lecture.txt</code>. Optional question pools use <code>&lt;id&gt;_easy.txt</code>, <code>&lt;id&gt;_medium.txt</code>, and <code>&lt;id&gt;_hard.txt</code>.</li><li>Load the output folder in Tutor1on1 as a teacher. If validation reports a missing file or bad id, paste that error back into Codex and ask it to repair the folder.</li><li>After the course loads, use right-click <strong>AI edit content</strong> on a KP for smaller lesson or question-bank edits.</li></ol>
+        <pre class="code-block"><code>special_relativity_course/
+  contents.txt
+  context.txt
+  1_lecture.txt
+  1.1_lecture.txt
+  1.1_easy.txt
+  1.1_medium.txt
+  1.1_hard.txt</code></pre>
+        <h3>Codex web</h3>
+        <ol class="help-list"><li>Create a new task named <strong>Generate Tutor1on1 course folder from teaching materials</strong>.</li><li>Upload the PDF/PPT/Word files.</li><li>Prompt Codex: <code>Read the uploaded materials and propose a Tutor1on1 contents.txt outline. Use dotted ids like 1, 1.1, 1.2. Do not generate files yet. Wait for my approval.</code></li><li>After approving the outline, prompt Codex: <code>Create a complete Tutor1on1 course folder with contents.txt, one &lt;id&gt;_lecture.txt for every id, and optional easy/medium/hard question files. Run a self-check and list missing files.</code></li><li>Download the generated folder or zip, unzip it, and load that folder in Tutor1on1.</li></ol>
+        <h3>Codex desktop or local GUI</h3>
+        <ol class="help-list"><li>Create <code>source_materials/</code> for the original documents and an empty output folder such as <code>special_relativity_course/</code>.</li><li>Open the parent workspace in Codex.</li><li>Prompt Codex: <code>Use source_materials/ as input. Create a complete Tutor1on1 course folder in special_relativity_course/. Do not modify source_materials/. First generate contents.txt, then generate all lecture and question files. After writing files, check that every contents.txt id has &lt;id&gt;_lecture.txt.</code></li><li>Let Codex write files directly. Ask it for a final self-check report, then load the output folder in Tutor1on1.</li></ol>
       </section>
 
       <section class="content-block">

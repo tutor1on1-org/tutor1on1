@@ -38,6 +38,7 @@
           <a class="button button-primary" href="/de/install/">Zuerst installieren</a>
           <a class="button button-ghost" href="#teacher">Lehrerablauf</a>
           <a class="button button-ghost" href="#student">Schülerablauf</a>
+          <a class="button button-ghost" href="#course-folder">Kursordner</a>
           <a class="button button-ghost" href="#config">API config</a>
           <a class="button button-ghost" href="#oauth">ChatGPT OAuth</a>
         </div>
@@ -54,6 +55,25 @@
           <h2>Einschreiben und im eigenen Tempo lernen.</h2>
           <ol class="help-list"><li>Als Schüler anmelden oder ein Schülerkonto registrieren.</li><li>Den Marketplace öffnen und Einschreibung in einen Kurs beantragen.</li><li>Auf die Genehmigung durch den Lehrer warten.</li><li>Das genehmigte Kurs-Bundle herunterladen.</li><li>Den Kurs öffnen und eine Learn- oder Review-Sitzung starten, die dem eigenen Fortschritt folgt.</li></ol>
         </article>
+      </section>
+
+      <section class="content-block" id="course-folder">
+        <p class="eyebrow">Kurse mit AI erstellen</p>
+        <h2>PDF, PPT oder Unterrichtsnotizen in einen Tutor1on1-Kursordner umwandeln.</h2>
+        <p class="muted">Nutzen Sie einen AI-Agenten außerhalb der App, um vorhandene Materialien neu zu formatieren. Tutor1on1 validiert, lädt, veröffentlicht und erlaubt danach gezielte Bearbeitung einzelner KP.</p>
+        <ol class="help-list"><li>Legen Sie PDF, PPT, Word-Dateien, Arbeitsblätter und Antwortnotizen in einen Quellordner. Bei Scans zuerst OCR ausführen und Formeln manuell prüfen.</li><li>Lassen Sie Codex zuerst nur den <code>contents.txt</code>-Entwurf vorschlagen. Prüfen Sie Reihenfolge, Titel und Granularität der KP, bevor Dateien geschrieben werden.</li><li>Lassen Sie Codex den Ausgabeordner erstellen. Jede id in <code>contents.txt</code> benötigt eine passende Datei <code>&lt;id&gt;_lecture.txt</code>. Optionale Fragenbanken heißen <code>&lt;id&gt;_easy.txt</code>, <code>&lt;id&gt;_medium.txt</code> und <code>&lt;id&gt;_hard.txt</code>.</li><li>Laden Sie den Ordner als Lehrer in Tutor1on1. Wenn ein fehlender Dateiname oder eine ungültige id gemeldet wird, fügen Sie den Fehler in Codex ein und lassen den Ordner reparieren.</li><li>Nach erfolgreichem Laden nutzen Sie per Rechtsklick <strong>AI edit content</strong> auf einem KP für kleinere Lektionen- oder Fragenbank-Änderungen.</li></ol>
+        <pre class="code-block"><code>special_relativity_course/
+  contents.txt
+  context.txt
+  1_lecture.txt
+  1.1_lecture.txt
+  1.1_easy.txt
+  1.1_medium.txt
+  1.1_hard.txt</code></pre>
+        <h3>Codex Web</h3>
+        <ol class="help-list"><li>Erstellen Sie eine Aufgabe: <strong>Generate Tutor1on1 course folder from teaching materials</strong>.</li><li>Laden Sie PDF/PPT/Word-Dateien hoch.</li><li>Prompt: <code>Read the uploaded materials and propose a Tutor1on1 contents.txt outline. Use dotted ids like 1, 1.1, 1.2. Do not generate files yet. Wait for my approval.</code></li><li>Nach Freigabe des Entwurfs: <code>Create a complete Tutor1on1 course folder with contents.txt, one &lt;id&gt;_lecture.txt for every id, and optional easy/medium/hard question files. Run a self-check and list missing files.</code></li><li>Laden Sie den erzeugten Ordner oder die ZIP herunter, entpacken Sie sie und laden Sie den Ordner in Tutor1on1.</li></ol>
+        <h3>Codex Desktop oder lokale GUI</h3>
+        <ol class="help-list"><li>Erstellen Sie <code>source_materials/</code> für Originaldokumente und einen leeren Ausgabeordner wie <code>special_relativity_course/</code>.</li><li>Öffnen Sie den übergeordneten Workspace in Codex.</li><li>Prompt: <code>Use source_materials/ as input. Create a complete Tutor1on1 course folder in special_relativity_course/. Do not modify source_materials/. First generate contents.txt, then generate all lecture and question files. After writing files, check that every contents.txt id has &lt;id&gt;_lecture.txt.</code></li><li>Lassen Sie Codex direkt Dateien schreiben. Fordern Sie einen abschließenden self-check report an und laden Sie danach den Ausgabeordner in Tutor1on1.</li></ol>
       </section>
 
       <section class="content-block">
