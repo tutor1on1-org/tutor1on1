@@ -40,3 +40,4 @@
 - Website localization parity must be validated before claiming languages are unified; shared help/home content changes need matching visible copy and section structure across all locale paths.
 - Teacher AI course-building must call the shared edit-readiness repair before prompt generation, diff, and save; downloaded scaffolds without cached bundles must pull the latest server bundle first, not proceed with empty context and fail later.
 - Course-authoring help must describe external AI-agent generation of a complete Tutor1on1 course folder from PDF/PPT/Word materials, followed by app load/validation/upload; do not imply arbitrary source documents are parsed directly by the app.
+- Course-authoring help must also explain the in-app AI edit path after loading: KP/title right-click, `AI edit content`, `Content`/`Question`, diff review, `Add`/`Replace`, and question difficulty selection.
