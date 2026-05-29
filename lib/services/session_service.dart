@@ -401,11 +401,14 @@ class SessionService {
     final failedCounts = _resolveFailedCounts(
       evidenceState: evidenceState,
     );
-    final errorBookSummary = _buildErrorBookSummary(
+    final errorBookSummary = await _buildErrorBookSummary(
       messages: messages,
       progress: progress,
       previousJson: promptResolution.prevJson,
       evidenceState: evidenceState,
+      studentId: session?.studentId,
+      courseVersionId: courseVersion.id,
+      kpKey: node.kpKey,
     );
     final courseKey = _normalizeCourseKey(courseVersion.sourcePath);
     final studentPromptContext = await _db.resolveStudentPromptContext(
@@ -463,10 +466,21 @@ class SessionService {
     }
     if (actionMode == 'review') {
       if (promptName == PromptVariableRegistry.reviewInitPrompt) {
-        values[PromptVariableRegistry.presentedQuestions] =
-            _questionsTextForDifficulty(
+        final presentedQuestions = _questionsTextForDifficulty(
           questionTextsByLevel: questionTextsByLevel,
           difficulty: reviewQuestionDifficulty,
+        );
+        final dueMistakes = session == null
+            ? const <MistakeEntry>[]
+            : await _db.getDueMistakeEntriesForCourse(
+                studentId: session.studentId,
+                courseVersionId: courseVersion.id,
+                kpKey: node.kpKey,
+              );
+        values[PromptVariableRegistry.presentedQuestions] =
+            _questionsWithMistakeFocus(
+          questionsText: presentedQuestions,
+          mistakes: dueMistakes,
         );
       }
     }
@@ -704,8 +718,9 @@ class SessionService {
       parsed: decodedParsed,
     );
     final parsedJsonText = parsed == null ? null : jsonEncode(parsed);
+    final int persistedMessageId;
     if (assistantMessageId == null) {
-      await _db.into(_db.chatMessages).insert(
+      persistedMessageId = await _db.into(_db.chatMessages).insert(
             ChatMessagesCompanion.insert(
               sessionId: request.sessionId,
               role: 'assistant',
@@ -716,6 +731,7 @@ class SessionService {
             ),
           );
     } else {
+      persistedMessageId = assistantMessageId;
       await _db.updateChatMessageAssistantPayload(
         messageId: assistantMessageId,
         content: resolution.payload.displayText,
@@ -766,6 +782,13 @@ class SessionService {
       studentIntent: request.resolvedStudentIntent,
       parsedJsonText: parsedJsonText,
       passedLevel: request.reviewPassedLevel,
+      shouldCountReviewAttempt: shouldCountReviewAttempt,
+    );
+    await _persistMistakeEntriesIfNeeded(
+      request: request,
+      parsed: parsed,
+      currentControl: currentControl,
+      messageId: persistedMessageId,
       shouldCountReviewAttempt: shouldCountReviewAttempt,
     );
     if (request.actionMode == 'review' && studentId != null && studentId > 0) {
@@ -1306,6 +1329,27 @@ class SessionService {
     return questionTextsByLevel[normalized]?.trim() ?? '';
   }
 
+  String _questionsWithMistakeFocus({
+    required String questionsText,
+    required List<MistakeEntry> mistakes,
+  }) {
+    final activeMistakes = mistakes
+        .where((mistake) => !mistake.dismissed && mistake.status == 'open')
+        .take(3)
+        .toList(growable: false);
+    if (activeMistakes.isEmpty) {
+      return questionsText;
+    }
+    final focus = activeMistakes
+        .map((mistake) => '- ${mistake.mistakeTagRaw}')
+        .join('\n');
+    final trimmedQuestions = questionsText.trim();
+    if (trimmedQuestions.isEmpty) {
+      return 'Mistake focus:\n$focus';
+    }
+    return 'Mistake focus:\n$focus\n\n$trimmedQuestions';
+  }
+
   Future<String> _loadQuestionTextForLevel({
     required CourseVersion courseVersion,
     required String kpKey,
@@ -1615,12 +1659,151 @@ class SessionService {
     );
   }
 
-  String _buildErrorBookSummary({
+  Future<void> _persistMistakeEntriesIfNeeded({
+    required _TutorRequestContext request,
+    required Map<String, dynamic>? parsed,
+    required TutorControlState currentControl,
+    required int messageId,
+    required bool shouldCountReviewAttempt,
+  }) async {
+    final studentId = request.llmContext.studentId;
+    if (request.actionMode != 'review' ||
+        request.promptName != PromptVariableRegistry.reviewContPrompt ||
+        !shouldCountReviewAttempt ||
+        studentId == null ||
+        studentId <= 0 ||
+        parsed == null ||
+        parsed['finished'] is! bool) {
+      return;
+    }
+    final drafts = _mistakeDraftsFromReviewPayload(parsed);
+    if (drafts.isEmpty) {
+      return;
+    }
+    final activeQuestion = currentControl.activeReviewQuestion;
+    final questionExcerpt = _activeQuestionExcerpt(activeQuestion);
+    final difficulty = _normalizeLevel(activeQuestion?['difficulty']) ??
+        _normalizeLevel(request.reviewQuestionDifficulty);
+    for (final draft in drafts) {
+      await _db.upsertMistakeEvidence(
+        studentId: studentId,
+        courseVersionId: request.courseVersionId,
+        kpKey: request.kpKey,
+        sessionId: request.sessionId,
+        messageId: messageId,
+        mistakeTag: draft.tag,
+        mistakeNote: draft.note,
+        questionExcerpt: questionExcerpt,
+        difficulty: difficulty,
+        evidenceJson: jsonEncode(<String, dynamic>{
+          'prompt_name': request.promptName,
+          'active_question': activeQuestion,
+          'assistant_payload': parsed,
+        }),
+      );
+    }
+  }
+
+  List<_MistakeDraft> _mistakeDraftsFromReviewPayload(
+    Map<String, dynamic> parsed,
+  ) {
+    final drafts = <_MistakeDraft>[];
+    final update = parsed['error_book_update'];
+    if (update is Map) {
+      final tag = update['mistake_tag']?.toString().trim() ?? '';
+      if (tag.isNotEmpty) {
+        drafts.add(
+          _MistakeDraft(
+            tag: tag,
+            note: update['mistake_note']?.toString(),
+          ),
+        );
+      }
+    }
+    final source = parsed['mistakes'] ?? parsed['mistake_tags'];
+    if (source is List) {
+      for (final item in source) {
+        if (item is String) {
+          final tag = item.trim();
+          if (tag.isNotEmpty) {
+            drafts.add(_MistakeDraft(tag: tag));
+          }
+          continue;
+        }
+        if (item is Map) {
+          final tag =
+              (item['mistake_tag'] ?? item['tag'])?.toString().trim() ?? '';
+          if (tag.isNotEmpty) {
+            drafts.add(
+              _MistakeDraft(
+                tag: tag,
+                note: item['mistake_note']?.toString() ??
+                    item['note']?.toString(),
+              ),
+            );
+          }
+        }
+      }
+    }
+    final seen = <String>{};
+    return drafts.where((draft) {
+      final key = AppDatabase.normalizeMistakeTagKey(draft.tag);
+      return key.isNotEmpty && seen.add(key);
+    }).toList(growable: false);
+  }
+
+  String? _activeQuestionExcerpt(Map<String, dynamic>? activeQuestion) {
+    if (activeQuestion == null) {
+      return null;
+    }
+    final text = activeQuestion['text']?.toString().trim();
+    if (text != null && text.isNotEmpty) {
+      return text;
+    }
+    final questionText = activeQuestion['question_text']?.toString().trim();
+    if (questionText != null && questionText.isNotEmpty) {
+      return questionText;
+    }
+    return null;
+  }
+
+  Future<String> _buildErrorBookSummary({
     required List<ChatMessage> messages,
     ProgressEntry? progress,
     Map<String, dynamic>? previousJson,
     TutorEvidenceState? evidenceState,
-  }) {
+    int? studentId,
+    int? courseVersionId,
+    String? kpKey,
+  }) async {
+    if (studentId != null &&
+        studentId > 0 &&
+        courseVersionId != null &&
+        courseVersionId > 0 &&
+        (kpKey ?? '').trim().isNotEmpty) {
+      final durableMistakes = await _db.getMistakeEntriesForScope(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+        kpKey: kpKey!.trim(),
+      );
+      if (durableMistakes.isNotEmpty) {
+        return jsonEncode(<String, dynamic>{
+          'source': 'mistake_entries',
+          'top_mistakes': durableMistakes
+              .take(5)
+              .map(
+                (mistake) => <String, dynamic>{
+                  'mistake_tag': mistake.mistakeTagRaw,
+                  'count': mistake.occurrences,
+                  if ((mistake.mistakeNote ?? '').trim().isNotEmpty)
+                    'last_note': mistake.mistakeNote!.trim(),
+                  'status': mistake.status,
+                },
+              )
+              .toList(growable: false),
+        });
+      }
+    }
     final aggregated = _aggregateErrorBook(messages);
     if (aggregated != null && aggregated.isNotEmpty) {
       return jsonEncode(aggregated);
@@ -2300,6 +2483,16 @@ class _AssistantJsonRef {
 
   final int index;
   final Map<String, dynamic>? json;
+}
+
+class _MistakeDraft {
+  const _MistakeDraft({
+    required this.tag,
+    this.note,
+  });
+
+  final String tag;
+  final String? note;
 }
 
 class _ErrorBookAggregate {

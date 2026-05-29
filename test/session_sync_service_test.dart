@@ -398,6 +398,7 @@ Future<_ServerArtifact> _buildServerArtifact({
   required String updatedAt,
   required List<Map<String, dynamic>> sessions,
   Map<String, dynamic>? progress,
+  List<Map<String, dynamic>>? mistakes,
   String studentUsername = 'student_remote',
 }) async {
   final artifactId = 'student_kp:$remoteStudentUserId:$remoteCourseId:$kpKey';
@@ -415,6 +416,7 @@ Future<_ServerArtifact> _buildServerArtifact({
         'student_username': studentUsername,
         'updated_at': updatedAt,
         if (progress != null) 'progress': progress,
+        if (mistakes != null) 'mistakes': mistakes,
         'sessions': sessions,
       },
     ),
@@ -514,6 +516,19 @@ void main() {
           'student_remote_user_id': 3001,
           'updated_at': '2026-04-01T08:05:00Z',
         },
+        mistakes: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'mistake_tag': 'sign error',
+            'mistake_tag_key': 'sign error',
+            'mistake_note': 'Missed the negative sign.',
+            'question_excerpt': 'Solve -2x = 4',
+            'difficulty': 'easy',
+            'evidence_json': '{"ok":true}',
+            'occurrences': 2,
+            'first_seen_at': '2026-04-01T08:01:00Z',
+            'last_seen_at': '2026-04-01T08:04:00Z',
+          },
+        ],
         sessions: <Map<String, dynamic>>[
           <String, dynamic>{
             'session_sync_id': 'remote-session-1',
@@ -570,12 +585,96 @@ void main() {
     );
     expect(progress, isNotNull);
     expect(progress!.litPercent, 66);
+    final mistakes = await db.getMistakeEntriesForScope(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+      kpKey: '1.1',
+    );
+    expect(mistakes, hasLength(1));
+    expect(mistakes.single.mistakeTagRaw, 'sign error');
+    expect(mistakes.single.occurrences, 2);
 
     final secondStats = await service.syncIfReady(currentUser: student);
     expect(secondStats.downloadedCount, 0);
     expect(secondStats.uploadedCount, 0);
     expect(api.downloadCalls, 1);
     expect(api.uploadCalls, 0);
+
+    await db.setMistakeEntryStatus(
+      id: mistakes.single.id,
+      status: 'dismissed',
+      dismissed: true,
+    );
+    api.seedServerArtifact(
+      await _buildServerArtifact(
+        store: artifactStore,
+        remoteStudentUserId: 3001,
+        remoteCourseId: 200,
+        teacherRemoteUserId: 901,
+        courseSubject: 'Biology',
+        kpKey: '1.1',
+        updatedAt: '2026-04-01T09:05:00Z',
+        progress: <String, dynamic>{
+          'course_id': 200,
+          'course_subject': 'Biology',
+          'kp_key': '1.1',
+          'lit': true,
+          'lit_percent': 80,
+          'easy_passed_count': 0,
+          'medium_passed_count': 0,
+          'hard_passed_count': 0,
+          'teacher_remote_user_id': 901,
+          'student_remote_user_id': 3001,
+          'updated_at': '2026-04-01T09:05:00Z',
+        },
+        mistakes: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'mistake_tag': 'sign error',
+            'mistake_tag_key': 'sign error',
+            'mistake_note': 'Server updated note.',
+            'question_excerpt': 'Solve -2x = 4',
+            'difficulty': 'easy',
+            'evidence_json': '{"ok":true,"updated":true}',
+            'occurrences': 3,
+            'first_seen_at': '2026-04-01T08:01:00Z',
+            'last_seen_at': '2026-04-01T09:04:00Z',
+          },
+        ],
+        sessions: <Map<String, dynamic>>[
+          <String, dynamic>{
+            'session_sync_id': 'remote-session-1',
+            'course_id': 200,
+            'course_subject': 'Biology',
+            'kp_key': '1.1',
+            'kp_title': 'Cells',
+            'session_title': 'Remote Session',
+            'started_at': '2026-04-01T08:00:00Z',
+            'summary_text': 'server summary',
+            'student_remote_user_id': 3001,
+            'student_username': 'student',
+            'teacher_remote_user_id': 901,
+            'updated_at': '2026-04-01T09:05:00Z',
+            'messages': <Map<String, dynamic>>[
+              <String, dynamic>{
+                'role': 'assistant',
+                'content': 'server message updated',
+                'created_at': '2026-04-01T09:00:10Z',
+              },
+            ],
+          },
+        ],
+      ),
+    );
+    final thirdStats = await service.syncIfReady(currentUser: student);
+    expect(thirdStats.downloadedCount, 1);
+    final replacedMistakes = await db.getMistakeEntriesForScope(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+      kpKey: '1.1',
+    );
+    expect(replacedMistakes.single.dismissed, isTrue);
+    expect(replacedMistakes.single.status, 'dismissed');
+    expect(replacedMistakes.single.occurrences, 3);
   });
 
   test('upload-only session sync uploads local changes without downloads',
@@ -632,7 +731,7 @@ void main() {
             syncUpdatedAt: Value(DateTime.parse('2026-04-01T09:05:00Z')),
           ),
         );
-    await db.into(db.chatMessages).insert(
+    final firstMessageId = await db.into(db.chatMessages).insert(
           ChatMessagesCompanion.insert(
             sessionId: firstSessionId,
             role: 'assistant',
@@ -668,6 +767,19 @@ void main() {
       updatedAt: DateTime.parse('2026-04-01T09:12:30Z'),
       mergeWithLocal: false,
     );
+    await db.upsertMistakeEvidence(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+      kpKey: '1.1',
+      sessionId: firstSessionId,
+      messageId: firstMessageId,
+      mistakeTag: 'denominator mismatch',
+      mistakeNote: 'Mixed unlike denominators.',
+      questionExcerpt: '1/2 + 1/3',
+      difficulty: 'medium',
+      evidenceJson: '{"source":"test"}',
+      seenAt: DateTime.parse('2026-04-01T09:13:00Z'),
+    );
 
     await service.handleLocalSyncRelevantChange(
       SyncRelevantChange(localUserIds: <int>{studentId}),
@@ -697,6 +809,12 @@ void main() {
     final uploaded = await api.downloadArtifact('student_kp:3001:200:1.1');
     final payload = artifactStore.readPayload(uploaded.bytes);
     expect((payload['sessions'] as List), hasLength(2));
+    final mistakes = payload['mistakes'] as List<dynamic>;
+    expect(mistakes, hasLength(1));
+    final mistake = mistakes.single as Map<String, dynamic>;
+    expect(mistake['mistake_tag'], 'denominator mismatch');
+    expect(mistake.containsKey('next_review_at'), isFalse);
+    expect(mistake.containsKey('dismissed'), isFalse);
 
     final secondStats = await uploadService.syncIfReady(
       currentUser: student,

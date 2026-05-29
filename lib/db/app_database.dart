@@ -81,6 +81,7 @@ class ProgressEntries extends Table {
   TextColumn get kpKey => text()();
   BoolColumn get lit => boolean().withDefault(const Constant(false))();
   IntColumn get litPercent => integer().withDefault(const Constant(0))();
+  IntColumn get masteryLevel => integer().nullable()();
   TextColumn get questionLevel => text().nullable()();
   IntColumn get easyPassedCount => integer().withDefault(const Constant(0))();
   IntColumn get mediumPassedCount => integer().withDefault(const Constant(0))();
@@ -93,6 +94,35 @@ class ProgressEntries extends Table {
   @override
   List<Set<Column>> get uniqueKeys => [
         {studentId, courseVersionId, kpKey},
+      ];
+}
+
+class MistakeEntries extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  IntColumn get studentId => integer()();
+  IntColumn get courseVersionId => integer()();
+  TextColumn get kpKey => text()();
+  TextColumn get bundleVersionId => text().nullable()();
+  IntColumn get sessionId => integer()();
+  IntColumn get messageId => integer()();
+  TextColumn get mistakeTagRaw => text()();
+  TextColumn get mistakeTagKey => text()();
+  TextColumn get mistakeNote => text().nullable()();
+  TextColumn get questionExcerpt => text().nullable()();
+  TextColumn get difficulty => text().nullable()();
+  TextColumn get evidenceJson => text()();
+  IntColumn get occurrences => integer().withDefault(const Constant(1))();
+  DateTimeColumn get firstSeenAt => dateTime()();
+  DateTimeColumn get lastSeenAt => dateTime()();
+  TextColumn get status => text().withDefault(const Constant('open'))();
+  DateTimeColumn get nextReviewAt => dateTime().nullable()();
+  DateTimeColumn get snoozedUntil => dateTime().nullable()();
+  BoolColumn get dismissed => boolean().withDefault(const Constant(false))();
+  IntColumn get reviewStreak => integer().withDefault(const Constant(0))();
+
+  @override
+  List<Set<Column>> get uniqueKeys => [
+        {studentId, courseVersionId, kpKey, mistakeTagKey},
       ];
 }
 
@@ -330,6 +360,7 @@ class SyncedProgressUpsert {
     required this.lit,
     required this.litPercent,
     required this.updatedAt,
+    this.masteryLevel,
     this.easyPassedCount = 0,
     this.mediumPassedCount = 0,
     this.hardPassedCount = 0,
@@ -344,6 +375,7 @@ class SyncedProgressUpsert {
   final String kpKey;
   final bool lit;
   final int litPercent;
+  final int? masteryLevel;
   final int easyPassedCount;
   final int mediumPassedCount;
   final int hardPassedCount;
@@ -362,6 +394,7 @@ class SyncedProgressUpsert {
     CourseEdges,
     StudentCourseAssignments,
     ProgressEntries,
+    MistakeEntries,
     ChatSessions,
     ChatMessages,
     LlmCalls,
@@ -527,7 +560,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 33;
+  int get schemaVersion => 34;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -540,6 +573,7 @@ class AppDatabase extends _$AppDatabase {
             'WHERE remote_user_id IS NOT NULL',
           );
           await _ensureApiConfigNormalizedUniqueIndex();
+          await _ensureMistakeEntryIndexes();
         },
         onUpgrade: (m, from, to) async {
           if (from < 2) {
@@ -770,12 +804,40 @@ ORDER BY id
           if (from < 33) {
             await m.createTable(apiModelCaches);
           }
+          if (from < 34) {
+            if (await _tableExists('progress_entries')) {
+              await m.addColumn(progressEntries, progressEntries.masteryLevel);
+            }
+            await m.createTable(mistakeEntries);
+            await _ensureMistakeEntryIndexes();
+          }
         },
       );
 
+  Future<void> _ensureMistakeEntryIndexes() async {
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS '
+      'idx_mistake_entries_student_course_status '
+      'ON mistake_entries(student_id, course_version_id, status)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_mistake_entries_next_review '
+      'ON mistake_entries(next_review_at)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_mistake_entries_session '
+      'ON mistake_entries(session_id)',
+    );
+  }
+
   Future<bool> _apiConfigsTableExists() async {
+    return _tableExists('api_configs');
+  }
+
+  Future<bool> _tableExists(String tableName) async {
     final rows = await customSelect(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='api_configs'",
+      "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+      variables: [Variable.withString(tableName)],
     ).get();
     return rows.isNotEmpty;
   }
@@ -1204,6 +1266,9 @@ ORDER BY c.subject COLLATE NOCASE ASC
 
   Future<void> deleteSession(int sessionId) async {
     await transaction(() async {
+      await (delete(mistakeEntries)
+            ..where((tbl) => tbl.sessionId.equals(sessionId)))
+          .go();
       await (delete(chatMessages)
             ..where((tbl) => tbl.sessionId.equals(sessionId)))
           .go();
@@ -1307,6 +1372,433 @@ ORDER BY s.started_at DESC
               tbl.courseVersionId.equals(courseVersionId) &
               tbl.kpKey.equals(kpKey)))
         .watchSingleOrNull();
+  }
+
+  static String normalizeMistakeTagKey(String value) {
+    final trimmed = value
+        .trim()
+        .replaceAll('\u3000', ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .toLowerCase();
+    return trimmed;
+  }
+
+  Future<List<MistakeEntry>> getMistakeEntriesForScope({
+    required int studentId,
+    required int courseVersionId,
+    required String kpKey,
+  }) {
+    return (select(mistakeEntries)
+          ..where((tbl) =>
+              tbl.studentId.equals(studentId) &
+              tbl.courseVersionId.equals(courseVersionId) &
+              tbl.kpKey.equals(kpKey))
+          ..orderBy([
+            (tbl) => OrderingTerm(
+                  expression: tbl.lastSeenAt,
+                  mode: OrderingMode.desc,
+                ),
+          ]))
+        .get();
+  }
+
+  Future<List<MistakeEntry>> getMistakeEntriesForCourse({
+    required int studentId,
+    required int courseVersionId,
+  }) {
+    return (select(mistakeEntries)
+          ..where((tbl) =>
+              tbl.studentId.equals(studentId) &
+              tbl.courseVersionId.equals(courseVersionId))
+          ..orderBy([
+            (tbl) => OrderingTerm(
+                  expression: tbl.lastSeenAt,
+                  mode: OrderingMode.desc,
+                ),
+          ]))
+        .get();
+  }
+
+  Future<List<MistakeEntry>> getDueMistakeEntriesForCourse({
+    required int studentId,
+    required int courseVersionId,
+    String? kpKey,
+    int limit = 5,
+  }) {
+    final now = DateTime.now();
+    final query = select(mistakeEntries)
+      ..where((tbl) =>
+          tbl.studentId.equals(studentId) &
+          tbl.courseVersionId.equals(courseVersionId) &
+          tbl.status.equals('open') &
+          tbl.dismissed.equals(false) &
+          (tbl.nextReviewAt.isNull() |
+              tbl.nextReviewAt.isSmallerOrEqualValue(now)))
+      ..orderBy([
+        (tbl) => OrderingTerm(expression: tbl.nextReviewAt),
+        (tbl) => OrderingTerm(
+              expression: tbl.occurrences,
+              mode: OrderingMode.desc,
+            ),
+        (tbl) => OrderingTerm(
+              expression: tbl.lastSeenAt,
+              mode: OrderingMode.desc,
+            ),
+      ])
+      ..limit(limit);
+    final normalizedKp = kpKey?.trim();
+    if (normalizedKp != null && normalizedKp.isNotEmpty) {
+      query.where((tbl) => tbl.kpKey.equals(normalizedKp));
+    }
+    return query.get();
+  }
+
+  Stream<List<MistakeEntry>> watchMistakeEntriesForSession(int sessionId) {
+    return (select(mistakeEntries)
+          ..where((tbl) => tbl.sessionId.equals(sessionId))
+          ..orderBy([
+            (tbl) => OrderingTerm(
+                  expression: tbl.lastSeenAt,
+                  mode: OrderingMode.desc,
+                ),
+          ]))
+        .watch();
+  }
+
+  Stream<List<MistakeEntry>> watchMistakeEntriesForCourse(
+    int studentId,
+    int courseVersionId,
+  ) {
+    return (select(mistakeEntries)
+          ..where((tbl) =>
+              tbl.studentId.equals(studentId) &
+              tbl.courseVersionId.equals(courseVersionId))
+          ..orderBy([
+            (tbl) => OrderingTerm(
+                  expression: tbl.lastSeenAt,
+                  mode: OrderingMode.desc,
+                ),
+          ]))
+        .watch();
+  }
+
+  Stream<List<MistakeEntry>> watchMistakeEntriesForStudent(
+    int studentId, {
+    int? courseVersionId,
+  }) {
+    final query = select(mistakeEntries)
+      ..where((tbl) => tbl.studentId.equals(studentId))
+      ..orderBy([
+        (tbl) => OrderingTerm(
+              expression: tbl.lastSeenAt,
+              mode: OrderingMode.desc,
+            ),
+      ]);
+    if (courseVersionId != null && courseVersionId > 0) {
+      query.where((tbl) => tbl.courseVersionId.equals(courseVersionId));
+    }
+    return query.watch();
+  }
+
+  Future<void> upsertMistakeEvidence({
+    required int studentId,
+    required int courseVersionId,
+    required String kpKey,
+    required int sessionId,
+    required int messageId,
+    required String mistakeTag,
+    String? mistakeNote,
+    String? questionExcerpt,
+    String? difficulty,
+    required String evidenceJson,
+    DateTime? seenAt,
+  }) async {
+    final rawTag = mistakeTag.trim();
+    final tagKey = normalizeMistakeTagKey(rawTag);
+    if (rawTag.isEmpty || tagKey.isEmpty) {
+      return;
+    }
+    final normalizedKp = kpKey.trim();
+    if (studentId <= 0 || courseVersionId <= 0 || normalizedKp.isEmpty) {
+      return;
+    }
+    final now = (seenAt ?? DateTime.now()).toUtc();
+    final existing = await (select(mistakeEntries)
+          ..where((tbl) =>
+              tbl.studentId.equals(studentId) &
+              tbl.courseVersionId.equals(courseVersionId) &
+              tbl.kpKey.equals(normalizedKp) &
+              tbl.mistakeTagKey.equals(tagKey)))
+        .getSingleOrNull();
+    if (existing == null) {
+      await into(mistakeEntries).insert(
+        MistakeEntriesCompanion.insert(
+          studentId: studentId,
+          courseVersionId: courseVersionId,
+          kpKey: normalizedKp,
+          sessionId: sessionId,
+          messageId: messageId,
+          mistakeTagRaw: rawTag,
+          mistakeTagKey: tagKey,
+          mistakeNote: Value(_emptyToNull(mistakeNote)),
+          questionExcerpt: Value(_emptyToNull(questionExcerpt)),
+          difficulty: Value(_emptyToNull(difficulty)),
+          evidenceJson: evidenceJson.trim().isEmpty ? '{}' : evidenceJson,
+          occurrences: const Value(1),
+          firstSeenAt: now,
+          lastSeenAt: now,
+          status: const Value('open'),
+          nextReviewAt: Value(now),
+          dismissed: const Value(false),
+        ),
+      );
+      return;
+    }
+    await (update(mistakeEntries)..where((tbl) => tbl.id.equals(existing.id)))
+        .write(
+      MistakeEntriesCompanion(
+        sessionId: Value(sessionId),
+        messageId: Value(messageId),
+        mistakeTagRaw: Value(rawTag),
+        mistakeNote: Value(_emptyToNull(mistakeNote) ?? existing.mistakeNote),
+        questionExcerpt:
+            Value(_emptyToNull(questionExcerpt) ?? existing.questionExcerpt),
+        difficulty: Value(_emptyToNull(difficulty) ?? existing.difficulty),
+        evidenceJson: Value(evidenceJson.trim().isEmpty ? '{}' : evidenceJson),
+        occurrences: Value(existing.occurrences + 1),
+        lastSeenAt: Value(now),
+        status: const Value('open'),
+        nextReviewAt: Value(now),
+        dismissed: const Value(false),
+      ),
+    );
+  }
+
+  Future<void> setMistakeEntryStatus({
+    required int id,
+    required String status,
+    bool dismissed = false,
+  }) async {
+    final normalizedStatus = _normalizeMistakeStatus(status);
+    await (update(mistakeEntries)..where((tbl) => tbl.id.equals(id))).write(
+      MistakeEntriesCompanion(
+        status: Value(normalizedStatus),
+        dismissed: Value(dismissed),
+      ),
+    );
+  }
+
+  Future<void> deleteMistakeEntriesForScope({
+    required int studentId,
+    required int courseVersionId,
+    required String kpKey,
+  }) {
+    return (delete(mistakeEntries)
+          ..where((tbl) =>
+              tbl.studentId.equals(studentId) &
+              tbl.courseVersionId.equals(courseVersionId) &
+              tbl.kpKey.equals(kpKey.trim())))
+        .go();
+  }
+
+  Future<void> importMistakeEntriesFromArtifact({
+    required int studentId,
+    required int courseVersionId,
+    required String kpKey,
+    required List entries,
+    bool replaceScope = true,
+    List<MistakeEntry>? preservedLocalState,
+  }) async {
+    final normalizedKp = kpKey.trim();
+    if (normalizedKp.isEmpty) {
+      return;
+    }
+    await transaction(() async {
+      final localStateByKey = <String, MistakeEntry>{};
+      for (final entry in preservedLocalState ?? const <MistakeEntry>[]) {
+        localStateByKey[entry.mistakeTagKey] = entry;
+      }
+      if (replaceScope) {
+        final existingLocal = await getMistakeEntriesForScope(
+          studentId: studentId,
+          courseVersionId: courseVersionId,
+          kpKey: normalizedKp,
+        );
+        for (final entry in existingLocal) {
+          localStateByKey.putIfAbsent(entry.mistakeTagKey, () => entry);
+        }
+      }
+      if (replaceScope) {
+        await deleteMistakeEntriesForScope(
+          studentId: studentId,
+          courseVersionId: courseVersionId,
+          kpKey: normalizedKp,
+        );
+      }
+      for (final rawEntry in entries) {
+        if (rawEntry is! Map<String, dynamic>) {
+          continue;
+        }
+        final rawTag =
+            (rawEntry['mistake_tag'] as String?)?.trim().isNotEmpty == true
+                ? (rawEntry['mistake_tag'] as String).trim()
+                : (rawEntry['mistake_tag_raw'] as String?)?.trim() ?? '';
+        final tagKey = ((rawEntry['mistake_tag_key'] as String?)?.trim() ??
+                normalizeMistakeTagKey(rawTag))
+            .trim();
+        if (rawTag.isEmpty || tagKey.isEmpty) {
+          continue;
+        }
+        final localState = localStateByKey[tagKey];
+        final firstSeenAt =
+            _parseStoredDateTime(rawEntry['first_seen_at']) ?? DateTime.now();
+        final lastSeenAt =
+            _parseStoredDateTime(rawEntry['last_seen_at']) ?? firstSeenAt;
+        await into(mistakeEntries).insert(
+          MistakeEntriesCompanion.insert(
+            studentId: studentId,
+            courseVersionId: courseVersionId,
+            kpKey: normalizedKp,
+            bundleVersionId: Value(_emptyToNull(
+              rawEntry['bundle_version_id']?.toString(),
+            )),
+            sessionId: _readInt(rawEntry['session_id']) ?? 0,
+            messageId: _readInt(rawEntry['message_id']) ?? 0,
+            mistakeTagRaw: rawTag,
+            mistakeTagKey: tagKey,
+            mistakeNote: Value(
+              _emptyToNull(rawEntry['mistake_note']?.toString()),
+            ),
+            questionExcerpt: Value(
+              _emptyToNull(rawEntry['question_excerpt']?.toString()),
+            ),
+            difficulty: Value(_emptyToNull(rawEntry['difficulty']?.toString())),
+            evidenceJson: _encodeStoredJson(rawEntry['evidence_json']),
+            occurrences: Value(_readInt(rawEntry['occurrences']) ?? 1),
+            firstSeenAt: firstSeenAt.toUtc(),
+            lastSeenAt: lastSeenAt.toUtc(),
+            status: Value(_normalizeMistakeStatus(
+              localState?.status ?? rawEntry['status']?.toString() ?? 'open',
+            )),
+            nextReviewAt: Value(
+              localState?.nextReviewAt ??
+                  _parseStoredDateTime(rawEntry['next_review_at']),
+            ),
+            snoozedUntil: Value(
+              localState?.snoozedUntil ??
+                  _parseStoredDateTime(rawEntry['snoozed_until']),
+            ),
+            dismissed: Value(
+              localState?.dismissed ?? rawEntry['dismissed'] == true,
+            ),
+            reviewStreak: Value(
+              localState?.reviewStreak ??
+                  _readInt(rawEntry['review_streak']) ??
+                  0,
+            ),
+          ),
+          mode: InsertMode.insertOrReplace,
+        );
+      }
+    });
+  }
+
+  Future<void> backfillMistakeEntriesFromMessages() async {
+    final messages = await (select(chatMessages)
+          ..where((tbl) => tbl.role.equals('assistant')))
+        .get();
+    final pending = <String, _BackfilledMistakeEntry>{};
+    for (final message in messages) {
+      final action = (message.action ?? '').trim().toLowerCase();
+      if (action != 'review') {
+        continue;
+      }
+      final parsed = _tryDecodeObject(message.parsedJson);
+      if (parsed == null || parsed['finished'] is! bool) {
+        continue;
+      }
+      final session = await getSession(message.sessionId);
+      if (session == null) {
+        continue;
+      }
+      final entries = _mistakeEntriesFromParsed(parsed);
+      for (final entry in entries) {
+        final tagKey = normalizeMistakeTagKey(entry.tag);
+        if (tagKey.isEmpty) {
+          continue;
+        }
+        final key =
+            '${session.studentId}:${session.courseVersionId}:${session.kpKey}:$tagKey';
+        final existing = pending[key];
+        if (existing == null) {
+          pending[key] = _BackfilledMistakeEntry(
+            studentId: session.studentId,
+            courseVersionId: session.courseVersionId,
+            kpKey: session.kpKey,
+            sessionId: message.sessionId,
+            messageId: message.id,
+            tag: entry.tag,
+            tagKey: tagKey,
+            note: entry.note,
+            questionExcerpt: _questionExcerptFromParsed(parsed),
+            difficulty: _difficultyFromParsed(parsed),
+            evidenceJson: jsonEncode(<String, dynamic>{
+              'prompt_name': 'review_cont_backfill',
+              'active_question': null,
+              'assistant_payload': parsed,
+            }),
+            occurrences: 1,
+            firstSeenAt: message.createdAt,
+            lastSeenAt: message.createdAt,
+          );
+          continue;
+        }
+        existing.occurrences += 1;
+        existing.sessionId = message.sessionId;
+        existing.messageId = message.id;
+        existing.lastSeenAt = message.createdAt;
+        if ((entry.note ?? '').trim().isNotEmpty) {
+          existing.note = entry.note;
+        }
+      }
+    }
+    if (pending.isEmpty) {
+      return;
+    }
+    await transaction(() async {
+      for (final entry in pending.values) {
+        final existing = await (select(mistakeEntries)
+              ..where((tbl) =>
+                  tbl.studentId.equals(entry.studentId) &
+                  tbl.courseVersionId.equals(entry.courseVersionId) &
+                  tbl.kpKey.equals(entry.kpKey) &
+                  tbl.mistakeTagKey.equals(entry.tagKey)))
+            .getSingleOrNull();
+        if (existing != null) {
+          continue;
+        }
+        await into(mistakeEntries).insert(
+          MistakeEntriesCompanion.insert(
+            studentId: entry.studentId,
+            courseVersionId: entry.courseVersionId,
+            kpKey: entry.kpKey,
+            sessionId: entry.sessionId,
+            messageId: entry.messageId,
+            mistakeTagRaw: entry.tag,
+            mistakeTagKey: entry.tagKey,
+            mistakeNote: Value(_emptyToNull(entry.note)),
+            questionExcerpt: Value(_emptyToNull(entry.questionExcerpt)),
+            difficulty: Value(_emptyToNull(entry.difficulty)),
+            evidenceJson: entry.evidenceJson,
+            occurrences: Value(entry.occurrences),
+            firstSeenAt: entry.firstSeenAt.toUtc(),
+            lastSeenAt: entry.lastSeenAt.toUtc(),
+            status: const Value('open'),
+            nextReviewAt: Value(entry.lastSeenAt.toUtc()),
+          ),
+        );
+      }
+    });
   }
 
   Future<DateTime?> getLatestProgressUpdatedAtForSync({
@@ -1488,6 +1980,7 @@ WHERE p.student_id = ? AND p.kp_key <> ?
           kpKey: kpKey,
           lit: Value(lit),
           litPercent: Value(resolvedPercent),
+          masteryLevel: Value(resolvedPercent),
           easyPassedCount: Value(normalizedCounts.easyPassedCount),
           mediumPassedCount: Value(normalizedCounts.mediumPassedCount),
           hardPassedCount: Value(normalizedCounts.hardPassedCount),
@@ -1501,6 +1994,7 @@ WHERE p.student_id = ? AND p.kp_key <> ?
       ProgressEntriesCompanion(
         lit: Value(lit),
         litPercent: Value(resolvedPercent),
+        masteryLevel: Value(resolvedPercent),
         questionLevel: const Value(null),
         easyPassedCount: Value(normalizedCounts.easyPassedCount),
         mediumPassedCount: Value(normalizedCounts.mediumPassedCount),
@@ -1579,6 +2073,7 @@ WHERE p.student_id = ? AND p.kp_key <> ?
           courseVersionId: courseVersionId,
           kpKey: kpKey,
           litPercent: Value(derivedLitPercent),
+          masteryLevel: Value(derivedLitPercent),
           questionLevel: const Value(null),
           easyPassedCount: Value(easyCount),
           mediumPassedCount: Value(mediumCount),
@@ -1592,6 +2087,7 @@ WHERE p.student_id = ? AND p.kp_key <> ?
         .write(
       ProgressEntriesCompanion(
         litPercent: Value(derivedLitPercent),
+        masteryLevel: Value(derivedLitPercent),
         questionLevel: const Value(null),
         easyPassedCount: Value(easyCount),
         mediumPassedCount: Value(mediumCount),
@@ -1629,6 +2125,7 @@ WHERE p.student_id = ? AND p.kp_key <> ?
           kpKey: kpKey,
           lit: Value(shouldLit),
           litPercent: Value(resolvedPercent),
+          masteryLevel: Value(resolvedPercent),
           easyPassedCount: const Value(0),
           mediumPassedCount: const Value(0),
           hardPassedCount: const Value(0),
@@ -1645,6 +2142,7 @@ WHERE p.student_id = ? AND p.kp_key <> ?
       ProgressEntriesCompanion(
         lit: Value(shouldLit),
         litPercent: Value(resolvedPercent),
+        masteryLevel: Value(resolvedPercent),
         questionLevel: const Value(null),
         summaryText: Value(summaryText),
         summaryRawResponse: Value(summaryRawResponse),
@@ -1660,6 +2158,7 @@ WHERE p.student_id = ? AND p.kp_key <> ?
     required String kpKey,
     required bool lit,
     required int litPercent,
+    int? masteryLevel,
     int easyPassedCount = 0,
     int mediumPassedCount = 0,
     int hardPassedCount = 0,
@@ -1688,6 +2187,8 @@ WHERE p.student_id = ? AND p.kp_key <> ?
     final normalizedQuestionLevel = _normalizeLevel(questionLevel) == null
         ? null
         : _normalizeLevel(questionLevel);
+    final clampedMasteryLevel =
+        masteryLevel == null ? null : masteryLevel.clamp(0, 100).toInt();
     if (!mergeWithLocal) {
       await into(progressEntries).insert(
         ProgressEntriesCompanion.insert(
@@ -1696,6 +2197,7 @@ WHERE p.student_id = ? AND p.kp_key <> ?
           kpKey: kpKey,
           lit: Value(lit),
           litPercent: Value(clampedPercent),
+          masteryLevel: Value(clampedMasteryLevel),
           questionLevel: Value(normalizedQuestionLevel),
           easyPassedCount: Value(normalizedCounts.easyPassedCount),
           mediumPassedCount: Value(normalizedCounts.mediumPassedCount),
@@ -1722,6 +2224,7 @@ WHERE p.student_id = ? AND p.kp_key <> ?
           kpKey: kpKey,
           lit: Value(lit),
           litPercent: Value(clampedPercent),
+          masteryLevel: Value(clampedMasteryLevel),
           questionLevel: Value(mergeWithLocal ? null : normalizedQuestionLevel),
           easyPassedCount: Value(normalizedCounts.easyPassedCount),
           mediumPassedCount: Value(normalizedCounts.mediumPassedCount),
@@ -1741,6 +2244,7 @@ WHERE p.student_id = ? AND p.kp_key <> ?
         ProgressEntriesCompanion(
           lit: Value(lit),
           litPercent: Value(clampedPercent),
+          masteryLevel: Value(clampedMasteryLevel),
           questionLevel: Value(normalizedQuestionLevel),
           easyPassedCount: Value(normalizedCounts.easyPassedCount),
           mediumPassedCount: Value(normalizedCounts.mediumPassedCount),
@@ -1784,6 +2288,11 @@ WHERE p.student_id = ? AND p.kp_key <> ?
       ProgressEntriesCompanion(
         lit: Value(shouldTakeIncomingDetails ? lit : existing.lit),
         litPercent: Value(mergedLitPercent),
+        masteryLevel: Value(
+          shouldTakeIncomingDetails
+              ? clampedMasteryLevel
+              : existing.masteryLevel,
+        ),
         questionLevel: const Value(null),
         easyPassedCount: Value(mergedEasyPassedCount),
         mediumPassedCount: Value(mergedMediumPassedCount),
@@ -2129,6 +2638,9 @@ ON CONFLICT(base_url, api_key_hash) DO UPDATE SET
           fallbackPercent: row.litPercent.clamp(0, 100),
         );
         final normalizedQuestionLevel = _normalizeLevel(row.questionLevel);
+        final clampedMasteryLevel = row.masteryLevel == null
+            ? null
+            : row.masteryLevel!.clamp(0, 100).toInt();
         batch.insert(
           progressEntries,
           ProgressEntriesCompanion.insert(
@@ -2137,6 +2649,7 @@ ON CONFLICT(base_url, api_key_hash) DO UPDATE SET
             kpKey: row.kpKey,
             lit: Value(row.lit),
             litPercent: Value(clampedPercent),
+            masteryLevel: Value(clampedMasteryLevel),
             questionLevel: Value(normalizedQuestionLevel),
             easyPassedCount: Value(normalizedCounts.easyPassedCount),
             mediumPassedCount: Value(normalizedCounts.mediumPassedCount),
@@ -2443,6 +2956,9 @@ HAVING COUNT(*) > 1
                   : progress.litPercent,
             ),
           ),
+          masteryLevel: Value(
+            sourceIsNewer ? progress.masteryLevel : existing.masteryLevel,
+          ),
           questionLevel: const Value(null),
           easyPassedCount: Value(mergedEasyPassedCount),
           mediumPassedCount: Value(mergedMediumPassedCount),
@@ -2465,6 +2981,49 @@ HAVING COUNT(*) > 1
       );
       await (delete(progressEntries)
             ..where((tbl) => tbl.id.equals(progress.id)))
+          .go();
+    }
+
+    final sourceMistakes = await (select(mistakeEntries)
+          ..where((tbl) => tbl.studentId.equals(removeUserId)))
+        .get();
+    for (final mistake in sourceMistakes) {
+      final existing = await (select(mistakeEntries)
+            ..where((tbl) =>
+                tbl.studentId.equals(keepUserId) &
+                tbl.courseVersionId.equals(mistake.courseVersionId) &
+                tbl.kpKey.equals(mistake.kpKey) &
+                tbl.mistakeTagKey.equals(mistake.mistakeTagKey)))
+          .getSingleOrNull();
+      if (existing == null) {
+        await (update(mistakeEntries)
+              ..where((tbl) => tbl.id.equals(mistake.id)))
+            .write(MistakeEntriesCompanion(studentId: Value(keepUserId)));
+        continue;
+      }
+      await (update(mistakeEntries)..where((tbl) => tbl.id.equals(existing.id)))
+          .write(
+        MistakeEntriesCompanion(
+          occurrences: Value(existing.occurrences + mistake.occurrences),
+          lastSeenAt: Value(
+            mistake.lastSeenAt.isAfter(existing.lastSeenAt)
+                ? mistake.lastSeenAt
+                : existing.lastSeenAt,
+          ),
+          firstSeenAt: Value(
+            mistake.firstSeenAt.isBefore(existing.firstSeenAt)
+                ? mistake.firstSeenAt
+                : existing.firstSeenAt,
+          ),
+          status: Value(
+            existing.status == 'open' || mistake.status == 'open'
+                ? 'open'
+                : existing.status,
+          ),
+          dismissed: Value(existing.dismissed && mistake.dismissed),
+        ),
+      );
+      await (delete(mistakeEntries)..where((tbl) => tbl.id.equals(mistake.id)))
           .go();
     }
 
@@ -2578,6 +3137,26 @@ HAVING COUNT(*) > 1
           .get();
       final courseIds = courses.map((course) => course.id).toList();
       if (courseIds.isNotEmpty) {
+        final sessions = await (select(chatSessions)
+              ..where((tbl) => tbl.courseVersionId.isIn(courseIds)))
+            .get();
+        final sessionIds = sessions.map((session) => session.id).toList();
+        if (sessionIds.isNotEmpty) {
+          await (delete(chatMessages)
+                ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+              .go();
+          await (delete(llmCalls)
+                ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+              .go();
+          await (delete(chatSessions)..where((tbl) => tbl.id.isIn(sessionIds)))
+              .go();
+        }
+        await (delete(mistakeEntries)
+              ..where((tbl) => tbl.courseVersionId.isIn(courseIds)))
+            .go();
+        await (delete(progressEntries)
+              ..where((tbl) => tbl.courseVersionId.isIn(courseIds)))
+            .go();
         await (delete(courseNodes)
               ..where((tbl) => tbl.courseVersionId.isIn(courseIds)))
             .go();
@@ -2612,6 +3191,9 @@ HAVING COUNT(*) > 1
           .get();
       final sessionIds = sessions.map((session) => session.id).toList();
       if (sessionIds.isNotEmpty) {
+        await (delete(mistakeEntries)
+              ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+            .go();
         await (delete(chatMessages)
               ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
             .go();
@@ -2621,6 +3203,9 @@ HAVING COUNT(*) > 1
             .go();
       }
       await (delete(progressEntries)
+            ..where((tbl) => tbl.courseVersionId.equals(courseVersionId)))
+          .go();
+      await (delete(mistakeEntries)
             ..where((tbl) => tbl.courseVersionId.equals(courseVersionId)))
           .go();
       await (delete(studentCourseAssignments)
@@ -2661,6 +3246,9 @@ HAVING COUNT(*) > 1
           .get();
       final sessionIds = sessions.map((session) => session.id).toList();
       if (sessionIds.isNotEmpty) {
+        await (delete(mistakeEntries)
+              ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+            .go();
         await (delete(chatMessages)
               ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
             .go();
@@ -2670,6 +3258,11 @@ HAVING COUNT(*) > 1
             .go();
       }
       await (delete(progressEntries)
+            ..where((tbl) =>
+                tbl.studentId.equals(studentId) &
+                tbl.courseVersionId.equals(courseVersionId)))
+          .go();
+      await (delete(mistakeEntries)
             ..where((tbl) =>
                 tbl.studentId.equals(studentId) &
                 tbl.courseVersionId.equals(courseVersionId)))
@@ -2725,6 +3318,7 @@ HAVING COUNT(*) > 1
                   fallbackPercent: progress.litPercent,
                 ),
               ),
+              masteryLevel: Value(progress.masteryLevel),
               questionLevel: const Value(null),
               easyPassedCount: Value(progress.easyPassedCount),
               mediumPassedCount: Value(progress.mediumPassedCount),
@@ -2766,6 +3360,9 @@ HAVING COUNT(*) > 1
           ProgressEntriesCompanion(
             lit: Value(mergedLit),
             litPercent: Value(mergedLitPercent),
+            masteryLevel: Value(
+              sourceIsNewer ? progress.masteryLevel : existing.masteryLevel,
+            ),
             questionLevel: const Value(null),
             easyPassedCount: Value(mergedEasyPassedCount),
             mediumPassedCount: Value(mergedMediumPassedCount),
@@ -2804,6 +3401,51 @@ HAVING COUNT(*) > 1
         ),
       );
 
+      final sourceMistakes = await (select(mistakeEntries)
+            ..where((tbl) =>
+                tbl.studentId.equals(studentId) &
+                tbl.courseVersionId.equals(fromCourseVersionId)))
+          .get();
+      for (final mistake in sourceMistakes) {
+        final existing = await (select(mistakeEntries)
+              ..where((tbl) =>
+                  tbl.studentId.equals(studentId) &
+                  tbl.courseVersionId.equals(toCourseVersionId) &
+                  tbl.kpKey.equals(mistake.kpKey) &
+                  tbl.mistakeTagKey.equals(mistake.mistakeTagKey)))
+            .getSingleOrNull();
+        if (existing == null) {
+          await (update(mistakeEntries)
+                ..where((tbl) => tbl.id.equals(mistake.id)))
+              .write(
+            MistakeEntriesCompanion(
+              courseVersionId: Value(toCourseVersionId),
+            ),
+          );
+          continue;
+        }
+        await (update(mistakeEntries)
+              ..where((tbl) => tbl.id.equals(existing.id)))
+            .write(
+          MistakeEntriesCompanion(
+            occurrences: Value(existing.occurrences + mistake.occurrences),
+            lastSeenAt: Value(
+              mistake.lastSeenAt.isAfter(existing.lastSeenAt)
+                  ? mistake.lastSeenAt
+                  : existing.lastSeenAt,
+            ),
+            firstSeenAt: Value(
+              mistake.firstSeenAt.isBefore(existing.firstSeenAt)
+                  ? mistake.firstSeenAt
+                  : existing.firstSeenAt,
+            ),
+          ),
+        );
+        await (delete(mistakeEntries)
+              ..where((tbl) => tbl.id.equals(mistake.id)))
+            .go();
+      }
+
       await (delete(studentCourseAssignments)
             ..where((tbl) =>
                 tbl.studentId.equals(studentId) &
@@ -2818,6 +3460,9 @@ HAVING COUNT(*) > 1
         .get();
     final sessionIds = sessions.map((session) => session.id).toList();
     if (sessionIds.isNotEmpty) {
+      await (delete(mistakeEntries)
+            ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+          .go();
       await (delete(chatMessages)
             ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
           .go();
@@ -2827,6 +3472,9 @@ HAVING COUNT(*) > 1
           .go();
     }
     await (delete(progressEntries)
+          ..where((tbl) => tbl.studentId.equals(studentId)))
+        .go();
+    await (delete(mistakeEntries)
           ..where((tbl) => tbl.studentId.equals(studentId)))
         .go();
     await (delete(studentCourseAssignments)
@@ -3793,6 +4441,211 @@ HAVING COUNT(*) > 1
     }
     return incomingUpdatedAt.isAfter(existing.updatedAt);
   }
+
+  static String? _emptyToNull(String? value) {
+    final trimmed = value?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return null;
+    }
+    return trimmed;
+  }
+
+  static int? _readInt(dynamic value) {
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    if (value is String) {
+      return int.tryParse(value.trim());
+    }
+    return null;
+  }
+
+  static DateTime? _parseStoredDateTime(dynamic value) {
+    if (value == null) {
+      return null;
+    }
+    if (value is DateTime) {
+      return value.toUtc();
+    }
+    if (value is num) {
+      final raw = value.toInt();
+      final millis = raw > 1000000000000 ? raw : raw * 1000;
+      return DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true);
+    }
+    if (value is String) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty) {
+        return null;
+      }
+      return DateTime.tryParse(trimmed)?.toUtc();
+    }
+    return null;
+  }
+
+  static String _encodeStoredJson(dynamic value) {
+    if (value == null) {
+      return '{}';
+    }
+    if (value is String) {
+      final trimmed = value.trim();
+      return trimmed.isEmpty ? '{}' : trimmed;
+    }
+    return jsonEncode(value);
+  }
+
+  static String _normalizeMistakeStatus(String value) {
+    final normalized = value.trim().toLowerCase();
+    switch (normalized) {
+      case 'open':
+      case 'dismissed':
+      case 'resolved':
+        return normalized;
+      default:
+        return 'open';
+    }
+  }
+
+  static Map<String, dynamic>? _tryDecodeObject(String? raw) {
+    final trimmed = raw?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(trimmed);
+      if (decoded is Map<String, dynamic>) {
+        return decoded;
+      }
+      if (decoded is Map) {
+        return decoded.map(
+          (key, value) => MapEntry(key.toString(), value),
+        );
+      }
+    } catch (_) {
+      return null;
+    }
+    return null;
+  }
+
+  static List<_ParsedMistakeEntry> _mistakeEntriesFromParsed(
+    Map<String, dynamic>? parsed,
+  ) {
+    if (parsed == null) {
+      return const <_ParsedMistakeEntry>[];
+    }
+    final result = <_ParsedMistakeEntry>[];
+    final update = parsed['error_book_update'];
+    if (update is Map) {
+      final tag = update['mistake_tag']?.toString().trim() ?? '';
+      if (tag.isNotEmpty) {
+        result.add(
+          _ParsedMistakeEntry(
+            tag: tag,
+            note: update['mistake_note']?.toString(),
+          ),
+        );
+      }
+    }
+    final source = parsed['mistakes'] ?? parsed['mistake_tags'];
+    if (source is List) {
+      for (final item in source) {
+        if (item is String) {
+          final tag = item.trim();
+          if (tag.isNotEmpty) {
+            result.add(_ParsedMistakeEntry(tag: tag));
+          }
+          continue;
+        }
+        if (item is Map) {
+          final tag =
+              (item['mistake_tag'] ?? item['tag'])?.toString().trim() ?? '';
+          if (tag.isNotEmpty) {
+            result.add(
+              _ParsedMistakeEntry(
+                tag: tag,
+                note: item['mistake_note']?.toString() ??
+                    item['note']?.toString(),
+              ),
+            );
+          }
+        }
+      }
+    }
+    return result;
+  }
+
+  static String? _questionExcerptFromParsed(Map<String, dynamic>? parsed) {
+    if (parsed == null) {
+      return null;
+    }
+    final question = parsed['question'];
+    if (question is Map) {
+      final text = question['text']?.toString().trim() ??
+          question['question_text']?.toString().trim() ??
+          '';
+      if (text.isNotEmpty) {
+        return text;
+      }
+    }
+    for (final key in const <String>['question_text', 'active_question']) {
+      final value = parsed[key]?.toString().trim();
+      if (value != null && value.isNotEmpty) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  static String? _difficultyFromParsed(Map<String, dynamic>? parsed) {
+    final value = parsed?['difficulty']?.toString().trim();
+    return value == null || value.isEmpty ? null : value;
+  }
+}
+
+class _ParsedMistakeEntry {
+  const _ParsedMistakeEntry({
+    required this.tag,
+    this.note,
+  });
+
+  final String tag;
+  final String? note;
+}
+
+class _BackfilledMistakeEntry {
+  _BackfilledMistakeEntry({
+    required this.studentId,
+    required this.courseVersionId,
+    required this.kpKey,
+    required this.sessionId,
+    required this.messageId,
+    required this.tag,
+    required this.tagKey,
+    required this.evidenceJson,
+    required this.occurrences,
+    required this.firstSeenAt,
+    required this.lastSeenAt,
+    this.note,
+    this.questionExcerpt,
+    this.difficulty,
+  });
+
+  final int studentId;
+  final int courseVersionId;
+  final String kpKey;
+  int sessionId;
+  int messageId;
+  final String tag;
+  final String tagKey;
+  String? note;
+  final String? questionExcerpt;
+  final String? difficulty;
+  final String evidenceJson;
+  int occurrences;
+  final DateTime firstSeenAt;
+  DateTime lastSeenAt;
 }
 
 class _NormalizedPassedCounts {

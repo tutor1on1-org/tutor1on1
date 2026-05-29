@@ -137,6 +137,7 @@ class AppServices {
       artifactStore: artifactStore,
     );
     await sessionSyncService.ensureLocalCutoverInitialized();
+    await db.backfillMistakeEntriesFromMessages();
     db.setSyncRelevantChangeCallback((change) async {
       await enrollmentSyncService.handleLocalSyncRelevantChange(change);
       await sessionSyncService.handleLocalSyncRelevantChange(change);

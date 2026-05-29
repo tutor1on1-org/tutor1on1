@@ -148,6 +148,7 @@ void main() {
         await db.customSelect('PRAGMA table_info(progress_entries)').get();
     final progressColumns = progressInfo.map((row) => row.data['name']).toSet();
     expect(progressColumns.contains('question_level'), isTrue);
+    expect(progressColumns.contains('mastery_level'), isTrue);
     expect(progressColumns.contains('summary_text'), isTrue);
     expect(progressColumns.contains('summary_raw_response'), isTrue);
     expect(progressColumns.contains('summary_valid'), isTrue);
@@ -187,6 +188,13 @@ void main() {
         )
         .get();
     expect(promptTable.isNotEmpty, isTrue);
+
+    final mistakeTable = await db
+        .customSelect(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='mistake_entries'",
+        )
+        .get();
+    expect(mistakeTable.isNotEmpty, isTrue);
 
     await db.close();
   });
@@ -321,6 +329,58 @@ void main() {
         .get();
 
     expect(rows, hasLength(1));
+
+    await db.close();
+  });
+
+  test('migration to v34 creates durable mistake table and mastery column',
+      () async {
+    final tempDir = await Directory.systemTemp.createTemp('tutor1on1');
+    final dbFile = File(p.join(tempDir.path, 'test.db'));
+
+    final rawDb = sqlite3.sqlite3.open(dbFile.path);
+    rawDb.execute('''
+      CREATE TABLE progress_entries (
+        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        student_id INTEGER NOT NULL,
+        course_version_id INTEGER NOT NULL,
+        kp_key TEXT NOT NULL,
+        lit INTEGER NOT NULL DEFAULT 0 CHECK (lit IN (0, 1)),
+        lit_percent INTEGER NOT NULL DEFAULT 0,
+        question_level TEXT NULL,
+        easy_passed_count INTEGER NOT NULL DEFAULT 0,
+        medium_passed_count INTEGER NOT NULL DEFAULT 0,
+        hard_passed_count INTEGER NOT NULL DEFAULT 0,
+        summary_text TEXT NULL,
+        summary_raw_response TEXT NULL,
+        summary_valid INTEGER NULL CHECK (summary_valid IN (0, 1)),
+        updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s', CURRENT_TIMESTAMP) AS INTEGER)),
+        UNIQUE(student_id, course_version_id, kp_key)
+      );
+    ''');
+    rawDb.execute('PRAGMA user_version = 33;');
+    rawDb.dispose();
+
+    final db = AppDatabase.forTesting(NativeDatabase(dbFile));
+    await db.customSelect('SELECT 1').get();
+
+    final progressInfo =
+        await db.customSelect('PRAGMA table_info(progress_entries)').get();
+    final progressColumns = progressInfo.map((row) => row.data['name']).toSet();
+    final mistakeTable = await db
+        .customSelect(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='mistake_entries'",
+        )
+        .get();
+    final indexes =
+        await db.customSelect('PRAGMA index_list(mistake_entries)').get();
+
+    expect(progressColumns.contains('mastery_level'), isTrue);
+    expect(mistakeTable, hasLength(1));
+    expect(
+      indexes.map((row) => row.data['name']),
+      contains('idx_mistake_entries_student_course_status'),
+    );
 
     await db.close();
   });

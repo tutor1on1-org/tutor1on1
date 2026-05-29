@@ -1659,6 +1659,17 @@ class SessionSyncService {
         }
         kpKeys.add(kpKey);
       }
+      final mistakeRows = await _db.getMistakeEntriesForCourse(
+        studentId: student.id,
+        courseVersionId: course.id,
+      );
+      for (final mistake in mistakeRows) {
+        final kpKey = mistake.kpKey.trim();
+        if (kpKey.isEmpty || kpKey == kTreeViewStateKpKey) {
+          continue;
+        }
+        kpKeys.add(kpKey);
+      }
       final sortedKpKeys = kpKeys.toList(growable: false)..sort();
       for (final kpKey in sortedKpKeys) {
         scopes.add(
@@ -1704,7 +1715,12 @@ class SessionSyncService {
       courseVersionId: scope.courseVersionId,
       kpKey: scope.kpKey,
     );
-    if (sessions.isEmpty && progress == null) {
+    final mistakes = await _db.getMistakeEntriesForScope(
+      studentId: scope.localStudentId,
+      courseVersionId: scope.courseVersionId,
+      kpKey: scope.kpKey,
+    );
+    if (sessions.isEmpty && progress == null && mistakes.isEmpty) {
       throw StateError(
         'Cannot build empty artifact for ${scope.remoteCourseId}:${scope.kpKey}.',
       );
@@ -1804,6 +1820,8 @@ class SessionSyncService {
         'kp_key': scope.kpKey,
         'lit': progress.lit,
         'lit_percent': progress.litPercent,
+        if (progress.masteryLevel != null)
+          'mastery_level': progress.masteryLevel,
         if ((progress.questionLevel ?? '').trim().isNotEmpty)
           'question_level': progress.questionLevel!.trim(),
         'easy_passed_count': progress.easyPassedCount,
@@ -1819,6 +1837,37 @@ class SessionSyncService {
         'student_remote_user_id': scope.remoteStudentUserId,
         'updated_at': progress.updatedAt.toUtc().toIso8601String(),
       };
+    }
+
+    final mistakePayloads = mistakes
+        .map(
+          (mistake) => <String, dynamic>{
+            'mistake_tag': mistake.mistakeTagRaw,
+            'mistake_tag_key': mistake.mistakeTagKey,
+            if ((mistake.mistakeNote ?? '').trim().isNotEmpty)
+              'mistake_note': mistake.mistakeNote!.trim(),
+            if ((mistake.questionExcerpt ?? '').trim().isNotEmpty)
+              'question_excerpt': mistake.questionExcerpt!.trim(),
+            if ((mistake.difficulty ?? '').trim().isNotEmpty)
+              'difficulty': mistake.difficulty!.trim(),
+            'evidence_json': mistake.evidenceJson,
+            'occurrences': mistake.occurrences,
+            'first_seen_at': mistake.firstSeenAt.toUtc().toIso8601String(),
+            'last_seen_at': mistake.lastSeenAt.toUtc().toIso8601String(),
+          },
+        )
+        .toList(growable: false)
+      ..sort((left, right) {
+        final keyCompare = ((left['mistake_tag_key'] as String?) ?? '')
+            .compareTo((right['mistake_tag_key'] as String?) ?? '');
+        if (keyCompare != 0) {
+          return keyCompare;
+        }
+        return ((left['last_seen_at'] as String?) ?? '')
+            .compareTo((right['last_seen_at'] as String?) ?? '');
+      });
+    for (final mistake in mistakes) {
+      updatedAtValues.add(mistake.lastSeenAt.toUtc());
     }
 
     if (updatedAtValues.isEmpty) {
@@ -1849,6 +1898,7 @@ class SessionSyncService {
             'student_username': scope.studentUsername,
           'updated_at': artifactUpdatedAt.toUtc().toIso8601String(),
           if (progressPayload != null) 'progress': progressPayload,
+          if (mistakePayloads.isNotEmpty) 'mistakes': mistakePayloads,
           'sessions': sessionPayloads,
         },
       ),
@@ -1997,6 +2047,13 @@ class SessionSyncService {
     required Map<String, dynamic> payload,
     required bool replaceExistingLocalScope,
   }) async {
+    final preservedMistakeState = replaceExistingLocalScope
+        ? await _db.getMistakeEntriesForScope(
+            studentId: localStudentId,
+            courseVersionId: localCourseVersionId,
+            kpKey: kpKey,
+          )
+        : const <MistakeEntry>[];
     if (replaceExistingLocalScope) {
       await _deleteLocalArtifactScope(
         localStudentId: localStudentId,
@@ -2013,6 +2070,7 @@ class SessionSyncService {
         kpKey: kpKey,
         lit: progressPayload['lit'] == true,
         litPercent: (progressPayload['lit_percent'] as num?)?.toInt() ?? 0,
+        masteryLevel: (progressPayload['mastery_level'] as num?)?.toInt(),
         questionLevel: (progressPayload['question_level'] as String?)?.trim(),
         easyPassedCount:
             (progressPayload['easy_passed_count'] as num?)?.toInt() ?? 0,
@@ -2029,6 +2087,16 @@ class SessionSyncService {
         mergeWithLocal: false,
       );
     }
+
+    final mistakes = payload['mistakes'];
+    await _db.importMistakeEntriesFromArtifact(
+      studentId: localStudentId,
+      courseVersionId: localCourseVersionId,
+      kpKey: kpKey,
+      entries: mistakes is List ? mistakes : const <dynamic>[],
+      replaceScope: replaceExistingLocalScope,
+      preservedLocalState: preservedMistakeState,
+    );
 
     final sessions = payload['sessions'];
     if (sessions is! List) {
@@ -2143,6 +2211,7 @@ class SessionSyncService {
   }) async {
     final progressRows = <SyncedProgressUpsert>[];
     final sessionImports = <_PendingArtifactSessionImport>[];
+    final mistakeImports = <_PendingArtifactMistakeImport>[];
     for (final entry in chunk) {
       final candidate = entry.candidate;
       final downloaded = entry.downloaded;
@@ -2177,6 +2246,7 @@ class SessionSyncService {
             kpKey: identity.kpKey,
             lit: progressPayload['lit'] == true,
             litPercent: (progressPayload['lit_percent'] as num?)?.toInt() ?? 0,
+            masteryLevel: (progressPayload['mastery_level'] as num?)?.toInt(),
             questionLevel:
                 (progressPayload['question_level'] as String?)?.trim(),
             easyPassedCount:
@@ -2203,6 +2273,17 @@ class SessionSyncService {
             localCourseVersionId: localCourseVersionId,
             kpKey: identity.kpKey,
             sessions: sessions,
+          ),
+        );
+      }
+      final mistakes = payload['mistakes'];
+      if (mistakes is List && mistakes.isNotEmpty) {
+        mistakeImports.add(
+          _PendingArtifactMistakeImport(
+            localStudentId: currentUser.id,
+            localCourseVersionId: localCourseVersionId,
+            kpKey: identity.kpKey,
+            mistakes: mistakes,
           ),
         );
       }
@@ -2235,6 +2316,14 @@ class SessionSyncService {
         localCourseVersionId: sessionImport.localCourseVersionId,
         kpKey: sessionImport.kpKey,
         sessions: sessionImport.sessions,
+      );
+    }
+    for (final mistakeImport in mistakeImports) {
+      await _db.importMistakeEntriesFromArtifact(
+        studentId: mistakeImport.localStudentId,
+        courseVersionId: mistakeImport.localCourseVersionId,
+        kpKey: mistakeImport.kpKey,
+        entries: mistakeImport.mistakes,
       );
     }
   }
@@ -2287,6 +2376,9 @@ class SessionSyncService {
     final sessionIds =
         sessions.map((session) => session.id).toList(growable: false);
     if (sessionIds.isNotEmpty) {
+      await (_db.delete(_db.mistakeEntries)
+            ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+          .go();
       await (_db.delete(_db.chatMessages)
             ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
           .go();
@@ -2305,6 +2397,14 @@ class SessionSyncService {
                 tbl.kpKey.equals(kpKey),
           ))
         .go();
+    await (_db.delete(_db.mistakeEntries)
+          ..where(
+            (tbl) =>
+                tbl.studentId.equals(localStudentId) &
+                tbl.courseVersionId.equals(localCourseVersionId) &
+                tbl.kpKey.equals(kpKey),
+          ))
+        .go();
   }
 
   Future<void> _clearLegacyLocalState() async {
@@ -2313,6 +2413,9 @@ class SessionSyncService {
       final sessionIds =
           sessions.map((session) => session.id).toList(growable: false);
       if (sessionIds.isNotEmpty) {
+        await (_db.delete(_db.mistakeEntries)
+              ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+            .go();
         await (_db.delete(_db.chatMessages)
               ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
             .go();
@@ -2324,6 +2427,7 @@ class SessionSyncService {
             .go();
       }
       await _db.delete(_db.progressEntries).go();
+      await _db.delete(_db.mistakeEntries).go();
       await _db.delete(_db.syncItemStates).go();
       await _db.delete(_db.syncMetadataEntries).go();
     });
@@ -2339,6 +2443,9 @@ class SessionSyncService {
       final sessionIds =
           sessions.map((session) => session.id).toList(growable: false);
       if (sessionIds.isNotEmpty) {
+        await (_db.delete(_db.mistakeEntries)
+              ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+            .go();
         await (_db.delete(_db.chatMessages)
               ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
             .go();
@@ -2350,6 +2457,9 @@ class SessionSyncService {
             .go();
       }
       await (_db.delete(_db.progressEntries)
+            ..where((tbl) => tbl.studentId.equals(studentId)))
+          .go();
+      await (_db.delete(_db.mistakeEntries)
             ..where((tbl) => tbl.studentId.equals(studentId)))
           .go();
     });
@@ -2510,6 +2620,20 @@ class _PendingArtifactSessionImport {
   final int localCourseVersionId;
   final String kpKey;
   final List sessions;
+}
+
+class _PendingArtifactMistakeImport {
+  const _PendingArtifactMistakeImport({
+    required this.localStudentId,
+    required this.localCourseVersionId,
+    required this.kpKey,
+    required this.mistakes,
+  });
+
+  final int localStudentId;
+  final int localCourseVersionId;
+  final String kpKey;
+  final List mistakes;
 }
 
 class _ArtifactIdentity {

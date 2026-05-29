@@ -19,6 +19,7 @@ import '../quit_app_flow.dart';
 import '../progress_display.dart';
 import '../widgets/action_indicators.dart';
 import 'marketplace_page.dart';
+import 'mistake_book_page.dart';
 import 'skill_tree_page.dart';
 import '../widgets/server_sync_overlay.dart';
 import '../../services/session_sync_service.dart';
@@ -581,6 +582,17 @@ class _StudentHomePageState extends State<StudentHomePage>
                           ),
                         );
                       },
+                    );
+                  },
+                ),
+                IconButton(
+                  tooltip: 'Mistake Book',
+                  icon: const Icon(Icons.menu_book_outlined),
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => MistakeBookPage(studentId: student.id),
+                      ),
                     );
                   },
                 ),

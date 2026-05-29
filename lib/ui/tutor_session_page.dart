@@ -24,6 +24,7 @@ import '../services/tts_text_sanitizer.dart';
 import '../state/auth_controller.dart';
 import '../state/settings_controller.dart';
 import 'app_close_button.dart';
+import 'pages/mistake_book_page.dart';
 import 'session_progress_display.dart';
 import 'tutor_turn_logic.dart';
 import 'widgets/math_markdown_view.dart';
@@ -541,11 +542,13 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                       ),
                     ),
                     if (canInteract)
-                      StreamBuilder<List<ChatMessage>>(
-                        stream: db.watchMessagesForSession(widget.sessionId),
+                      StreamBuilder<List<MistakeEntry>>(
+                        stream: db.watchMistakeEntriesForSession(
+                          widget.sessionId,
+                        ),
                         builder: (context, snapshot) {
                           final preview = _buildErrorBookPreview(
-                            snapshot.data ?? const <ChatMessage>[],
+                            snapshot.data ?? const <MistakeEntry>[],
                           );
                           if (preview.isEmpty) {
                             return const SizedBox.shrink();
@@ -576,10 +579,21 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                   ...preview.map(
                                     (item) => Tooltip(
                                       message: item.lastNote,
-                                      child: Chip(
+                                      child: ActionChip(
                                         label: Text(
                                           '${item.mistakeTag} x${item.count}',
                                         ),
+                                        onPressed: () {
+                                          Navigator.of(context).push(
+                                            MaterialPageRoute(
+                                              builder: (_) => MistakeBookPage(
+                                                studentId: item.studentId,
+                                                courseVersionId:
+                                                    widget.courseVersion.id,
+                                              ),
+                                            ),
+                                          );
+                                        },
                                       ),
                                     ),
                                   ),
@@ -2253,41 +2267,23 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   }
 
   List<_ErrorBookPreviewItem> _buildErrorBookPreview(
-    List<ChatMessage> messages,
+    List<MistakeEntry> mistakes,
   ) {
-    final aggregates = <String, _ErrorBookPreviewItem>{};
-    for (final message in messages) {
-      if (message.role != 'assistant' || message.action != 'review') {
-        continue;
-      }
-      final parsed = _extractMessageJson(message);
-      final update = parsed?['error_book_update'];
-      if (update is! Map<String, dynamic>) {
-        continue;
-      }
-      final mistakeTag = (update['mistake_tag'] as String?)?.trim() ?? '';
-      if (mistakeTag.isEmpty) {
-        continue;
-      }
-      final note = (update['mistake_note'] as String?)?.trim() ?? '';
-      final existing = aggregates[mistakeTag];
-      if (existing == null) {
-        aggregates[mistakeTag] = _ErrorBookPreviewItem(
-          mistakeTag: mistakeTag,
-          count: 1,
-          lastNote: note.isEmpty ? 'No note.' : note,
-        );
-      } else {
-        existing.count += 1;
-        if (note.isNotEmpty) {
-          existing.lastNote = note;
-        }
-      }
-    }
-    if (aggregates.isEmpty) {
+    if (mistakes.isEmpty) {
       return const <_ErrorBookPreviewItem>[];
     }
-    final sorted = aggregates.values.toList()
+    final sorted = mistakes
+        .map(
+          (mistake) => _ErrorBookPreviewItem(
+            studentId: mistake.studentId,
+            mistakeTag: mistake.mistakeTagRaw,
+            count: mistake.occurrences,
+            lastNote: (mistake.mistakeNote ?? '').trim().isEmpty
+                ? 'No note.'
+                : mistake.mistakeNote!.trim(),
+          ),
+        )
+        .toList(growable: false)
       ..sort((left, right) => right.count.compareTo(left.count));
     return sorted.take(3).toList(growable: false);
   }
@@ -2982,11 +2978,13 @@ class _TtsQueuedChunk {
 
 class _ErrorBookPreviewItem {
   _ErrorBookPreviewItem({
+    required this.studentId,
     required this.mistakeTag,
     required this.count,
     required this.lastNote,
   });
 
+  final int studentId;
   final String mistakeTag;
   int count;
   String lastNote;

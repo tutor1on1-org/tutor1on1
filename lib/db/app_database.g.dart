@@ -1946,6 +1946,12 @@ class $ProgressEntriesTable extends ProgressEntries
       type: DriftSqlType.int,
       requiredDuringInsert: false,
       defaultValue: const Constant(0));
+  static const VerificationMeta _masteryLevelMeta =
+      const VerificationMeta('masteryLevel');
+  @override
+  late final GeneratedColumn<int> masteryLevel = GeneratedColumn<int>(
+      'mastery_level', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
   static const VerificationMeta _questionLevelMeta =
       const VerificationMeta('questionLevel');
   @override
@@ -2013,6 +2019,7 @@ class $ProgressEntriesTable extends ProgressEntries
         kpKey,
         lit,
         litPercent,
+        masteryLevel,
         questionLevel,
         easyPassedCount,
         mediumPassedCount,
@@ -2064,6 +2071,12 @@ class $ProgressEntriesTable extends ProgressEntries
           _litPercentMeta,
           litPercent.isAcceptableOrUnknown(
               data['lit_percent']!, _litPercentMeta));
+    }
+    if (data.containsKey('mastery_level')) {
+      context.handle(
+          _masteryLevelMeta,
+          masteryLevel.isAcceptableOrUnknown(
+              data['mastery_level']!, _masteryLevelMeta));
     }
     if (data.containsKey('question_level')) {
       context.handle(
@@ -2136,6 +2149,8 @@ class $ProgressEntriesTable extends ProgressEntries
           .read(DriftSqlType.bool, data['${effectivePrefix}lit'])!,
       litPercent: attachedDatabase.typeMapping
           .read(DriftSqlType.int, data['${effectivePrefix}lit_percent'])!,
+      masteryLevel: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}mastery_level']),
       questionLevel: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}question_level']),
       easyPassedCount: attachedDatabase.typeMapping
@@ -2168,6 +2183,7 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
   final String kpKey;
   final bool lit;
   final int litPercent;
+  final int? masteryLevel;
   final String? questionLevel;
   final int easyPassedCount;
   final int mediumPassedCount;
@@ -2183,6 +2199,7 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
       required this.kpKey,
       required this.lit,
       required this.litPercent,
+      this.masteryLevel,
       this.questionLevel,
       required this.easyPassedCount,
       required this.mediumPassedCount,
@@ -2200,6 +2217,9 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
     map['kp_key'] = Variable<String>(kpKey);
     map['lit'] = Variable<bool>(lit);
     map['lit_percent'] = Variable<int>(litPercent);
+    if (!nullToAbsent || masteryLevel != null) {
+      map['mastery_level'] = Variable<int>(masteryLevel);
+    }
     if (!nullToAbsent || questionLevel != null) {
       map['question_level'] = Variable<String>(questionLevel);
     }
@@ -2227,6 +2247,9 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
       kpKey: Value(kpKey),
       lit: Value(lit),
       litPercent: Value(litPercent),
+      masteryLevel: masteryLevel == null && nullToAbsent
+          ? const Value.absent()
+          : Value(masteryLevel),
       questionLevel: questionLevel == null && nullToAbsent
           ? const Value.absent()
           : Value(questionLevel),
@@ -2256,6 +2279,7 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
       kpKey: serializer.fromJson<String>(json['kpKey']),
       lit: serializer.fromJson<bool>(json['lit']),
       litPercent: serializer.fromJson<int>(json['litPercent']),
+      masteryLevel: serializer.fromJson<int?>(json['masteryLevel']),
       questionLevel: serializer.fromJson<String?>(json['questionLevel']),
       easyPassedCount: serializer.fromJson<int>(json['easyPassedCount']),
       mediumPassedCount: serializer.fromJson<int>(json['mediumPassedCount']),
@@ -2277,6 +2301,7 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
       'kpKey': serializer.toJson<String>(kpKey),
       'lit': serializer.toJson<bool>(lit),
       'litPercent': serializer.toJson<int>(litPercent),
+      'masteryLevel': serializer.toJson<int?>(masteryLevel),
       'questionLevel': serializer.toJson<String?>(questionLevel),
       'easyPassedCount': serializer.toJson<int>(easyPassedCount),
       'mediumPassedCount': serializer.toJson<int>(mediumPassedCount),
@@ -2295,6 +2320,7 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
           String? kpKey,
           bool? lit,
           int? litPercent,
+          Value<int?> masteryLevel = const Value.absent(),
           Value<String?> questionLevel = const Value.absent(),
           int? easyPassedCount,
           int? mediumPassedCount,
@@ -2310,6 +2336,8 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
         kpKey: kpKey ?? this.kpKey,
         lit: lit ?? this.lit,
         litPercent: litPercent ?? this.litPercent,
+        masteryLevel:
+            masteryLevel.present ? masteryLevel.value : this.masteryLevel,
         questionLevel:
             questionLevel.present ? questionLevel.value : this.questionLevel,
         easyPassedCount: easyPassedCount ?? this.easyPassedCount,
@@ -2334,6 +2362,9 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
       lit: data.lit.present ? data.lit.value : this.lit,
       litPercent:
           data.litPercent.present ? data.litPercent.value : this.litPercent,
+      masteryLevel: data.masteryLevel.present
+          ? data.masteryLevel.value
+          : this.masteryLevel,
       questionLevel: data.questionLevel.present
           ? data.questionLevel.value
           : this.questionLevel,
@@ -2367,6 +2398,7 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
           ..write('kpKey: $kpKey, ')
           ..write('lit: $lit, ')
           ..write('litPercent: $litPercent, ')
+          ..write('masteryLevel: $masteryLevel, ')
           ..write('questionLevel: $questionLevel, ')
           ..write('easyPassedCount: $easyPassedCount, ')
           ..write('mediumPassedCount: $mediumPassedCount, ')
@@ -2387,6 +2419,7 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
       kpKey,
       lit,
       litPercent,
+      masteryLevel,
       questionLevel,
       easyPassedCount,
       mediumPassedCount,
@@ -2405,6 +2438,7 @@ class ProgressEntry extends DataClass implements Insertable<ProgressEntry> {
           other.kpKey == this.kpKey &&
           other.lit == this.lit &&
           other.litPercent == this.litPercent &&
+          other.masteryLevel == this.masteryLevel &&
           other.questionLevel == this.questionLevel &&
           other.easyPassedCount == this.easyPassedCount &&
           other.mediumPassedCount == this.mediumPassedCount &&
@@ -2422,6 +2456,7 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
   final Value<String> kpKey;
   final Value<bool> lit;
   final Value<int> litPercent;
+  final Value<int?> masteryLevel;
   final Value<String?> questionLevel;
   final Value<int> easyPassedCount;
   final Value<int> mediumPassedCount;
@@ -2437,6 +2472,7 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
     this.kpKey = const Value.absent(),
     this.lit = const Value.absent(),
     this.litPercent = const Value.absent(),
+    this.masteryLevel = const Value.absent(),
     this.questionLevel = const Value.absent(),
     this.easyPassedCount = const Value.absent(),
     this.mediumPassedCount = const Value.absent(),
@@ -2453,6 +2489,7 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
     required String kpKey,
     this.lit = const Value.absent(),
     this.litPercent = const Value.absent(),
+    this.masteryLevel = const Value.absent(),
     this.questionLevel = const Value.absent(),
     this.easyPassedCount = const Value.absent(),
     this.mediumPassedCount = const Value.absent(),
@@ -2471,6 +2508,7 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
     Expression<String>? kpKey,
     Expression<bool>? lit,
     Expression<int>? litPercent,
+    Expression<int>? masteryLevel,
     Expression<String>? questionLevel,
     Expression<int>? easyPassedCount,
     Expression<int>? mediumPassedCount,
@@ -2487,6 +2525,7 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
       if (kpKey != null) 'kp_key': kpKey,
       if (lit != null) 'lit': lit,
       if (litPercent != null) 'lit_percent': litPercent,
+      if (masteryLevel != null) 'mastery_level': masteryLevel,
       if (questionLevel != null) 'question_level': questionLevel,
       if (easyPassedCount != null) 'easy_passed_count': easyPassedCount,
       if (mediumPassedCount != null) 'medium_passed_count': mediumPassedCount,
@@ -2506,6 +2545,7 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
       Value<String>? kpKey,
       Value<bool>? lit,
       Value<int>? litPercent,
+      Value<int?>? masteryLevel,
       Value<String?>? questionLevel,
       Value<int>? easyPassedCount,
       Value<int>? mediumPassedCount,
@@ -2521,6 +2561,7 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
       kpKey: kpKey ?? this.kpKey,
       lit: lit ?? this.lit,
       litPercent: litPercent ?? this.litPercent,
+      masteryLevel: masteryLevel ?? this.masteryLevel,
       questionLevel: questionLevel ?? this.questionLevel,
       easyPassedCount: easyPassedCount ?? this.easyPassedCount,
       mediumPassedCount: mediumPassedCount ?? this.mediumPassedCount,
@@ -2552,6 +2593,9 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
     }
     if (litPercent.present) {
       map['lit_percent'] = Variable<int>(litPercent.value);
+    }
+    if (masteryLevel.present) {
+      map['mastery_level'] = Variable<int>(masteryLevel.value);
     }
     if (questionLevel.present) {
       map['question_level'] = Variable<String>(questionLevel.value);
@@ -2589,6 +2633,7 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
           ..write('kpKey: $kpKey, ')
           ..write('lit: $lit, ')
           ..write('litPercent: $litPercent, ')
+          ..write('masteryLevel: $masteryLevel, ')
           ..write('questionLevel: $questionLevel, ')
           ..write('easyPassedCount: $easyPassedCount, ')
           ..write('mediumPassedCount: $mediumPassedCount, ')
@@ -2597,6 +2642,1003 @@ class ProgressEntriesCompanion extends UpdateCompanion<ProgressEntry> {
           ..write('summaryRawResponse: $summaryRawResponse, ')
           ..write('summaryValid: $summaryValid, ')
           ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $MistakeEntriesTable extends MistakeEntries
+    with TableInfo<$MistakeEntriesTable, MistakeEntry> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $MistakeEntriesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+      'id', aliasedName, false,
+      hasAutoIncrement: true,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('PRIMARY KEY AUTOINCREMENT'));
+  static const VerificationMeta _studentIdMeta =
+      const VerificationMeta('studentId');
+  @override
+  late final GeneratedColumn<int> studentId = GeneratedColumn<int>(
+      'student_id', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _courseVersionIdMeta =
+      const VerificationMeta('courseVersionId');
+  @override
+  late final GeneratedColumn<int> courseVersionId = GeneratedColumn<int>(
+      'course_version_id', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _kpKeyMeta = const VerificationMeta('kpKey');
+  @override
+  late final GeneratedColumn<String> kpKey = GeneratedColumn<String>(
+      'kp_key', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _bundleVersionIdMeta =
+      const VerificationMeta('bundleVersionId');
+  @override
+  late final GeneratedColumn<String> bundleVersionId = GeneratedColumn<String>(
+      'bundle_version_id', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _sessionIdMeta =
+      const VerificationMeta('sessionId');
+  @override
+  late final GeneratedColumn<int> sessionId = GeneratedColumn<int>(
+      'session_id', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _messageIdMeta =
+      const VerificationMeta('messageId');
+  @override
+  late final GeneratedColumn<int> messageId = GeneratedColumn<int>(
+      'message_id', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _mistakeTagRawMeta =
+      const VerificationMeta('mistakeTagRaw');
+  @override
+  late final GeneratedColumn<String> mistakeTagRaw = GeneratedColumn<String>(
+      'mistake_tag_raw', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _mistakeTagKeyMeta =
+      const VerificationMeta('mistakeTagKey');
+  @override
+  late final GeneratedColumn<String> mistakeTagKey = GeneratedColumn<String>(
+      'mistake_tag_key', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _mistakeNoteMeta =
+      const VerificationMeta('mistakeNote');
+  @override
+  late final GeneratedColumn<String> mistakeNote = GeneratedColumn<String>(
+      'mistake_note', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _questionExcerptMeta =
+      const VerificationMeta('questionExcerpt');
+  @override
+  late final GeneratedColumn<String> questionExcerpt = GeneratedColumn<String>(
+      'question_excerpt', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _difficultyMeta =
+      const VerificationMeta('difficulty');
+  @override
+  late final GeneratedColumn<String> difficulty = GeneratedColumn<String>(
+      'difficulty', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _evidenceJsonMeta =
+      const VerificationMeta('evidenceJson');
+  @override
+  late final GeneratedColumn<String> evidenceJson = GeneratedColumn<String>(
+      'evidence_json', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _occurrencesMeta =
+      const VerificationMeta('occurrences');
+  @override
+  late final GeneratedColumn<int> occurrences = GeneratedColumn<int>(
+      'occurrences', aliasedName, false,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(1));
+  static const VerificationMeta _firstSeenAtMeta =
+      const VerificationMeta('firstSeenAt');
+  @override
+  late final GeneratedColumn<DateTime> firstSeenAt = GeneratedColumn<DateTime>(
+      'first_seen_at', aliasedName, false,
+      type: DriftSqlType.dateTime, requiredDuringInsert: true);
+  static const VerificationMeta _lastSeenAtMeta =
+      const VerificationMeta('lastSeenAt');
+  @override
+  late final GeneratedColumn<DateTime> lastSeenAt = GeneratedColumn<DateTime>(
+      'last_seen_at', aliasedName, false,
+      type: DriftSqlType.dateTime, requiredDuringInsert: true);
+  static const VerificationMeta _statusMeta = const VerificationMeta('status');
+  @override
+  late final GeneratedColumn<String> status = GeneratedColumn<String>(
+      'status', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: false,
+      defaultValue: const Constant('open'));
+  static const VerificationMeta _nextReviewAtMeta =
+      const VerificationMeta('nextReviewAt');
+  @override
+  late final GeneratedColumn<DateTime> nextReviewAt = GeneratedColumn<DateTime>(
+      'next_review_at', aliasedName, true,
+      type: DriftSqlType.dateTime, requiredDuringInsert: false);
+  static const VerificationMeta _snoozedUntilMeta =
+      const VerificationMeta('snoozedUntil');
+  @override
+  late final GeneratedColumn<DateTime> snoozedUntil = GeneratedColumn<DateTime>(
+      'snoozed_until', aliasedName, true,
+      type: DriftSqlType.dateTime, requiredDuringInsert: false);
+  static const VerificationMeta _dismissedMeta =
+      const VerificationMeta('dismissed');
+  @override
+  late final GeneratedColumn<bool> dismissed = GeneratedColumn<bool>(
+      'dismissed', aliasedName, false,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints:
+          GeneratedColumn.constraintIsAlways('CHECK ("dismissed" IN (0, 1))'),
+      defaultValue: const Constant(false));
+  static const VerificationMeta _reviewStreakMeta =
+      const VerificationMeta('reviewStreak');
+  @override
+  late final GeneratedColumn<int> reviewStreak = GeneratedColumn<int>(
+      'review_streak', aliasedName, false,
+      type: DriftSqlType.int,
+      requiredDuringInsert: false,
+      defaultValue: const Constant(0));
+  @override
+  List<GeneratedColumn> get $columns => [
+        id,
+        studentId,
+        courseVersionId,
+        kpKey,
+        bundleVersionId,
+        sessionId,
+        messageId,
+        mistakeTagRaw,
+        mistakeTagKey,
+        mistakeNote,
+        questionExcerpt,
+        difficulty,
+        evidenceJson,
+        occurrences,
+        firstSeenAt,
+        lastSeenAt,
+        status,
+        nextReviewAt,
+        snoozedUntil,
+        dismissed,
+        reviewStreak
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'mistake_entries';
+  @override
+  VerificationContext validateIntegrity(Insertable<MistakeEntry> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('student_id')) {
+      context.handle(_studentIdMeta,
+          studentId.isAcceptableOrUnknown(data['student_id']!, _studentIdMeta));
+    } else if (isInserting) {
+      context.missing(_studentIdMeta);
+    }
+    if (data.containsKey('course_version_id')) {
+      context.handle(
+          _courseVersionIdMeta,
+          courseVersionId.isAcceptableOrUnknown(
+              data['course_version_id']!, _courseVersionIdMeta));
+    } else if (isInserting) {
+      context.missing(_courseVersionIdMeta);
+    }
+    if (data.containsKey('kp_key')) {
+      context.handle(
+          _kpKeyMeta, kpKey.isAcceptableOrUnknown(data['kp_key']!, _kpKeyMeta));
+    } else if (isInserting) {
+      context.missing(_kpKeyMeta);
+    }
+    if (data.containsKey('bundle_version_id')) {
+      context.handle(
+          _bundleVersionIdMeta,
+          bundleVersionId.isAcceptableOrUnknown(
+              data['bundle_version_id']!, _bundleVersionIdMeta));
+    }
+    if (data.containsKey('session_id')) {
+      context.handle(_sessionIdMeta,
+          sessionId.isAcceptableOrUnknown(data['session_id']!, _sessionIdMeta));
+    } else if (isInserting) {
+      context.missing(_sessionIdMeta);
+    }
+    if (data.containsKey('message_id')) {
+      context.handle(_messageIdMeta,
+          messageId.isAcceptableOrUnknown(data['message_id']!, _messageIdMeta));
+    } else if (isInserting) {
+      context.missing(_messageIdMeta);
+    }
+    if (data.containsKey('mistake_tag_raw')) {
+      context.handle(
+          _mistakeTagRawMeta,
+          mistakeTagRaw.isAcceptableOrUnknown(
+              data['mistake_tag_raw']!, _mistakeTagRawMeta));
+    } else if (isInserting) {
+      context.missing(_mistakeTagRawMeta);
+    }
+    if (data.containsKey('mistake_tag_key')) {
+      context.handle(
+          _mistakeTagKeyMeta,
+          mistakeTagKey.isAcceptableOrUnknown(
+              data['mistake_tag_key']!, _mistakeTagKeyMeta));
+    } else if (isInserting) {
+      context.missing(_mistakeTagKeyMeta);
+    }
+    if (data.containsKey('mistake_note')) {
+      context.handle(
+          _mistakeNoteMeta,
+          mistakeNote.isAcceptableOrUnknown(
+              data['mistake_note']!, _mistakeNoteMeta));
+    }
+    if (data.containsKey('question_excerpt')) {
+      context.handle(
+          _questionExcerptMeta,
+          questionExcerpt.isAcceptableOrUnknown(
+              data['question_excerpt']!, _questionExcerptMeta));
+    }
+    if (data.containsKey('difficulty')) {
+      context.handle(
+          _difficultyMeta,
+          difficulty.isAcceptableOrUnknown(
+              data['difficulty']!, _difficultyMeta));
+    }
+    if (data.containsKey('evidence_json')) {
+      context.handle(
+          _evidenceJsonMeta,
+          evidenceJson.isAcceptableOrUnknown(
+              data['evidence_json']!, _evidenceJsonMeta));
+    } else if (isInserting) {
+      context.missing(_evidenceJsonMeta);
+    }
+    if (data.containsKey('occurrences')) {
+      context.handle(
+          _occurrencesMeta,
+          occurrences.isAcceptableOrUnknown(
+              data['occurrences']!, _occurrencesMeta));
+    }
+    if (data.containsKey('first_seen_at')) {
+      context.handle(
+          _firstSeenAtMeta,
+          firstSeenAt.isAcceptableOrUnknown(
+              data['first_seen_at']!, _firstSeenAtMeta));
+    } else if (isInserting) {
+      context.missing(_firstSeenAtMeta);
+    }
+    if (data.containsKey('last_seen_at')) {
+      context.handle(
+          _lastSeenAtMeta,
+          lastSeenAt.isAcceptableOrUnknown(
+              data['last_seen_at']!, _lastSeenAtMeta));
+    } else if (isInserting) {
+      context.missing(_lastSeenAtMeta);
+    }
+    if (data.containsKey('status')) {
+      context.handle(_statusMeta,
+          status.isAcceptableOrUnknown(data['status']!, _statusMeta));
+    }
+    if (data.containsKey('next_review_at')) {
+      context.handle(
+          _nextReviewAtMeta,
+          nextReviewAt.isAcceptableOrUnknown(
+              data['next_review_at']!, _nextReviewAtMeta));
+    }
+    if (data.containsKey('snoozed_until')) {
+      context.handle(
+          _snoozedUntilMeta,
+          snoozedUntil.isAcceptableOrUnknown(
+              data['snoozed_until']!, _snoozedUntilMeta));
+    }
+    if (data.containsKey('dismissed')) {
+      context.handle(_dismissedMeta,
+          dismissed.isAcceptableOrUnknown(data['dismissed']!, _dismissedMeta));
+    }
+    if (data.containsKey('review_streak')) {
+      context.handle(
+          _reviewStreakMeta,
+          reviewStreak.isAcceptableOrUnknown(
+              data['review_streak']!, _reviewStreakMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+        {studentId, courseVersionId, kpKey, mistakeTagKey},
+      ];
+  @override
+  MistakeEntry map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return MistakeEntry(
+      id: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}id'])!,
+      studentId: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}student_id'])!,
+      courseVersionId: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}course_version_id'])!,
+      kpKey: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}kp_key'])!,
+      bundleVersionId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}bundle_version_id']),
+      sessionId: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}session_id'])!,
+      messageId: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}message_id'])!,
+      mistakeTagRaw: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}mistake_tag_raw'])!,
+      mistakeTagKey: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}mistake_tag_key'])!,
+      mistakeNote: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}mistake_note']),
+      questionExcerpt: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}question_excerpt']),
+      difficulty: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}difficulty']),
+      evidenceJson: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}evidence_json'])!,
+      occurrences: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}occurrences'])!,
+      firstSeenAt: attachedDatabase.typeMapping.read(
+          DriftSqlType.dateTime, data['${effectivePrefix}first_seen_at'])!,
+      lastSeenAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}last_seen_at'])!,
+      status: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}status'])!,
+      nextReviewAt: attachedDatabase.typeMapping.read(
+          DriftSqlType.dateTime, data['${effectivePrefix}next_review_at']),
+      snoozedUntil: attachedDatabase.typeMapping
+          .read(DriftSqlType.dateTime, data['${effectivePrefix}snoozed_until']),
+      dismissed: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}dismissed'])!,
+      reviewStreak: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}review_streak'])!,
+    );
+  }
+
+  @override
+  $MistakeEntriesTable createAlias(String alias) {
+    return $MistakeEntriesTable(attachedDatabase, alias);
+  }
+}
+
+class MistakeEntry extends DataClass implements Insertable<MistakeEntry> {
+  final int id;
+  final int studentId;
+  final int courseVersionId;
+  final String kpKey;
+  final String? bundleVersionId;
+  final int sessionId;
+  final int messageId;
+  final String mistakeTagRaw;
+  final String mistakeTagKey;
+  final String? mistakeNote;
+  final String? questionExcerpt;
+  final String? difficulty;
+  final String evidenceJson;
+  final int occurrences;
+  final DateTime firstSeenAt;
+  final DateTime lastSeenAt;
+  final String status;
+  final DateTime? nextReviewAt;
+  final DateTime? snoozedUntil;
+  final bool dismissed;
+  final int reviewStreak;
+  const MistakeEntry(
+      {required this.id,
+      required this.studentId,
+      required this.courseVersionId,
+      required this.kpKey,
+      this.bundleVersionId,
+      required this.sessionId,
+      required this.messageId,
+      required this.mistakeTagRaw,
+      required this.mistakeTagKey,
+      this.mistakeNote,
+      this.questionExcerpt,
+      this.difficulty,
+      required this.evidenceJson,
+      required this.occurrences,
+      required this.firstSeenAt,
+      required this.lastSeenAt,
+      required this.status,
+      this.nextReviewAt,
+      this.snoozedUntil,
+      required this.dismissed,
+      required this.reviewStreak});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['student_id'] = Variable<int>(studentId);
+    map['course_version_id'] = Variable<int>(courseVersionId);
+    map['kp_key'] = Variable<String>(kpKey);
+    if (!nullToAbsent || bundleVersionId != null) {
+      map['bundle_version_id'] = Variable<String>(bundleVersionId);
+    }
+    map['session_id'] = Variable<int>(sessionId);
+    map['message_id'] = Variable<int>(messageId);
+    map['mistake_tag_raw'] = Variable<String>(mistakeTagRaw);
+    map['mistake_tag_key'] = Variable<String>(mistakeTagKey);
+    if (!nullToAbsent || mistakeNote != null) {
+      map['mistake_note'] = Variable<String>(mistakeNote);
+    }
+    if (!nullToAbsent || questionExcerpt != null) {
+      map['question_excerpt'] = Variable<String>(questionExcerpt);
+    }
+    if (!nullToAbsent || difficulty != null) {
+      map['difficulty'] = Variable<String>(difficulty);
+    }
+    map['evidence_json'] = Variable<String>(evidenceJson);
+    map['occurrences'] = Variable<int>(occurrences);
+    map['first_seen_at'] = Variable<DateTime>(firstSeenAt);
+    map['last_seen_at'] = Variable<DateTime>(lastSeenAt);
+    map['status'] = Variable<String>(status);
+    if (!nullToAbsent || nextReviewAt != null) {
+      map['next_review_at'] = Variable<DateTime>(nextReviewAt);
+    }
+    if (!nullToAbsent || snoozedUntil != null) {
+      map['snoozed_until'] = Variable<DateTime>(snoozedUntil);
+    }
+    map['dismissed'] = Variable<bool>(dismissed);
+    map['review_streak'] = Variable<int>(reviewStreak);
+    return map;
+  }
+
+  MistakeEntriesCompanion toCompanion(bool nullToAbsent) {
+    return MistakeEntriesCompanion(
+      id: Value(id),
+      studentId: Value(studentId),
+      courseVersionId: Value(courseVersionId),
+      kpKey: Value(kpKey),
+      bundleVersionId: bundleVersionId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(bundleVersionId),
+      sessionId: Value(sessionId),
+      messageId: Value(messageId),
+      mistakeTagRaw: Value(mistakeTagRaw),
+      mistakeTagKey: Value(mistakeTagKey),
+      mistakeNote: mistakeNote == null && nullToAbsent
+          ? const Value.absent()
+          : Value(mistakeNote),
+      questionExcerpt: questionExcerpt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(questionExcerpt),
+      difficulty: difficulty == null && nullToAbsent
+          ? const Value.absent()
+          : Value(difficulty),
+      evidenceJson: Value(evidenceJson),
+      occurrences: Value(occurrences),
+      firstSeenAt: Value(firstSeenAt),
+      lastSeenAt: Value(lastSeenAt),
+      status: Value(status),
+      nextReviewAt: nextReviewAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(nextReviewAt),
+      snoozedUntil: snoozedUntil == null && nullToAbsent
+          ? const Value.absent()
+          : Value(snoozedUntil),
+      dismissed: Value(dismissed),
+      reviewStreak: Value(reviewStreak),
+    );
+  }
+
+  factory MistakeEntry.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return MistakeEntry(
+      id: serializer.fromJson<int>(json['id']),
+      studentId: serializer.fromJson<int>(json['studentId']),
+      courseVersionId: serializer.fromJson<int>(json['courseVersionId']),
+      kpKey: serializer.fromJson<String>(json['kpKey']),
+      bundleVersionId: serializer.fromJson<String?>(json['bundleVersionId']),
+      sessionId: serializer.fromJson<int>(json['sessionId']),
+      messageId: serializer.fromJson<int>(json['messageId']),
+      mistakeTagRaw: serializer.fromJson<String>(json['mistakeTagRaw']),
+      mistakeTagKey: serializer.fromJson<String>(json['mistakeTagKey']),
+      mistakeNote: serializer.fromJson<String?>(json['mistakeNote']),
+      questionExcerpt: serializer.fromJson<String?>(json['questionExcerpt']),
+      difficulty: serializer.fromJson<String?>(json['difficulty']),
+      evidenceJson: serializer.fromJson<String>(json['evidenceJson']),
+      occurrences: serializer.fromJson<int>(json['occurrences']),
+      firstSeenAt: serializer.fromJson<DateTime>(json['firstSeenAt']),
+      lastSeenAt: serializer.fromJson<DateTime>(json['lastSeenAt']),
+      status: serializer.fromJson<String>(json['status']),
+      nextReviewAt: serializer.fromJson<DateTime?>(json['nextReviewAt']),
+      snoozedUntil: serializer.fromJson<DateTime?>(json['snoozedUntil']),
+      dismissed: serializer.fromJson<bool>(json['dismissed']),
+      reviewStreak: serializer.fromJson<int>(json['reviewStreak']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'studentId': serializer.toJson<int>(studentId),
+      'courseVersionId': serializer.toJson<int>(courseVersionId),
+      'kpKey': serializer.toJson<String>(kpKey),
+      'bundleVersionId': serializer.toJson<String?>(bundleVersionId),
+      'sessionId': serializer.toJson<int>(sessionId),
+      'messageId': serializer.toJson<int>(messageId),
+      'mistakeTagRaw': serializer.toJson<String>(mistakeTagRaw),
+      'mistakeTagKey': serializer.toJson<String>(mistakeTagKey),
+      'mistakeNote': serializer.toJson<String?>(mistakeNote),
+      'questionExcerpt': serializer.toJson<String?>(questionExcerpt),
+      'difficulty': serializer.toJson<String?>(difficulty),
+      'evidenceJson': serializer.toJson<String>(evidenceJson),
+      'occurrences': serializer.toJson<int>(occurrences),
+      'firstSeenAt': serializer.toJson<DateTime>(firstSeenAt),
+      'lastSeenAt': serializer.toJson<DateTime>(lastSeenAt),
+      'status': serializer.toJson<String>(status),
+      'nextReviewAt': serializer.toJson<DateTime?>(nextReviewAt),
+      'snoozedUntil': serializer.toJson<DateTime?>(snoozedUntil),
+      'dismissed': serializer.toJson<bool>(dismissed),
+      'reviewStreak': serializer.toJson<int>(reviewStreak),
+    };
+  }
+
+  MistakeEntry copyWith(
+          {int? id,
+          int? studentId,
+          int? courseVersionId,
+          String? kpKey,
+          Value<String?> bundleVersionId = const Value.absent(),
+          int? sessionId,
+          int? messageId,
+          String? mistakeTagRaw,
+          String? mistakeTagKey,
+          Value<String?> mistakeNote = const Value.absent(),
+          Value<String?> questionExcerpt = const Value.absent(),
+          Value<String?> difficulty = const Value.absent(),
+          String? evidenceJson,
+          int? occurrences,
+          DateTime? firstSeenAt,
+          DateTime? lastSeenAt,
+          String? status,
+          Value<DateTime?> nextReviewAt = const Value.absent(),
+          Value<DateTime?> snoozedUntil = const Value.absent(),
+          bool? dismissed,
+          int? reviewStreak}) =>
+      MistakeEntry(
+        id: id ?? this.id,
+        studentId: studentId ?? this.studentId,
+        courseVersionId: courseVersionId ?? this.courseVersionId,
+        kpKey: kpKey ?? this.kpKey,
+        bundleVersionId: bundleVersionId.present
+            ? bundleVersionId.value
+            : this.bundleVersionId,
+        sessionId: sessionId ?? this.sessionId,
+        messageId: messageId ?? this.messageId,
+        mistakeTagRaw: mistakeTagRaw ?? this.mistakeTagRaw,
+        mistakeTagKey: mistakeTagKey ?? this.mistakeTagKey,
+        mistakeNote: mistakeNote.present ? mistakeNote.value : this.mistakeNote,
+        questionExcerpt: questionExcerpt.present
+            ? questionExcerpt.value
+            : this.questionExcerpt,
+        difficulty: difficulty.present ? difficulty.value : this.difficulty,
+        evidenceJson: evidenceJson ?? this.evidenceJson,
+        occurrences: occurrences ?? this.occurrences,
+        firstSeenAt: firstSeenAt ?? this.firstSeenAt,
+        lastSeenAt: lastSeenAt ?? this.lastSeenAt,
+        status: status ?? this.status,
+        nextReviewAt:
+            nextReviewAt.present ? nextReviewAt.value : this.nextReviewAt,
+        snoozedUntil:
+            snoozedUntil.present ? snoozedUntil.value : this.snoozedUntil,
+        dismissed: dismissed ?? this.dismissed,
+        reviewStreak: reviewStreak ?? this.reviewStreak,
+      );
+  MistakeEntry copyWithCompanion(MistakeEntriesCompanion data) {
+    return MistakeEntry(
+      id: data.id.present ? data.id.value : this.id,
+      studentId: data.studentId.present ? data.studentId.value : this.studentId,
+      courseVersionId: data.courseVersionId.present
+          ? data.courseVersionId.value
+          : this.courseVersionId,
+      kpKey: data.kpKey.present ? data.kpKey.value : this.kpKey,
+      bundleVersionId: data.bundleVersionId.present
+          ? data.bundleVersionId.value
+          : this.bundleVersionId,
+      sessionId: data.sessionId.present ? data.sessionId.value : this.sessionId,
+      messageId: data.messageId.present ? data.messageId.value : this.messageId,
+      mistakeTagRaw: data.mistakeTagRaw.present
+          ? data.mistakeTagRaw.value
+          : this.mistakeTagRaw,
+      mistakeTagKey: data.mistakeTagKey.present
+          ? data.mistakeTagKey.value
+          : this.mistakeTagKey,
+      mistakeNote:
+          data.mistakeNote.present ? data.mistakeNote.value : this.mistakeNote,
+      questionExcerpt: data.questionExcerpt.present
+          ? data.questionExcerpt.value
+          : this.questionExcerpt,
+      difficulty:
+          data.difficulty.present ? data.difficulty.value : this.difficulty,
+      evidenceJson: data.evidenceJson.present
+          ? data.evidenceJson.value
+          : this.evidenceJson,
+      occurrences:
+          data.occurrences.present ? data.occurrences.value : this.occurrences,
+      firstSeenAt:
+          data.firstSeenAt.present ? data.firstSeenAt.value : this.firstSeenAt,
+      lastSeenAt:
+          data.lastSeenAt.present ? data.lastSeenAt.value : this.lastSeenAt,
+      status: data.status.present ? data.status.value : this.status,
+      nextReviewAt: data.nextReviewAt.present
+          ? data.nextReviewAt.value
+          : this.nextReviewAt,
+      snoozedUntil: data.snoozedUntil.present
+          ? data.snoozedUntil.value
+          : this.snoozedUntil,
+      dismissed: data.dismissed.present ? data.dismissed.value : this.dismissed,
+      reviewStreak: data.reviewStreak.present
+          ? data.reviewStreak.value
+          : this.reviewStreak,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MistakeEntry(')
+          ..write('id: $id, ')
+          ..write('studentId: $studentId, ')
+          ..write('courseVersionId: $courseVersionId, ')
+          ..write('kpKey: $kpKey, ')
+          ..write('bundleVersionId: $bundleVersionId, ')
+          ..write('sessionId: $sessionId, ')
+          ..write('messageId: $messageId, ')
+          ..write('mistakeTagRaw: $mistakeTagRaw, ')
+          ..write('mistakeTagKey: $mistakeTagKey, ')
+          ..write('mistakeNote: $mistakeNote, ')
+          ..write('questionExcerpt: $questionExcerpt, ')
+          ..write('difficulty: $difficulty, ')
+          ..write('evidenceJson: $evidenceJson, ')
+          ..write('occurrences: $occurrences, ')
+          ..write('firstSeenAt: $firstSeenAt, ')
+          ..write('lastSeenAt: $lastSeenAt, ')
+          ..write('status: $status, ')
+          ..write('nextReviewAt: $nextReviewAt, ')
+          ..write('snoozedUntil: $snoozedUntil, ')
+          ..write('dismissed: $dismissed, ')
+          ..write('reviewStreak: $reviewStreak')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hashAll([
+        id,
+        studentId,
+        courseVersionId,
+        kpKey,
+        bundleVersionId,
+        sessionId,
+        messageId,
+        mistakeTagRaw,
+        mistakeTagKey,
+        mistakeNote,
+        questionExcerpt,
+        difficulty,
+        evidenceJson,
+        occurrences,
+        firstSeenAt,
+        lastSeenAt,
+        status,
+        nextReviewAt,
+        snoozedUntil,
+        dismissed,
+        reviewStreak
+      ]);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is MistakeEntry &&
+          other.id == this.id &&
+          other.studentId == this.studentId &&
+          other.courseVersionId == this.courseVersionId &&
+          other.kpKey == this.kpKey &&
+          other.bundleVersionId == this.bundleVersionId &&
+          other.sessionId == this.sessionId &&
+          other.messageId == this.messageId &&
+          other.mistakeTagRaw == this.mistakeTagRaw &&
+          other.mistakeTagKey == this.mistakeTagKey &&
+          other.mistakeNote == this.mistakeNote &&
+          other.questionExcerpt == this.questionExcerpt &&
+          other.difficulty == this.difficulty &&
+          other.evidenceJson == this.evidenceJson &&
+          other.occurrences == this.occurrences &&
+          other.firstSeenAt == this.firstSeenAt &&
+          other.lastSeenAt == this.lastSeenAt &&
+          other.status == this.status &&
+          other.nextReviewAt == this.nextReviewAt &&
+          other.snoozedUntil == this.snoozedUntil &&
+          other.dismissed == this.dismissed &&
+          other.reviewStreak == this.reviewStreak);
+}
+
+class MistakeEntriesCompanion extends UpdateCompanion<MistakeEntry> {
+  final Value<int> id;
+  final Value<int> studentId;
+  final Value<int> courseVersionId;
+  final Value<String> kpKey;
+  final Value<String?> bundleVersionId;
+  final Value<int> sessionId;
+  final Value<int> messageId;
+  final Value<String> mistakeTagRaw;
+  final Value<String> mistakeTagKey;
+  final Value<String?> mistakeNote;
+  final Value<String?> questionExcerpt;
+  final Value<String?> difficulty;
+  final Value<String> evidenceJson;
+  final Value<int> occurrences;
+  final Value<DateTime> firstSeenAt;
+  final Value<DateTime> lastSeenAt;
+  final Value<String> status;
+  final Value<DateTime?> nextReviewAt;
+  final Value<DateTime?> snoozedUntil;
+  final Value<bool> dismissed;
+  final Value<int> reviewStreak;
+  const MistakeEntriesCompanion({
+    this.id = const Value.absent(),
+    this.studentId = const Value.absent(),
+    this.courseVersionId = const Value.absent(),
+    this.kpKey = const Value.absent(),
+    this.bundleVersionId = const Value.absent(),
+    this.sessionId = const Value.absent(),
+    this.messageId = const Value.absent(),
+    this.mistakeTagRaw = const Value.absent(),
+    this.mistakeTagKey = const Value.absent(),
+    this.mistakeNote = const Value.absent(),
+    this.questionExcerpt = const Value.absent(),
+    this.difficulty = const Value.absent(),
+    this.evidenceJson = const Value.absent(),
+    this.occurrences = const Value.absent(),
+    this.firstSeenAt = const Value.absent(),
+    this.lastSeenAt = const Value.absent(),
+    this.status = const Value.absent(),
+    this.nextReviewAt = const Value.absent(),
+    this.snoozedUntil = const Value.absent(),
+    this.dismissed = const Value.absent(),
+    this.reviewStreak = const Value.absent(),
+  });
+  MistakeEntriesCompanion.insert({
+    this.id = const Value.absent(),
+    required int studentId,
+    required int courseVersionId,
+    required String kpKey,
+    this.bundleVersionId = const Value.absent(),
+    required int sessionId,
+    required int messageId,
+    required String mistakeTagRaw,
+    required String mistakeTagKey,
+    this.mistakeNote = const Value.absent(),
+    this.questionExcerpt = const Value.absent(),
+    this.difficulty = const Value.absent(),
+    required String evidenceJson,
+    this.occurrences = const Value.absent(),
+    required DateTime firstSeenAt,
+    required DateTime lastSeenAt,
+    this.status = const Value.absent(),
+    this.nextReviewAt = const Value.absent(),
+    this.snoozedUntil = const Value.absent(),
+    this.dismissed = const Value.absent(),
+    this.reviewStreak = const Value.absent(),
+  })  : studentId = Value(studentId),
+        courseVersionId = Value(courseVersionId),
+        kpKey = Value(kpKey),
+        sessionId = Value(sessionId),
+        messageId = Value(messageId),
+        mistakeTagRaw = Value(mistakeTagRaw),
+        mistakeTagKey = Value(mistakeTagKey),
+        evidenceJson = Value(evidenceJson),
+        firstSeenAt = Value(firstSeenAt),
+        lastSeenAt = Value(lastSeenAt);
+  static Insertable<MistakeEntry> custom({
+    Expression<int>? id,
+    Expression<int>? studentId,
+    Expression<int>? courseVersionId,
+    Expression<String>? kpKey,
+    Expression<String>? bundleVersionId,
+    Expression<int>? sessionId,
+    Expression<int>? messageId,
+    Expression<String>? mistakeTagRaw,
+    Expression<String>? mistakeTagKey,
+    Expression<String>? mistakeNote,
+    Expression<String>? questionExcerpt,
+    Expression<String>? difficulty,
+    Expression<String>? evidenceJson,
+    Expression<int>? occurrences,
+    Expression<DateTime>? firstSeenAt,
+    Expression<DateTime>? lastSeenAt,
+    Expression<String>? status,
+    Expression<DateTime>? nextReviewAt,
+    Expression<DateTime>? snoozedUntil,
+    Expression<bool>? dismissed,
+    Expression<int>? reviewStreak,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (studentId != null) 'student_id': studentId,
+      if (courseVersionId != null) 'course_version_id': courseVersionId,
+      if (kpKey != null) 'kp_key': kpKey,
+      if (bundleVersionId != null) 'bundle_version_id': bundleVersionId,
+      if (sessionId != null) 'session_id': sessionId,
+      if (messageId != null) 'message_id': messageId,
+      if (mistakeTagRaw != null) 'mistake_tag_raw': mistakeTagRaw,
+      if (mistakeTagKey != null) 'mistake_tag_key': mistakeTagKey,
+      if (mistakeNote != null) 'mistake_note': mistakeNote,
+      if (questionExcerpt != null) 'question_excerpt': questionExcerpt,
+      if (difficulty != null) 'difficulty': difficulty,
+      if (evidenceJson != null) 'evidence_json': evidenceJson,
+      if (occurrences != null) 'occurrences': occurrences,
+      if (firstSeenAt != null) 'first_seen_at': firstSeenAt,
+      if (lastSeenAt != null) 'last_seen_at': lastSeenAt,
+      if (status != null) 'status': status,
+      if (nextReviewAt != null) 'next_review_at': nextReviewAt,
+      if (snoozedUntil != null) 'snoozed_until': snoozedUntil,
+      if (dismissed != null) 'dismissed': dismissed,
+      if (reviewStreak != null) 'review_streak': reviewStreak,
+    });
+  }
+
+  MistakeEntriesCompanion copyWith(
+      {Value<int>? id,
+      Value<int>? studentId,
+      Value<int>? courseVersionId,
+      Value<String>? kpKey,
+      Value<String?>? bundleVersionId,
+      Value<int>? sessionId,
+      Value<int>? messageId,
+      Value<String>? mistakeTagRaw,
+      Value<String>? mistakeTagKey,
+      Value<String?>? mistakeNote,
+      Value<String?>? questionExcerpt,
+      Value<String?>? difficulty,
+      Value<String>? evidenceJson,
+      Value<int>? occurrences,
+      Value<DateTime>? firstSeenAt,
+      Value<DateTime>? lastSeenAt,
+      Value<String>? status,
+      Value<DateTime?>? nextReviewAt,
+      Value<DateTime?>? snoozedUntil,
+      Value<bool>? dismissed,
+      Value<int>? reviewStreak}) {
+    return MistakeEntriesCompanion(
+      id: id ?? this.id,
+      studentId: studentId ?? this.studentId,
+      courseVersionId: courseVersionId ?? this.courseVersionId,
+      kpKey: kpKey ?? this.kpKey,
+      bundleVersionId: bundleVersionId ?? this.bundleVersionId,
+      sessionId: sessionId ?? this.sessionId,
+      messageId: messageId ?? this.messageId,
+      mistakeTagRaw: mistakeTagRaw ?? this.mistakeTagRaw,
+      mistakeTagKey: mistakeTagKey ?? this.mistakeTagKey,
+      mistakeNote: mistakeNote ?? this.mistakeNote,
+      questionExcerpt: questionExcerpt ?? this.questionExcerpt,
+      difficulty: difficulty ?? this.difficulty,
+      evidenceJson: evidenceJson ?? this.evidenceJson,
+      occurrences: occurrences ?? this.occurrences,
+      firstSeenAt: firstSeenAt ?? this.firstSeenAt,
+      lastSeenAt: lastSeenAt ?? this.lastSeenAt,
+      status: status ?? this.status,
+      nextReviewAt: nextReviewAt ?? this.nextReviewAt,
+      snoozedUntil: snoozedUntil ?? this.snoozedUntil,
+      dismissed: dismissed ?? this.dismissed,
+      reviewStreak: reviewStreak ?? this.reviewStreak,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (studentId.present) {
+      map['student_id'] = Variable<int>(studentId.value);
+    }
+    if (courseVersionId.present) {
+      map['course_version_id'] = Variable<int>(courseVersionId.value);
+    }
+    if (kpKey.present) {
+      map['kp_key'] = Variable<String>(kpKey.value);
+    }
+    if (bundleVersionId.present) {
+      map['bundle_version_id'] = Variable<String>(bundleVersionId.value);
+    }
+    if (sessionId.present) {
+      map['session_id'] = Variable<int>(sessionId.value);
+    }
+    if (messageId.present) {
+      map['message_id'] = Variable<int>(messageId.value);
+    }
+    if (mistakeTagRaw.present) {
+      map['mistake_tag_raw'] = Variable<String>(mistakeTagRaw.value);
+    }
+    if (mistakeTagKey.present) {
+      map['mistake_tag_key'] = Variable<String>(mistakeTagKey.value);
+    }
+    if (mistakeNote.present) {
+      map['mistake_note'] = Variable<String>(mistakeNote.value);
+    }
+    if (questionExcerpt.present) {
+      map['question_excerpt'] = Variable<String>(questionExcerpt.value);
+    }
+    if (difficulty.present) {
+      map['difficulty'] = Variable<String>(difficulty.value);
+    }
+    if (evidenceJson.present) {
+      map['evidence_json'] = Variable<String>(evidenceJson.value);
+    }
+    if (occurrences.present) {
+      map['occurrences'] = Variable<int>(occurrences.value);
+    }
+    if (firstSeenAt.present) {
+      map['first_seen_at'] = Variable<DateTime>(firstSeenAt.value);
+    }
+    if (lastSeenAt.present) {
+      map['last_seen_at'] = Variable<DateTime>(lastSeenAt.value);
+    }
+    if (status.present) {
+      map['status'] = Variable<String>(status.value);
+    }
+    if (nextReviewAt.present) {
+      map['next_review_at'] = Variable<DateTime>(nextReviewAt.value);
+    }
+    if (snoozedUntil.present) {
+      map['snoozed_until'] = Variable<DateTime>(snoozedUntil.value);
+    }
+    if (dismissed.present) {
+      map['dismissed'] = Variable<bool>(dismissed.value);
+    }
+    if (reviewStreak.present) {
+      map['review_streak'] = Variable<int>(reviewStreak.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MistakeEntriesCompanion(')
+          ..write('id: $id, ')
+          ..write('studentId: $studentId, ')
+          ..write('courseVersionId: $courseVersionId, ')
+          ..write('kpKey: $kpKey, ')
+          ..write('bundleVersionId: $bundleVersionId, ')
+          ..write('sessionId: $sessionId, ')
+          ..write('messageId: $messageId, ')
+          ..write('mistakeTagRaw: $mistakeTagRaw, ')
+          ..write('mistakeTagKey: $mistakeTagKey, ')
+          ..write('mistakeNote: $mistakeNote, ')
+          ..write('questionExcerpt: $questionExcerpt, ')
+          ..write('difficulty: $difficulty, ')
+          ..write('evidenceJson: $evidenceJson, ')
+          ..write('occurrences: $occurrences, ')
+          ..write('firstSeenAt: $firstSeenAt, ')
+          ..write('lastSeenAt: $lastSeenAt, ')
+          ..write('status: $status, ')
+          ..write('nextReviewAt: $nextReviewAt, ')
+          ..write('snoozedUntil: $snoozedUntil, ')
+          ..write('dismissed: $dismissed, ')
+          ..write('reviewStreak: $reviewStreak')
           ..write(')'))
         .toString();
   }
@@ -9366,6 +10408,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $StudentCourseAssignmentsTable(this);
   late final $ProgressEntriesTable progressEntries =
       $ProgressEntriesTable(this);
+  late final $MistakeEntriesTable mistakeEntries = $MistakeEntriesTable(this);
   late final $ChatSessionsTable chatSessions = $ChatSessionsTable(this);
   late final $ChatMessagesTable chatMessages = $ChatMessagesTable(this);
   late final $LlmCallsTable llmCalls = $LlmCallsTable(this);
@@ -9394,6 +10437,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         courseEdges,
         studentCourseAssignments,
         progressEntries,
+        mistakeEntries,
         chatSessions,
         chatMessages,
         llmCalls,
@@ -10373,6 +11417,7 @@ typedef $$ProgressEntriesTableCreateCompanionBuilder = ProgressEntriesCompanion
   required String kpKey,
   Value<bool> lit,
   Value<int> litPercent,
+  Value<int?> masteryLevel,
   Value<String?> questionLevel,
   Value<int> easyPassedCount,
   Value<int> mediumPassedCount,
@@ -10390,6 +11435,7 @@ typedef $$ProgressEntriesTableUpdateCompanionBuilder = ProgressEntriesCompanion
   Value<String> kpKey,
   Value<bool> lit,
   Value<int> litPercent,
+  Value<int?> masteryLevel,
   Value<String?> questionLevel,
   Value<int> easyPassedCount,
   Value<int> mediumPassedCount,
@@ -10427,6 +11473,9 @@ class $$ProgressEntriesTableFilterComposer
 
   ColumnFilters<int> get litPercent => $composableBuilder(
       column: $table.litPercent, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get masteryLevel => $composableBuilder(
+      column: $table.masteryLevel, builder: (column) => ColumnFilters(column));
 
   ColumnFilters<String> get questionLevel => $composableBuilder(
       column: $table.questionLevel, builder: (column) => ColumnFilters(column));
@@ -10484,6 +11533,10 @@ class $$ProgressEntriesTableOrderingComposer
 
   ColumnOrderings<int> get litPercent => $composableBuilder(
       column: $table.litPercent, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get masteryLevel => $composableBuilder(
+      column: $table.masteryLevel,
+      builder: (column) => ColumnOrderings(column));
 
   ColumnOrderings<String> get questionLevel => $composableBuilder(
       column: $table.questionLevel,
@@ -10543,6 +11596,9 @@ class $$ProgressEntriesTableAnnotationComposer
   GeneratedColumn<int> get litPercent => $composableBuilder(
       column: $table.litPercent, builder: (column) => column);
 
+  GeneratedColumn<int> get masteryLevel => $composableBuilder(
+      column: $table.masteryLevel, builder: (column) => column);
+
   GeneratedColumn<String> get questionLevel => $composableBuilder(
       column: $table.questionLevel, builder: (column) => column);
 
@@ -10601,6 +11657,7 @@ class $$ProgressEntriesTableTableManager extends RootTableManager<
             Value<String> kpKey = const Value.absent(),
             Value<bool> lit = const Value.absent(),
             Value<int> litPercent = const Value.absent(),
+            Value<int?> masteryLevel = const Value.absent(),
             Value<String?> questionLevel = const Value.absent(),
             Value<int> easyPassedCount = const Value.absent(),
             Value<int> mediumPassedCount = const Value.absent(),
@@ -10617,6 +11674,7 @@ class $$ProgressEntriesTableTableManager extends RootTableManager<
             kpKey: kpKey,
             lit: lit,
             litPercent: litPercent,
+            masteryLevel: masteryLevel,
             questionLevel: questionLevel,
             easyPassedCount: easyPassedCount,
             mediumPassedCount: mediumPassedCount,
@@ -10633,6 +11691,7 @@ class $$ProgressEntriesTableTableManager extends RootTableManager<
             required String kpKey,
             Value<bool> lit = const Value.absent(),
             Value<int> litPercent = const Value.absent(),
+            Value<int?> masteryLevel = const Value.absent(),
             Value<String?> questionLevel = const Value.absent(),
             Value<int> easyPassedCount = const Value.absent(),
             Value<int> mediumPassedCount = const Value.absent(),
@@ -10649,6 +11708,7 @@ class $$ProgressEntriesTableTableManager extends RootTableManager<
             kpKey: kpKey,
             lit: lit,
             litPercent: litPercent,
+            masteryLevel: masteryLevel,
             questionLevel: questionLevel,
             easyPassedCount: easyPassedCount,
             mediumPassedCount: mediumPassedCount,
@@ -10679,6 +11739,426 @@ typedef $$ProgressEntriesTableProcessedTableManager = ProcessedTableManager<
       BaseReferences<_$AppDatabase, $ProgressEntriesTable, ProgressEntry>
     ),
     ProgressEntry,
+    PrefetchHooks Function()>;
+typedef $$MistakeEntriesTableCreateCompanionBuilder = MistakeEntriesCompanion
+    Function({
+  Value<int> id,
+  required int studentId,
+  required int courseVersionId,
+  required String kpKey,
+  Value<String?> bundleVersionId,
+  required int sessionId,
+  required int messageId,
+  required String mistakeTagRaw,
+  required String mistakeTagKey,
+  Value<String?> mistakeNote,
+  Value<String?> questionExcerpt,
+  Value<String?> difficulty,
+  required String evidenceJson,
+  Value<int> occurrences,
+  required DateTime firstSeenAt,
+  required DateTime lastSeenAt,
+  Value<String> status,
+  Value<DateTime?> nextReviewAt,
+  Value<DateTime?> snoozedUntil,
+  Value<bool> dismissed,
+  Value<int> reviewStreak,
+});
+typedef $$MistakeEntriesTableUpdateCompanionBuilder = MistakeEntriesCompanion
+    Function({
+  Value<int> id,
+  Value<int> studentId,
+  Value<int> courseVersionId,
+  Value<String> kpKey,
+  Value<String?> bundleVersionId,
+  Value<int> sessionId,
+  Value<int> messageId,
+  Value<String> mistakeTagRaw,
+  Value<String> mistakeTagKey,
+  Value<String?> mistakeNote,
+  Value<String?> questionExcerpt,
+  Value<String?> difficulty,
+  Value<String> evidenceJson,
+  Value<int> occurrences,
+  Value<DateTime> firstSeenAt,
+  Value<DateTime> lastSeenAt,
+  Value<String> status,
+  Value<DateTime?> nextReviewAt,
+  Value<DateTime?> snoozedUntil,
+  Value<bool> dismissed,
+  Value<int> reviewStreak,
+});
+
+class $$MistakeEntriesTableFilterComposer
+    extends Composer<_$AppDatabase, $MistakeEntriesTable> {
+  $$MistakeEntriesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get studentId => $composableBuilder(
+      column: $table.studentId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get courseVersionId => $composableBuilder(
+      column: $table.courseVersionId,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get kpKey => $composableBuilder(
+      column: $table.kpKey, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get bundleVersionId => $composableBuilder(
+      column: $table.bundleVersionId,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get sessionId => $composableBuilder(
+      column: $table.sessionId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get messageId => $composableBuilder(
+      column: $table.messageId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get mistakeTagRaw => $composableBuilder(
+      column: $table.mistakeTagRaw, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get mistakeTagKey => $composableBuilder(
+      column: $table.mistakeTagKey, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get mistakeNote => $composableBuilder(
+      column: $table.mistakeNote, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get questionExcerpt => $composableBuilder(
+      column: $table.questionExcerpt,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get difficulty => $composableBuilder(
+      column: $table.difficulty, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get evidenceJson => $composableBuilder(
+      column: $table.evidenceJson, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get occurrences => $composableBuilder(
+      column: $table.occurrences, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get firstSeenAt => $composableBuilder(
+      column: $table.firstSeenAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get lastSeenAt => $composableBuilder(
+      column: $table.lastSeenAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get status => $composableBuilder(
+      column: $table.status, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get nextReviewAt => $composableBuilder(
+      column: $table.nextReviewAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<DateTime> get snoozedUntil => $composableBuilder(
+      column: $table.snoozedUntil, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get dismissed => $composableBuilder(
+      column: $table.dismissed, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get reviewStreak => $composableBuilder(
+      column: $table.reviewStreak, builder: (column) => ColumnFilters(column));
+}
+
+class $$MistakeEntriesTableOrderingComposer
+    extends Composer<_$AppDatabase, $MistakeEntriesTable> {
+  $$MistakeEntriesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get studentId => $composableBuilder(
+      column: $table.studentId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get courseVersionId => $composableBuilder(
+      column: $table.courseVersionId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get kpKey => $composableBuilder(
+      column: $table.kpKey, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get bundleVersionId => $composableBuilder(
+      column: $table.bundleVersionId,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get sessionId => $composableBuilder(
+      column: $table.sessionId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get messageId => $composableBuilder(
+      column: $table.messageId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get mistakeTagRaw => $composableBuilder(
+      column: $table.mistakeTagRaw,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get mistakeTagKey => $composableBuilder(
+      column: $table.mistakeTagKey,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get mistakeNote => $composableBuilder(
+      column: $table.mistakeNote, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get questionExcerpt => $composableBuilder(
+      column: $table.questionExcerpt,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get difficulty => $composableBuilder(
+      column: $table.difficulty, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get evidenceJson => $composableBuilder(
+      column: $table.evidenceJson,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get occurrences => $composableBuilder(
+      column: $table.occurrences, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get firstSeenAt => $composableBuilder(
+      column: $table.firstSeenAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get lastSeenAt => $composableBuilder(
+      column: $table.lastSeenAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get status => $composableBuilder(
+      column: $table.status, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get nextReviewAt => $composableBuilder(
+      column: $table.nextReviewAt,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<DateTime> get snoozedUntil => $composableBuilder(
+      column: $table.snoozedUntil,
+      builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get dismissed => $composableBuilder(
+      column: $table.dismissed, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get reviewStreak => $composableBuilder(
+      column: $table.reviewStreak,
+      builder: (column) => ColumnOrderings(column));
+}
+
+class $$MistakeEntriesTableAnnotationComposer
+    extends Composer<_$AppDatabase, $MistakeEntriesTable> {
+  $$MistakeEntriesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get studentId =>
+      $composableBuilder(column: $table.studentId, builder: (column) => column);
+
+  GeneratedColumn<int> get courseVersionId => $composableBuilder(
+      column: $table.courseVersionId, builder: (column) => column);
+
+  GeneratedColumn<String> get kpKey =>
+      $composableBuilder(column: $table.kpKey, builder: (column) => column);
+
+  GeneratedColumn<String> get bundleVersionId => $composableBuilder(
+      column: $table.bundleVersionId, builder: (column) => column);
+
+  GeneratedColumn<int> get sessionId =>
+      $composableBuilder(column: $table.sessionId, builder: (column) => column);
+
+  GeneratedColumn<int> get messageId =>
+      $composableBuilder(column: $table.messageId, builder: (column) => column);
+
+  GeneratedColumn<String> get mistakeTagRaw => $composableBuilder(
+      column: $table.mistakeTagRaw, builder: (column) => column);
+
+  GeneratedColumn<String> get mistakeTagKey => $composableBuilder(
+      column: $table.mistakeTagKey, builder: (column) => column);
+
+  GeneratedColumn<String> get mistakeNote => $composableBuilder(
+      column: $table.mistakeNote, builder: (column) => column);
+
+  GeneratedColumn<String> get questionExcerpt => $composableBuilder(
+      column: $table.questionExcerpt, builder: (column) => column);
+
+  GeneratedColumn<String> get difficulty => $composableBuilder(
+      column: $table.difficulty, builder: (column) => column);
+
+  GeneratedColumn<String> get evidenceJson => $composableBuilder(
+      column: $table.evidenceJson, builder: (column) => column);
+
+  GeneratedColumn<int> get occurrences => $composableBuilder(
+      column: $table.occurrences, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get firstSeenAt => $composableBuilder(
+      column: $table.firstSeenAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get lastSeenAt => $composableBuilder(
+      column: $table.lastSeenAt, builder: (column) => column);
+
+  GeneratedColumn<String> get status =>
+      $composableBuilder(column: $table.status, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get nextReviewAt => $composableBuilder(
+      column: $table.nextReviewAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get snoozedUntil => $composableBuilder(
+      column: $table.snoozedUntil, builder: (column) => column);
+
+  GeneratedColumn<bool> get dismissed =>
+      $composableBuilder(column: $table.dismissed, builder: (column) => column);
+
+  GeneratedColumn<int> get reviewStreak => $composableBuilder(
+      column: $table.reviewStreak, builder: (column) => column);
+}
+
+class $$MistakeEntriesTableTableManager extends RootTableManager<
+    _$AppDatabase,
+    $MistakeEntriesTable,
+    MistakeEntry,
+    $$MistakeEntriesTableFilterComposer,
+    $$MistakeEntriesTableOrderingComposer,
+    $$MistakeEntriesTableAnnotationComposer,
+    $$MistakeEntriesTableCreateCompanionBuilder,
+    $$MistakeEntriesTableUpdateCompanionBuilder,
+    (
+      MistakeEntry,
+      BaseReferences<_$AppDatabase, $MistakeEntriesTable, MistakeEntry>
+    ),
+    MistakeEntry,
+    PrefetchHooks Function()> {
+  $$MistakeEntriesTableTableManager(
+      _$AppDatabase db, $MistakeEntriesTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$MistakeEntriesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$MistakeEntriesTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$MistakeEntriesTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<int> id = const Value.absent(),
+            Value<int> studentId = const Value.absent(),
+            Value<int> courseVersionId = const Value.absent(),
+            Value<String> kpKey = const Value.absent(),
+            Value<String?> bundleVersionId = const Value.absent(),
+            Value<int> sessionId = const Value.absent(),
+            Value<int> messageId = const Value.absent(),
+            Value<String> mistakeTagRaw = const Value.absent(),
+            Value<String> mistakeTagKey = const Value.absent(),
+            Value<String?> mistakeNote = const Value.absent(),
+            Value<String?> questionExcerpt = const Value.absent(),
+            Value<String?> difficulty = const Value.absent(),
+            Value<String> evidenceJson = const Value.absent(),
+            Value<int> occurrences = const Value.absent(),
+            Value<DateTime> firstSeenAt = const Value.absent(),
+            Value<DateTime> lastSeenAt = const Value.absent(),
+            Value<String> status = const Value.absent(),
+            Value<DateTime?> nextReviewAt = const Value.absent(),
+            Value<DateTime?> snoozedUntil = const Value.absent(),
+            Value<bool> dismissed = const Value.absent(),
+            Value<int> reviewStreak = const Value.absent(),
+          }) =>
+              MistakeEntriesCompanion(
+            id: id,
+            studentId: studentId,
+            courseVersionId: courseVersionId,
+            kpKey: kpKey,
+            bundleVersionId: bundleVersionId,
+            sessionId: sessionId,
+            messageId: messageId,
+            mistakeTagRaw: mistakeTagRaw,
+            mistakeTagKey: mistakeTagKey,
+            mistakeNote: mistakeNote,
+            questionExcerpt: questionExcerpt,
+            difficulty: difficulty,
+            evidenceJson: evidenceJson,
+            occurrences: occurrences,
+            firstSeenAt: firstSeenAt,
+            lastSeenAt: lastSeenAt,
+            status: status,
+            nextReviewAt: nextReviewAt,
+            snoozedUntil: snoozedUntil,
+            dismissed: dismissed,
+            reviewStreak: reviewStreak,
+          ),
+          createCompanionCallback: ({
+            Value<int> id = const Value.absent(),
+            required int studentId,
+            required int courseVersionId,
+            required String kpKey,
+            Value<String?> bundleVersionId = const Value.absent(),
+            required int sessionId,
+            required int messageId,
+            required String mistakeTagRaw,
+            required String mistakeTagKey,
+            Value<String?> mistakeNote = const Value.absent(),
+            Value<String?> questionExcerpt = const Value.absent(),
+            Value<String?> difficulty = const Value.absent(),
+            required String evidenceJson,
+            Value<int> occurrences = const Value.absent(),
+            required DateTime firstSeenAt,
+            required DateTime lastSeenAt,
+            Value<String> status = const Value.absent(),
+            Value<DateTime?> nextReviewAt = const Value.absent(),
+            Value<DateTime?> snoozedUntil = const Value.absent(),
+            Value<bool> dismissed = const Value.absent(),
+            Value<int> reviewStreak = const Value.absent(),
+          }) =>
+              MistakeEntriesCompanion.insert(
+            id: id,
+            studentId: studentId,
+            courseVersionId: courseVersionId,
+            kpKey: kpKey,
+            bundleVersionId: bundleVersionId,
+            sessionId: sessionId,
+            messageId: messageId,
+            mistakeTagRaw: mistakeTagRaw,
+            mistakeTagKey: mistakeTagKey,
+            mistakeNote: mistakeNote,
+            questionExcerpt: questionExcerpt,
+            difficulty: difficulty,
+            evidenceJson: evidenceJson,
+            occurrences: occurrences,
+            firstSeenAt: firstSeenAt,
+            lastSeenAt: lastSeenAt,
+            status: status,
+            nextReviewAt: nextReviewAt,
+            snoozedUntil: snoozedUntil,
+            dismissed: dismissed,
+            reviewStreak: reviewStreak,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$MistakeEntriesTableProcessedTableManager = ProcessedTableManager<
+    _$AppDatabase,
+    $MistakeEntriesTable,
+    MistakeEntry,
+    $$MistakeEntriesTableFilterComposer,
+    $$MistakeEntriesTableOrderingComposer,
+    $$MistakeEntriesTableAnnotationComposer,
+    $$MistakeEntriesTableCreateCompanionBuilder,
+    $$MistakeEntriesTableUpdateCompanionBuilder,
+    (
+      MistakeEntry,
+      BaseReferences<_$AppDatabase, $MistakeEntriesTable, MistakeEntry>
+    ),
+    MistakeEntry,
     PrefetchHooks Function()>;
 typedef $$ChatSessionsTableCreateCompanionBuilder = ChatSessionsCompanion
     Function({
@@ -13838,6 +15318,8 @@ class $AppDatabaseManager {
           _db, _db.studentCourseAssignments);
   $$ProgressEntriesTableTableManager get progressEntries =>
       $$ProgressEntriesTableTableManager(_db, _db.progressEntries);
+  $$MistakeEntriesTableTableManager get mistakeEntries =>
+      $$MistakeEntriesTableTableManager(_db, _db.mistakeEntries);
   $$ChatSessionsTableTableManager get chatSessions =>
       $$ChatSessionsTableTableManager(_db, _db.chatSessions);
   $$ChatMessagesTableTableManager get chatMessages =>

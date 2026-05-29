@@ -4,6 +4,7 @@ import 'package:tutor1on1/l10n/app_localizations.dart';
 
 import '../../db/app_database.dart';
 import '../app_close_button.dart';
+import 'mistake_book_page.dart';
 import 'skill_tree_page.dart';
 import 'student_sessions_page.dart';
 
@@ -132,6 +133,34 @@ class _TeacherStudentsPageState extends State<TeacherStudentsPage> {
                             },
                             icon: const Icon(Icons.history),
                             label: Text(l10n.studentSessionsButton),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          height: 56,
+                          width: 56,
+                          child: Tooltip(
+                            message: 'Mistake Book',
+                            child: IconButton.outlined(
+                              key: const Key(
+                                'teacher_students_mistake_book_button',
+                              ),
+                              onPressed: selectedCourse == null
+                                  ? null
+                                  : () {
+                                      Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder: (_) => MistakeBookPage(
+                                            studentId: selectedStudent.id,
+                                            courseVersionId:
+                                                selectedCourse.courseVersionId,
+                                            readOnly: true,
+                                          ),
+                                        ),
+                                      );
+                                    },
+                              icon: const Icon(Icons.menu_book_outlined),
+                            ),
                           ),
                         ),
                       ],
