@@ -166,6 +166,27 @@ class SessionService {
     );
   }
 
+  /// One-shot mistake focus per session: the next REVIEW_INIT for that session
+  /// lists this tag first in its "Mistake focus:" prefix. App mechanics only —
+  /// the prompt still selects the actual question.
+  final Map<int, String> _pendingMistakeFocusTags = <int, String>{};
+
+  /// Occurrence cap for mistake evidence: the prompt may re-describe the same
+  /// mistake on several turns of one question, so each (session, active
+  /// question, tag) bumps occurrences at most once per app run.
+  final Map<int, Set<String>> _persistedQuestionTags = <int, Set<String>>{};
+
+  void setPendingMistakeFocusTag({
+    required int sessionId,
+    required String tag,
+  }) {
+    final trimmed = tag.trim();
+    if (sessionId <= 0 || trimmed.isEmpty) {
+      return;
+    }
+    _pendingMistakeFocusTags[sessionId] = trimmed;
+  }
+
   Future<int> _createSession({
     required int studentId,
     required int courseVersionId,
@@ -477,10 +498,13 @@ class SessionService {
                 courseVersionId: courseVersion.id,
                 kpKey: node.kpKey,
               );
+        final pendingFocusTag =
+            session == null ? null : _pendingMistakeFocusTags.remove(session.id);
         values[PromptVariableRegistry.presentedQuestions] =
             _questionsWithMistakeFocus(
           questionsText: presentedQuestions,
           mistakes: dueMistakes,
+          pendingTag: pendingFocusTag,
         );
       }
     }
@@ -864,6 +888,23 @@ class SessionService {
       resolution: resolution,
     );
     await _touchSessionSync(request.sessionId);
+    if (request.actionMode == 'review' &&
+        request.promptName == PromptVariableRegistry.reviewContPrompt &&
+        shouldCountReviewAttempt &&
+        parsed != null &&
+        parsed['finished'] == true &&
+        studentId != null &&
+        studentId > 0) {
+      try {
+        // Graded turn: durable progress/mistake evidence changed. Artifacts
+        // are otherwise rebuilt only by the quit-app syncNow path, so mark
+        // them stale here or other devices/teachers stay stale until exit.
+        await _db.notifySessionArtifactsChanged(studentId);
+      } catch (_) {
+        // Best-effort: the turn itself is already persisted, and the next
+        // sync run rebuilds artifacts anyway.
+      }
+    }
   }
 
   Future<void> _appendTutorPersistLog({
@@ -1332,17 +1373,33 @@ class SessionService {
   String _questionsWithMistakeFocus({
     required String questionsText,
     required List<MistakeEntry> mistakes,
+    String? pendingTag,
   }) {
-    final activeMistakes = mistakes
-        .where((mistake) => !mistake.dismissed && mistake.status == 'open')
-        .take(3)
-        .toList(growable: false);
-    if (activeMistakes.isEmpty) {
+    final focusTags = <String>[];
+    final seenKeys = <String>{};
+    final trimmedPending = pendingTag?.trim() ?? '';
+    if (trimmedPending.isNotEmpty) {
+      final key = AppDatabase.normalizeMistakeTagKey(trimmedPending);
+      if (key.isNotEmpty && seenKeys.add(key)) {
+        focusTags.add(trimmedPending);
+      }
+    }
+    for (final mistake in mistakes) {
+      if (focusTags.length >= 3) {
+        break;
+      }
+      if (mistake.dismissed || mistake.status != 'open') {
+        continue;
+      }
+      if (mistake.mistakeTagKey.isNotEmpty &&
+          seenKeys.add(mistake.mistakeTagKey)) {
+        focusTags.add(mistake.mistakeTagRaw);
+      }
+    }
+    if (focusTags.isEmpty) {
       return questionsText;
     }
-    final focus = activeMistakes
-        .map((mistake) => '- ${mistake.mistakeTagRaw}')
-        .join('\n');
+    final focus = focusTags.map((tag) => '- $tag').join('\n');
     final trimmedQuestions = questionsText.trim();
     if (trimmedQuestions.isEmpty) {
       return 'Mistake focus:\n$focus';
@@ -1667,6 +1724,9 @@ class SessionService {
     required bool shouldCountReviewAttempt,
   }) async {
     final studentId = request.llmContext.studentId;
+    // The frozen prompt reports mistakes on wrong answers (finished=false), so
+    // unfinished turns must persist too. Inflation is prevented below by
+    // capping occurrences at one bump per (session, active question, tag).
     if (request.actionMode != 'review' ||
         request.promptName != PromptVariableRegistry.reviewContPrompt ||
         !shouldCountReviewAttempt ||
@@ -1684,7 +1744,18 @@ class SessionService {
     final questionExcerpt = _activeQuestionExcerpt(activeQuestion);
     final difficulty = _normalizeLevel(activeQuestion?['difficulty']) ??
         _normalizeLevel(request.reviewQuestionDifficulty);
+    // Key on the question text: the control state rebuilds the active-question
+    // map between turns, but the text is stable for the life of one question.
+    final questionFingerprint = questionExcerpt ?? jsonEncode(activeQuestion);
+    final seenForSession = _persistedQuestionTags.putIfAbsent(
+      request.sessionId,
+      () => <String>{},
+    );
     for (final draft in drafts) {
+      final tagKey = AppDatabase.normalizeMistakeTagKey(draft.tag);
+      if (!seenForSession.add('$questionFingerprint|$tagKey')) {
+        continue;
+      }
       await _db.upsertMistakeEvidence(
         studentId: studentId,
         courseVersionId: request.courseVersionId,

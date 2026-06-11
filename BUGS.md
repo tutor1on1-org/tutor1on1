@@ -1,5 +1,5 @@
 # BUGS
-Last updated: 2026-05-08
+Last updated: 2026-06-11
 
 ## Active watch
 - Student import race after bundle download (monitoring): fixed by awaiting archive extraction in client bundle service (`f77e7e0`); keep watching for recurrence in production-like flow.
@@ -8,6 +8,26 @@ Last updated: 2026-05-08
 - Current canonical sync model is zip-artifact manifest sync. Bug entries that explicitly target the retired row-level session/progress/enrollment sync model are kept only as historical root-cause references.
 
 ## Recent bug fixes
+- 2026-06-11 Mistake-book occurrence inflation: the frozen `review_cont` prompt
+  reports mistakes on wrong answers (`finished=false`), so the same tag
+  re-described across turns of ONE question bumped `occurrences` each turn and
+  reset `next_review_at`. Fix: keep capturing unfinished turns (they carry the
+  evidence — do NOT gate on `finished==true`) but cap occurrence bumps at one
+  per (session, active-question text, tag); backfill caps per (session, tag).
+  Prevention: read the bundled prompt text before changing any capture gate.
+- 2026-06-11 Mistake/progress evidence stale until app quit: artifacts were
+  rebuilt only in `syncNow` (quit-app flow) / force-push; the
+  `refreshSessionArtifacts` notify path was dead (no caller passed `true`), so
+  the 60s background sync uploaded nothing new mid-session. Fix: graded review
+  turns call `notifySessionArtifactsChanged`; `handleLocalSyncRelevantChange`
+  now always enqueues and drains while holding the sync slot
+  (`_beginSync`/`_finishSync`) so manifest rebuilds cannot race a concurrent
+  sync, and the notify is failure-isolated from the already-persisted turn.
+- 2026-06-11 Mistake Book "Review" launched a learn-mode session, so the
+  REVIEW_INIT mistake-focus bias never fired from the book. Fix:
+  `ChatSessionPage(startInReview: true)` + one-shot per-session
+  `setPendingMistakeFocusTag` seeds the tapped tag into `presented_questions`
+  (in-memory only; never synced).
 - 2026-05-08 Teacher AI course builder `Cached course artifacts are missing`: downloaded course scaffolds can exist without an artifact manifest/content bundle. Repair the editable artifact source before prompt generation, diff, and save by pulling the latest server bundle; do not wait until `saveQuestionText` throws.
 - 2026-04-30 OpenAI Codex OAuth `Unsupported parameter: max_output_tokens`: ChatGPT/Codex `/backend-api/codex/responses` is not a drop-in OpenAI Platform Responses endpoint and can reject Platform-supported request fields. Do not send `max_output_tokens` on the `openai-codex` provider path; keep a request-shape test that asserts the OAuth body omits unsupported parameters.
 - 2026-04-30 OpenAI Codex OAuth `Instructions are required`: ChatGPT/Codex `/backend-api/codex/responses` rejects requests without a non-empty top-level `instructions` field even when `input` carries the tutor prompt. Keep a concise stable tutor instruction in the Codex OAuth request body and assert it in provider tests.

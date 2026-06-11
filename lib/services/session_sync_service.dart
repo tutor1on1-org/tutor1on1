@@ -46,7 +46,6 @@ class SessionSyncService {
   static const int _downloadApplyCheckpointInterval = 64;
 
   bool get _localMutationSuppressed => _localMutationSuppressionDepth > 0;
-  bool get _syncing => _activeSyncCompleter != null;
 
   Future<Completer<void>?> _beginSync({
     required bool waitForActiveSync,
@@ -106,37 +105,28 @@ class SessionSyncService {
   }
 
   Future<void> handleLocalSyncRelevantChange(SyncRelevantChange change) async {
-    if (_localMutationSuppressed ||
-        change.isEmpty ||
-        !change.refreshSessionArtifacts) {
+    if (change.isEmpty || !change.refreshSessionArtifacts) {
       return;
     }
     await ensureLocalCutoverInitialized();
-    final pendingStudents = <User>[];
-    final seenRemoteUserIds = <int>{};
-    for (final localUserId in change.localUserIds) {
-      final user = await _db.getUserById(localUserId);
-      final remoteUserId = user?.remoteUserId;
-      if (user == null ||
-          user.role != 'student' ||
-          remoteUserId == null ||
-          remoteUserId <= 0) {
-        continue;
-      }
-      if (!seenRemoteUserIds.add(remoteUserId)) {
-        continue;
-      }
-      pendingStudents.add(user);
-    }
-    if (_syncing) {
-      for (final student in pendingStudents) {
-        _pendingRefreshLocalUserIds.add(student.id);
-      }
+    // Always enqueue (never drop): _drainPendingRefreshes re-resolves users
+    // and filters non-students / missing remote ids itself.
+    _pendingRefreshLocalUserIds.addAll(
+      change.localUserIds.where((id) => id > 0),
+    );
+    if (_localMutationSuppressed) {
+      // Sync-owned mutation window; the surrounding flow drains the pending
+      // set when it finishes.
       return;
     }
-    for (final student in pendingStudents) {
-      await _refreshLocalArtifactsForStudent(student);
+    final syncCompleter = await _beginSync(waitForActiveSync: false);
+    if (syncCompleter == null) {
+      // A sync is active; its _finishSync drains the pending set.
+      return;
     }
+    // Holding the sync slot serializes manifest rebuilds against sync runs;
+    // _finishSync drains the pending set before releasing the slot.
+    await _finishSync(syncCompleter);
   }
 
   Future<void> prepareForAutoSync({

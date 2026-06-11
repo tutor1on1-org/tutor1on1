@@ -463,6 +463,17 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
+  /// Marks the student's session artifacts stale so the sync layer rebuilds
+  /// them now; without this, artifacts are only rebuilt by the quit-app
+  /// syncNow / manual force-push paths and graded-turn evidence stays local.
+  Future<void> notifySessionArtifactsChanged(int studentId) {
+    return _notifySyncRelevantUsers(
+      <int>[studentId],
+      refreshEnrollmentState: false,
+      refreshSessionArtifacts: true,
+    );
+  }
+
   Future<Set<int>> _syncAffectedUsersForCourseVersion(
       int courseVersionId) async {
     final affected = <int>{};
@@ -1708,6 +1719,7 @@ ORDER BY s.started_at DESC
           ..where((tbl) => tbl.role.equals('assistant')))
         .get();
     final pending = <String, _BackfilledMistakeEntry>{};
+    final seenSessionTags = <String>{};
     for (final message in messages) {
       final action = (message.action ?? '').trim().toLowerCase();
       if (action != 'review') {
@@ -1729,6 +1741,11 @@ ORDER BY s.started_at DESC
         }
         final key =
             '${session.studentId}:${session.courseVersionId}:${session.kpKey}:$tagKey';
+        // Stored messages carry no per-question identity, so cap occurrences
+        // at one bump per (session, tag): the prompt re-describes the same
+        // mistake across turns of one question, which would inflate counts.
+        final firstInSession =
+            seenSessionTags.add('${message.sessionId}:$tagKey');
         final existing = pending[key];
         if (existing == null) {
           pending[key] = _BackfilledMistakeEntry(
@@ -1753,7 +1770,9 @@ ORDER BY s.started_at DESC
           );
           continue;
         }
-        existing.occurrences += 1;
+        if (firstInSession) {
+          existing.occurrences += 1;
+        }
         existing.sessionId = message.sessionId;
         existing.messageId = message.id;
         existing.lastSeenAt = message.createdAt;

@@ -37,12 +37,17 @@ class ChatSessionPage extends StatefulWidget {
     required this.courseVersion,
     required this.node,
     this.readOnly = false,
+    this.startInReview = false,
   });
 
   final int sessionId;
   final CourseVersion courseVersion;
   final CourseNode node;
   final bool readOnly;
+
+  /// Auto-start the first turn in review mode (explicit Review intent, e.g.
+  /// launched from a Mistake Book entry) instead of the default learn mode.
+  final bool startInReview;
 
   @override
   State<ChatSessionPage> createState() => _ChatSessionPageState();
@@ -201,6 +206,10 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       return;
     }
     _autoStartAttempted = true;
+    if (widget.startInReview) {
+      await _startNewReviewTurn();
+      return;
+    }
     await _sendMessage(allowEmpty: true);
   }
 

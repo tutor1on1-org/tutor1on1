@@ -818,6 +818,204 @@ void main() {
     expect(session?.summaryLit, isTrue);
   });
 
+  test('mistake occurrences bump once per question, again on a new question',
+      () async {
+    final fixture = await _createTutorFixture(db: db, service: service);
+    _queueReviewQuestion(
+      llmService,
+      callHash: 'mb_gate_init_1',
+      text: 'First question?',
+    );
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': 'Not yet. Check the sign.',
+            'mistakes': <String>['sign error'],
+            'finished': false,
+            'difficulty_adjustment': 'same',
+          }),
+          callHash: 'mb_gate_unfinished',
+        ),
+      ),
+    );
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': 'Correct.',
+            'mistakes': <String>['sign error'],
+            'finished': true,
+            'difficulty_adjustment': 'same',
+          }),
+          callHash: 'mb_gate_finished',
+        ),
+      ),
+    );
+    _queueReviewQuestion(
+      llmService,
+      callHash: 'mb_gate_init_2',
+      text: 'Second question?',
+    );
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': 'Correct, but watch the sign.',
+            'mistakes': <String>['sign error'],
+            'finished': true,
+            'difficulty_adjustment': 'same',
+          }),
+          callHash: 'mb_gate_finished_2',
+        ),
+      ),
+    );
+
+    await _runReviewAction(service: service, fixture: fixture);
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      studentInput: 'wrong answer',
+    );
+
+    // The wrong-answer (finished=false) turn carries the evidence.
+    var entries = await db.select(db.mistakeEntries).get();
+    expect(entries, hasLength(1));
+    expect(entries.single.mistakeTagKey, equals('sign error'));
+    expect(entries.single.occurrences, equals(1));
+
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      studentInput: 'right answer',
+    );
+
+    // Same question re-listing the tag must not bump occurrences.
+    entries = await db.select(db.mistakeEntries).get();
+    expect(entries, hasLength(1));
+    expect(entries.single.occurrences, equals(1));
+
+    await _runReviewAction(service: service, fixture: fixture);
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      studentInput: 'right answer with same mistake',
+    );
+
+    // A different question re-flagging the tag is a real recurrence.
+    entries = await db.select(db.mistakeEntries).get();
+    expect(entries, hasLength(1));
+    expect(entries.single.occurrences, equals(2));
+  });
+
+  test('pending mistake focus tag does not leak into another session',
+      () async {
+    final fixture = await _createTutorFixture(db: db, service: service);
+    service.setPendingMistakeFocusTag(
+      sessionId: fixture.sessionId + 999,
+      tag: 'Sign Error',
+    );
+    _queueReviewQuestion(llmService, callHash: 'mb_isolation_init');
+
+    await _runReviewAction(service: service, fixture: fixture);
+
+    final initPrompt = llmService.callInvocations.single.renderedPrompt;
+    expect(initPrompt, isNot(contains('Mistake focus:')));
+  });
+
+  test('graded review turn marks session artifacts stale for sync', () async {
+    final fixture = await _createTutorFixture(db: db, service: service);
+    final refreshes = <SyncRelevantChange>[];
+    db.setSyncRelevantChangeCallback((change) async {
+      if (change.refreshSessionArtifacts) {
+        refreshes.add(change);
+      }
+    });
+    _queueReviewQuestion(llmService, callHash: 'mb_sync_init');
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': 'Not yet.',
+            'mistakes': <String>[],
+            'finished': false,
+            'difficulty_adjustment': 'same',
+          }),
+          callHash: 'mb_sync_unfinished',
+        ),
+      ),
+    );
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': 'Correct.',
+            'mistakes': <String>[],
+            'finished': true,
+            'difficulty_adjustment': 'same',
+          }),
+          callHash: 'mb_sync_finished',
+        ),
+      ),
+    );
+
+    await _runReviewAction(service: service, fixture: fixture);
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      studentInput: 'almost',
+    );
+    expect(refreshes, isEmpty);
+
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      studentInput: 'done',
+    );
+
+    expect(refreshes, hasLength(1));
+    expect(refreshes.single.localUserIds, contains(fixture.studentId));
+  });
+
+  test('pending mistake focus tag seeds only the next review init', () async {
+    final fixture = await _createTutorFixture(db: db, service: service);
+    service.setPendingMistakeFocusTag(
+      sessionId: fixture.sessionId,
+      tag: 'Sign Error',
+    );
+    _queueReviewQuestion(llmService, callHash: 'mb_focus_init_1');
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': 'Correct.',
+            'mistakes': <String>[],
+            'finished': true,
+            'difficulty_adjustment': 'same',
+          }),
+          callHash: 'mb_focus_finished',
+        ),
+      ),
+    );
+    _queueReviewQuestion(llmService, callHash: 'mb_focus_init_2');
+
+    await _runReviewAction(service: service, fixture: fixture);
+
+    final firstInitPrompt = llmService.callInvocations.first.renderedPrompt;
+    expect(firstInitPrompt, contains('Mistake focus:'));
+    expect(firstInitPrompt, contains('- Sign Error'));
+
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      studentInput: 'done',
+    );
+    await _runReviewAction(service: service, fixture: fixture);
+
+    final secondInitPrompt = llmService.callInvocations.last.renderedPrompt;
+    expect(secondInitPrompt, isNot(contains('Mistake focus:')));
+  });
+
   test('learn payload does not require structured retry', () async {
     final fixture = await _createTutorFixture(db: db, service: service);
     llmService.queueCall(

@@ -129,10 +129,21 @@ void main() {
           ChatMessagesCompanion.insert(
             sessionId: sessionId,
             role: 'assistant',
+            content: 'mid-question hint',
+            action: const Value('review'),
+            parsedJson: const Value(
+              '{"finished":false,"mistakes":["sign error"]}',
+            ),
+          ),
+        );
+    await db.into(db.chatMessages).insert(
+          ChatMessagesCompanion.insert(
+            sessionId: sessionId,
+            role: 'assistant',
             content: 'review result',
             action: const Value('review'),
             parsedJson: const Value(
-              '{"finished":true,"mistakes":["sign error"]}',
+              '{"finished":true,"mistakes":["sign error","off by one"]}',
             ),
           ),
         );
@@ -145,8 +156,11 @@ void main() {
       courseVersionId: courseVersionId,
       kpKey: '1.1',
     );
-    expect(rows, hasLength(1));
-    expect(rows.single.occurrences, 1);
+    expect(rows, hasLength(2));
+    final byKey = {for (final row in rows) row.mistakeTagKey: row};
+    // 'sign error' appears in two turns of the same session: counted once.
+    expect(byKey['sign error']?.occurrences, 1);
+    expect(byKey['off by one']?.occurrences, 1);
   });
 
   test('artifact import preserves local queue state on scope replace',

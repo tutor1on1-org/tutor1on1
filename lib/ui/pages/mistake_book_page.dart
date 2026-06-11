@@ -220,13 +220,17 @@ class _MistakeBookPageState extends State<MistakeBookPage> {
       );
       return;
     }
-    final sessionId =
-        await context.read<AppServices>().sessionService.startSession(
-              studentId: widget.studentId,
-              courseVersionId: entry.courseVersionId,
-              kpKey: entry.kpKey,
-              title: 'Review: ${entry.mistakeTagRaw}',
-            );
+    final sessionService = context.read<AppServices>().sessionService;
+    final sessionId = await sessionService.startSession(
+      studentId: widget.studentId,
+      courseVersionId: entry.courseVersionId,
+      kpKey: entry.kpKey,
+      title: 'Review: ${entry.mistakeTagRaw}',
+    );
+    sessionService.setPendingMistakeFocusTag(
+      sessionId: sessionId,
+      tag: entry.mistakeTagRaw,
+    );
     if (!mounted) {
       return;
     }
@@ -236,6 +240,7 @@ class _MistakeBookPageState extends State<MistakeBookPage> {
           sessionId: sessionId,
           courseVersion: course,
           node: node,
+          startInReview: true,
         ),
       ),
     );
