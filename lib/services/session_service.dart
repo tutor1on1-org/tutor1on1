@@ -808,7 +808,7 @@ class SessionService {
       passedLevel: request.reviewPassedLevel,
       shouldCountReviewAttempt: shouldCountReviewAttempt,
     );
-    await _persistMistakeEntriesIfNeeded(
+    final reflaggedTagKeys = await _persistMistakeEntriesIfNeeded(
       request: request,
       parsed: parsed,
       currentControl: currentControl,
@@ -888,17 +888,34 @@ class SessionService {
       resolution: resolution,
     );
     await _touchSessionSync(request.sessionId);
-    if (request.actionMode == 'review' &&
+    final isGradedReviewTurn = request.actionMode == 'review' &&
         request.promptName == PromptVariableRegistry.reviewContPrompt &&
         shouldCountReviewAttempt &&
         parsed != null &&
-        parsed['finished'] == true &&
         studentId != null &&
-        studentId > 0) {
+        studentId > 0;
+    if (isGradedReviewTurn && parsed['finished'] == true) {
       try {
-        // Graded turn: durable progress/mistake evidence changed. Artifacts
-        // are otherwise rebuilt only by the quit-app syncNow path, so mark
-        // them stale here or other devices/teachers stay stale until exit.
+        // A question completed: open, currently-due mistakes for this KP that
+        // the LLM did NOT re-flag count as a successful review and get pushed
+        // out along the spaced-resurfacing ladder (drains the due queue).
+        await _db.creditReviewedDueMistakes(
+          studentId: studentId,
+          courseVersionId: request.courseVersionId,
+          kpKey: request.kpKey,
+          reflaggedTagKeys: reflaggedTagKeys,
+        );
+      } catch (_) {
+        // Best-effort scheduling; the turn itself is already persisted.
+      }
+    }
+    // Mark artifacts stale when durable evidence changed: a completed (graded)
+    // turn, OR any turn that recorded mistake evidence (incl. wrong-answer
+    // finished==false turns — otherwise that evidence stays unsynced until a
+    // later finished turn or app quit).
+    if (isGradedReviewTurn &&
+        (parsed['finished'] == true || reflaggedTagKeys.isNotEmpty)) {
+      try {
         await _db.notifySessionArtifactsChanged(studentId);
       } catch (_) {
         // Best-effort: the turn itself is already persisted, and the next
@@ -1716,7 +1733,10 @@ class SessionService {
     );
   }
 
-  Future<void> _persistMistakeEntriesIfNeeded({
+  /// Persists mistake evidence for a graded review turn and returns the set of
+  /// normalized tag keys the LLM flagged this turn (used to widen the sync
+  /// notify and to credit spaced reviews). Empty when nothing applies.
+  Future<Set<String>> _persistMistakeEntriesIfNeeded({
     required _TutorRequestContext request,
     required Map<String, dynamic>? parsed,
     required TutorControlState currentControl,
@@ -1734,12 +1754,15 @@ class SessionService {
         studentId <= 0 ||
         parsed == null ||
         parsed['finished'] is! bool) {
-      return;
+      return const <String>{};
     }
     final drafts = _mistakeDraftsFromReviewPayload(parsed);
     if (drafts.isEmpty) {
-      return;
+      return const <String>{};
     }
+    final reflaggedTagKeys = <String>{
+      for (final draft in drafts) AppDatabase.normalizeMistakeTagKey(draft.tag),
+    }..removeWhere((key) => key.isEmpty);
     final activeQuestion = currentControl.activeReviewQuestion;
     final questionExcerpt = _activeQuestionExcerpt(activeQuestion);
     final difficulty = _normalizeLevel(activeQuestion?['difficulty']) ??
@@ -1773,6 +1796,7 @@ class SessionService {
         }),
       );
     }
+    return reflaggedTagKeys;
   }
 
   List<_MistakeDraft> _mistakeDraftsFromReviewPayload(

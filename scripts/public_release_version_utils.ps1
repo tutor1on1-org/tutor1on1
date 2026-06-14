@@ -181,6 +181,20 @@ function Sync-WebsiteReleaseConfig {
       $assetNames.WindowsFileName
     )
 
+    # Single-source the displayed version: rewrite the inner text of the
+    # data-release-version / data-release-tag elements so no-JS / curl / SEO
+    # never drift from site.js. The JS metadata becomes a redundant fallback.
+    $htmlUpdated = [regex]::Replace(
+      $htmlUpdated,
+      '(data-release-version[^>]*>)[^<]*(<)',
+      "`${1}$($versionInfo.AppVersion)`${2}"
+    )
+    $htmlUpdated = [regex]::Replace(
+      $htmlUpdated,
+      '(data-release-tag[^>]*>)[^<]*(<)',
+      "`${1}$($versionInfo.ReleaseTag)`${2}"
+    )
+
     if (-not [string]::Equals($htmlNormalized, $htmlUpdated, [System.StringComparison]::Ordinal)) {
       $downloadReferenceChanged = $true
       $lineEnding = if ($htmlOriginal.Contains("`r`n")) { "`r`n" } else { "`n" }

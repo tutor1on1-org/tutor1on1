@@ -219,4 +219,104 @@ void main() {
     expect(replaced.single.status, 'dismissed');
     expect(replaced.single.occurrences, 3);
   });
+
+  test('crediting a reviewed KP pushes out due, non-reflagged mistakes',
+      () async {
+    final teacherId = await db.createUser(
+        username: 'teacher', pinHash: 'hash', role: 'teacher');
+    final studentId = await db.createUser(
+        username: 'student', pinHash: 'hash', role: 'student', teacherId: teacherId);
+    final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId, subject: 'Math', granularity: 1, textbookText: '');
+    final sessionId = await db.into(db.chatSessions).insert(
+          ChatSessionsCompanion.insert(
+            studentId: studentId,
+            courseVersionId: courseVersionId,
+            kpKey: '1.1',
+            syncId: const Value('session-1'),
+          ),
+        );
+    for (final tag in const ['sign error', 'off by one']) {
+      await db.upsertMistakeEvidence(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+        kpKey: '1.1',
+        sessionId: sessionId,
+        messageId: 1,
+        mistakeTag: tag,
+        evidenceJson: '{}',
+      );
+    }
+    // Both start due now.
+    expect(
+      await db.getDueMistakeEntriesForCourse(
+          studentId: studentId, courseVersionId: courseVersionId, kpKey: '1.1'),
+      hasLength(2),
+    );
+
+    // Reviewed the KP; only 'sign error' was re-flagged this turn.
+    await db.creditReviewedDueMistakes(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+      kpKey: '1.1',
+      reflaggedTagKeys: {'sign error'},
+    );
+
+    final rows = await db.getMistakeEntriesForScope(
+        studentId: studentId, courseVersionId: courseVersionId, kpKey: '1.1');
+    final byKey = {for (final r in rows) r.mistakeTagKey: r};
+    // 'off by one' was not re-flagged: streak bumped and pushed into the future.
+    expect(byKey['off by one']!.reviewStreak, 1);
+    expect(byKey['off by one']!.nextReviewAt!.isAfter(DateTime.now().toUtc()),
+        isTrue);
+    // 'sign error' was re-flagged: still due, streak unchanged.
+    expect(byKey['sign error']!.reviewStreak, 0);
+
+    final stillDue = await db.getDueMistakeEntriesForCourse(
+        studentId: studentId, courseVersionId: courseVersionId, kpKey: '1.1');
+    expect(stillDue.map((e) => e.mistakeTagKey), ['sign error']);
+  });
+
+  test('due query is snooze-aware', () async {
+    final teacherId = await db.createUser(
+        username: 'teacher', pinHash: 'hash', role: 'teacher');
+    final studentId = await db.createUser(
+        username: 'student', pinHash: 'hash', role: 'student', teacherId: teacherId);
+    final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId, subject: 'Math', granularity: 1, textbookText: '');
+    final sessionId = await db.into(db.chatSessions).insert(
+          ChatSessionsCompanion.insert(
+            studentId: studentId,
+            courseVersionId: courseVersionId,
+            kpKey: '1.1',
+            syncId: const Value('session-1'),
+          ),
+        );
+    await db.upsertMistakeEvidence(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+      kpKey: '1.1',
+      sessionId: sessionId,
+      messageId: 1,
+      mistakeTag: 'snoozed tag',
+      evidenceJson: '{}',
+    );
+    final entry = (await db.getMistakeEntriesForScope(
+            studentId: studentId, courseVersionId: courseVersionId, kpKey: '1.1'))
+        .single;
+    await (db.update(db.mistakeEntries)..where((t) => t.id.equals(entry.id)))
+        .write(MistakeEntriesCompanion(
+      snoozedUntil: Value(DateTime.now().toUtc().add(const Duration(days: 2))),
+    ));
+
+    expect(
+      await db.getDueMistakeEntriesForCourse(
+          studentId: studentId, courseVersionId: courseVersionId, kpKey: '1.1'),
+      isEmpty,
+    );
+    expect(
+      await db.getDueMistakeEntriesForStudent(studentId: studentId),
+      isEmpty,
+    );
+  });
 }

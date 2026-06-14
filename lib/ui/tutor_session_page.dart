@@ -2874,11 +2874,17 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     if (_assistantMessageId == null) {
       return;
     }
+    final finalizedContent = _ttsRawBuffer.toString();
+    if (finalizedContent.isEmpty) {
+      // Never flush an empty buffer over a message that may already hold a
+      // valid assistant payload.
+      return;
+    }
     final services = context.read<AppServices>();
     final db = services.db;
     await db.updateChatMessageContent(
       messageId: _assistantMessageId!,
-      content: _ttsRawBuffer.toString(),
+      content: finalizedContent,
     );
     final settings = await services.settingsRepository.load();
     await services.llmLogRepository.appendEntry(

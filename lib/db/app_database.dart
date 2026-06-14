@@ -1443,6 +1443,8 @@ ORDER BY s.started_at DESC
           tbl.courseVersionId.equals(courseVersionId) &
           tbl.status.equals('open') &
           tbl.dismissed.equals(false) &
+          (tbl.snoozedUntil.isNull() |
+              tbl.snoozedUntil.isSmallerOrEqualValue(now)) &
           (tbl.nextReviewAt.isNull() |
               tbl.nextReviewAt.isSmallerOrEqualValue(now)))
       ..orderBy([
@@ -1462,6 +1464,33 @@ ORDER BY s.started_at DESC
       query.where((tbl) => tbl.kpKey.equals(normalizedKp));
     }
     return query.get();
+  }
+
+  /// Course-agnostic due-mistake feed for a student (snooze-aware), backing a
+  /// home "Review due" surface. Local-only scheduling fields only.
+  Future<List<MistakeEntry>> getDueMistakeEntriesForStudent({
+    required int studentId,
+    int limit = 50,
+  }) {
+    final now = DateTime.now();
+    return (select(mistakeEntries)
+          ..where((tbl) =>
+              tbl.studentId.equals(studentId) &
+              tbl.status.equals('open') &
+              tbl.dismissed.equals(false) &
+              (tbl.snoozedUntil.isNull() |
+                  tbl.snoozedUntil.isSmallerOrEqualValue(now)) &
+              (tbl.nextReviewAt.isNull() |
+                  tbl.nextReviewAt.isSmallerOrEqualValue(now)))
+          ..orderBy([
+            (tbl) => OrderingTerm(expression: tbl.nextReviewAt),
+            (tbl) => OrderingTerm(
+                  expression: tbl.occurrences,
+                  mode: OrderingMode.desc,
+                ),
+          ])
+          ..limit(limit))
+        .get();
   }
 
   Stream<List<MistakeEntry>> watchMistakeEntriesForSession(int sessionId) {
@@ -1581,8 +1610,62 @@ ORDER BY s.started_at DESC
         status: const Value('open'),
         nextReviewAt: Value(now),
         dismissed: const Value(false),
+        // Got it wrong again: due now and the spaced-review streak resets, so
+        // the resurfacing ladder starts over.
+        reviewStreak: const Value(0),
       ),
     );
+  }
+
+  /// Local interval ladder (days) for a mistake's spaced resurfacing, indexed by
+  /// the count of successful focused reviews. All fields are local-only, so this
+  /// never touches the synced artifact payload.
+  static Duration mistakeReviewIntervalForStreak(int streak) {
+    const days = <int>[1, 3, 7, 16, 35];
+    final index = streak <= 0 ? 0 : (streak >= days.length ? days.length - 1 : streak);
+    return Duration(days: days[index]);
+  }
+
+  /// Records a successful focused review: open, currently-due entries for this
+  /// KP whose tag the LLM did NOT re-flag this turn get their streak bumped and
+  /// their next review pushed out along the ladder. This drains the due queue
+  /// without the App making any semantic judgment — "not re-flagged" is the
+  /// LLM's signal, not the App's.
+  Future<void> creditReviewedDueMistakes({
+    required int studentId,
+    required int courseVersionId,
+    required String kpKey,
+    required Set<String> reflaggedTagKeys,
+    DateTime? reviewedAt,
+  }) async {
+    final normalizedKp = kpKey.trim();
+    if (studentId <= 0 || courseVersionId <= 0 || normalizedKp.isEmpty) {
+      return;
+    }
+    final now = (reviewedAt ?? DateTime.now()).toUtc();
+    final due = await (select(mistakeEntries)
+          ..where((tbl) =>
+              tbl.studentId.equals(studentId) &
+              tbl.courseVersionId.equals(courseVersionId) &
+              tbl.kpKey.equals(normalizedKp) &
+              tbl.status.equals('open') &
+              tbl.dismissed.equals(false) &
+              (tbl.nextReviewAt.isNull() |
+                  tbl.nextReviewAt.isSmallerOrEqualValue(now))))
+        .get();
+    for (final entry in due) {
+      if (reflaggedTagKeys.contains(entry.mistakeTagKey)) {
+        continue;
+      }
+      final nextStreak = entry.reviewStreak + 1;
+      await (update(mistakeEntries)..where((tbl) => tbl.id.equals(entry.id)))
+          .write(
+        MistakeEntriesCompanion(
+          reviewStreak: Value(nextStreak),
+          nextReviewAt: Value(now.add(mistakeReviewIntervalForStreak(nextStreak))),
+        ),
+      );
+    }
   }
 
   Future<void> setMistakeEntryStatus({

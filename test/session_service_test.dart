@@ -977,6 +977,43 @@ void main() {
     expect(refreshes.single.localUserIds, contains(fixture.studentId));
   });
 
+  test('wrong-answer turn that records a mistake marks artifacts stale',
+      () async {
+    final fixture = await _createTutorFixture(db: db, service: service);
+    final refreshes = <SyncRelevantChange>[];
+    db.setSyncRelevantChangeCallback((change) async {
+      if (change.refreshSessionArtifacts) {
+        refreshes.add(change);
+      }
+    });
+    _queueReviewQuestion(llmService, callHash: 'mb_b1_init');
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': 'Not quite — watch the sign.',
+            'mistakes': <String>['sign error'],
+            'finished': false,
+            'difficulty_adjustment': 'same',
+          }),
+          callHash: 'mb_b1_unfinished',
+        ),
+      ),
+    );
+
+    await _runReviewAction(service: service, fixture: fixture);
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      studentInput: 'wrong',
+    );
+
+    // finished==false, but a mistake was persisted, so the rebuild notify fires.
+    expect(refreshes, hasLength(1));
+    final entries = await db.select(db.mistakeEntries).get();
+    expect(entries.single.mistakeTagKey, 'sign error');
+  });
+
   test('pending mistake focus tag seeds only the next review init', () async {
     final fixture = await _createTutorFixture(db: db, service: service);
     service.setPendingMistakeFocusTag(
