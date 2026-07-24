@@ -39,11 +39,14 @@ function Invoke-GradleAssembleRelease {
     [string]$RepoRoot
   )
   Push-Location (Join-Path $RepoRoot 'android')
+  $previousErrorActionPreference = $ErrorActionPreference
   try {
+    $ErrorActionPreference = 'Continue'
     .\gradlew.bat assembleRelease --no-daemon 2>&1 | ForEach-Object { Write-Host $_ }
     $exitCode = $LASTEXITCODE
     return $exitCode
   } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
     Pop-Location
   }
 }

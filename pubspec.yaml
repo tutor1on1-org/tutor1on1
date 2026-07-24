@@ -49,6 +49,8 @@ dev_dependencies:
 dependency_overrides:
   record_linux:
     path: packages/record_linux
+  record_windows:
+    path: packages/record_windows
 
 flutter:
   uses-material-design: true
