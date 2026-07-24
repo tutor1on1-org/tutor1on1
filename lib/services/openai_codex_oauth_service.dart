@@ -230,6 +230,74 @@ class OpenAiCodexOAuthService {
     );
   }
 
+  Future<List<String>> fetchAvailableModelIds({
+    required OpenAiCodexOAuthCredentials credentials,
+    required String clientVersion,
+  }) async {
+    final accessToken = credentials.accessToken.trim();
+    final accountId = credentials.accountId.trim();
+    final version = clientVersion.trim();
+    if (accessToken.isEmpty || accountId.isEmpty || version.isEmpty) {
+      throw StateError('ChatGPT OAuth model request is missing credentials.');
+    }
+    final uri = Uri.parse('$baseUrl/codex/models').replace(
+      queryParameters: <String, String>{'client_version': version},
+    );
+    final response = await _getModels(
+      uri,
+      <String, String>{
+        'Authorization': 'Bearer $accessToken',
+        'chatgpt-account-id': accountId,
+        'originator': 'Tutor1on1',
+        'Accept': 'application/json',
+      },
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw HttpException(
+        'OpenAI OAuth model request failed: HTTP ${response.statusCode}: '
+        '${response.body}',
+      );
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic> || decoded['models'] is! List) {
+      throw StateError('OpenAI OAuth model response is missing models.');
+    }
+    final entries = <_OpenAiCodexModelEntry>[];
+    var sourceIndex = 0;
+    for (final item in decoded['models'] as List) {
+      if (item is! Map<String, dynamic>) {
+        continue;
+      }
+      final slug = (item['slug'] as String?)?.trim() ?? '';
+      final visibility = (item['visibility'] as String?)?.trim() ?? '';
+      if (slug.isEmpty ||
+          visibility != 'list' ||
+          item['supported_in_api'] != true) {
+        continue;
+      }
+      final priority = item['priority'];
+      entries.add(
+        _OpenAiCodexModelEntry(
+          id: slug,
+          priority: priority is num ? priority.toInt() : 1 << 30,
+          sourceIndex: sourceIndex,
+        ),
+      );
+      sourceIndex++;
+    }
+    entries.sort((left, right) {
+      final priorityOrder = left.priority.compareTo(right.priority);
+      return priorityOrder != 0
+          ? priorityOrder
+          : left.sourceIndex.compareTo(right.sourceIndex);
+    });
+    final seen = <String>{};
+    return entries
+        .map((entry) => entry.id)
+        .where(seen.add)
+        .toList(growable: false);
+  }
+
   Future<OpenAiCodexOAuthCredentials> _exchangeToken(
     Map<String, String> fields,
   ) async {
@@ -298,6 +366,26 @@ class OpenAiCodexOAuthService {
             body: fields,
           )
           .timeout(const Duration(seconds: 30));
+    } finally {
+      client.close();
+    }
+  }
+
+  Future<http.Response> _getModels(
+    Uri uri,
+    Map<String, String> headers,
+  ) async {
+    final injected = _client;
+    if (injected != null) {
+      return injected
+          .get(uri, headers: headers)
+          .timeout(const Duration(seconds: 20));
+    }
+    final client = http.Client();
+    try {
+      return await client
+          .get(uri, headers: headers)
+          .timeout(const Duration(seconds: 20));
     } finally {
       client.close();
     }
@@ -449,4 +537,16 @@ class _OAuthCallbackServer {
 
   final Future<String?> Function() waitForCode;
   final Future<void> Function() close;
+}
+
+class _OpenAiCodexModelEntry {
+  const _OpenAiCodexModelEntry({
+    required this.id,
+    required this.priority,
+    required this.sourceIndex,
+  });
+
+  final String id;
+  final int priority;
+  final int sourceIndex;
 }

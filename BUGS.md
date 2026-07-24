@@ -382,3 +382,13 @@ Last updated: 2026-06-11
 - Symptom: adding a question from AI edit could fail with `Cached course artifacts are missing for course version <id>` on downloaded/server-copy courses such as `special_relativity 1.1.1`.
 - Root cause: the previous downloaded-scaffold fix assumed a cached content bundle already existed. Older or partially repaired local course versions can have only the lightweight scaffold and no artifact manifest, so the builder read empty context and then failed at save time.
 - Prevention: centralize edit readiness in `CourseBuilderService.ensureEditableArtifacts`, run it before prompt generation/diff/save, pull the latest teacher server bundle when downloaded scaffolds lack cached artifacts, and keep regression tests for missing-manifest repair plus the no-repair error path.
+
+69. Manual session deletion must refresh the student artifact
+- Symptom: deleting a session removed local rows but left the cached `student_kp` hash and payload unchanged until another unrelated artifact refresh.
+- Root cause: `AppDatabase.deleteSession()` deleted the session data without calling `notifySessionArtifactsChanged()` for the owning student.
+- Prevention: read the session owner before deletion, notify after the transaction succeeds, and keep an integration test that observes the manifest tombstone without a manual refresh call.
+
+70. OAuth model refresh must query the authenticated catalog
+- Symptom: OpenAI Codex OAuth model refresh showed only bundled defaults and omitted account-visible models such as `gpt-5.6-sol`.
+- Root cause: `_cacheOpenAiCodexModels()` copied `provider.models` instead of requesting the authenticated ChatGPT `/codex/models` catalog.
+- Prevention: fetch the catalog with the OAuth token, account id, and client version; cache only visible API-supported slugs in server priority order.

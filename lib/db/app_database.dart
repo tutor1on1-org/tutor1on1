@@ -1276,6 +1276,7 @@ ORDER BY c.subject COLLATE NOCASE ASC
   }
 
   Future<void> deleteSession(int sessionId) async {
+    final session = await getSession(sessionId);
     await transaction(() async {
       await (delete(mistakeEntries)
             ..where((tbl) => tbl.sessionId.equals(sessionId)))
@@ -1288,6 +1289,9 @@ ORDER BY c.subject COLLATE NOCASE ASC
       await (delete(chatSessions)..where((tbl) => tbl.id.equals(sessionId)))
           .go();
     });
+    if (session != null) {
+      await notifySessionArtifactsChanged(session.studentId);
+    }
   }
 
   Future<void> deleteMessagesFrom({

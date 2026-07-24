@@ -118,6 +118,68 @@ void main() {
     expect(stored!.refreshToken, equals('new-refresh'));
   });
 
+  test('downloads visible API-supported OAuth models in server priority order',
+      () async {
+    final service = OpenAiCodexOAuthService(
+      _MemorySecureStorage(),
+      client: MockClient((request) async {
+        expect(request.method, equals('GET'));
+        expect(
+          request.url.toString(),
+          equals(
+            'https://chatgpt.com/backend-api/codex/models'
+            '?client_version=1.0.53',
+          ),
+        );
+        expect(request.headers['authorization'], equals('Bearer access-token'));
+        expect(request.headers['chatgpt-account-id'], equals('acct_123'));
+        return http.Response(
+          jsonEncode(<String, dynamic>{
+            'models': <Map<String, dynamic>>[
+              <String, dynamic>{
+                'slug': 'gpt-later',
+                'visibility': 'list',
+                'supported_in_api': true,
+                'priority': 2,
+              },
+              <String, dynamic>{
+                'slug': 'gpt-hidden',
+                'visibility': 'hide',
+                'supported_in_api': true,
+                'priority': 0,
+              },
+              <String, dynamic>{
+                'slug': 'gpt-first',
+                'visibility': 'list',
+                'supported_in_api': true,
+                'priority': 1,
+              },
+              <String, dynamic>{
+                'slug': 'gpt-cli-only',
+                'visibility': 'list',
+                'supported_in_api': false,
+                'priority': 0,
+              },
+            ],
+          }),
+          200,
+        );
+      }),
+    );
+
+    final models = await service.fetchAvailableModelIds(
+      credentials: OpenAiCodexOAuthCredentials(
+        accessToken: 'access-token',
+        refreshToken: 'refresh-token',
+        expiresAtMs: DateTime.now().millisecondsSinceEpoch + 60000,
+        accountId: 'acct_123',
+      ),
+      clientVersion: '1.0.53',
+    );
+
+    expect(models, equals(<String>['gpt-first', 'gpt-later']));
+  });
+
   test('rejects mismatched OAuth state', () async {
     final service = OpenAiCodexOAuthService(_MemorySecureStorage());
 

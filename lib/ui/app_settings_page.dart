@@ -154,7 +154,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
     final provider = _resolveProvider(providers, settings);
     if (provider.usesOpenAiCodexOAuth) {
-      _maybeLoadOpenAiCodexOAuth(services, provider.id);
+      _maybeLoadOpenAiCodexOAuth(services, provider);
     } else {
       _maybeLoadApiKey(services, provider.baseUrl);
     }
@@ -225,21 +225,52 @@ class _SettingsPageState extends State<SettingsPage> {
     });
   }
 
-  void _maybeLoadOpenAiCodexOAuth(AppServices services, String providerId) {
-    if (_openAiCodexOAuthLoadedForProvider == providerId) {
+  void _maybeLoadOpenAiCodexOAuth(
+    AppServices services,
+    LlmProvider provider,
+  ) {
+    if (_openAiCodexOAuthLoadedForProvider == provider.id) {
       return;
     }
-    _openAiCodexOAuthLoadedForProvider = providerId;
+    _openAiCodexOAuthLoadedForProvider = provider.id;
     Future.microtask(() async {
-      final credentials = await OpenAiCodexOAuthService(services.secureStorage)
-          .readCredentials();
+      final oauth = OpenAiCodexOAuthService(services.secureStorage);
+      final credentials = await oauth.readCredentials();
       if (!mounted) {
         return;
       }
       setState(() {
         _apiKeyController.clear();
         _openAiCodexOAuthCredentials = credentials;
+        _apiTesting = credentials != null;
       });
+      if (credentials == null) {
+        return;
+      }
+      try {
+        final validCredentials = await oauth.resolveValidCredentials();
+        await _cacheOpenAiCodexModels(
+          services: services,
+          provider: provider,
+          credentials: validCredentials,
+        );
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _openAiCodexOAuthCredentials = validCredentials;
+          _apiTestError = null;
+        });
+      } catch (error) {
+        if (!mounted) {
+          return;
+        }
+        setState(() => _apiTestError = '$error');
+      } finally {
+        if (mounted) {
+          setState(() => _apiTesting = false);
+        }
+      }
     });
   }
 
@@ -874,7 +905,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     });
                     if (next.usesOpenAiCodexOAuth) {
                       _openAiCodexOAuthLoadedForProvider = null;
-                      _maybeLoadOpenAiCodexOAuth(services, next.id);
+                      _maybeLoadOpenAiCodexOAuth(services, next);
                     } else {
                       _maybeLoadApiKey(services, next.baseUrl);
                     }
@@ -1486,12 +1517,19 @@ class _SettingsPageState extends State<SettingsPage> {
     if (hash == null || hash.isEmpty) {
       throw StateError('ChatGPT OAuth identity is missing.');
     }
-    final models = provider.models
-        .map((model) => ApiModelInfo(id: model))
-        .toList(growable: false);
-    final lists = ModelListService.splitModels(
-      models: models,
-      provider: provider,
+    final versionInfo = await _appVersionFuture;
+    final modelIds = await OpenAiCodexOAuthService(services.secureStorage)
+        .fetchAvailableModelIds(
+      credentials: credentials,
+      clientVersion: versionInfo.appVersion,
+    );
+    if (modelIds.isEmpty) {
+      throw StateError('OpenAI OAuth returned no available models.');
+    }
+    final lists = ApiModelLists(
+      textModels: modelIds,
+      ttsModels: const <String>[],
+      sttModels: const <String>[],
     );
     await services.db.upsertApiModelCache(
       baseUrl: provider.baseUrl,

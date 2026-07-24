@@ -1021,10 +1021,13 @@ void main() {
       currentUser: student,
       mode: SessionSyncMode.uploadOnly,
     );
+    db.setSyncRelevantChangeCallback(service.handleLocalSyncRelevantChange);
     await db.deleteSession(sessionId);
-    await service.handleLocalSyncRelevantChange(
-      SyncRelevantChange(localUserIds: <int>{studentId}),
-    );
+    final manifestAfterDelete = await artifactStore.loadManifest(3001);
+    final deletedItem = manifestAfterDelete.items['student_kp:3001:200:1.1'];
+    expect(deletedItem, isNotNull);
+    expect(deletedItem!.deleted, isTrue);
+    expect(deletedItem.storageFile, isEmpty);
 
     final stats = await service.forcePushLocalToServer(currentUser: student);
 
