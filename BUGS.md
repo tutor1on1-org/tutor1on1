@@ -1,13 +1,15 @@
 # BUGS
-Last updated: 2026-06-11
+Last updated: 2026-07-24
 
 ## Active watch
-- Student import race after bundle download (monitoring): fixed by awaiting archive extraction in client bundle service (`f77e7e0`); keep watching for recurrence in production-like flow.
+- None.
 
 ## Scope note
 - Current canonical sync model is zip-artifact manifest sync. Bug entries that explicitly target the retired row-level session/progress/enrollment sync model are kept only as historical root-cause references.
 
 ## Recent bug fixes
+- 2026-07-24 Legacy artifact cutover could preserve sessions but omit visible progress when a KP had no explicit legacy progress row. The cutover grouped only explicit progress payloads even though backup repair already derived progress from durable session evidence. Fix: reuse `deriveProgressFromSessionEvidence` for missing cutover progress and keep focused Go coverage. Prevention: every artifact rebuild path must preserve explicit progress first, then derive only missing progress before writing manifest parity.
+- 2026-07-24 Closed the student bundle-import race watch after a clean-profile Windows production smoke imported Dennis's six course artifacts (11,077,758 bytes) without an extraction failure, created four student scaffolds and seven assignments, and completed a zero-transfer second login.
 - 2026-06-11 Mistake-book occurrence inflation: the frozen `review_cont` prompt
   reports mistakes on wrong answers (`finished=false`), so the same tag
   re-described across turns of ONE question bumped `occurrences` each turn and

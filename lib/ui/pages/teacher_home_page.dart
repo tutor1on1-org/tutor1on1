@@ -47,7 +47,6 @@ class _TeacherHomePageState extends State<TeacherHomePage>
   static const Duration _resumeSyncDelay = Duration(seconds: 3);
   bool _syncStarted = false;
   bool _syncInProgress = false;
-  bool _backgroundSessionSyncInProgress = false;
   bool _syncingFromServer = false;
   String _syncProgressMessage = '';
   double? _syncProgressValue;
@@ -144,7 +143,7 @@ class _TeacherHomePageState extends State<TeacherHomePage>
   }
 
   Future<void> _runSyncCycle({required bool showOverlay}) async {
-    if (!mounted || _syncInProgress || _backgroundSessionSyncInProgress) {
+    if (!mounted || _syncInProgress) {
       return;
     }
     _syncInProgress = true;

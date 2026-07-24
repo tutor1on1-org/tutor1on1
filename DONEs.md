@@ -1,8 +1,11 @@
 # DONES
-Last updated: 2026-04-30
+Last updated: 2026-07-24
 
 Recent completions only. Detailed historical delivery records live in `LOGBOOK.md`.
 
+- Released public client `v1.0.53` with automatic session-artifact hash refresh after manual deletion, live OpenAI OAuth model discovery, and parser-validated GFM table rendering; `flutter analyze` and all 233 Flutter tests passed, and canonical Android/Windows downloads were published.
+- Verified production sync from empty local profiles in the Windows integration runner: Dennis created four students, six courses, seven assignments, and 112 `student_kp` manifest entries without downloading teacher payload files; Albert restored 100 artifacts into 80 progress rows, 109 sessions, and 1795 messages; both second logins transferred zero bytes.
+- Hardened legacy artifact cutover so KPs with sessions but no explicit progress row derive progress from durable session evidence before canonical artifacts are written; focused and full Go test suites passed.
 - Fixed OpenAI Codex/ChatGPT OAuth tutor calls failing with HTTP 400 `Unsupported parameter: max_output_tokens` by omitting that field on the OAuth provider request path and adding request-shape regression coverage.
 - Fixed OpenAI Codex/ChatGPT OAuth tutor calls failing with HTTP 400 `Instructions are required` by sending a concise top-level Codex `instructions` field and adding request-shape regression coverage.
 - Updated the public website Help pages with OpenAI Codex/ChatGPT OAuth setup steps across supported locales and added website publish verification for the new OAuth help text.

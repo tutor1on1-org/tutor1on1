@@ -629,7 +629,40 @@ func buildStudentKpGroups(
 			group.UpdatedAt = updatedAt
 		}
 	}
+	backfillCutoverProgressFromSessions(groups)
 	return groups, nil
+}
+
+func backfillCutoverProgressFromSessions(
+	groups map[studentKpGroupKey]*studentKpGroup,
+) {
+	for key, group := range groups {
+		if group == nil || group.Progress != nil || len(group.Sessions) == 0 {
+			continue
+		}
+		sort.Slice(group.Sessions, func(i, j int) bool {
+			if group.Sessions[i].SessionSyncID != group.Sessions[j].SessionSyncID {
+				return group.Sessions[i].SessionSyncID < group.Sessions[j].SessionSyncID
+			}
+			return group.Sessions[i].UpdatedAt < group.Sessions[j].UpdatedAt
+		})
+		derived := deriveProgressFromSessionEvidence(
+			group.Sessions,
+			key.StudentUserID,
+			group.TeacherUserID,
+		)
+		if derived == nil {
+			continue
+		}
+		group.Progress = derived
+		if group.CourseSubject == "" {
+			group.CourseSubject = strings.TrimSpace(derived.CourseSubject)
+		}
+		updatedAt, err := time.Parse(time.RFC3339, derived.UpdatedAt)
+		if err == nil && updatedAt.After(group.UpdatedAt) {
+			group.UpdatedAt = updatedAt
+		}
+	}
 }
 
 func buildStudentSessionPayload(
