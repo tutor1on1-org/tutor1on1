@@ -1,5 +1,5 @@
 # WORKLOG
-Last updated: 2026-04-11
+Last updated: 2026-07-24
 
 Active remote runbook and host details only. Historical deployment timeline lives in `LOGBOOK.md`.
 
@@ -38,14 +38,15 @@ Active remote runbook and host details only. Historical deployment timeline live
 - Production runtime sync is artifact-manifest only; retired row-level routes `/api/session/sync`, `/api/progress/sync`, and `/api/sync/download` should stay `404`.
 - `/api/artifacts/sync/state2` is the active artifact route and should require auth (`401` when unauthenticated).
 - Latest pre-cutover backup: `/home/ecs-user/db_backups/family_teacher_20260401_195705_artifact_cutover_pre.sql.gz`
+- Clean-profile production smoke on 2026-07-24 verified teacher scaffolds with metadata-only `student_kp` sync, Albert server-copy restoration, and zero-byte second logins for both accounts.
 
 ## Latest verified public artifacts
-- Version: `v1.0.7`
+- Version: `v1.0.54`
 - Android APK: `https://api.tutor1on1.org/downloads/Tutor1on1.apk`
-  - SHA-256: `a4baa5d899b04ea216df91e2b0c3e92e62887b74b0c38a5b5d29c497857d07b0`
+  - SHA-256: `87a28b73bad1e37348e79e8615253a7f3bf3ace5ed1457b5bec9a17b37eeb491`
 - Windows ZIP: `https://api.tutor1on1.org/downloads/Tutor1on1.zip`
-  - SHA-256: `ad3f83187cb311d423dfab393003b1c164ebe6352a8048ca11f17fcda75fce21`
-- GitHub Release: `https://github.com/tutor1on1-org/tutor1on1/releases/tag/v1.0.7`
+  - SHA-256: `3ccca072a1d1b6a7ec0b0ca8d08953960ad38522b7088f5bbc0b5d4d2ee59cf0`
+- GitHub Release: `https://github.com/tutor1on1-org/tutor1on1/releases/tag/v1.0.54`
 - Website root: `https://www.tutor1on1.org`
 
 ## Common checks

@@ -3,6 +3,7 @@ Last updated: 2026-07-24
 
 Recent completions only. Detailed historical delivery records live in `LOGBOOK.md`.
 
+- Published public client `v1.0.54` after restoring digest-aware resumable GitHub Release publishing and synchronizing website metadata; verified Android APK SHA-256 `87a28b73bad1e37348e79e8615253a7f3bf3ace5ed1457b5bec9a17b37eeb491`, Windows ZIP SHA-256 `3ccca072a1d1b6a7ec0b0ca8d08953960ad38522b7088f5bbc0b5d4d2ee59cf0`, all three GitHub assets, fresh public downloads, and localized website pages.
 - Released public client `v1.0.53` with automatic session-artifact hash refresh after manual deletion, live OpenAI OAuth model discovery, and parser-validated GFM table rendering; `flutter analyze` and all 233 Flutter tests passed, and canonical Android/Windows downloads were published.
 - Verified production sync from empty local profiles in the Windows integration runner: Dennis created four students, six courses, seven assignments, and 112 `student_kp` manifest entries without downloading teacher payload files; Albert restored 100 artifacts into 80 progress rows, 109 sessions, and 1795 messages; both second logins transferred zero bytes.
 - Hardened legacy artifact cutover so KPs with sessions but no explicit progress row derive progress from durable session evidence before canonical artifacts are written; focused and full Go test suites passed.

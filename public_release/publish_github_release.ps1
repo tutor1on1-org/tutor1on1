@@ -274,26 +274,36 @@ try {
   $release = Ensure-Release -RepoSlug $RepoSlug -ReleaseTag $ReleaseTag -ReleaseName $ReleaseName -Token $token
   Write-Host "==> GitHub release ready: id=$($release.id) tag=$($release.tag_name)"
 
-  foreach ($asset in @($release.assets)) {
-    if ($assetNames -notcontains $asset.name) {
-      continue
-    }
-    $deleteResponse = Invoke-GitHubApi `
-      -Method 'DELETE' `
-      -Url "https://api.github.com/repos/$RepoSlug/releases/assets/$($asset.id)" `
-      -Token $token
-    if ($deleteResponse.StatusCode -notin @(204, 404)) {
-      throw "Failed to delete existing asset $($asset.name). Status=$($deleteResponse.StatusCode)"
-    }
-    if ($deleteResponse.StatusCode -eq 404) {
-      Write-Host "Asset already absent: $($asset.name)"
-    } else {
-      Write-Host "Deleted existing asset: $($asset.name)"
-    }
-  }
-
   foreach ($assetPath in $assetPaths) {
     $assetName = Split-Path -Leaf $assetPath
+    $localSHA256 = (Get-FileHash -Algorithm SHA256 $assetPath).Hash.ToLowerInvariant()
+    $expectedDigest = "sha256:$localSHA256"
+    $existingAsset = @(
+      $release.assets |
+        Where-Object { $_.name -eq $assetName } |
+        Select-Object -First 1
+    )
+    if ($existingAsset.Count -gt 0) {
+      $digestProperty = $existingAsset[0].PSObject.Properties['digest']
+      $existingDigest = if ($null -eq $digestProperty) {
+        ''
+      } else {
+        ([string]$digestProperty.Value).Trim().ToLowerInvariant()
+      }
+      if ($existingAsset[0].state -eq 'uploaded' -and $existingDigest -eq $expectedDigest) {
+        Write-Host "Asset already matches local SHA256: $assetName"
+        continue
+      }
+      $deleteResponse = Invoke-GitHubApi `
+        -Method 'DELETE' `
+        -Url "https://api.github.com/repos/$RepoSlug/releases/assets/$($existingAsset[0].id)" `
+        -Token $token
+      if ($deleteResponse.StatusCode -notin @(204, 404)) {
+        throw "Failed to delete existing asset $assetName. Status=$($deleteResponse.StatusCode)"
+      }
+      Write-Host "Removed stale asset: $assetName"
+    }
+
     $uploadUrl = "https://uploads.github.com/repos/$RepoSlug/releases/$($release.id)/assets?name=$assetName"
     $uploadResponse = Invoke-GitHubApi `
       -Method 'POST' `
