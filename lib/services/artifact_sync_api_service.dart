@@ -402,6 +402,53 @@ class ArtifactSyncApiService {
     _decodeResponse(response);
   }
 
+  Future<void> deleteStudentSessionAsTeacher({
+    required String artifactId,
+    required String sessionSyncId,
+    required String baseSha256,
+  }) async {
+    final uri = Uri.parse('$_baseUrl/api/teacher/student-sessions/delete');
+    Future<http.Response> send(String token) {
+      return _runRequest(
+        uri: uri,
+        action: () => _client.post(
+          uri,
+          headers: _authHeaders(token),
+          body: jsonEncode(<String, dynamic>{
+            'artifact_id': artifactId.trim(),
+            'session_sync_id': sessionSyncId.trim(),
+            'base_sha256': baseSha256.trim(),
+          }),
+        ),
+      );
+    }
+
+    var token = await _requireAccessToken();
+    var response = await send(token);
+    if (response.statusCode == 401 && await _refreshAccessToken()) {
+      token = await _requireAccessToken();
+      response = await send(token);
+    }
+    if (response.statusCode == 409) {
+      final decoded = _decodeJsonBody(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        throw ArtifactSyncApiException(
+          'Unexpected conflict response format.',
+          statusCode: response.statusCode,
+        );
+      }
+      throw ArtifactConflictException(
+        message: (decoded['conflict_type'] as String?)?.trim().isNotEmpty ==
+                true
+            ? 'Artifact conflict: ${(decoded['conflict_type'] as String).trim()}'
+            : 'Artifact conflict.',
+        serverSha256: (decoded['server_sha256'] as String?)?.trim() ?? '',
+        expectedBaseSha256: (decoded['expected_base'] as String?)?.trim() ?? '',
+      );
+    }
+    _decodeResponse(response);
+  }
+
   Future<void> uploadArtifactBatch(List<PendingArtifactUpload> uploads) async {
     final normalizedUploads = uploads
         .where((item) => item.artifactId.trim().isNotEmpty)

@@ -9,11 +9,16 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 var ErrFileExists = errors.New("file already exists")
 var ErrTooLarge = errors.New("file exceeds size limit")
+
+const studentKpGCMarkerSuffix = ".gc-pending"
 
 type Config struct {
 	Root           string
@@ -23,6 +28,7 @@ type Config struct {
 type Service struct {
 	root           string
 	bundleMaxBytes int64
+	mutationMu     sync.Mutex
 }
 
 func New(cfg Config) (*Service, error) {
@@ -76,8 +82,14 @@ func (s *Service) RemoveRelativePath(relPath string) error {
 	if strings.TrimSpace(relPath) == "" {
 		return nil
 	}
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	absPath := s.AbsolutePath(relPath)
 	if err := os.Remove(absPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.Remove(absPath + studentKpGCMarkerSuffix); err != nil &&
+		!errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil
@@ -87,6 +99,8 @@ func (s *Service) writeRelativePath(relPath string, reader io.Reader, overwrite 
 	if reader == nil {
 		return 0, "", errors.New("reader required")
 	}
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
 	normalizedRelPath := path.Clean(relPath)
 	if normalizedRelPath == "." || normalizedRelPath == "" || strings.HasPrefix(normalizedRelPath, "../") || strings.Contains(normalizedRelPath, "/../") {
 		return 0, "", errors.New("relative path invalid")
@@ -103,9 +117,14 @@ func (s *Service) writeRelativePath(relPath string, reader io.Reader, overwrite 
 		return 0, "", err
 	}
 
-	tmpPath := absPath + ".tmp"
-	file, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0640)
+	file, err := os.CreateTemp(filepath.Dir(absPath), filepath.Base(absPath)+".tmp-*")
 	if err != nil {
+		return 0, "", err
+	}
+	tmpPath := file.Name()
+	if err := file.Chmod(0640); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tmpPath)
 		return 0, "", err
 	}
 	closed := false
@@ -146,6 +165,191 @@ func (s *Service) writeRelativePath(relPath string, reader io.Reader, overwrite 
 		_ = os.Remove(tmpPath)
 		return 0, "", err
 	}
+	if err := os.Remove(absPath + studentKpGCMarkerSuffix); err != nil &&
+		!errors.Is(err, os.ErrNotExist) {
+		return 0, "", err
+	}
 	hash := hex.EncodeToString(hasher.Sum(nil))
 	return written, hash, nil
+}
+
+func (s *Service) RemoveUnreferencedStudentKpArtifacts(
+	referencedRelPaths map[string]struct{},
+	olderThan time.Time,
+) (int, error) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
+
+	normalizedReferences := make(map[string]struct{}, len(referencedRelPaths))
+	for relPath := range referencedRelPaths {
+		normalized := normalizeRelativePath(relPath)
+		if normalized != "" {
+			normalizedReferences[normalized] = struct{}{}
+		}
+	}
+	studentKpRoot := filepath.Join(s.root, "student_kp")
+	removed := 0
+	err := filepath.WalkDir(
+		studentKpRoot,
+		func(absPath string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				if errors.Is(walkErr, os.ErrNotExist) {
+					return nil
+				}
+				return walkErr
+			}
+			if entry.IsDir() {
+				if absPath != studentKpRoot && entry.Name() == "_cutover" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if entry.Type()&os.ModeSymlink != 0 || !entry.Type().IsRegular() {
+				return nil
+			}
+			relPath, err := filepath.Rel(s.root, absPath)
+			if err != nil {
+				return err
+			}
+			normalizedRelPath := normalizeRelativePath(relPath)
+			if isManagedStudentKpGCMarkerPath(normalizedRelPath) {
+				artifactAbsPath := strings.TrimSuffix(
+					absPath,
+					studentKpGCMarkerSuffix,
+				)
+				if _, err := os.Stat(artifactAbsPath); err == nil {
+					return nil
+				} else if !errors.Is(err, os.ErrNotExist) {
+					return err
+				}
+				info, err := entry.Info()
+				if err != nil {
+					if errors.Is(err, os.ErrNotExist) {
+						return nil
+					}
+					return err
+				}
+				if !info.ModTime().Before(olderThan) {
+					return nil
+				}
+				if err := os.Remove(absPath); err != nil &&
+					!errors.Is(err, os.ErrNotExist) {
+					return err
+				}
+				return nil
+			}
+			if !isManagedStudentKpArtifactPath(normalizedRelPath) &&
+				!isManagedStudentKpTempPath(normalizedRelPath) {
+				return nil
+			}
+			if isManagedStudentKpArtifactPath(normalizedRelPath) {
+				if _, ok := normalizedReferences[normalizedRelPath]; ok {
+					if err := os.Remove(absPath + studentKpGCMarkerSuffix); err != nil &&
+						!errors.Is(err, os.ErrNotExist) {
+						return err
+					}
+					return nil
+				}
+				markerPath := absPath + studentKpGCMarkerSuffix
+				markerInfo, err := os.Stat(markerPath)
+				if errors.Is(err, os.ErrNotExist) {
+					marker, createErr := os.OpenFile(
+						markerPath,
+						os.O_CREATE|os.O_EXCL|os.O_WRONLY,
+						0640,
+					)
+					if createErr != nil {
+						return createErr
+					}
+					return marker.Close()
+				}
+				if err != nil {
+					return err
+				}
+				if !markerInfo.Mode().IsRegular() {
+					return fmt.Errorf("student artifact cleanup marker invalid: %s", markerPath)
+				}
+				if !markerInfo.ModTime().Before(olderThan) {
+					return nil
+				}
+				if err := os.Remove(absPath); err != nil &&
+					!errors.Is(err, os.ErrNotExist) {
+					return err
+				}
+				removed++
+				return nil
+			}
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			if !info.ModTime().Before(olderThan) {
+				return nil
+			}
+			if err := os.Remove(absPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			removed++
+			return nil
+		},
+	)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	return removed, err
+}
+
+func normalizeRelativePath(relPath string) string {
+	normalized := path.Clean(strings.ReplaceAll(strings.TrimSpace(relPath), "\\", "/"))
+	if normalized == "." || normalized == "" || strings.HasPrefix(normalized, "../") {
+		return ""
+	}
+	return normalized
+}
+
+func isManagedStudentKpArtifactPath(relPath string) bool {
+	parts := strings.Split(relPath, "/")
+	if len(parts) != 4 || parts[0] != "student_kp" || !strings.HasSuffix(parts[3], ".zip") {
+		return false
+	}
+	studentUserID, studentErr := strconv.ParseInt(parts[1], 10, 64)
+	courseID, courseErr := strconv.ParseInt(parts[2], 10, 64)
+	if studentErr != nil || studentUserID <= 0 || courseErr != nil || courseID <= 0 {
+		return false
+	}
+	baseName := strings.TrimSuffix(parts[3], ".zip")
+	return strings.TrimSpace(baseName) != ""
+}
+
+func isManagedStudentKpTempPath(relPath string) bool {
+	parts := strings.Split(relPath, "/")
+	if len(parts) != 4 || parts[0] != "student_kp" {
+		return false
+	}
+	studentUserID, studentErr := strconv.ParseInt(parts[1], 10, 64)
+	courseID, courseErr := strconv.ParseInt(parts[2], 10, 64)
+	if studentErr != nil || studentUserID <= 0 || courseErr != nil || courseID <= 0 {
+		return false
+	}
+	baseName := parts[3]
+	switch {
+	case strings.HasSuffix(baseName, ".zip.tmp"):
+		baseName = strings.TrimSuffix(baseName, ".tmp")
+	case strings.Contains(baseName, ".zip.tmp-"):
+		baseName = baseName[:strings.LastIndex(baseName, ".tmp-")]
+	default:
+		return false
+	}
+	return isManagedStudentKpArtifactPath(
+		path.Join(parts[0], parts[1], parts[2], baseName),
+	)
+}
+
+func isManagedStudentKpGCMarkerPath(relPath string) bool {
+	if !strings.HasSuffix(relPath, studentKpGCMarkerSuffix) {
+		return false
+	}
+	return isManagedStudentKpArtifactPath(
+		strings.TrimSuffix(relPath, studentKpGCMarkerSuffix),
+	)
 }

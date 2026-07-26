@@ -14,6 +14,183 @@ void main() {
     await db.close();
   });
 
+  test(
+      'deleting a session resets its KP progress without removing sibling data',
+      () async {
+    final teacherId = await db.createUser(
+      username: 'teacher_delete',
+      pinHash: 'hash',
+      role: 'teacher',
+    );
+    final studentId = await db.createUser(
+      username: 'student_delete',
+      pinHash: 'hash',
+      role: 'student',
+      teacherId: teacherId,
+    );
+    final courseVersionId = await db.createCourseVersion(
+      teacherId: teacherId,
+      subject: 'Math',
+      granularity: 1,
+      textbookText: '',
+    );
+    final targetSessionId = await db.into(db.chatSessions).insert(
+          ChatSessionsCompanion.insert(
+            studentId: studentId,
+            courseVersionId: courseVersionId,
+            kpKey: '1.1',
+            syncId: const Value('target-session'),
+          ),
+        );
+    final siblingSessionId = await db.into(db.chatSessions).insert(
+          ChatSessionsCompanion.insert(
+            studentId: studentId,
+            courseVersionId: courseVersionId,
+            kpKey: '1.1',
+            syncId: const Value('sibling-session'),
+          ),
+        );
+    final targetMessageId = await db.into(db.chatMessages).insert(
+          ChatMessagesCompanion.insert(
+            sessionId: targetSessionId,
+            role: 'assistant',
+            content: 'target',
+          ),
+        );
+    final siblingMessageId = await db.into(db.chatMessages).insert(
+          ChatMessagesCompanion.insert(
+            sessionId: siblingSessionId,
+            role: 'assistant',
+            content: 'sibling',
+          ),
+        );
+    await db.into(db.llmCalls).insert(
+          LlmCallsCompanion.insert(
+            callHash: 'target-call',
+            promptName: 'review',
+            renderedPrompt: 'target prompt',
+            model: 'model',
+            baseUrl: 'https://example.com',
+            mode: 'LIVE',
+            sessionId: Value(targetSessionId),
+          ),
+        );
+    await db.into(db.llmCalls).insert(
+          LlmCallsCompanion.insert(
+            callHash: 'sibling-call',
+            promptName: 'review',
+            renderedPrompt: 'sibling prompt',
+            model: 'model',
+            baseUrl: 'https://example.com',
+            mode: 'LIVE',
+            sessionId: Value(siblingSessionId),
+          ),
+        );
+    await db.into(db.progressEntries).insert(
+          ProgressEntriesCompanion.insert(
+            studentId: studentId,
+            courseVersionId: courseVersionId,
+            kpKey: '1.1',
+            lit: const Value(true),
+            litPercent: const Value(100),
+            easyPassedCount: const Value(1),
+            mediumPassedCount: const Value(1),
+            hardPassedCount: const Value(1),
+          ),
+        );
+    await db.into(db.progressEntries).insert(
+          ProgressEntriesCompanion.insert(
+            studentId: studentId,
+            courseVersionId: courseVersionId,
+            kpKey: '1.2',
+            lit: const Value(true),
+            litPercent: const Value(100),
+          ),
+        );
+    await db.upsertMistakeEvidence(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+      kpKey: '1.1',
+      sessionId: targetSessionId,
+      messageId: targetMessageId,
+      mistakeTag: 'target mistake',
+      evidenceJson: '{}',
+    );
+    await db.upsertMistakeEvidence(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+      kpKey: '1.1',
+      sessionId: siblingSessionId,
+      messageId: siblingMessageId,
+      mistakeTag: 'sibling mistake',
+      evidenceJson: '{}',
+    );
+    var callbackCount = 0;
+    SyncRelevantChange? capturedChange;
+    db.setSyncRelevantChangeCallback((change) async {
+      callbackCount++;
+      capturedChange = change;
+    });
+
+    await db.deleteSession(targetSessionId);
+
+    expect(await db.getSession(targetSessionId), isNull);
+    expect(await db.getMessagesForSession(targetSessionId), isEmpty);
+    expect(
+      await (db.select(db.llmCalls)
+            ..where((row) => row.sessionId.equals(targetSessionId)))
+          .get(),
+      isEmpty,
+    );
+    expect(await db.getSession(siblingSessionId), isNotNull);
+    expect(await db.getMessagesForSession(siblingSessionId), hasLength(1));
+    expect(
+      await (db.select(db.llmCalls)
+            ..where((row) => row.sessionId.equals(siblingSessionId)))
+          .get(),
+      hasLength(1),
+    );
+    expect(
+      await db.getProgress(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+        kpKey: '1.1',
+      ),
+      isNull,
+    );
+    final otherProgress = await db.getProgress(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+      kpKey: '1.2',
+    );
+    expect(otherProgress, isNotNull);
+    expect(otherProgress!.lit, isTrue);
+    final mistakes = await db.getMistakeEntriesForScope(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+      kpKey: '1.1',
+    );
+    final mistakesByKey = {
+      for (final mistake in mistakes) mistake.mistakeTagKey: mistake,
+    };
+    expect(
+        mistakesByKey.keys,
+        containsAll(<String>[
+          'target mistake',
+          'sibling mistake',
+        ]));
+    expect(mistakesByKey['target mistake']!.sessionId, 0);
+    expect(mistakesByKey['target mistake']!.messageId, 0);
+    expect(
+      mistakesByKey['sibling mistake']!.sessionId,
+      siblingSessionId,
+    );
+    expect(callbackCount, 1);
+    expect(capturedChange, isNotNull);
+    expect(capturedChange!.localUserIds, <int>{studentId});
+    expect(capturedChange!.refreshSessionArtifacts, isTrue);
+  });
+
   test('mistake evidence dedupes by normalized tag key', () async {
     final teacherId = await db.createUser(
       username: 'teacher',
@@ -225,9 +402,15 @@ void main() {
     final teacherId = await db.createUser(
         username: 'teacher', pinHash: 'hash', role: 'teacher');
     final studentId = await db.createUser(
-        username: 'student', pinHash: 'hash', role: 'student', teacherId: teacherId);
+        username: 'student',
+        pinHash: 'hash',
+        role: 'student',
+        teacherId: teacherId);
     final courseVersionId = await db.createCourseVersion(
-        teacherId: teacherId, subject: 'Math', granularity: 1, textbookText: '');
+        teacherId: teacherId,
+        subject: 'Math',
+        granularity: 1,
+        textbookText: '');
     final sessionId = await db.into(db.chatSessions).insert(
           ChatSessionsCompanion.insert(
             studentId: studentId,
@@ -281,9 +464,15 @@ void main() {
     final teacherId = await db.createUser(
         username: 'teacher', pinHash: 'hash', role: 'teacher');
     final studentId = await db.createUser(
-        username: 'student', pinHash: 'hash', role: 'student', teacherId: teacherId);
+        username: 'student',
+        pinHash: 'hash',
+        role: 'student',
+        teacherId: teacherId);
     final courseVersionId = await db.createCourseVersion(
-        teacherId: teacherId, subject: 'Math', granularity: 1, textbookText: '');
+        teacherId: teacherId,
+        subject: 'Math',
+        granularity: 1,
+        textbookText: '');
     final sessionId = await db.into(db.chatSessions).insert(
           ChatSessionsCompanion.insert(
             studentId: studentId,
@@ -302,7 +491,9 @@ void main() {
       evidenceJson: '{}',
     );
     final entry = (await db.getMistakeEntriesForScope(
-            studentId: studentId, courseVersionId: courseVersionId, kpKey: '1.1'))
+            studentId: studentId,
+            courseVersionId: courseVersionId,
+            kpKey: '1.1'))
         .single;
     await (db.update(db.mistakeEntries)..where((t) => t.id.equals(entry.id)))
         .write(MistakeEntriesCompanion(

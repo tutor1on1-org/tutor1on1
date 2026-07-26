@@ -141,6 +141,31 @@ func StudentKpStorageRelPath(studentUserID int64, courseID int64, kpKey string) 
 	)
 }
 
+func StudentKpVersionedStorageRelPath(
+	studentUserID int64,
+	courseID int64,
+	kpKey string,
+	shaValue string,
+) (string, error) {
+	normalizedSHA := strings.ToLower(strings.TrimSpace(shaValue))
+	if len(normalizedSHA) != sha256.Size*2 {
+		return "", errors.New("student kp artifact sha256 invalid")
+	}
+	if _, err := hex.DecodeString(normalizedSHA); err != nil {
+		return "", errors.New("student kp artifact sha256 invalid")
+	}
+	escapedKpKey := url.PathEscape(strings.TrimSpace(kpKey))
+	if studentUserID <= 0 || courseID <= 0 || escapedKpKey == "" {
+		return "", errors.New("student kp artifact identity invalid")
+	}
+	return path.Join(
+		"student_kp",
+		fmt.Sprintf("%d", studentUserID),
+		fmt.Sprintf("%d", courseID),
+		escapedKpKey+"."+normalizedSHA+".zip",
+	), nil
+}
+
 func CutoverStudentKpStorageRelPath(
 	runID string,
 	studentUserID int64,
@@ -197,7 +222,16 @@ func BuildStudentKpArtifactZip(payload StudentKpArtifactPayload) ([]byte, string
 	if err != nil {
 		return nil, "", err
 	}
-	canonical, err := marshalCanonicalJSON(normalized)
+	return BuildStudentKpArtifactZipFromMap(normalized)
+}
+
+// BuildStudentKpArtifactZipFromMap rebuilds an existing payload without
+// discarding fields that are newer than the server's typed payload model.
+func BuildStudentKpArtifactZipFromMap(payload map[string]interface{}) ([]byte, string, error) {
+	if payload == nil {
+		return nil, "", errors.New("student kp artifact payload required")
+	}
+	canonical, err := marshalCanonicalJSON(payload)
 	if err != nil {
 		return nil, "", err
 	}
@@ -226,9 +260,47 @@ func BuildStudentKpArtifactZip(payload StudentKpArtifactPayload) ([]byte, string
 }
 
 func ReadStudentKpArtifactPayload(data []byte) (StudentKpArtifactPayload, string, error) {
-	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	payloadBytes, shaValue, err := readStudentKpArtifactPayloadBytes(data)
 	if err != nil {
 		return StudentKpArtifactPayload{}, "", err
+	}
+	var payload StudentKpArtifactPayload
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+		return StudentKpArtifactPayload{}, "", err
+	}
+	return payload, shaValue, nil
+}
+
+// ReadStudentKpArtifactPayloadMap exposes the complete payload so targeted
+// server mutations can preserve mistakes and future fields verbatim.
+func ReadStudentKpArtifactPayloadMap(data []byte) (map[string]interface{}, string, error) {
+	payloadBytes, shaValue, err := readStudentKpArtifactPayloadBytes(data)
+	if err != nil {
+		return nil, "", err
+	}
+	var payload map[string]interface{}
+	decoder := json.NewDecoder(bytes.NewReader(payloadBytes))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil {
+		return nil, "", err
+	}
+	var trailing interface{}
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, "", errors.New("student kp artifact payload has trailing json")
+		}
+		return nil, "", err
+	}
+	if payload == nil {
+		return nil, "", errors.New("student kp artifact payload invalid")
+	}
+	return payload, shaValue, nil
+}
+
+func readStudentKpArtifactPayloadBytes(data []byte) ([]byte, string, error) {
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, "", err
 	}
 	for _, file := range reader.File {
 		if file.FileInfo().IsDir() {
@@ -239,21 +311,17 @@ func ReadStudentKpArtifactPayload(data []byte) (StudentKpArtifactPayload, string
 		}
 		handle, err := file.Open()
 		if err != nil {
-			return StudentKpArtifactPayload{}, "", err
+			return nil, "", err
 		}
 		payloadBytes, err := io.ReadAll(handle)
 		_ = handle.Close()
 		if err != nil {
-			return StudentKpArtifactPayload{}, "", err
-		}
-		var payload StudentKpArtifactPayload
-		if err := json.Unmarshal(payloadBytes, &payload); err != nil {
-			return StudentKpArtifactPayload{}, "", err
+			return nil, "", err
 		}
 		sum := sha256.Sum256(data)
-		return payload, hex.EncodeToString(sum[:]), nil
+		return payloadBytes, hex.EncodeToString(sum[:]), nil
 	}
-	return StudentKpArtifactPayload{}, "", errors.New("payload.json missing from student kp artifact")
+	return nil, "", errors.New("payload.json missing from student kp artifact")
 }
 
 func normalizeStudentKpArtifactPayload(payload StudentKpArtifactPayload) (map[string]interface{}, error) {

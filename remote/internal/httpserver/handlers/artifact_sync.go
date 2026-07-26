@@ -8,11 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
+	"log"
 	"mime/multipart"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"family_teacher_remote/internal/artifactsync"
@@ -22,7 +25,8 @@ import (
 )
 
 type ArtifactSyncHandler struct {
-	cfg Dependencies
+	cfg           Dependencies
+	mutationLocks [64]sync.Mutex
 }
 
 type artifactState1ItemResponse struct {
@@ -64,6 +68,12 @@ type artifactDeleteRequest struct {
 	OverwriteServer bool   `json:"overwrite_server"`
 }
 
+type teacherStudentSessionDeleteRequest struct {
+	ArtifactID    string `json:"artifact_id"`
+	SessionSyncID string `json:"session_sync_id"`
+	BaseSHA256    string `json:"base_sha256"`
+}
+
 type artifactUploadConflict struct {
 	payload fiber.Map
 }
@@ -82,6 +92,14 @@ type artifactBatchManifestItemResponse struct {
 
 func NewArtifactSyncHandler(deps Dependencies) *ArtifactSyncHandler {
 	return &ArtifactSyncHandler{cfg: deps}
+}
+
+func (h *ArtifactSyncHandler) lockArtifactMutation(artifactID string) func() {
+	hasher := fnv.New32a()
+	_, _ = hasher.Write([]byte(strings.TrimSpace(artifactID)))
+	lock := &h.mutationLocks[int(hasher.Sum32())%len(h.mutationLocks)]
+	lock.Lock()
+	return lock.Unlock
 }
 
 func (h *ArtifactSyncHandler) State2(c *fiber.Ctx) error {
@@ -370,8 +388,8 @@ func (h *ArtifactSyncHandler) UploadBatch(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "artifact files required")
 	}
 
-	affectedCourses := make(map[int64]struct{}, len(request.Items))
 	results := make([]artifactBatchUploadItemResponse, 0, len(request.Items))
+	state2 := ""
 	for _, item := range request.Items {
 		artifactID := strings.TrimSpace(item.ArtifactID)
 		if !strings.HasPrefix(artifactID, "student_kp:") {
@@ -385,7 +403,7 @@ func (h *ArtifactSyncHandler) UploadBatch(c *fiber.Ctx) error {
 		if len(fileHeaders) == 0 || fileHeaders[0] == nil {
 			return fiber.NewError(fiber.StatusBadRequest, "artifact file required")
 		}
-		storedSHA, courseID, err := h.uploadStudentKpFileHeader(
+		storedSHA, _, nextState2, err := h.uploadStudentKpFileHeader(
 			userID,
 			artifactID,
 			strings.TrimSpace(item.BaseSHA256),
@@ -400,20 +418,13 @@ func (h *ArtifactSyncHandler) UploadBatch(c *fiber.Ctx) error {
 			}
 			return err
 		}
-		affectedCourses[courseID] = struct{}{}
+		state2 = nextState2
 		results = append(results, artifactBatchUploadItemResponse{
 			ArtifactID: artifactID,
 			SHA256:     storedSHA,
 		})
 	}
-
-	for courseID := range affectedCourses {
-		if err := artifactsync.RefreshUsersForCourse(h.cfg.Store.DB, courseID); err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
-		}
-	}
-	state2, err := artifactsync.ReadState2(h.cfg.Store.DB, userID)
-	if err != nil {
+	if strings.TrimSpace(state2) == "" {
 		return fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
 	}
 	return c.JSON(fiber.Map{
@@ -439,67 +450,414 @@ func (h *ArtifactSyncHandler) Delete(c *fiber.Ctx) error {
 	if !strings.HasPrefix(artifactID, "student_kp:") {
 		return fiber.NewError(fiber.StatusBadRequest, "student_kp artifact required")
 	}
-	studentUserID, courseID, _, err := artifactsync.ParseStudentKpArtifactID(artifactID)
+	studentUserID, courseID, kpKey, err := artifactsync.ParseStudentKpArtifactID(artifactID)
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "artifact_id invalid")
 	}
 	if userID != studentUserID {
 		return fiber.NewError(fiber.StatusForbidden, "student artifact delete forbidden")
 	}
-	enrolled, err := isEnrolled(h.cfg.Store.DB, userID, courseID)
+	enrollmentID, err := lookupActiveEnrollmentID(h.cfg.Store.DB, userID, courseID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusForbidden, "student not enrolled")
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, "enrollment check failed")
+	}
+	teacherUserID, err := getTeacherUserIDForCourse(h.cfg.Store.DB, courseID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusNotFound, "course not found")
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, "course lookup failed")
+	}
+	unlockMutation := h.lockArtifactMutation(artifactID)
+	defer unlockMutation()
+	tx, err := h.cfg.Store.DB.Begin()
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	enrolled, err := isEnrollmentActiveTx(
+		tx,
+		enrollmentID,
+		userID,
+		courseID,
+	)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "enrollment check failed")
 	}
 	if !enrolled {
 		return fiber.NewError(fiber.StatusForbidden, "student not enrolled")
 	}
-	currentSHA, storageRelPath, err := h.lookupStudentKpDeleteState(artifactID)
-	if err != nil {
+	currentSHA, storageRelPath, err := lookupStudentKpMutationStateTx(tx, artifactID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fiber.NewError(fiber.StatusInternalServerError, "student artifact lookup failed")
 	}
 	if conflict := uploadConflict(currentSHA, strings.TrimSpace(request.BaseSHA256), request.OverwriteServer); conflict != nil {
 		return c.Status(fiber.StatusConflict).JSON(conflict)
 	}
-	if strings.TrimSpace(currentSHA) != "" {
-		tx, err := h.cfg.Store.DB.Begin()
-		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
-		}
-		committed := false
-		defer func() {
-			if !committed {
-				_ = tx.Rollback()
-			}
-		}()
-		if _, err := tx.Exec(
-			`DELETE FROM student_kp_artifacts
-			 WHERE artifact_id = ? AND student_user_id = ?`,
-			artifactID,
-			userID,
-		); err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "student artifact delete failed")
-		}
-		if err := tx.Commit(); err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
+	if strings.TrimSpace(currentSHA) == "" {
+		if err := tx.Rollback(); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "rollback failed")
 		}
 		committed = true
-		if strings.TrimSpace(storageRelPath) != "" {
-			if err := h.cfg.Storage.RemoveRelativePath(storageRelPath); err != nil {
-				return fiber.NewError(fiber.StatusInternalServerError, "artifact delete failed")
-			}
+		state2, err := artifactsync.ReadState2(h.cfg.Store.DB, userID)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "artifact state read failed")
 		}
+		return c.JSON(fiber.Map{
+			"status":      "deleted",
+			"artifact_id": artifactID,
+			"state2":      state2,
+		})
 	}
-	if err := artifactsync.RefreshUsersForCourse(h.cfg.Store.DB, courseID); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
+	result, err := tx.Exec(
+		`DELETE FROM student_kp_artifacts
+		 WHERE artifact_id = ? AND student_user_id = ? AND sha256 = ?`,
+		artifactID,
+		userID,
+		currentSHA,
+	)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "student artifact delete failed")
 	}
-	state2, err := artifactsync.ReadState2(h.cfg.Store.DB, userID)
+	affected, err := result.RowsAffected()
+	if err != nil || affected != 1 {
+		return fiber.NewError(fiber.StatusConflict, "student artifact changed")
+	}
+	state2ByUserID, err := artifactsync.ApplyStudentKpArtifactVisibilityTx(
+		tx,
+		artifactsync.VisibleArtifact{
+			ArtifactID:    artifactID,
+			ArtifactClass: "student_kp",
+			CourseID:      courseID,
+			TeacherUserID: teacherUserID,
+			StudentUserID: studentUserID,
+			KpKey:         kpKey,
+			LastModified:  time.Now().UTC(),
+		},
+		true,
+	)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
 	}
+	state2, ok := state2ByUserID[userID]
+	if !ok || strings.TrimSpace(state2) == "" {
+		return fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
+	}
+	if err := tx.Commit(); err != nil {
+		log.Printf(
+			"student artifact delete commit outcome uncertain; artifact_id=%s path=%s",
+			artifactID,
+			storageRelPath,
+		)
+		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
+	}
+	committed = true
+	// Keep the old artifact file so an already-issued X-Accel-Redirect remains valid.
 	return c.JSON(fiber.Map{
 		"status":      "deleted",
 		"artifact_id": artifactID,
 		"state2":      state2,
+	})
+}
+
+func (h *ArtifactSyncHandler) DeleteStudentSessionAsTeacher(c *fiber.Ctx) error {
+	userID, err := requireUserID(c, h.cfg.Config.JWTVerifySecrets)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	}
+	if h.cfg.Storage == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "storage unavailable")
+	}
+	var request teacherStudentSessionDeleteRequest
+	if err := json.Unmarshal(c.Body(), &request); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "delete request invalid")
+	}
+	artifactID := strings.TrimSpace(request.ArtifactID)
+	sessionSyncID := strings.TrimSpace(request.SessionSyncID)
+	baseSHA := strings.TrimSpace(request.BaseSHA256)
+	studentUserID, courseID, kpKey, err := artifactsync.ParseStudentKpArtifactID(artifactID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "artifact_id invalid")
+	}
+	if sessionSyncID == "" || baseSHA == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "session_sync_id and base_sha256 required")
+	}
+	teacherAccountID, err := getTeacherAccountID(h.cfg.Store.DB, userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusForbidden, "active teacher account required")
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, "teacher lookup failed")
+	}
+	ownsCourse, err := isCourseOwnedByTeacher(h.cfg.Store.DB, teacherAccountID, courseID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "course ownership check failed")
+	}
+	if !ownsCourse {
+		return fiber.NewError(fiber.StatusForbidden, "teacher does not own course")
+	}
+	enrollmentID, err := lookupActiveEnrollmentID(
+		h.cfg.Store.DB,
+		studentUserID,
+		courseID,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fiber.NewError(fiber.StatusForbidden, "student not enrolled")
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, "enrollment check failed")
+	}
+	unlockMutation := h.lockArtifactMutation(artifactID)
+	defer unlockMutation()
+	tx, err := h.cfg.Store.DB.Begin()
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	enrolled, err := isEnrollmentActiveTx(
+		tx,
+		enrollmentID,
+		studentUserID,
+		courseID,
+	)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "enrollment check failed")
+	}
+	if !enrolled {
+		return fiber.NewError(fiber.StatusForbidden, "student not enrolled")
+	}
+	currentSHA, storageRelPath, err := lookupStudentKpMutationStateTx(tx, artifactID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			if err := tx.Rollback(); err != nil {
+				return fiber.NewError(fiber.StatusInternalServerError, "rollback failed")
+			}
+			committed = true
+			state2, err := artifactsync.ReadState2(h.cfg.Store.DB, userID)
+			if err != nil {
+				return fiber.NewError(fiber.StatusInternalServerError, "artifact state read failed")
+			}
+			return c.JSON(fiber.Map{
+				"status":           "session_already_deleted",
+				"artifact_id":      artifactID,
+				"artifact_deleted": true,
+				"sha256":           "",
+				"state2":           state2,
+			})
+		}
+		return fiber.NewError(fiber.StatusInternalServerError, "student artifact lookup failed")
+	}
+	if currentSHA == "" || storageRelPath == "" {
+		return fiber.NewError(fiber.StatusNotFound, "student artifact not found")
+	}
+	originalBytes, err := os.ReadFile(h.cfg.Storage.AbsolutePath(storageRelPath))
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "student artifact read failed")
+	}
+	typedPayload, computedSHA, err := artifactsync.ReadStudentKpArtifactPayload(originalBytes)
+	if err != nil || computedSHA != currentSHA {
+		return fiber.NewError(fiber.StatusInternalServerError, "stored student artifact invalid")
+	}
+	if typedPayload.CourseID != courseID ||
+		typedPayload.StudentRemoteUserID != studentUserID ||
+		typedPayload.TeacherRemoteUserID != userID ||
+		strings.TrimSpace(typedPayload.KpKey) != strings.TrimSpace(kpKey) {
+		return fiber.NewError(fiber.StatusInternalServerError, "stored student artifact identity mismatch")
+	}
+	rawPayload, rawSHA, err := artifactsync.ReadStudentKpArtifactPayloadMap(originalBytes)
+	if err != nil || rawSHA != currentSHA {
+		return fiber.NewError(fiber.StatusInternalServerError, "stored student artifact invalid")
+	}
+	rawSessions, ok := rawPayload["sessions"].([]interface{})
+	if !ok {
+		return fiber.NewError(fiber.StatusInternalServerError, "stored student sessions invalid")
+	}
+	remainingSessions := make([]interface{}, 0, len(rawSessions))
+	sessionFound := false
+	for _, rawSession := range rawSessions {
+		session, ok := rawSession.(map[string]interface{})
+		if !ok {
+			return fiber.NewError(fiber.StatusInternalServerError, "stored student session invalid")
+		}
+		storedSyncID, ok := session["session_sync_id"].(string)
+		if !ok || strings.TrimSpace(storedSyncID) == "" {
+			return fiber.NewError(fiber.StatusInternalServerError, "stored student session invalid")
+		}
+		if strings.TrimSpace(storedSyncID) == sessionSyncID {
+			sessionFound = true
+			continue
+		}
+		remainingSessions = append(remainingSessions, rawSession)
+	}
+	if !sessionFound {
+		if err := tx.Rollback(); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "rollback failed")
+		}
+		committed = true
+		state2, err := artifactsync.ReadState2(h.cfg.Store.DB, userID)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "artifact state read failed")
+		}
+		return c.JSON(fiber.Map{
+			"status":           "session_already_deleted",
+			"artifact_id":      artifactID,
+			"artifact_deleted": false,
+			"sha256":           currentSHA,
+			"state2":           state2,
+		})
+	}
+	if conflict := uploadConflict(currentSHA, baseSHA, false); conflict != nil {
+		return c.Status(fiber.StatusConflict).JSON(conflict)
+	}
+	mistakeCount, err := studentKpMistakeCount(rawPayload["mistakes"])
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "stored student mistakes invalid")
+	}
+	delete(rawPayload, "progress")
+	rawPayload["sessions"] = remainingSessions
+	now := time.Now().UTC()
+	rawPayload["updated_at"] = now.Format(time.RFC3339Nano)
+
+	artifactDeleted := len(remainingSessions) == 0 &&
+		mistakeCount == 0 &&
+		!studentKpPayloadHasUnknownTopLevelFields(rawPayload)
+	nextSHA := ""
+	nextStorageRelPath := ""
+	commitAttempted := false
+	defer func() {
+		if !committed && nextStorageRelPath != "" {
+			if !commitAttempted && nextStorageRelPath != storageRelPath {
+				if err := h.cfg.Storage.RemoveRelativePath(nextStorageRelPath); err != nil {
+					log.Printf(
+						"teacher session delete candidate cleanup failed; artifact_id=%s path=%s error=%v",
+						artifactID,
+						nextStorageRelPath,
+						err,
+					)
+				}
+			} else {
+				log.Printf(
+					"teacher session delete left candidate after uncertain commit; artifact_id=%s path=%s",
+					artifactID,
+					nextStorageRelPath,
+				)
+			}
+		}
+	}()
+	visibleArtifact := artifactsync.VisibleArtifact{
+		ArtifactID:    artifactID,
+		ArtifactClass: "student_kp",
+		CourseID:      courseID,
+		TeacherUserID: userID,
+		StudentUserID: studentUserID,
+		KpKey:         kpKey,
+		LastModified:  now,
+	}
+	if artifactDeleted {
+		result, err := tx.Exec(
+			`DELETE FROM student_kp_artifacts
+			 WHERE artifact_id = ? AND student_user_id = ? AND sha256 = ?`,
+			artifactID,
+			studentUserID,
+			currentSHA,
+		)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "student artifact delete failed")
+		}
+		affected, err := result.RowsAffected()
+		if err != nil || affected != 1 {
+			return fiber.NewError(fiber.StatusConflict, "student artifact changed")
+		}
+	} else {
+		nextBytes, builtSHA, err := artifactsync.BuildStudentKpArtifactZipFromMap(rawPayload)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "student artifact rebuild failed")
+		}
+		nextStorageRelPath, err = artifactsync.StudentKpVersionedStorageRelPath(
+			studentUserID,
+			courseID,
+			kpKey,
+			builtSHA,
+		)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "student artifact path failed")
+		}
+		_, storedSHA, err := h.cfg.Storage.SaveRelativePath(
+			nextStorageRelPath,
+			bytes.NewReader(nextBytes),
+		)
+		if err != nil {
+			if errors.Is(err, storage.ErrTooLarge) {
+				return fiber.NewError(fiber.StatusRequestEntityTooLarge, "artifact too large")
+			}
+			return fiber.NewError(fiber.StatusInternalServerError, "artifact save failed")
+		}
+		if storedSHA != builtSHA {
+			return fiber.NewError(fiber.StatusInternalServerError, "artifact sha256 mismatch")
+		}
+		result, err := tx.Exec(
+			`UPDATE student_kp_artifacts
+			 SET teacher_user_id = ?,
+			     storage_rel_path = ?,
+			     sha256 = ?,
+			     last_modified = ?
+			 WHERE artifact_id = ? AND student_user_id = ? AND sha256 = ?`,
+			userID,
+			nextStorageRelPath,
+			storedSHA,
+			now,
+			artifactID,
+			studentUserID,
+			currentSHA,
+		)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "student artifact save failed")
+		}
+		affected, err := result.RowsAffected()
+		if err != nil || affected != 1 {
+			return fiber.NewError(fiber.StatusConflict, "student artifact changed")
+		}
+		nextSHA = storedSHA
+		visibleArtifact.StorageRelPath = nextStorageRelPath
+		visibleArtifact.SHA256 = nextSHA
+	}
+	state2ByUserID, err := artifactsync.ApplyStudentKpArtifactVisibilityTx(
+		tx,
+		visibleArtifact,
+		artifactDeleted,
+	)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
+	}
+	state2, ok := state2ByUserID[userID]
+	if !ok || strings.TrimSpace(state2) == "" {
+		return fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
+	}
+	commitAttempted = true
+	if err := tx.Commit(); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "commit failed")
+	}
+	committed = true
+	// Keep the old artifact file so an already-issued X-Accel-Redirect remains valid.
+	return c.JSON(fiber.Map{
+		"status":           "session_deleted",
+		"artifact_id":      artifactID,
+		"artifact_deleted": artifactDeleted,
+		"sha256":           nextSHA,
+		"state2":           state2,
 	})
 }
 
@@ -595,7 +953,7 @@ func (h *ArtifactSyncHandler) uploadStudentKp(
 	overwriteServer bool,
 	fileHeader *multipart.FileHeader,
 ) error {
-	storedSHA, courseID, err := h.uploadStudentKpFileHeader(
+	storedSHA, _, state2, err := h.uploadStudentKpFileHeader(
 		userID,
 		artifactID,
 		baseSHA,
@@ -609,13 +967,6 @@ func (h *ArtifactSyncHandler) uploadStudentKp(
 			return c.Status(fiber.StatusConflict).JSON(conflict.payload)
 		}
 		return err
-	}
-	if err := artifactsync.RefreshUsersForCourse(h.cfg.Store.DB, courseID); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
-	}
-	state2, err := artifactsync.ReadState2(h.cfg.Store.DB, userID)
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
 	}
 	return c.JSON(fiber.Map{
 		"status":      "uploaded",
@@ -632,71 +983,64 @@ func (h *ArtifactSyncHandler) uploadStudentKpFileHeader(
 	declaredSHA string,
 	overwriteServer bool,
 	fileHeader *multipart.FileHeader,
-) (string, int64, error) {
+) (string, int64, string, error) {
 	studentUserID, courseID, kpKey, err := artifactsync.ParseStudentKpArtifactID(artifactID)
 	if err != nil {
-		return "", 0, fiber.NewError(fiber.StatusBadRequest, "artifact_id invalid")
+		return "", 0, "", fiber.NewError(fiber.StatusBadRequest, "artifact_id invalid")
 	}
 	if userID != studentUserID {
-		return "", 0, fiber.NewError(fiber.StatusForbidden, "student artifact upload forbidden")
+		return "", 0, "", fiber.NewError(fiber.StatusForbidden, "student artifact upload forbidden")
 	}
-	enrolled, err := isEnrolled(h.cfg.Store.DB, userID, courseID)
+	enrollmentID, err := lookupActiveEnrollmentID(h.cfg.Store.DB, userID, courseID)
 	if err != nil {
-		return "", 0, fiber.NewError(fiber.StatusInternalServerError, "enrollment check failed")
-	}
-	if !enrolled {
-		return "", 0, fiber.NewError(fiber.StatusForbidden, "student not enrolled")
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", 0, "", fiber.NewError(fiber.StatusForbidden, "student not enrolled")
+		}
+		return "", 0, "", fiber.NewError(fiber.StatusInternalServerError, "enrollment check failed")
 	}
 	teacherUserID, err := getTeacherUserIDForCourse(h.cfg.Store.DB, courseID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", 0, fiber.NewError(fiber.StatusNotFound, "course not found")
+			return "", 0, "", fiber.NewError(fiber.StatusNotFound, "course not found")
 		}
-		return "", 0, fiber.NewError(fiber.StatusInternalServerError, "course lookup failed")
-	}
-	currentSHA, err := h.lookupStudentKpUploadState(artifactID)
-	if err != nil {
-		return "", 0, fiber.NewError(fiber.StatusInternalServerError, "student artifact lookup failed")
-	}
-	if conflict := uploadConflict(currentSHA, baseSHA, overwriteServer); conflict != nil {
-		return "", 0, artifactUploadConflict{payload: conflict}
+		return "", 0, "", fiber.NewError(fiber.StatusInternalServerError, "course lookup failed")
 	}
 	file, err := fileHeader.Open()
 	if err != nil {
-		return "", 0, fiber.NewError(fiber.StatusBadRequest, "artifact open failed")
+		return "", 0, "", fiber.NewError(fiber.StatusBadRequest, "artifact open failed")
 	}
 	defer file.Close()
 	zipBytes, err := io.ReadAll(file)
 	if err != nil {
-		return "", 0, fiber.NewError(fiber.StatusBadRequest, "artifact read failed")
+		return "", 0, "", fiber.NewError(fiber.StatusBadRequest, "artifact read failed")
 	}
 	payload, computedSHA, err := artifactsync.ReadStudentKpArtifactPayload(zipBytes)
 	if err != nil {
-		return "", 0, fiber.NewError(fiber.StatusBadRequest, "student artifact invalid")
+		return "", 0, "", fiber.NewError(fiber.StatusBadRequest, "student artifact invalid")
 	}
 	if computedSHA != declaredSHA {
-		return "", 0, fiber.NewError(fiber.StatusBadRequest, "sha256 mismatch")
+		return "", 0, "", fiber.NewError(fiber.StatusBadRequest, "sha256 mismatch")
 	}
 	if payload.CourseID != courseID ||
 		payload.StudentRemoteUserID != studentUserID ||
 		strings.TrimSpace(payload.KpKey) != strings.TrimSpace(kpKey) ||
 		payload.TeacherRemoteUserID != teacherUserID {
-		return "", 0, fiber.NewError(fiber.StatusBadRequest, "student artifact payload identity mismatch")
+		return "", 0, "", fiber.NewError(fiber.StatusBadRequest, "student artifact payload identity mismatch")
 	}
-	storageRelPath := artifactsync.StudentKpStorageRelPath(studentUserID, courseID, kpKey)
-	_, storedSHA, err := h.cfg.Storage.SaveRelativePath(storageRelPath, bytes.NewReader(zipBytes))
+	storageRelPath, err := artifactsync.StudentKpVersionedStorageRelPath(
+		studentUserID,
+		courseID,
+		kpKey,
+		declaredSHA,
+	)
 	if err != nil {
-		if errors.Is(err, storage.ErrTooLarge) {
-			return "", 0, fiber.NewError(fiber.StatusRequestEntityTooLarge, "artifact too large")
-		}
-		return "", 0, fiber.NewError(fiber.StatusInternalServerError, "artifact save failed")
+		return "", 0, "", fiber.NewError(fiber.StatusInternalServerError, "artifact path failed")
 	}
-	if storedSHA != declaredSHA {
-		return "", 0, fiber.NewError(fiber.StatusBadRequest, "sha256 mismatch")
-	}
+	unlockMutation := h.lockArtifactMutation(artifactID)
+	defer unlockMutation()
 	tx, err := h.cfg.Store.DB.Begin()
 	if err != nil {
-		return "", 0, fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
+		return "", 0, "", fiber.NewError(fiber.StatusInternalServerError, "transaction failed")
 	}
 	committed := false
 	defer func() {
@@ -704,6 +1048,65 @@ func (h *ArtifactSyncHandler) uploadStudentKpFileHeader(
 			_ = tx.Rollback()
 		}
 	}()
+	enrolled, err := isEnrollmentActiveTx(
+		tx,
+		enrollmentID,
+		userID,
+		courseID,
+	)
+	if err != nil {
+		return "", 0, "", fiber.NewError(fiber.StatusInternalServerError, "enrollment check failed")
+	}
+	if !enrolled {
+		return "", 0, "", fiber.NewError(fiber.StatusForbidden, "student not enrolled")
+	}
+	currentSHA, previousStorageRelPath, err := lookupStudentKpMutationStateTx(tx, artifactID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", 0, "", fiber.NewError(fiber.StatusInternalServerError, "student artifact lookup failed")
+	}
+	if currentSHA != declaredSHA {
+		if conflict := uploadConflict(currentSHA, baseSHA, overwriteServer); conflict != nil {
+			return "", 0, "", artifactUploadConflict{payload: conflict}
+		}
+	}
+	commitAttempted := false
+	candidateIsNewPath := storageRelPath != previousStorageRelPath
+	storedSHA := declaredSHA
+	if candidateIsNewPath {
+		_, storedSHA, err = h.cfg.Storage.SaveRelativePath(
+			storageRelPath,
+			bytes.NewReader(zipBytes),
+		)
+		if err != nil {
+			if errors.Is(err, storage.ErrTooLarge) {
+				return "", 0, "", fiber.NewError(fiber.StatusRequestEntityTooLarge, "artifact too large")
+			}
+			return "", 0, "", fiber.NewError(fiber.StatusInternalServerError, "artifact save failed")
+		}
+	}
+	defer func() {
+		if !committed && candidateIsNewPath {
+			if !commitAttempted {
+				if err := h.cfg.Storage.RemoveRelativePath(storageRelPath); err != nil {
+					log.Printf(
+						"student artifact upload candidate cleanup failed; artifact_id=%s path=%s error=%v",
+						artifactID,
+						storageRelPath,
+						err,
+					)
+				}
+			} else {
+				log.Printf(
+					"student artifact upload left candidate after uncertain commit; artifact_id=%s path=%s",
+					artifactID,
+					storageRelPath,
+				)
+			}
+		}
+	}()
+	if storedSHA != declaredSHA {
+		return "", 0, "", fiber.NewError(fiber.StatusBadRequest, "sha256 mismatch")
+	}
 	lastModified := parseRFC3339OrNow(payload.UpdatedAt)
 	if err := artifactsync.UpsertStudentKpArtifactTx(
 		tx,
@@ -716,13 +1119,37 @@ func (h *ArtifactSyncHandler) uploadStudentKpFileHeader(
 		storedSHA,
 		lastModified,
 	); err != nil {
-		return "", 0, fiber.NewError(fiber.StatusInternalServerError, "student artifact save failed")
+		return "", 0, "", fiber.NewError(fiber.StatusInternalServerError, "student artifact save failed")
 	}
+	state2ByUserID, err := artifactsync.ApplyStudentKpArtifactVisibilityTx(
+		tx,
+		artifactsync.VisibleArtifact{
+			ArtifactID:     artifactID,
+			ArtifactClass:  "student_kp",
+			CourseID:       courseID,
+			TeacherUserID:  teacherUserID,
+			StudentUserID:  studentUserID,
+			KpKey:          kpKey,
+			StorageRelPath: storageRelPath,
+			SHA256:         storedSHA,
+			LastModified:   lastModified,
+		},
+		false,
+	)
+	if err != nil {
+		return "", 0, "", fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
+	}
+	state2, ok := state2ByUserID[userID]
+	if !ok || strings.TrimSpace(state2) == "" {
+		return "", 0, "", fiber.NewError(fiber.StatusInternalServerError, "artifact state refresh failed")
+	}
+	commitAttempted = true
 	if err := tx.Commit(); err != nil {
-		return "", 0, fiber.NewError(fiber.StatusInternalServerError, "commit failed")
+		return "", 0, "", fiber.NewError(fiber.StatusInternalServerError, "commit failed")
 	}
 	committed = true
-	return storedSHA, courseID, nil
+	// Keep the old artifact file so an already-issued X-Accel-Redirect remains valid.
+	return storedSHA, courseID, state2, nil
 }
 
 func (h *ArtifactSyncHandler) lookupCourseBundleUploadState(
@@ -760,38 +1187,21 @@ func (h *ArtifactSyncHandler) lookupCourseBundleUploadState(
 	return bundleID, strings.TrimSpace(currentSHA), currentVersion, nil
 }
 
-func (h *ArtifactSyncHandler) lookupStudentKpUploadState(artifactID string) (string, error) {
-	row := h.cfg.Store.DB.QueryRow(
-		`SELECT sha256
-		 FROM student_kp_artifacts
-		 WHERE artifact_id = ?
-		 LIMIT 1`,
-		artifactID,
-	)
-	var sha string
-	if err := row.Scan(&sha); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", nil
-		}
-		return "", err
-	}
-	return strings.TrimSpace(sha), nil
-}
-
-func (h *ArtifactSyncHandler) lookupStudentKpDeleteState(artifactID string) (string, string, error) {
-	row := h.cfg.Store.DB.QueryRow(
+func lookupStudentKpMutationStateTx(
+	tx *sql.Tx,
+	artifactID string,
+) (string, string, error) {
+	row := tx.QueryRow(
 		`SELECT sha256, storage_rel_path
 		 FROM student_kp_artifacts
 		 WHERE artifact_id = ?
-		 LIMIT 1`,
-		artifactID,
+		 LIMIT 1
+		 FOR UPDATE`,
+		strings.TrimSpace(artifactID),
 	)
 	var sha string
 	var storageRelPath string
 	if err := row.Scan(&sha, &storageRelPath); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", "", nil
-		}
 		return "", "", err
 	}
 	return strings.TrimSpace(sha), strings.TrimSpace(storageRelPath), nil
@@ -978,6 +1388,104 @@ func isEnrolled(db *sql.DB, studentUserID int64, courseID int64) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func lookupActiveEnrollmentID(
+	db *sql.DB,
+	studentUserID int64,
+	courseID int64,
+) (int64, error) {
+	row := db.QueryRow(
+		`SELECT id
+		 FROM enrollments
+		 WHERE student_id = ? AND course_id = ? AND status = 'active'
+		 LIMIT 1`,
+		studentUserID,
+		courseID,
+	)
+	var enrollmentID int64
+	if err := row.Scan(&enrollmentID); err != nil {
+		return 0, err
+	}
+	return enrollmentID, nil
+}
+
+func isEnrollmentActiveTx(
+	tx *sql.Tx,
+	enrollmentID int64,
+	studentUserID int64,
+	courseID int64,
+) (bool, error) {
+	row := tx.QueryRow(
+		`SELECT status
+		 FROM enrollments
+		 WHERE id = ? AND student_id = ? AND course_id = ?
+		 LIMIT 1
+		 FOR UPDATE`,
+		enrollmentID,
+		studentUserID,
+		courseID,
+	)
+	var status string
+	if err := row.Scan(&status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return strings.TrimSpace(status) == "active", nil
+}
+
+func isCourseOwnedByTeacher(db *sql.DB, teacherAccountID int64, courseID int64) (bool, error) {
+	row := db.QueryRow(
+		`SELECT 1
+		 FROM courses
+		 WHERE id = ? AND teacher_id = ?
+		 LIMIT 1`,
+		courseID,
+		teacherAccountID,
+	)
+	var found int
+	if err := row.Scan(&found); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func studentKpMistakeCount(raw interface{}) (int, error) {
+	if raw == nil {
+		return 0, nil
+	}
+	items, ok := raw.([]interface{})
+	if !ok {
+		return 0, errors.New("mistakes must be a list")
+	}
+	return len(items), nil
+}
+
+func studentKpPayloadHasUnknownTopLevelFields(payload map[string]interface{}) bool {
+	knownFields := map[string]struct{}{
+		"schema":                 {},
+		"course_id":              {},
+		"course_subject":         {},
+		"kp_key":                 {},
+		"teacher_remote_user_id": {},
+		"student_remote_user_id": {},
+		"student_username":       {},
+		"updated_at":             {},
+		"progress":               {},
+		"mistakes":               {},
+		"sessions":               {},
+	}
+	for key := range payload {
+		if _, ok := knownFields[key]; !ok {
+			return true
+		}
+	}
+	return false
 }
 
 func getTeacherUserIDForCourse(db *sql.DB, courseID int64) (int64, error) {

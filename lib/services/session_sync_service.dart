@@ -227,6 +227,10 @@ class SessionSyncService {
         manifest: manifest,
         serverItems: serverState1.items,
       );
+      manifest = await _reconcileMatchingServerBases(
+        manifest: manifest,
+        serverItems: serverState1.items,
+      );
       manifest = await _deleteServerArtifactsForLocalDeletes(
         remoteUserId: remoteUserId,
         manifest: manifest,
@@ -294,6 +298,21 @@ class SessionSyncService {
     return artifactHashesById;
   }
 
+  Future<bool> hasPendingCanonicalManifestChanges({
+    required User currentUser,
+  }) async {
+    final remoteUserId = currentUser.remoteUserId;
+    if (remoteUserId == null || remoteUserId <= 0) {
+      return false;
+    }
+    await ensureLocalCutoverInitialized();
+    final manifest = await _artifactStore.loadManifest(remoteUserId);
+    return _hasPendingStudentManifestChanges(
+      currentUser: currentUser,
+      manifest: manifest,
+    );
+  }
+
   Future<SyncRunStats> syncFromCanonicalState1({
     required User currentUser,
     required List<ArtifactState1Item> visibleItems,
@@ -318,6 +337,10 @@ class SessionSyncService {
       var manifest = await _artifactStore.loadManifest(remoteUserId);
       manifest = await _removeResolvedDeletedEntries(
         currentUser: currentUser,
+        manifest: manifest,
+        serverItems: serverItems,
+      );
+      manifest = await _reconcileMatchingServerBases(
         manifest: manifest,
         serverItems: serverItems,
       );
@@ -380,6 +403,140 @@ class SessionSyncService {
       }
       await _artifactStore.saveManifest(manifest);
       return stats;
+    } finally {
+      await _finishSync(syncCompleter);
+    }
+  }
+
+  Future<void> deleteSessionAndResetKpProgress({
+    required User currentUser,
+    required int sessionId,
+  }) async {
+    if (currentUser.role == 'student') {
+      final session = await _db.getSession(sessionId);
+      if (session == null) {
+        throw StateError('Session $sessionId no longer exists.');
+      }
+      if (session.studentId != currentUser.id) {
+        throw StateError('Students can only delete their own sessions.');
+      }
+      await _db.deleteSession(sessionId);
+      return;
+    }
+    if (currentUser.role != 'teacher') {
+      throw StateError(
+          'Only a teacher or the owning student can delete a session.');
+    }
+
+    await ensureLocalCutoverInitialized();
+    final syncCompleter = await _beginSync(waitForActiveSync: true);
+    if (syncCompleter == null) {
+      throw StateError('Could not acquire the session sync lock.');
+    }
+    try {
+      final session = await _db.getSession(sessionId);
+      if (session == null) {
+        throw StateError('Session $sessionId no longer exists.');
+      }
+      final syncId = (session.syncId ?? '').trim();
+      if (syncId.isEmpty) {
+        throw StateError(
+          'This session has no server identity and cannot be deleted by a teacher.',
+        );
+      }
+      final course = await _db.getCourseVersionById(session.courseVersionId);
+      if (course == null || course.teacherId != currentUser.id) {
+        throw StateError(
+            'The current teacher does not own this session course.');
+      }
+      final student = await _db.getUserById(session.studentId);
+      if (student == null || student.role != 'student') {
+        throw StateError('The session student no longer exists.');
+      }
+      final remoteTeacherUserId = _requireRemoteUserId(currentUser);
+      final remoteStudentUserId = _requireRemoteUserId(student);
+      final remoteCourseId =
+          await _db.getRemoteCourseIdForCourseVersion(session.courseVersionId);
+      if (remoteCourseId == null || remoteCourseId <= 0) {
+        throw StateError(
+          'Course version ${session.courseVersionId} is missing its remote course link.',
+        );
+      }
+      final kpKey = session.kpKey.trim();
+      if (kpKey.isEmpty) {
+        throw StateError('The session knowledge-point key is missing.');
+      }
+      final artifactId =
+          'student_kp:$remoteStudentUserId:$remoteCourseId:$kpKey';
+      final teacherManifest =
+          await _artifactStore.loadManifest(remoteTeacherUserId);
+      final teacherItem = teacherManifest.items[artifactId];
+      if (teacherItem == null ||
+          teacherItem.deleted ||
+          teacherItem.baseSha256.trim().isEmpty ||
+          teacherItem.sha256.trim() != teacherItem.baseSha256.trim()) {
+        throw StateError(
+          'The teacher session cache is stale; reload the student sessions and retry.',
+        );
+      }
+
+      try {
+        await _api.deleteStudentSessionAsTeacher(
+          artifactId: artifactId,
+          sessionSyncId: syncId,
+          baseSha256: teacherItem.baseSha256,
+        );
+      } catch (deleteError, deleteStackTrace) {
+        try {
+          await materializeTeacherArtifactsForView(
+            currentUser: currentUser,
+            localStudentId: student.id,
+            courseVersionId: session.courseVersionId,
+          );
+          final reconciledSessions = await _db.getSessionsForNode(
+            studentId: student.id,
+            courseVersionId: session.courseVersionId,
+            kpKey: kpKey,
+          );
+          final deletionReachedServer = !reconciledSessions.any(
+            (candidate) => (candidate.syncId ?? '').trim() == syncId,
+          );
+          if (deletionReachedServer) {
+            await _invalidateCachedArtifact(
+              remoteUserId: remoteStudentUserId,
+              artifactId: artifactId,
+            );
+            return;
+          }
+        } catch (reconcileError, reconcileStackTrace) {
+          Error.throwWithStackTrace(
+            StateError(
+              'The server deletion result was uncertain and this device could not reconcile it: '
+              '$deleteError; refresh failed: $reconcileError',
+            ),
+            reconcileStackTrace,
+          );
+        }
+        Error.throwWithStackTrace(deleteError, deleteStackTrace);
+      }
+      try {
+        await materializeTeacherArtifactsForView(
+          currentUser: currentUser,
+          localStudentId: student.id,
+          courseVersionId: session.courseVersionId,
+        );
+        await _invalidateCachedArtifact(
+          remoteUserId: remoteStudentUserId,
+          artifactId: artifactId,
+        );
+      } catch (error, stackTrace) {
+        Error.throwWithStackTrace(
+          StateError(
+            'The session was deleted on the server, but this device could not refresh its canonical copy: $error',
+          ),
+          stackTrace,
+        );
+      }
     } finally {
       await _finishSync(syncCompleter);
     }
@@ -551,6 +708,25 @@ class SessionSyncService {
     return true;
   }
 
+  Future<void> _invalidateCachedArtifact({
+    required int remoteUserId,
+    required String artifactId,
+  }) async {
+    final manifest = await _artifactStore.loadManifest(remoteUserId);
+    final item = manifest.items[artifactId];
+    if (item == null) {
+      return;
+    }
+    await _artifactStore.deleteArtifactFile(
+      remoteUserId: remoteUserId,
+      storageFile: item.storageFile,
+    );
+    final items =
+        Map<String, StudentKpArtifactManifestItem>.from(manifest.items)
+          ..remove(artifactId);
+    await _artifactStore.saveManifest(manifest.copyWith(items: items));
+  }
+
   Future<Map<String, Uint8List>> _ensureTeacherArtifactBytesAvailable({
     required User currentUser,
     required int remoteTeacherUserId,
@@ -663,10 +839,14 @@ class SessionSyncService {
           final serverState1 = await _api.getState1(
             artifactClass: _artifactClass,
           );
+          final manifest = await _reconcileMatchingServerBases(
+            manifest: initialManifest,
+            serverItems: serverState1.items,
+          );
           await _uploadLocalChanges(
             currentUser: currentUser,
             remoteUserId: remoteUserId,
-            manifest: initialManifest,
+            manifest: manifest,
             serverItems: serverState1.items,
             stats: stats,
             onProgress: onProgress,
@@ -686,7 +866,11 @@ class SessionSyncService {
         final remoteState2 =
             await _api.getState2(artifactClass: _artifactClass);
         if (remoteState2.trim().isNotEmpty &&
-            remoteState2.trim() == initialManifest.state2.trim()) {
+            remoteState2.trim() == initialManifest.state2.trim() &&
+            !_hasPendingStudentManifestChanges(
+              currentUser: currentUser,
+              manifest: initialManifest,
+            )) {
           return stats;
         }
       }
@@ -704,6 +888,10 @@ class SessionSyncService {
 
       manifest = await _removeResolvedDeletedEntries(
         currentUser: currentUser,
+        manifest: manifest,
+        serverItems: serverState1.items,
+      );
+      manifest = await _reconcileMatchingServerBases(
         manifest: manifest,
         serverItems: serverState1.items,
       );
@@ -786,6 +974,57 @@ class SessionSyncService {
     }
   }
 
+  bool _hasPendingStudentManifestChanges({
+    required User currentUser,
+    required StudentKpArtifactManifest manifest,
+  }) {
+    if (currentUser.role != 'student') {
+      return false;
+    }
+    return manifest.items.values.any((item) {
+      if (item.deleted) {
+        return true;
+      }
+      return item.sha256.trim() != item.baseSha256.trim();
+    });
+  }
+
+  Future<StudentKpArtifactManifest> _reconcileMatchingServerBases({
+    required StudentKpArtifactManifest manifest,
+    required List<ArtifactState1Item> serverItems,
+  }) async {
+    final serverById = <String, ArtifactState1Item>{
+      for (final item in serverItems)
+        if (item.artifactId.trim().isNotEmpty) item.artifactId.trim(): item,
+    };
+    var changed = false;
+    final nextItems = Map<String, StudentKpArtifactManifestItem>.from(
+      manifest.items,
+    );
+    for (final entry in manifest.items.entries) {
+      final localItem = entry.value;
+      final serverItem = serverById[entry.key];
+      if (localItem.deleted || serverItem == null) {
+        continue;
+      }
+      final localSha = localItem.sha256.trim();
+      final serverSha = serverItem.sha256.trim();
+      if (localSha.isEmpty ||
+          localSha != serverSha ||
+          localItem.baseSha256.trim() == serverSha) {
+        continue;
+      }
+      nextItems[entry.key] = localItem.copyWith(baseSha256: serverSha);
+      changed = true;
+    }
+    if (!changed) {
+      return manifest;
+    }
+    final updated = manifest.copyWith(items: nextItems);
+    await _artifactStore.saveManifest(updated);
+    return await _artifactStore.loadManifest(manifest.remoteUserId);
+  }
+
   Future<StudentKpArtifactManifest> _removeResolvedDeletedEntries({
     required User currentUser,
     required StudentKpArtifactManifest manifest,
@@ -838,6 +1077,14 @@ class SessionSyncService {
       }
     }
     if (downloadCandidates.isEmpty) {
+      if (removeMissingLocalArtifacts) {
+        return _removeMissingLocalArtifacts(
+          currentUser: currentUser,
+          remoteUserId: remoteUserId,
+          manifest: manifest,
+          serverArtifactIds: serverById.keys.toSet(),
+        );
+      }
       return manifest;
     }
 
@@ -944,34 +1191,60 @@ class SessionSyncService {
     }
 
     if (removeMissingLocalArtifacts) {
-      final localOnlyIds = currentManifest.items.keys
-          .where((artifactId) => !serverById.containsKey(artifactId))
-          .toList(growable: false)
-        ..sort();
-      for (final artifactId in localOnlyIds) {
-        final localItem = currentManifest.items[artifactId];
-        if (localItem == null || localItem.deleted) {
-          continue;
-        }
-        if (currentUser.role == 'teacher') {
-          await _runWithLocalMutationSuppressed(() async {
-            await _deleteLocalArtifactScopeById(
-              currentUser: currentUser,
-              artifactId: artifactId,
-            );
-          });
-          await _artifactStore.deleteArtifactFile(
-            remoteUserId: remoteUserId,
-            storageFile: localItem.storageFile,
-          );
-          final updatedItems = Map<String, StudentKpArtifactManifestItem>.from(
-              currentManifest.items)
-            ..remove(artifactId);
-          currentManifest = currentManifest.copyWith(items: updatedItems);
-          await _artifactStore.saveManifest(currentManifest);
-        }
-      }
+      currentManifest = await _removeMissingLocalArtifacts(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+        manifest: currentManifest,
+        serverArtifactIds: serverById.keys.toSet(),
+      );
     }
+    return await _artifactStore.loadManifest(remoteUserId);
+  }
+
+  Future<StudentKpArtifactManifest> _removeMissingLocalArtifacts({
+    required User currentUser,
+    required int remoteUserId,
+    required StudentKpArtifactManifest manifest,
+    required Set<String> serverArtifactIds,
+  }) async {
+    final localOnlyIds = manifest.items.keys
+        .where((artifactId) => !serverArtifactIds.contains(artifactId))
+        .toList(growable: false)
+      ..sort();
+    final updatedItems =
+        Map<String, StudentKpArtifactManifestItem>.from(manifest.items);
+    var changed = false;
+    for (final artifactId in localOnlyIds) {
+      final localItem = updatedItems[artifactId];
+      if (localItem == null || localItem.deleted) {
+        continue;
+      }
+      final localSha = localItem.sha256.trim();
+      final baseSha = localItem.baseSha256.trim();
+      final isCleanStudentCopy = currentUser.role == 'student' &&
+          baseSha.isNotEmpty &&
+          localSha == baseSha;
+      if (currentUser.role != 'teacher' && !isCleanStudentCopy) {
+        continue;
+      }
+      await _runWithLocalMutationSuppressed(() async {
+        await _deleteLocalArtifactScopeById(
+          currentUser: currentUser,
+          artifactId: artifactId,
+        );
+      });
+      await _artifactStore.deleteArtifactFile(
+        remoteUserId: remoteUserId,
+        storageFile: localItem.storageFile,
+      );
+      updatedItems.remove(artifactId);
+      changed = true;
+    }
+    if (!changed) {
+      return manifest;
+    }
+    final updated = manifest.copyWith(items: updatedItems);
+    await _artifactStore.saveManifest(updated);
     return await _artifactStore.loadManifest(remoteUserId);
   }
 

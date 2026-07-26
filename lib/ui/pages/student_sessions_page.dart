@@ -219,7 +219,6 @@ class _StudentSessionsPageState extends State<StudentSessionsPage> {
 
   Future<void> _confirmDelete(StudentSessionInfo session) async {
     final l10n = AppLocalizations.of(context)!;
-    final db = context.read<AppDatabase>();
     final title = (session.sessionTitle ?? '').trim().isNotEmpty
         ? session.sessionTitle!.trim()
         : l10n.sessionLabel(session.sessionId);
@@ -243,7 +242,31 @@ class _StudentSessionsPageState extends State<StudentSessionsPage> {
     if (confirmed != true) {
       return;
     }
-    await db.deleteSession(session.sessionId);
+    final currentUser = context.read<AuthController>().currentUser;
+    if (currentUser == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Delete session failed: signed out.')),
+      );
+      return;
+    }
+    try {
+      await context
+          .read<AppServices>()
+          .sessionSyncService
+          .deleteSessionAndResetKpProgress(
+            currentUser: currentUser,
+            sessionId: session.sessionId,
+          );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _sessionsFuture = _loadSessions());
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Delete session failed: $error')),
+      );
+      return;
+    }
     if (!mounted) {
       return;
     }

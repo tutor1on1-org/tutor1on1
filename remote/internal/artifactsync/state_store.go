@@ -214,11 +214,6 @@ func RefreshUserState(db *sql.DB, userID int64) error {
 	if db == nil {
 		return errors.New("database required")
 	}
-	items, err := collectVisibleArtifacts(db, userID)
-	if err != nil {
-		return err
-	}
-	state2 := BuildState2(buildState2Items(items))
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -229,6 +224,22 @@ func RefreshUserState(db *sql.DB, userID int64) error {
 			_ = tx.Rollback()
 		}
 	}()
+	var currentState2 string
+	err = tx.QueryRow(
+		`SELECT state2
+		 FROM artifact_state2
+		 WHERE user_id = ?
+		 FOR UPDATE`,
+		userID,
+	).Scan(&currentState2)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	items, err := collectVisibleArtifacts(tx, userID)
+	if err != nil {
+		return err
+	}
+	state2 := BuildState2(buildState2Items(items))
 
 	if _, err := tx.Exec(
 		`DELETE FROM artifact_state1_items WHERE user_id = ?`,
@@ -374,6 +385,118 @@ func UpsertStudentKpArtifactTx(
 	return err
 }
 
+func ApplyStudentKpArtifactVisibilityTx(
+	tx *sql.Tx,
+	item VisibleArtifact,
+	deleted bool,
+) (map[int64]string, error) {
+	if tx == nil {
+		return nil, errors.New("transaction required")
+	}
+	if strings.TrimSpace(item.ArtifactID) == "" ||
+		item.CourseID <= 0 ||
+		item.TeacherUserID <= 0 ||
+		item.StudentUserID <= 0 ||
+		strings.TrimSpace(item.KpKey) == "" {
+		return nil, errors.New("student artifact visibility fields missing")
+	}
+	if !deleted &&
+		(strings.TrimSpace(item.StorageRelPath) == "" ||
+			strings.TrimSpace(item.SHA256) == "") {
+		return nil, errors.New("student artifact visibility storage fields missing")
+	}
+	userIDs := []int64{item.TeacherUserID}
+	if item.StudentUserID != item.TeacherUserID {
+		userIDs = append(userIDs, item.StudentUserID)
+	}
+	sort.Slice(userIDs, func(i, j int) bool {
+		return userIDs[i] < userIDs[j]
+	})
+	for _, userID := range userIDs {
+		var currentState2 string
+		err := tx.QueryRow(
+			`SELECT state2
+			 FROM artifact_state2
+			 WHERE user_id = ?
+			 FOR UPDATE`,
+			userID,
+		).Scan(&currentState2)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+	}
+	state2ByUserID := make(map[int64]string, len(userIDs))
+	for _, userID := range userIDs {
+		if _, err := tx.Exec(
+			`DELETE FROM artifact_state1_items
+			 WHERE user_id = ? AND artifact_id = ?`,
+			userID,
+			strings.TrimSpace(item.ArtifactID),
+		); err != nil {
+			return nil, err
+		}
+		if !deleted {
+			if _, err := tx.Exec(
+				`INSERT INTO artifact_state1_items
+				 (user_id, artifact_id, artifact_class, course_id, teacher_user_id, student_user_id, kp_key, bundle_version_id, storage_rel_path, sha256, last_modified)
+				 VALUES (?, ?, 'student_kp', ?, ?, ?, ?, NULL, ?, ?, ?)`,
+				userID,
+				strings.TrimSpace(item.ArtifactID),
+				item.CourseID,
+				item.TeacherUserID,
+				item.StudentUserID,
+				strings.TrimSpace(item.KpKey),
+				strings.TrimSpace(item.StorageRelPath),
+				strings.TrimSpace(item.SHA256),
+				item.LastModified.UTC(),
+			); err != nil {
+				return nil, err
+			}
+		}
+		rows, err := tx.Query(
+			`SELECT artifact_id, sha256
+			 FROM artifact_state1_items
+			 WHERE user_id = ?
+			 ORDER BY artifact_id ASC`,
+			userID,
+		)
+		if err != nil {
+			return nil, err
+		}
+		stateItems := make([]State2Item, 0)
+		for rows.Next() {
+			var stateItem State2Item
+			if err := rows.Scan(&stateItem.ArtifactID, &stateItem.SHA256); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			stateItems = append(stateItems, stateItem)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+		state2 := BuildState2(stateItems)
+		if _, err := tx.Exec(
+			`INSERT INTO artifact_state2 (user_id, state2, updated_at)
+			 VALUES (?, ?, ?)
+			 ON DUPLICATE KEY UPDATE
+			   state2 = VALUES(state2),
+			   updated_at = VALUES(updated_at)`,
+			userID,
+			state2,
+			time.Now().UTC(),
+		); err != nil {
+			return nil, err
+		}
+		state2ByUserID[userID] = state2
+	}
+	return state2ByUserID, nil
+}
+
 func DeleteLegacyRowLevelTablesTx(tx *sql.Tx) error {
 	if tx == nil {
 		return errors.New("transaction required")
@@ -400,14 +523,18 @@ func DeleteLegacyRowLevelTablesTx(tx *sql.Tx) error {
 	return nil
 }
 
-func collectVisibleArtifacts(db *sql.DB, userID int64) ([]VisibleArtifact, error) {
+type sqlRowsQueryer interface {
+	Query(query string, args ...interface{}) (*sql.Rows, error)
+}
+
+func collectVisibleArtifacts(queryer sqlRowsQueryer, userID int64) ([]VisibleArtifact, error) {
 	items := []VisibleArtifact{}
-	bundles, err := collectVisibleCourseBundles(db, userID)
+	bundles, err := collectVisibleCourseBundles(queryer, userID)
 	if err != nil {
 		return nil, err
 	}
 	items = append(items, bundles...)
-	studentArtifacts, err := collectVisibleStudentKpArtifacts(db, userID)
+	studentArtifacts, err := collectVisibleStudentKpArtifacts(queryer, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -448,7 +575,7 @@ func buildState2Items(items []VisibleArtifact) []State2Item {
 	return stateItems
 }
 
-func collectVisibleCourseBundles(db *sql.DB, userID int64) ([]VisibleArtifact, error) {
+func collectVisibleCourseBundles(queryer sqlRowsQueryer, userID int64) ([]VisibleArtifact, error) {
 	const latestBundleQuery = `
 SELECT c.id, ta.user_id, bv.id, bv.oss_path, bv.hash, bv.created_at
 FROM bundles b
@@ -475,7 +602,7 @@ WHERE %s
 	}
 	items := []VisibleArtifact{}
 	for _, query := range queries {
-		rows, err := db.Query(query, userID)
+		rows, err := queryer.Query(query, userID)
 		if err != nil {
 			return nil, err
 		}
@@ -509,8 +636,8 @@ WHERE %s
 	return items, nil
 }
 
-func collectVisibleStudentKpArtifacts(db *sql.DB, userID int64) ([]VisibleArtifact, error) {
-	rows, err := db.Query(
+func collectVisibleStudentKpArtifacts(queryer sqlRowsQueryer, userID int64) ([]VisibleArtifact, error) {
+	rows, err := queryer.Query(
 		`SELECT a.artifact_id, a.course_id, a.teacher_user_id, a.student_user_id, a.kp_key, a.storage_rel_path, a.sha256, a.last_modified
 		 FROM student_kp_artifacts a
 		 JOIN enrollments e

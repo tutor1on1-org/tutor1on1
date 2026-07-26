@@ -780,8 +780,8 @@
       "name": {}
     }
   },
-  "deleteSessionMessage": "这将删除该会话及其消息。",
-  "deleteSessionSuccess": "会话已删除。",
+  "deleteSessionMessage": "这将删除该会话及其消息、重置该知识点的进度，并保留错题本记录。",
+  "deleteSessionSuccess": "会话已删除，知识点进度已重置。",
   "resetPinButton": "重置密码",
   "resetPinDialogTitle": "为 {name} 重置密码",
   "@resetPinDialogTitle": {

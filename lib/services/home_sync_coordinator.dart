@@ -50,10 +50,15 @@ class HomeSyncCoordinator {
           ),
         );
       final localState2 = _buildState2FromArtifactHashes(localArtifactHashes);
+      final hasPendingSessionManifestChanges = includeSessionSync &&
+          await _sessionSyncService.hasPendingCanonicalManifestChanges(
+            currentUser: user,
+          );
       final remoteState2 =
           await _enrollmentSyncService.readCanonicalRemoteState2();
       if (remoteState2.trim().isNotEmpty &&
-          remoteState2.trim() == localState2) {
+          remoteState2.trim() == localState2 &&
+          !hasPendingSessionManifestChanges) {
         if (includeEnrollmentSync && user.role == 'teacher') {
           await _enrollmentSyncService
               .repairTeacherEnrollmentScaffoldsFromServer(

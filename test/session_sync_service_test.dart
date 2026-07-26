@@ -76,11 +76,26 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
   final List<bool> uploadedOverwriteServerFlags = <bool>[];
   final List<String> deletedArtifactIds = <String>[];
   final List<bool> deletedOverwriteServerFlags = <bool>[];
+  int teacherSessionDeleteCalls = 0;
+  final List<String> teacherDeletedArtifactIds = <String>[];
+  final List<String> teacherDeletedSessionSyncIds = <String>[];
+  final List<String> teacherDeleteBaseSha256Values = <String>[];
+  Object? teacherSessionDeleteError;
+  bool teacherSessionDeleteThrowsAfterMutation = false;
+  Object? downloadArtifactError;
+  int? uploadBatchFailAfterCommittedItems;
+  Object? uploadBatchFailure;
+  Object? uploadArtifactError;
 
   void seedServerArtifact(_ServerArtifact artifact) {
     _items[artifact.item.artifactId] = artifact.item;
     _bytesByArtifactId[artifact.item.artifactId] =
         Uint8List.fromList(artifact.bytes);
+  }
+
+  void removeServerArtifact(String artifactId) {
+    _items.remove(artifactId);
+    _bytesByArtifactId.remove(artifactId);
   }
 
   void blockNextGetState2() {
@@ -167,6 +182,10 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
   @override
   Future<DownloadedArtifact> downloadArtifact(String artifactId) async {
     downloadCalls++;
+    final error = downloadArtifactError;
+    if (error != null) {
+      throw error;
+    }
     final item = _items[artifactId];
     final bytes = _bytesByArtifactId[artifactId];
     if (item == null || bytes == null) {
@@ -186,6 +205,10 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
     List<String> artifactIds,
   ) async {
     downloadBatchCalls++;
+    final error = downloadArtifactError;
+    if (error != null) {
+      throw error;
+    }
     final downloaded = <DownloadedArtifact>[];
     for (final artifactId in artifactIds) {
       final item = _items[artifactId];
@@ -224,13 +247,19 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
           expectedBaseSha256: normalizedBase,
         );
       }
-      if (current != null && current.sha256.trim() != normalizedBase) {
+      if (current != null &&
+          current.sha256.trim() != normalizedBase &&
+          current.sha256.trim() != sha256.trim()) {
         throw ArtifactConflictException(
           message: 'Artifact conflict: server_changed',
           serverSha256: current.sha256,
           expectedBaseSha256: normalizedBase,
         );
       }
+    }
+    final uploadError = uploadArtifactError;
+    if (uploadError != null) {
+      throw uploadError;
     }
     final result = _storeUploadedArtifact(
       artifactId: artifactId,
@@ -257,7 +286,9 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
             expectedBaseSha256: normalizedBase,
           );
         }
-        if (current != null && current.sha256.trim() != normalizedBase) {
+        if (current != null &&
+            current.sha256.trim() != normalizedBase &&
+            current.sha256.trim() != upload.sha256.trim()) {
           throw ArtifactConflictException(
             message: 'Artifact conflict: server_changed',
             serverSha256: current.sha256,
@@ -272,6 +303,12 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
       );
       uploadedArtifactIds.add(upload.artifactId);
       uploadedOverwriteServerFlags.add(upload.overwriteServer);
+      final failAfter = uploadBatchFailAfterCommittedItems;
+      if (failAfter != null &&
+          uploadedArtifactIds.length >= failAfter &&
+          uploadBatchFailure != null) {
+        throw uploadBatchFailure!;
+      }
     }
   }
 
@@ -304,6 +341,88 @@ class _FakeArtifactSyncApiService extends ArtifactSyncApiService {
     deleteCalls++;
     deletedArtifactIds.add(artifactId);
     deletedOverwriteServerFlags.add(overwriteServer);
+  }
+
+  @override
+  Future<void> deleteStudentSessionAsTeacher({
+    required String artifactId,
+    required String sessionSyncId,
+    required String baseSha256,
+  }) async {
+    teacherSessionDeleteCalls++;
+    teacherDeletedArtifactIds.add(artifactId);
+    teacherDeletedSessionSyncIds.add(sessionSyncId);
+    teacherDeleteBaseSha256Values.add(baseSha256);
+    final error = teacherSessionDeleteError;
+    if (error != null && !teacherSessionDeleteThrowsAfterMutation) {
+      throw error;
+    }
+    final currentItem = _items[artifactId];
+    final currentBytes = _bytesByArtifactId[artifactId];
+    if (currentItem == null || currentBytes == null) {
+      throw StateError('Missing server artifact $artifactId.');
+    }
+    if (currentItem.sha256 != baseSha256.trim()) {
+      throw ArtifactConflictException(
+        message: 'Artifact conflict: server_changed',
+        serverSha256: currentItem.sha256,
+        expectedBaseSha256: baseSha256.trim(),
+      );
+    }
+    final payload = _zipStore.readPayload(currentBytes);
+    final rawSessions = payload['sessions'];
+    if (rawSessions is! List) {
+      throw StateError('Server artifact sessions are invalid.');
+    }
+    var found = false;
+    final remainingSessions = <dynamic>[];
+    for (final rawSession in rawSessions) {
+      if (rawSession is! Map<String, dynamic>) {
+        throw StateError('Server artifact session is invalid.');
+      }
+      if ((rawSession['session_sync_id'] as String?)?.trim() ==
+          sessionSyncId.trim()) {
+        found = true;
+      } else {
+        remainingSessions.add(rawSession);
+      }
+    }
+    if (!found) {
+      throw StateError('Missing server session $sessionSyncId.');
+    }
+    payload
+      ..remove('progress')
+      ..['sessions'] = remainingSessions
+      ..['updated_at'] = DateTime.now().toUtc().toIso8601String();
+    final mistakes = payload['mistakes'];
+    final hasMistakes = mistakes is List && mistakes.isNotEmpty;
+    if (remainingSessions.isEmpty && !hasMistakes) {
+      _items.remove(artifactId);
+      _bytesByArtifactId.remove(artifactId);
+      return;
+    }
+    final build = _zipStore.buildArtifact(
+      LocalArtifactBuildInput(
+        artifactId: artifactId,
+        lastModified: DateTime.now().toUtc(),
+        payload: payload,
+      ),
+    );
+    _items[artifactId] = ArtifactState1Item(
+      artifactId: artifactId,
+      artifactClass: 'student_kp',
+      courseId: currentItem.courseId,
+      teacherUserId: currentItem.teacherUserId,
+      studentUserId: currentItem.studentUserId,
+      kpKey: currentItem.kpKey,
+      bundleVersionId: 0,
+      sha256: build.sha256,
+      lastModified: build.lastModified,
+    );
+    _bytesByArtifactId[artifactId] = Uint8List.fromList(build.bytes);
+    if (error != null && teacherSessionDeleteThrowsAfterMutation) {
+      throw error;
+    }
   }
 
   List<ArtifactState1Item> _stateItems(
@@ -434,6 +553,311 @@ Future<_ServerArtifact> _buildServerArtifact({
       lastModified: build.lastModified,
     ),
     bytes: Uint8List.fromList(build.bytes),
+  );
+}
+
+class _StudentMissingArtifactFixture {
+  const _StudentMissingArtifactFixture({
+    required this.service,
+    required this.api,
+    required this.student,
+    required this.studentId,
+    required this.courseVersionId,
+    required this.artifactId,
+  });
+
+  final SessionSyncService service;
+  final _FakeArtifactSyncApiService api;
+  final User student;
+  final int studentId;
+  final int courseVersionId;
+  final String artifactId;
+}
+
+Future<_StudentMissingArtifactFixture> _createStudentMissingArtifactFixture({
+  required AppDatabase db,
+  required StudentKpArtifactStoreService artifactStore,
+}) async {
+  final teacherId = await db.createUser(
+    username: 'teacher_missing',
+    pinHash: 'hash',
+    role: 'teacher',
+    remoteUserId: 901,
+  );
+  final studentId = await db.createUser(
+    username: 'student_missing',
+    pinHash: 'hash',
+    role: 'student',
+    remoteUserId: 3001,
+  );
+  final courseVersionId = await db.createCourseVersion(
+    teacherId: teacherId,
+    subject: 'Biology',
+    granularity: 1,
+    textbookText: '',
+  );
+  await db.upsertCourseRemoteLink(
+    courseVersionId: courseVersionId,
+    remoteCourseId: 200,
+  );
+  await db.assignStudent(
+    studentId: studentId,
+    courseVersionId: courseVersionId,
+  );
+  await db.into(db.courseNodes).insert(
+        CourseNodesCompanion.insert(
+          courseVersionId: courseVersionId,
+          kpKey: '1.1',
+          title: 'Cells',
+          description: '',
+          orderIndex: 1,
+        ),
+      );
+
+  final api = _FakeArtifactSyncApiService();
+  final artifact = await _buildServerArtifact(
+    store: artifactStore,
+    remoteStudentUserId: 3001,
+    remoteCourseId: 200,
+    teacherRemoteUserId: 901,
+    courseSubject: 'Biology',
+    kpKey: '1.1',
+    updatedAt: '2026-04-01T08:05:00Z',
+    progress: <String, dynamic>{
+      'course_id': 200,
+      'course_subject': 'Biology',
+      'kp_key': '1.1',
+      'lit': true,
+      'lit_percent': 80,
+      'easy_passed_count': 1,
+      'medium_passed_count': 0,
+      'hard_passed_count': 0,
+      'teacher_remote_user_id': 901,
+      'student_remote_user_id': 3001,
+      'updated_at': '2026-04-01T08:05:00Z',
+    },
+    sessions: <Map<String, dynamic>>[
+      <String, dynamic>{
+        'session_sync_id': 'remote-session-missing',
+        'course_id': 200,
+        'course_subject': 'Biology',
+        'kp_key': '1.1',
+        'kp_title': 'Cells',
+        'session_title': 'Remote Session',
+        'started_at': '2026-04-01T08:00:00Z',
+        'student_remote_user_id': 3001,
+        'student_username': 'student_missing',
+        'teacher_remote_user_id': 901,
+        'updated_at': '2026-04-01T08:05:00Z',
+        'messages': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'role': 'assistant',
+            'content': 'server message',
+            'created_at': '2026-04-01T08:00:10Z',
+          },
+        ],
+      },
+    ],
+  );
+  api.seedServerArtifact(artifact);
+  final service = SessionSyncService(
+    db: db,
+    api: api,
+    artifactStore: artifactStore,
+  );
+  final student = (await db.getUserById(studentId))!;
+  await service.forcePullFromServer(
+    currentUser: student,
+    wipeLocalStudentData: true,
+    mode: SessionSyncMode.downloadOnly,
+  );
+  return _StudentMissingArtifactFixture(
+    service: service,
+    api: api,
+    student: student,
+    studentId: studentId,
+    courseVersionId: courseVersionId,
+    artifactId: artifact.item.artifactId,
+  );
+}
+
+class _TeacherSessionDeleteFixture {
+  const _TeacherSessionDeleteFixture({
+    required this.service,
+    required this.teacher,
+    required this.localStudentId,
+    required this.courseVersionId,
+    required this.targetSessionId,
+    required this.siblingSessionId,
+    required this.artifactId,
+    required this.baseSha256,
+  });
+
+  final SessionSyncService service;
+  final User teacher;
+  final int localStudentId;
+  final int courseVersionId;
+  final int targetSessionId;
+  final int siblingSessionId;
+  final String artifactId;
+  final String baseSha256;
+}
+
+Future<_TeacherSessionDeleteFixture> _createTeacherSessionDeleteFixture({
+  required AppDatabase db,
+  required StudentKpArtifactStoreService artifactStore,
+  required _FakeArtifactSyncApiService api,
+}) async {
+  final teacherId = await db.createUser(
+    username: 'teacher_delete',
+    pinHash: 'hash',
+    role: 'teacher',
+    remoteUserId: 901,
+  );
+  final courseVersionId = await db.createCourseVersion(
+    teacherId: teacherId,
+    subject: 'History',
+    granularity: 1,
+    textbookText: '',
+  );
+  await db.upsertCourseRemoteLink(
+    courseVersionId: courseVersionId,
+    remoteCourseId: 200,
+  );
+  await db.into(db.courseNodes).insert(
+        CourseNodesCompanion.insert(
+          courseVersionId: courseVersionId,
+          kpKey: '2.1',
+          title: 'Ancient Rome',
+          description: '',
+          orderIndex: 1,
+        ),
+      );
+  final serverArtifact = await _buildServerArtifact(
+    store: artifactStore,
+    remoteStudentUserId: 3001,
+    remoteCourseId: 200,
+    teacherRemoteUserId: 901,
+    courseSubject: 'History',
+    kpKey: '2.1',
+    updatedAt: '2026-04-01T10:10:00Z',
+    progress: <String, dynamic>{
+      'course_id': 200,
+      'course_subject': 'History',
+      'kp_key': '2.1',
+      'lit': true,
+      'lit_percent': 100,
+      'easy_passed_count': 1,
+      'medium_passed_count': 1,
+      'hard_passed_count': 1,
+      'teacher_remote_user_id': 901,
+      'student_remote_user_id': 3001,
+      'updated_at': '2026-04-01T10:10:00Z',
+    },
+    mistakes: <Map<String, dynamic>>[
+      <String, dynamic>{
+        'mistake_tag': 'date confusion',
+        'mistake_tag_key': 'date confusion',
+        'mistake_note': 'Mixed up two dates.',
+        'evidence_json': '{"source":"server"}',
+        'occurrences': 2,
+        'first_seen_at': '2026-04-01T10:01:00Z',
+        'last_seen_at': '2026-04-01T10:09:00Z',
+      },
+    ],
+    sessions: <Map<String, dynamic>>[
+      <String, dynamic>{
+        'session_sync_id': 'target-session',
+        'course_id': 200,
+        'course_subject': 'History',
+        'kp_key': '2.1',
+        'kp_title': 'Ancient Rome',
+        'session_title': 'Delete Me',
+        'started_at': '2026-04-01T10:00:00Z',
+        'student_remote_user_id': 3001,
+        'student_username': 'albert',
+        'teacher_remote_user_id': 901,
+        'updated_at': '2026-04-01T10:05:00Z',
+        'messages': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'role': 'assistant',
+            'content': 'target message',
+            'created_at': '2026-04-01T10:00:10Z',
+          },
+        ],
+      },
+      <String, dynamic>{
+        'session_sync_id': 'sibling-session',
+        'course_id': 200,
+        'course_subject': 'History',
+        'kp_key': '2.1',
+        'kp_title': 'Ancient Rome',
+        'session_title': 'Keep Me',
+        'started_at': '2026-04-01T10:06:00Z',
+        'student_remote_user_id': 3001,
+        'student_username': 'albert',
+        'teacher_remote_user_id': 901,
+        'updated_at': '2026-04-01T10:10:00Z',
+        'messages': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'role': 'assistant',
+            'content': 'sibling message',
+            'created_at': '2026-04-01T10:06:10Z',
+          },
+        ],
+      },
+    ],
+  );
+  api.seedServerArtifact(serverArtifact);
+  final service = SessionSyncService(
+    db: db,
+    api: api,
+    artifactStore: artifactStore,
+  );
+  final teacher = (await db.getUserById(teacherId))!;
+  await service.syncIfReady(currentUser: teacher);
+  final localStudent = await db.findUserByRemoteId(3001);
+  if (localStudent == null) {
+    throw StateError('Teacher sync did not create the local student.');
+  }
+  await service.materializeTeacherArtifactsForView(
+    currentUser: teacher,
+    localStudentId: localStudent.id,
+    courseVersionId: courseVersionId,
+  );
+  final sessions = await db.getSessionsForNode(
+    studentId: localStudent.id,
+    courseVersionId: courseVersionId,
+    kpKey: '2.1',
+  );
+  final target = sessions.singleWhere(
+    (session) => session.syncId == 'target-session',
+  );
+  final sibling = sessions.singleWhere(
+    (session) => session.syncId == 'sibling-session',
+  );
+  const artifactId = 'student_kp:3001:200:2.1';
+  final manifest = await artifactStore.loadManifest(901);
+  final manifestItem = manifest.items[artifactId];
+  if (manifestItem == null) {
+    throw StateError('Teacher manifest item missing.');
+  }
+  await artifactStore.saveManifest(
+    StudentKpArtifactManifest.empty(3001).copyWith(
+      items: <String, StudentKpArtifactManifestItem>{
+        artifactId: manifestItem.copyWith(storageFile: ''),
+      },
+    ),
+  );
+  return _TeacherSessionDeleteFixture(
+    service: service,
+    teacher: teacher,
+    localStudentId: localStudent.id,
+    courseVersionId: courseVersionId,
+    targetSessionId: target.id,
+    siblingSessionId: sibling.id,
+    artifactId: artifactId,
+    baseSha256: manifestItem.baseSha256,
   );
 }
 
@@ -594,11 +1018,64 @@ void main() {
     expect(mistakes.single.mistakeTagRaw, 'sign error');
     expect(mistakes.single.occurrences, 2);
 
+    final manifestBeforeRetryRecovery = await artifactStore.loadManifest(3001);
+    final artifactId = manifestBeforeRetryRecovery.items.keys.single;
+    final itemBeforeRetryRecovery =
+        manifestBeforeRetryRecovery.items[artifactId]!;
+    await artifactStore.saveManifest(
+      manifestBeforeRetryRecovery.copyWith(
+        items: <String, StudentKpArtifactManifestItem>{
+          artifactId: itemBeforeRetryRecovery.copyWith(
+            baseSha256: 'stale-base-before-committed-upload',
+          ),
+        },
+      ),
+    );
+    final state1CallsBeforeRetryRecovery = api.getState1Calls;
     final secondStats = await service.syncIfReady(currentUser: student);
     expect(secondStats.downloadedCount, 0);
     expect(secondStats.uploadedCount, 0);
     expect(api.downloadCalls, 1);
     expect(api.uploadCalls, 0);
+    expect(api.getState1Calls, state1CallsBeforeRetryRecovery + 2);
+    final manifestAfterRetryRecovery = await artifactStore.loadManifest(3001);
+    expect(
+      manifestAfterRetryRecovery.items[artifactId]!.baseSha256,
+      itemBeforeRetryRecovery.sha256,
+    );
+    expect(
+      await service.hasPendingCanonicalManifestChanges(currentUser: student),
+      isFalse,
+    );
+
+    await artifactStore.saveManifest(
+      manifestAfterRetryRecovery.copyWith(
+        items: <String, StudentKpArtifactManifestItem>{
+          artifactId: manifestAfterRetryRecovery.items[artifactId]!.copyWith(
+            baseSha256: 'stale-base-before-login-recovery',
+          ),
+        },
+      ),
+    );
+    expect(
+      await service.hasPendingCanonicalManifestChanges(currentUser: student),
+      isTrue,
+    );
+    final canonicalState1 = await api.getState1(
+      artifactClass: 'student_kp',
+    );
+    final canonicalStats = await service.syncFromCanonicalState1(
+      currentUser: student,
+      visibleItems: canonicalState1.items,
+      mode: SessionSyncMode.downloadOnly,
+    );
+    expect(canonicalStats.downloadedCount, 0);
+    expect(canonicalStats.uploadedCount, 0);
+    final manifestAfterLoginRecovery = await artifactStore.loadManifest(3001);
+    expect(
+      manifestAfterLoginRecovery.items[artifactId]!.baseSha256,
+      itemBeforeRetryRecovery.sha256,
+    );
 
     await db.setMistakeEntryStatus(
       id: mistakes.single.id,
@@ -675,6 +1152,177 @@ void main() {
     expect(replacedMistakes.single.dismissed, isTrue);
     expect(replacedMistakes.single.status, 'dismissed');
     expect(replacedMistakes.single.occurrences, 3);
+  });
+
+  test('canonical download removes a clean student artifact missing on server',
+      () async {
+    final fixture = await _createStudentMissingArtifactFixture(
+      db: db,
+      artifactStore: artifactStore,
+    );
+    final manifestBeforeDelete = await artifactStore.loadManifest(3001);
+    final cachedItem = manifestBeforeDelete.items[fixture.artifactId]!;
+    expect(await db.getSessionsForStudent(fixture.studentId), hasLength(1));
+    expect(
+      await db.getProgress(
+        studentId: fixture.studentId,
+        courseVersionId: fixture.courseVersionId,
+        kpKey: '1.1',
+      ),
+      isNotNull,
+    );
+    expect(
+      await artifactStore.readArtifactBytes(
+        remoteUserId: 3001,
+        item: cachedItem,
+      ),
+      isNotNull,
+    );
+
+    fixture.api.removeServerArtifact(fixture.artifactId);
+    final state1 = await fixture.api.getState1(
+      artifactClass: 'student_kp',
+    );
+    final stats = await fixture.service.syncFromCanonicalState1(
+      currentUser: fixture.student,
+      visibleItems: state1.items,
+      mode: SessionSyncMode.downloadOnly,
+    );
+
+    expect(stats.downloadedCount, 0);
+    expect(stats.uploadedCount, 0);
+    expect(await db.getSessionsForStudent(fixture.studentId), isEmpty);
+    expect(
+      await db.getProgress(
+        studentId: fixture.studentId,
+        courseVersionId: fixture.courseVersionId,
+        kpKey: '1.1',
+      ),
+      isNull,
+    );
+    expect(
+      (await artifactStore.loadManifest(3001)).items,
+      isNot(contains(fixture.artifactId)),
+    );
+    expect(
+      await artifactStore.readArtifactBytes(
+        remoteUserId: 3001,
+        item: cachedItem,
+      ),
+      isNull,
+    );
+  });
+
+  test('full sync accepts a clean student artifact deleted on server', () async {
+    final fixture = await _createStudentMissingArtifactFixture(
+      db: db,
+      artifactStore: artifactStore,
+    );
+    fixture.api.removeServerArtifact(fixture.artifactId);
+
+    final stats = await fixture.service.syncIfReady(
+      currentUser: fixture.student,
+      mode: SessionSyncMode.full,
+    );
+
+    expect(stats.downloadedCount, 0);
+    expect(stats.uploadedCount, 0);
+    expect(fixture.api.uploadCalls, 0);
+    expect(await db.getSessionsForStudent(fixture.studentId), isEmpty);
+    expect(
+      await db.getProgress(
+        studentId: fixture.studentId,
+        courseVersionId: fixture.courseVersionId,
+        kpKey: '1.1',
+      ),
+      isNull,
+    );
+    expect((await artifactStore.loadManifest(3001)).items, isEmpty);
+  });
+
+  test('download preserves divergent and new student artifacts missing on server',
+      () async {
+    final fixture = await _createStudentMissingArtifactFixture(
+      db: db,
+      artifactStore: artifactStore,
+    );
+    final existingSession =
+        (await db.getSessionsForStudent(fixture.studentId)).single;
+    await db.into(db.chatMessages).insert(
+          ChatMessagesCompanion.insert(
+            sessionId: existingSession.sessionId,
+            role: 'student',
+            content: 'locally divergent answer',
+            createdAt: Value(DateTime.parse('2026-04-01T08:06:00Z')),
+          ),
+        );
+    await db.into(db.courseNodes).insert(
+          CourseNodesCompanion.insert(
+            courseVersionId: fixture.courseVersionId,
+            kpKey: '1.2',
+            title: 'Cell division',
+            description: '',
+            orderIndex: 2,
+          ),
+        );
+    final newSessionId = await db.into(db.chatSessions).insert(
+          ChatSessionsCompanion.insert(
+            studentId: fixture.studentId,
+            courseVersionId: fixture.courseVersionId,
+            kpKey: '1.2',
+            title: const Value('New Local Session'),
+            startedAt: Value(DateTime.parse('2026-04-01T09:00:00Z')),
+            syncId: const Value('local-new-session'),
+            syncUpdatedAt: Value(DateTime.parse('2026-04-01T09:05:00Z')),
+          ),
+        );
+    await db.into(db.chatMessages).insert(
+          ChatMessagesCompanion.insert(
+            sessionId: newSessionId,
+            role: 'assistant',
+            content: 'new local message',
+            createdAt: Value(DateTime.parse('2026-04-01T09:00:10Z')),
+          ),
+        );
+    await fixture.service.handleLocalSyncRelevantChange(
+      SyncRelevantChange(localUserIds: <int>{fixture.studentId}),
+    );
+
+    const newArtifactId = 'student_kp:3001:200:1.2';
+    final divergentManifest = await artifactStore.loadManifest(3001);
+    final divergentItem = divergentManifest.items[fixture.artifactId]!;
+    final newItem = divergentManifest.items[newArtifactId]!;
+    expect(divergentItem.sha256, isNot(divergentItem.baseSha256));
+    expect(divergentItem.baseSha256, isNotEmpty);
+    expect(newItem.baseSha256, isEmpty);
+
+    fixture.api.removeServerArtifact(fixture.artifactId);
+    final state1 = await fixture.api.getState1(
+      artifactClass: 'student_kp',
+    );
+    await fixture.service.syncFromCanonicalState1(
+      currentUser: fixture.student,
+      visibleItems: state1.items,
+      mode: SessionSyncMode.downloadOnly,
+    );
+
+    final preservedManifest = await artifactStore.loadManifest(3001);
+    expect(preservedManifest.items, contains(fixture.artifactId));
+    expect(preservedManifest.items, contains(newArtifactId));
+    expect(await db.getSessionsForStudent(fixture.studentId), hasLength(2));
+    expect(
+      await db.getProgress(
+        studentId: fixture.studentId,
+        courseVersionId: fixture.courseVersionId,
+        kpKey: '1.1',
+      ),
+      isNotNull,
+    );
+    expect(
+      (await db.getMessagesForSession(existingSession.sessionId))
+          .map((message) => message.content),
+      contains('locally divergent answer'),
+    );
   });
 
   test('upload-only session sync uploads local changes without downloads',
@@ -1329,6 +1977,227 @@ void main() {
     expect(sessions.single.sessionTitle, 'Student Session');
   });
 
+  test(
+      'teacher session delete is server-first and resets only the target KP progress',
+      () async {
+    final api = _FakeArtifactSyncApiService();
+    final fixture = await _createTeacherSessionDeleteFixture(
+      db: db,
+      artifactStore: artifactStore,
+      api: api,
+    );
+
+    await fixture.service.deleteSessionAndResetKpProgress(
+      currentUser: fixture.teacher,
+      sessionId: fixture.targetSessionId,
+    );
+
+    expect(api.teacherSessionDeleteCalls, 1);
+    expect(api.teacherDeletedArtifactIds, <String>[fixture.artifactId]);
+    expect(api.teacherDeletedSessionSyncIds, <String>['target-session']);
+    expect(
+      api.teacherDeleteBaseSha256Values,
+      <String>[fixture.baseSha256],
+    );
+    expect(await db.getSession(fixture.targetSessionId), isNull);
+    final remainingSessions = await db.getSessionsForNode(
+      studentId: fixture.localStudentId,
+      courseVersionId: fixture.courseVersionId,
+      kpKey: '2.1',
+    );
+    expect(
+      remainingSessions.map((session) => session.syncId),
+      <String?>['sibling-session'],
+    );
+    expect(
+      await db.getProgress(
+        studentId: fixture.localStudentId,
+        courseVersionId: fixture.courseVersionId,
+        kpKey: '2.1',
+      ),
+      isNull,
+    );
+    final mistakes = await db.getMistakeEntriesForScope(
+      studentId: fixture.localStudentId,
+      courseVersionId: fixture.courseVersionId,
+      kpKey: '2.1',
+    );
+    expect(mistakes, hasLength(1));
+    expect(mistakes.single.mistakeTagKey, 'date confusion');
+    final teacherManifest = await artifactStore.loadManifest(901);
+    final refreshedTeacherItem = teacherManifest.items[fixture.artifactId];
+    expect(refreshedTeacherItem, isNotNull);
+    expect(refreshedTeacherItem!.baseSha256, isNot(fixture.baseSha256));
+    final studentManifest = await artifactStore.loadManifest(3001);
+    expect(studentManifest.items, isNot(contains(fixture.artifactId)));
+  });
+
+  test('teacher session delete conflict preserves all local canonical data',
+      () async {
+    final api = _FakeArtifactSyncApiService();
+    final fixture = await _createTeacherSessionDeleteFixture(
+      db: db,
+      artifactStore: artifactStore,
+      api: api,
+    );
+    final conflict = ArtifactConflictException(
+      message: 'Artifact conflict: server_changed',
+      serverSha256: 'server-v2',
+      expectedBaseSha256: fixture.baseSha256,
+    );
+    api.teacherSessionDeleteError = conflict;
+
+    await expectLater(
+      fixture.service.deleteSessionAndResetKpProgress(
+        currentUser: fixture.teacher,
+        sessionId: fixture.targetSessionId,
+      ),
+      throwsA(same(conflict)),
+    );
+
+    expect(api.teacherSessionDeleteCalls, 1);
+    expect(
+      api.teacherDeleteBaseSha256Values,
+      <String>[fixture.baseSha256],
+    );
+    final reconciledSessions = await db.getSessionsForNode(
+      studentId: fixture.localStudentId,
+      courseVersionId: fixture.courseVersionId,
+      kpKey: '2.1',
+    );
+    expect(
+      reconciledSessions.map((session) => session.syncId).toSet(),
+      <String?>{'target-session', 'sibling-session'},
+    );
+    final reconciledTarget = reconciledSessions.singleWhere(
+      (session) => session.syncId == 'target-session',
+    );
+    expect(
+      await db.getMessagesForSession(reconciledTarget.id),
+      hasLength(1),
+    );
+    expect(
+      await db.getProgress(
+        studentId: fixture.localStudentId,
+        courseVersionId: fixture.courseVersionId,
+        kpKey: '2.1',
+      ),
+      isNotNull,
+    );
+    expect(
+      await db.getMistakeEntriesForScope(
+        studentId: fixture.localStudentId,
+        courseVersionId: fixture.courseVersionId,
+        kpKey: '2.1',
+      ),
+      hasLength(1),
+    );
+    final teacherManifest = await artifactStore.loadManifest(901);
+    expect(teacherManifest.items, contains(fixture.artifactId));
+    final studentManifest = await artifactStore.loadManifest(3001);
+    expect(studentManifest.items, contains(fixture.artifactId));
+  });
+
+  test('teacher session delete reconciles a committed response loss', () async {
+    final api = _FakeArtifactSyncApiService();
+    final fixture = await _createTeacherSessionDeleteFixture(
+      db: db,
+      artifactStore: artifactStore,
+      api: api,
+    );
+    api
+      ..teacherSessionDeleteError =
+          ArtifactSyncApiException('Connection closed before response.')
+      ..teacherSessionDeleteThrowsAfterMutation = true;
+
+    await fixture.service.deleteSessionAndResetKpProgress(
+      currentUser: fixture.teacher,
+      sessionId: fixture.targetSessionId,
+    );
+
+    expect(api.teacherSessionDeleteCalls, 1);
+    final reconciledSessions = await db.getSessionsForNode(
+      studentId: fixture.localStudentId,
+      courseVersionId: fixture.courseVersionId,
+      kpKey: '2.1',
+    );
+    expect(
+      reconciledSessions.map((session) => session.syncId),
+      <String?>['sibling-session'],
+    );
+    expect(
+      await db.getProgress(
+        studentId: fixture.localStudentId,
+        courseVersionId: fixture.courseVersionId,
+        kpKey: '2.1',
+      ),
+      isNull,
+    );
+    final studentManifest = await artifactStore.loadManifest(3001);
+    expect(studentManifest.items, isNot(contains(fixture.artifactId)));
+  });
+
+  test('teacher session delete reports local refresh failure and can reconcile',
+      () async {
+    final api = _FakeArtifactSyncApiService();
+    final fixture = await _createTeacherSessionDeleteFixture(
+      db: db,
+      artifactStore: artifactStore,
+      api: api,
+    );
+    api.downloadArtifactError = StateError('download interrupted');
+
+    await expectLater(
+      fixture.service.deleteSessionAndResetKpProgress(
+        currentUser: fixture.teacher,
+        sessionId: fixture.targetSessionId,
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains('deleted on the server'),
+        ),
+      ),
+    );
+
+    expect(api.teacherSessionDeleteCalls, 1);
+    expect(await db.getSession(fixture.targetSessionId), isNotNull);
+    expect(
+      await db.getProgress(
+        studentId: fixture.localStudentId,
+        courseVersionId: fixture.courseVersionId,
+        kpKey: '2.1',
+      ),
+      isNotNull,
+    );
+
+    api.downloadArtifactError = null;
+    await fixture.service.materializeTeacherArtifactsForView(
+      currentUser: fixture.teacher,
+      localStudentId: fixture.localStudentId,
+      courseVersionId: fixture.courseVersionId,
+    );
+
+    final reconciledSessions = await db.getSessionsForNode(
+      studentId: fixture.localStudentId,
+      courseVersionId: fixture.courseVersionId,
+      kpKey: '2.1',
+    );
+    expect(
+      reconciledSessions.map((session) => session.syncId),
+      <String?>['sibling-session'],
+    );
+    expect(
+      await db.getProgress(
+        studentId: fixture.localStudentId,
+        courseVersionId: fixture.courseVersionId,
+        kpKey: '2.1',
+      ),
+      isNull,
+    );
+  });
+
   test('downloads batch zip when more than three artifacts are needed',
       () async {
     final teacherId = await db.createUser(
@@ -1432,7 +2301,7 @@ void main() {
     expect(api.downloadCalls, 0);
   });
 
-  test('uploads artifact batch when more than three local artifacts changed',
+  test('recovers manifest bases after a partially committed artifact batch',
       () async {
     final teacherId = await db.createUser(
       username: 'teacher',
@@ -1513,6 +2382,11 @@ void main() {
     );
 
     final api = _FakeArtifactSyncApiService();
+    final partialBatchFailure =
+        ArtifactSyncApiException('Batch response ended after one commit.');
+    api
+      ..uploadBatchFailAfterCommittedItems = 1
+      ..uploadBatchFailure = partialBatchFailure;
     final uploadService = SessionSyncService(
       db: db,
       api: api,
@@ -1520,18 +2394,61 @@ void main() {
     );
     final student = (await db.getUserById(studentId))!;
 
-    final stats = await uploadService.syncIfReady(
-      currentUser: student,
-      mode: SessionSyncMode.uploadOnly,
+    await expectLater(
+      uploadService.syncIfReady(
+        currentUser: student,
+        mode: SessionSyncMode.uploadOnly,
+      ),
+      throwsA(same(partialBatchFailure)),
     );
 
-    expect(stats.uploadedCount, 4);
-    expect(stats.downloadedCount, 0);
     expect(api.uploadBatchCalls, 1);
     expect(api.uploadCalls, 0);
     expect(api.getState1Calls, 1);
     expect(api.downloadCalls, 0);
     expect(api.downloadBatchCalls, 0);
+    expect(api.uploadedArtifactIds, hasLength(1));
+    final committedArtifactId = api.uploadedArtifactIds.single;
+    final manifestAfterPartialBatch = await artifactStore.loadManifest(3001);
+    expect(
+      manifestAfterPartialBatch.items[committedArtifactId]!.baseSha256,
+      isEmpty,
+    );
+
+    final laterConflict =
+        ArtifactSyncApiException('Later upload still needs retry.');
+    api
+      ..uploadBatchFailAfterCommittedItems = null
+      ..uploadBatchFailure = null
+      ..uploadArtifactError = laterConflict;
+    await expectLater(
+      uploadService.syncIfReady(
+        currentUser: student,
+        mode: SessionSyncMode.uploadOnly,
+      ),
+      throwsA(same(laterConflict)),
+    );
+
+    final manifestAfterReconciliation = await artifactStore.loadManifest(3001);
+    final committedItem =
+        manifestAfterReconciliation.items[committedArtifactId]!;
+    expect(committedItem.baseSha256, committedItem.sha256);
+    for (final item in manifestAfterReconciliation.items.values) {
+      if (item.artifactId != committedArtifactId) {
+        expect(item.baseSha256, isEmpty);
+      }
+    }
+
+    api.uploadArtifactError = null;
+    final recoveredStats = await uploadService.syncIfReady(
+      currentUser: student,
+      mode: SessionSyncMode.uploadOnly,
+    );
+    expect(recoveredStats.uploadedCount, 3);
+    expect(recoveredStats.downloadedCount, 0);
+    expect(api.uploadBatchCalls, 1);
+    expect(api.uploadCalls, 3);
+    expect(api.getState1Calls, 3);
     expect(
       api.uploadedArtifactIds,
       containsAll(const <String>[

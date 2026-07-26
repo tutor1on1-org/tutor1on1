@@ -137,6 +137,7 @@ func TestDeleteStudentKpArtifactRemovesRowAndStorage(t *testing.T) {
 
 	userID := int64(3001)
 	courseID := int64(200)
+	enrollmentID := int64(7001)
 	artifactID := "student_kp:3001:200:1.1"
 	relPath := "student_kp/3001/200/1.1.zip"
 	if err := os.MkdirAll(filepath.Dir(storageSvc.AbsolutePath(relPath)), 0750); err != nil {
@@ -146,23 +147,24 @@ func TestDeleteStudentKpArtifactRemovesRowAndStorage(t *testing.T) {
 		t.Fatalf("WriteFile error = %v", err)
 	}
 
-	mock.ExpectQuery(`(?s)SELECT 1\s+FROM enrollments\s+WHERE student_id = \? AND course_id = \? AND status = 'active'\s+LIMIT 1`).
+	mock.ExpectQuery(`(?s)SELECT id\s+FROM enrollments\s+WHERE student_id = \? AND course_id = \? AND status = 'active'\s+LIMIT 1`).
 		WithArgs(userID, courseID).
-		WillReturnRows(sqlmock.NewRows([]string{"found"}).AddRow(1))
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(enrollmentID))
+	mock.ExpectQuery(`(?s)SELECT ta.user_id\s+FROM courses c\s+JOIN teacher_accounts ta ON ta.id = c.teacher_id\s+WHERE c.id = \?\s+LIMIT 1`).
+		WithArgs(courseID).
+		WillReturnRows(sqlmock.NewRows([]string{"user_id"}).AddRow(teacherSessionDeleteTeacherUserID))
+	mock.ExpectBegin()
+	mock.ExpectQuery(`(?s)SELECT status\s+FROM enrollments\s+WHERE id = \? AND student_id = \? AND course_id = \?\s+LIMIT 1\s+FOR UPDATE`).
+		WithArgs(enrollmentID, userID, courseID).
+		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("active"))
 	mock.ExpectQuery(`(?s)SELECT sha256, storage_rel_path\s+FROM student_kp_artifacts\s+WHERE artifact_id = \?\s+LIMIT 1`).
 		WithArgs(artifactID).
 		WillReturnRows(sqlmock.NewRows([]string{"sha256", "storage_rel_path"}).AddRow("server-sha", relPath))
-	mock.ExpectBegin()
-	mock.ExpectExec(`(?s)DELETE FROM student_kp_artifacts\s+WHERE artifact_id = \? AND student_user_id = \?`).
-		WithArgs(artifactID, userID).
+	mock.ExpectExec(`(?s)DELETE FROM student_kp_artifacts\s+WHERE artifact_id = \? AND student_user_id = \? AND sha256 = \?`).
+		WithArgs(artifactID, userID, "server-sha").
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	expectStudentKpVisibilityMutation(mock, true, "")
 	mock.ExpectCommit()
-	mock.ExpectQuery(`(?s)SELECT DISTINCT user_id\s+FROM \(\s+SELECT ta.user_id AS user_id\s+FROM courses c\s+JOIN teacher_accounts ta ON ta.id = c.teacher_id\s+WHERE c.id = \?\s+UNION\s+SELECT e.student_id AS user_id\s+FROM enrollments e\s+WHERE e.course_id = \? AND e.status = 'active'\s+\) users_for_course\s+ORDER BY user_id ASC`).
-		WithArgs(courseID, courseID).
-		WillReturnRows(sqlmock.NewRows([]string{"user_id"}))
-	mock.ExpectQuery(`(?s)SELECT state2\s+FROM artifact_state2\s+WHERE user_id = \?`).
-		WithArgs(userID).
-		WillReturnRows(sqlmock.NewRows([]string{"state2"}).AddRow("artifact_state2_v1:after-delete"))
 
 	app := buildArtifactSyncDeleteTestApp(db, storageSvc, []string{"test-secret"})
 	token := signTestJWT(t, "test-secret", userID, true)
@@ -194,8 +196,8 @@ func TestDeleteStudentKpArtifactRemovesRowAndStorage(t *testing.T) {
 	if got := payload["status"]; got != "deleted" {
 		t.Fatalf("status = %q, want deleted", got)
 	}
-	if _, err := os.Stat(storageSvc.AbsolutePath(relPath)); !os.IsNotExist(err) {
-		t.Fatalf("artifact file still exists or stat failed unexpectedly: %v", err)
+	if _, err := os.Stat(storageSvc.AbsolutePath(relPath)); err != nil {
+		t.Fatalf("retained artifact file missing after logical delete: %v", err)
 	}
 	assertSQLMockExpectations(t, mock)
 }

@@ -169,4 +169,83 @@ void main() {
     expect(await storage.readAuthAccessToken(), equals('fresh-token'));
     expect(await storage.readAuthRefreshToken(), equals('refresh-2'));
   });
+
+  test('teacher session delete sends exact server mutation identity', () async {
+    final service = ArtifactSyncApiService(
+      secureStorage: _MemorySecureStorage(),
+      baseUrl: 'https://api.tutor1on1.org',
+      client: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(
+          request.url.path,
+          '/api/teacher/student-sessions/delete',
+        );
+        expect(request.headers['Authorization'], 'Bearer token');
+        expect(
+          jsonDecode(request.body),
+          <String, dynamic>{
+            'artifact_id': 'student_kp:3001:200:1.1',
+            'session_sync_id': 'session-a',
+            'base_sha256': 'base-sha',
+          },
+        );
+        return http.Response(
+          '{"status":"deleted"}',
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    await service.deleteStudentSessionAsTeacher(
+      artifactId: ' student_kp:3001:200:1.1 ',
+      sessionSyncId: ' session-a ',
+      baseSha256: ' base-sha ',
+    );
+  });
+
+  test('teacher session delete maps stale base to artifact conflict', () async {
+    final service = ArtifactSyncApiService(
+      secureStorage: _MemorySecureStorage(),
+      baseUrl: 'https://api.tutor1on1.org',
+      client: MockClient((request) async {
+        return http.Response(
+          jsonEncode(<String, dynamic>{
+            'status': 'conflict',
+            'conflict_type': 'server_changed',
+            'server_sha256': 'server-v2',
+            'expected_base': 'server-v1',
+          }),
+          409,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    await expectLater(
+      service.deleteStudentSessionAsTeacher(
+        artifactId: 'student_kp:3001:200:1.1',
+        sessionSyncId: 'session-a',
+        baseSha256: 'server-v1',
+      ),
+      throwsA(
+        isA<ArtifactConflictException>()
+            .having(
+              (error) => error.message,
+              'message',
+              'Artifact conflict: server_changed',
+            )
+            .having(
+              (error) => error.serverSha256,
+              'serverSha256',
+              'server-v2',
+            )
+            .having(
+              (error) => error.expectedBaseSha256,
+              'expectedBaseSha256',
+              'server-v1',
+            ),
+      ),
+    );
+  });
 }

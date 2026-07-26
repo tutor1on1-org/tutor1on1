@@ -780,8 +780,8 @@
       "name": {}
     }
   },
-  "deleteSessionMessage": "This will remove the session and its messages.",
-  "deleteSessionSuccess": "Session deleted.",
+  "deleteSessionMessage": "This will remove the session and its messages, reset progress for this knowledge point, and keep Mistake Book entries.",
+  "deleteSessionSuccess": "Session deleted and knowledge-point progress reset.",
   "resetPinButton": "Reset Password",
   "resetPinDialogTitle": "Reset password for {name}",
   "@resetPinDialogTitle": {

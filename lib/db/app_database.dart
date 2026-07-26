@@ -1278,9 +1278,22 @@ ORDER BY c.subject COLLATE NOCASE ASC
   Future<void> deleteSession(int sessionId) async {
     final session = await getSession(sessionId);
     await transaction(() async {
-      await (delete(mistakeEntries)
+      await (update(mistakeEntries)
             ..where((tbl) => tbl.sessionId.equals(sessionId)))
-          .go();
+          .write(
+        const MistakeEntriesCompanion(
+          sessionId: Value(0),
+          messageId: Value(0),
+        ),
+      );
+      if (session != null) {
+        await (delete(progressEntries)
+              ..where((tbl) =>
+                  tbl.studentId.equals(session.studentId) &
+                  tbl.courseVersionId.equals(session.courseVersionId) &
+                  tbl.kpKey.equals(session.kpKey)))
+            .go();
+      }
       await (delete(chatMessages)
             ..where((tbl) => tbl.sessionId.equals(sessionId)))
           .go();
@@ -1626,7 +1639,8 @@ ORDER BY s.started_at DESC
   /// never touches the synced artifact payload.
   static Duration mistakeReviewIntervalForStreak(int streak) {
     const days = <int>[1, 3, 7, 16, 35];
-    final index = streak <= 0 ? 0 : (streak >= days.length ? days.length - 1 : streak);
+    final index =
+        streak <= 0 ? 0 : (streak >= days.length ? days.length - 1 : streak);
     return Duration(days: days[index]);
   }
 
@@ -1666,7 +1680,8 @@ ORDER BY s.started_at DESC
           .write(
         MistakeEntriesCompanion(
           reviewStreak: Value(nextStreak),
-          nextReviewAt: Value(now.add(mistakeReviewIntervalForStreak(nextStreak))),
+          nextReviewAt:
+              Value(now.add(mistakeReviewIntervalForStreak(nextStreak))),
         ),
       );
     }
