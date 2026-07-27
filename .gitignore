@@ -8,6 +8,7 @@
 .packages
 .pub/
 build/
+public_release/dist/
 .flutter-plugins
 .flutter-plugins-dependencies
 android/.gradle/
@@ -30,7 +31,6 @@ ios/Flutter/.last_build_id
 .vscode/
 *.iml
 *.log
-public_release/dist/
 lib/l10n/app_localizations*.dart
 # Course materials (user data)
 assets/teachers/*/*
@@ -45,3 +45,5 @@ remote/.env
 remote/.env.*
 !remote/.env.example
 remote/*-api-linux
+remote/artifact-cutover-linux
+remote/artifact_cutover.exe

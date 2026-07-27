@@ -1,31 +1,37 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:drift/drift.dart' hide Column;
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 import 'package:tutor1on1/l10n/app_localizations.dart';
 
 import '../../db/app_database.dart';
 import '../../services/app_services.dart';
 import '../../services/course_bundle_service.dart';
+import '../../services/course_service.dart';
+import '../../services/course_source_policy.dart';
+import '../../services/home_sync_coordinator.dart';
 import '../../services/marketplace_api_service.dart';
-import '../../services/prompt_bundle_compat.dart';
-import '../../services/sync_log_repository.dart';
+import '../../services/prompt_bundle_metadata_builder.dart';
+import '../../services/session_sync_service.dart';
 import '../../services/teacher_marketplace_upload_service.dart';
+import '../../services/sync_progress.dart';
 import '../../state/auth_controller.dart';
 import '../app_close_button.dart';
 import '../app_settings_page.dart';
 import '../quit_app_flow.dart';
+import 'course_editor_page.dart';
 import 'course_version_page.dart';
 import 'marketplace_page.dart';
 import 'prompt_settings_page.dart';
-import 'skill_tree_page.dart';
-import 'student_sessions_page.dart';
+import 'teacher_students_page.dart';
 import 'subject_admin_page.dart';
 import 'teacher_enrollment_requests_page.dart';
 import 'teacher_study_mode_page.dart';
+import '../widgets/action_indicators.dart';
 import '../widgets/server_sync_overlay.dart';
 
 class TeacherHomePage extends StatefulWidget {
@@ -35,24 +41,34 @@ class TeacherHomePage extends StatefulWidget {
   State<TeacherHomePage> createState() => _TeacherHomePageState();
 }
 
-class _TeacherHomePageState extends State<TeacherHomePage> {
+class _TeacherHomePageState extends State<TeacherHomePage>
+    with WidgetsBindingObserver {
   static const Duration _autoSyncInterval = Duration(seconds: 60);
+  static const Duration _resumeSyncDelay = Duration(seconds: 3);
   bool _syncStarted = false;
   bool _syncInProgress = false;
   bool _syncingFromServer = false;
   String _syncProgressMessage = '';
+  double? _syncProgressValue;
+  String? _syncProgressDetail;
   Timer? _autoSyncTimer;
+  Timer? _resumeSyncTimer;
   final Set<int> _uploadingCourseIds = {};
+  final Set<int> _pullingCourseIds = {};
+  final Set<int> _savingCourseIds = {};
   String? _persistentMessage;
   bool _persistentMessageIsError = false;
   late MarketplaceApiService _marketplaceApi;
   late TeacherMarketplaceUploadService _uploadService;
+  late HomeSyncCoordinator _syncCoordinator;
   List<TeacherCourseSummary> _remoteTeacherCourses = [];
   List<SubjectLabelSummary> _subjectLabels = [];
+  int _pendingApprovalCount = 0;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final services = context.read<AppServices>();
     _marketplaceApi =
         MarketplaceApiService(secureStorage: services.secureStorage);
@@ -61,17 +77,33 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       marketplaceApi: _marketplaceApi,
       syncLogRepository: services.syncLogRepository,
     );
+    _syncCoordinator = HomeSyncCoordinator(
+      enrollmentSyncService: services.enrollmentSyncService,
+      sessionSyncService: services.sessionSyncService,
+      syncLogRepository: services.syncLogRepository,
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await _refreshMarketplaceState();
       await _startSync();
+      unawaited(_refreshMarketplaceState(surfaceAuthErrors: true));
       _startAutoSync();
     });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _autoSyncTimer?.cancel();
+    _resumeSyncTimer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _scheduleResumeSync();
+      return;
+    }
+    _stopAutoSync();
   }
 
   Future<void> _startSync() async {
@@ -89,6 +121,27 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     });
   }
 
+  void _stopAutoSync() {
+    _autoSyncTimer?.cancel();
+    _autoSyncTimer = null;
+    _resumeSyncTimer?.cancel();
+    _resumeSyncTimer = null;
+  }
+
+  void _scheduleResumeSync() {
+    if (!_syncStarted || !mounted) {
+      return;
+    }
+    _resumeSyncTimer?.cancel();
+    _resumeSyncTimer = Timer(_resumeSyncDelay, () async {
+      if (!mounted) {
+        return;
+      }
+      _startAutoSync();
+      await _runSyncCycle(showOverlay: false);
+    });
+  }
+
   Future<void> _runSyncCycle({required bool showOverlay}) async {
     if (!mounted || _syncInProgress) {
       return;
@@ -98,7 +151,9 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       syncing: showOverlay,
       message: showOverlay ? 'Syncing enrollments from server...' : '',
     );
-    final l10n = AppLocalizations.of(context)!;
+    if (showOverlay) {
+      await Future<void>.delayed(Duration.zero);
+    }
     final auth = context.read<AuthController>();
     final user = auth.currentUser;
     if (user == null) {
@@ -106,84 +161,115 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       _syncInProgress = false;
       return;
     }
-    final services = context.read<AppServices>();
-    final stats = SyncRunStats();
     final trigger = showOverlay ? 'login' : 'timer';
-    Object? syncError;
+    String? syncError;
     try {
-      stats.absorb(
-        await services.enrollmentSyncService.syncIfReady(currentUser: user),
-      );
-      _setSyncState(
-        syncing: showOverlay,
-        message: showOverlay ? 'Syncing sessions from server...' : '',
-      );
-      stats.absorb(
-        await services.sessionSyncService.syncIfReady(currentUser: user),
-      );
-      await _refreshMarketplaceState();
-    } catch (error) {
-      syncError = error;
+      if (showOverlay) {
+        await _syncCoordinator.runLoginSync(
+          user: user,
+          trigger: trigger,
+          onProgress: _applySyncProgress,
+          includeSessionSync: true,
+          sessionSyncMode: SessionSyncMode.downloadOnly,
+        );
+        _clearPersistentError();
+      } else {
+        await _syncCoordinator.runCoreSync(
+          user: user,
+          trigger: trigger,
+          onProgress: null,
+          includeSessionSync: true,
+        );
+        _clearPersistentError();
+      }
+      if (showOverlay) {
+        unawaited(_refreshMarketplaceState(surfaceAuthErrors: true));
+      } else {
+        await _refreshMarketplaceState(surfaceAuthErrors: false);
+      }
+    } on HomeSyncException catch (error) {
+      syncError = error.message;
+    } on Object catch (error) {
+      syncError = describeSyncFailure(
+        stage: 'Sync',
+        error: error,
+      ).userMessage;
     } finally {
       _setSyncState(syncing: false, message: '');
       _syncInProgress = false;
     }
     if (syncError != null) {
-      var reportedError = '$syncError';
-      try {
-        await services.syncLogRepository.appendRunEvent(
-          trigger: trigger,
-          actorRole: user.role,
-          actorUserId: user.id,
-          stats: stats,
-          success: false,
-          error: reportedError,
-        );
-      } catch (logError) {
-        reportedError = '$reportedError; sync log write failed: $logError';
-      }
       if (!mounted) {
         return;
       }
-      _setPersistentMessage(
-        l10n.sessionSyncFailed(reportedError),
-        isError: true,
-      );
-      return;
-    }
-    try {
-      await services.syncLogRepository.appendRunEvent(
-        trigger: trigger,
-        actorRole: user.role,
-        actorUserId: user.id,
-        stats: stats,
-        success: true,
-      );
-    } catch (logError) {
-      if (!mounted) {
-        return;
-      }
-      _setPersistentMessage(
-        l10n.sessionSyncFailed('Sync log write failed: $logError'),
-        isError: true,
-      );
+      _setPersistentMessage(syncError, isError: true);
     }
   }
 
-  Future<void> _refreshMarketplaceState() async {
+  Future<void> _refreshMarketplaceState({
+    bool surfaceAuthErrors = true,
+  }) async {
     try {
       final teacherCourses = await _marketplaceApi.listTeacherCourses();
       final subjectLabels = await _marketplaceApi.listSubjectLabels();
+      final pendingApprovalCount = await _loadPendingApprovalCount();
       if (!mounted) {
         return;
       }
       setState(() {
         _remoteTeacherCourses = teacherCourses;
         _subjectLabels = subjectLabels;
+        _pendingApprovalCount = pendingApprovalCount;
       });
+    } on MarketplaceApiException catch (error) {
+      if (surfaceAuthErrors && _isAuthFailure(error)) {
+        _setPersistentMessage(
+          'Server login expired. Log out and sign in again to resume sync.',
+          isError: true,
+        );
+      }
     } catch (_) {
       // Keep the teacher home usable even if marketplace metadata refresh fails.
     }
+  }
+
+  Future<int> _loadPendingApprovalCount() async {
+    try {
+      final requests = await _marketplaceApi.listTeacherRequests();
+      final quitRequests = await _marketplaceApi.listTeacherQuitRequests();
+      return _countPendingApprovalRequests(requests, quitRequests);
+    } catch (_) {
+      return _pendingApprovalCount;
+    }
+  }
+
+  bool _isAuthFailure(MarketplaceApiException error) {
+    if (error.statusCode == 401 || error.statusCode == 403) {
+      return true;
+    }
+    final message = error.message.toLowerCase();
+    return message.contains('missing auth token') ||
+        message.contains('unauthorized');
+  }
+
+  int _countPendingApprovalRequests(
+    List<TeacherRequestSummary> requests,
+    List<TeacherQuitRequestSummary> quitRequests,
+  ) {
+    var count = 0;
+    for (final request in requests) {
+      final status = request.status.trim().toLowerCase();
+      if (status.isEmpty || status == 'pending') {
+        count++;
+      }
+    }
+    for (final request in quitRequests) {
+      final status = request.status.trim().toLowerCase();
+      if (status.isEmpty || status == 'pending') {
+        count++;
+      }
+    }
+    return count;
   }
 
   @override
@@ -221,14 +307,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.logout),
-                  onPressed: () async {
-                    final confirmed =
-                        await AppQuitFlow.confirmTeacherPinIfRequired(context);
-                    if (!confirmed) {
-                      return;
-                    }
-                    await auth.logout();
-                  },
+                  onPressed: () => AppQuitFlow.handleLogout(context),
                 ),
               ],
             ),
@@ -259,16 +338,39 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                       child: Text(l10n.createCourseButton),
                     ),
                     ElevatedButton(
-                      key: const Key('enrollment_requests_button'),
+                      key: const Key('teacher_students_button'),
                       onPressed: () {
                         Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (_) =>
-                                const TeacherEnrollmentRequestsPage(),
+                            builder: (_) => TeacherStudentsPage(
+                              teacherId: teacher.id,
+                            ),
                           ),
                         );
                       },
-                      child: Text(l10n.enrollmentRequestsButton),
+                      child: Text(l10n.studentsSection),
+                    ),
+                    PendingCountBadge(
+                      count: _pendingApprovalCount,
+                      badgeKey:
+                          const Key('teacher_pending_approval_count_badge'),
+                      child: ElevatedButton(
+                        key: const Key('enrollment_requests_button'),
+                        onPressed: () async {
+                          await Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  const TeacherEnrollmentRequestsPage(),
+                            ),
+                          );
+                          if (mounted) {
+                            unawaited(_refreshMarketplaceState(
+                              surfaceAuthErrors: false,
+                            ));
+                          }
+                        },
+                        child: Text(l10n.enrollmentRequestsButton),
+                      ),
                     ),
                     ElevatedButton(
                       key: const Key('prompt_settings_button'),
@@ -307,43 +409,6 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  l10n.studentsSection,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                Expanded(
-                  child: StreamBuilder<List<User>>(
-                    stream: db.watchStudents(teacher.id),
-                    builder: (context, snapshot) {
-                      final students = snapshot.data ?? [];
-                      if (students.isEmpty) {
-                        return Center(child: Text(l10n.noStudents));
-                      }
-                      return ListView.builder(
-                        itemCount: students.length,
-                        itemBuilder: (context, index) {
-                          final student = students[index];
-                          return ListTile(
-                            title: Text(student.username),
-                            trailing: IconButton(
-                              tooltip: l10n.studentSessionsButton,
-                              icon: const Icon(Icons.history),
-                              onPressed: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                        StudentSessionsPage(student: student),
-                                  ),
-                                );
-                              },
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
                   l10n.coursesSection,
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
@@ -367,6 +432,8 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                             isLoaded: isLoaded,
                             isUploading:
                                 _uploadingCourseIds.contains(course.id),
+                            isPulling: _pullingCourseIds.contains(course.id),
+                            isSaving: _savingCourseIds.contains(course.id),
                             onReload: () {
                               Navigator.of(context).push(
                                 MaterialPageRoute(
@@ -377,70 +444,27 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
                                 ),
                               );
                             },
+                            onCourseEditor: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => CourseEditorPage(
+                                    courseVersionId: course.id,
+                                  ),
+                                ),
+                              );
+                            },
                             onDelete: () =>
                                 _confirmDeleteCourse(context, course),
                             onVersions: () => _openBundleVersionsPage(course),
                             onEditLabels: () =>
                                 _editCourseSubjectLabels(course),
+                            onPullLatest: () =>
+                                _pullLatestServerBundle(teacher, course),
+                            onSave: () => _saveCourseToFolder(course),
                             onUpload: isLoaded
                                 ? () =>
                                     _uploadCourseToMarketplace(teacher, course)
                                 : null,
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Course / Student / Tree',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-                Expanded(
-                  child: StreamBuilder<List<CourseStudentTreeInfo>>(
-                    stream: db.watchCourseStudentTrees(teacher.id),
-                    builder: (context, snapshot) {
-                      final rows = snapshot.data ?? [];
-                      if (rows.isEmpty) {
-                        return const Center(child: Text('No rows yet.'));
-                      }
-                      return ListView.builder(
-                        itemCount: rows.length,
-                        itemBuilder: (context, index) {
-                          final row = rows[index];
-                          return ListTile(
-                            onTap: () async {
-                              final student =
-                                  await db.getUserById(row.studentId);
-                              if (!mounted || student == null) {
-                                return;
-                              }
-                              await Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) => StudentSessionsPage(
-                                    student: student,
-                                    initialCourseVersionId: row.courseVersionId,
-                                  ),
-                                ),
-                              );
-                            },
-                            title: Text(
-                                '${_stripVersionSuffix(row.courseSubject)} / ${row.studentUsername}'),
-                            trailing: TextButton(
-                              onPressed: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) => SkillTreePage(
-                                      courseVersionId: row.courseVersionId,
-                                      isTeacherView: true,
-                                      teacherStudentId: row.studentId,
-                                    ),
-                                  ),
-                                );
-                              },
-                              child: Text(l10n.treeButton),
-                            ),
                           );
                         },
                       );
@@ -452,14 +476,29 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
           ),
         ),
         if (_syncingFromServer)
-          ServerSyncOverlay(message: _syncProgressMessage),
+          ServerSyncOverlay(
+            message: _syncProgressMessage,
+            progressValue: _syncProgressValue,
+            progressDetail: _syncProgressDetail,
+          ),
       ],
+    );
+  }
+
+  void _applySyncProgress(SyncProgress progress) {
+    _setSyncState(
+      syncing: true,
+      message: progress.message,
+      progressValue: progress.value,
+      progressDetail: progress.detail,
     );
   }
 
   void _setSyncState({
     required bool syncing,
     String message = '',
+    double? progressValue,
+    String? progressDetail,
   }) {
     if (!mounted) {
       return;
@@ -467,6 +506,8 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     setState(() {
       _syncingFromServer = syncing;
       _syncProgressMessage = message;
+      _syncProgressValue = syncing ? progressValue : null;
+      _syncProgressDetail = syncing ? progressDetail : null;
     });
   }
 
@@ -475,8 +516,8 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     CourseVersion course,
   ) async {
     final l10n = AppLocalizations.of(context)!;
-    final sourcePath = (course.sourcePath ?? '').trim();
-    if (sourcePath.isEmpty) {
+    final initialSourcePath = (course.sourcePath ?? '').trim();
+    if (initialSourcePath.isEmpty) {
       _setPersistentMessage(
         l10n.courseFolderRequired,
         isError: true,
@@ -488,6 +529,10 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     }
 
     final services = context.read<AppServices>();
+    final sourcePath = await _resolveUploadSourcePath(
+      services: services,
+      course: course,
+    );
 
     final preview = await services.courseService.previewCourseLoad(
       folderPath: sourcePath,
@@ -518,7 +563,8 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       );
       final remoteCourseId = target.remoteCourseId;
       final bundleService = CourseBundleService();
-      final promptMetadata = await _buildPromptBundleMetadata(
+      final promptMetadata =
+          await PromptBundleMetadataBuilder(db: services.db).build(
         teacher: teacher,
         course: course,
         remoteCourseId: remoteCourseId,
@@ -544,7 +590,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
         bundleLabel: course.subject,
       );
       bundleFile = prepared.bundleFile;
-      final localSemanticHash = prepared.hash;
+      final localBundleHash = prepared.hash;
       final remoteVersions = await _marketplaceApi.listTeacherBundleVersions(
         remoteCourseId,
       );
@@ -552,7 +598,7 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
           remoteVersions.isNotEmpty ? remoteVersions.first : null;
       if (latestRemoteVersion != null &&
           latestRemoteVersion.hash.isNotEmpty &&
-          latestRemoteVersion.hash == localSemanticHash) {
+          latestRemoteVersion.hash == localBundleHash) {
         _setPersistentMessage(
           'No file changes detected compared with latest version hash. No upload needed.',
           isError: false,
@@ -561,8 +607,9 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       }
       if (latestRemoteVersion != null) {
         final kpDiff = await _buildKpDiffAgainstLatestBundle(
+          services: services,
           bundleService: bundleService,
-          sourcePath: sourcePath,
+          course: course,
           latestBundleVersionId: latestRemoteVersion.bundleVersionId,
           courseSubject: course.subject,
         );
@@ -589,6 +636,18 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
       );
       final uploadedStatus =
           (uploadResponse['status'] as String?) ?? 'uploaded';
+      if (uploadedStatus != 'unchanged') {
+        final uploadedVersionId =
+            (uploadResponse['bundle_version_id'] as num?)?.toInt() ?? 0;
+        if (uploadedVersionId > 0) {
+          await services.enrollmentSyncService.recordTeacherMarketplaceUpload(
+            currentUser: teacher,
+            remoteCourseId: remoteCourseId,
+            bundleVersionId: uploadedVersionId,
+            bundleHash: prepared.hash,
+          );
+        }
+      }
       if (mounted) {
         if (uploadedStatus == 'unchanged') {
           _setPersistentMessage(
@@ -615,15 +674,291 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     } catch (error) {
       _setPersistentMessage(l10n.marketplaceUploadFailed('$error'));
     } finally {
-      if (bundleFile != null && bundleFile.existsSync()) {
-        await bundleFile.delete();
-      }
       if (mounted) {
         setState(() {
           _uploadingCourseIds.remove(course.id);
         });
       }
     }
+  }
+
+  Future<void> _pullLatestServerBundle(
+    User teacher,
+    CourseVersion course,
+  ) async {
+    if (_pullingCourseIds.contains(course.id)) {
+      return;
+    }
+    setState(() {
+      _pullingCourseIds.add(course.id);
+    });
+    try {
+      final services = context.read<AppServices>();
+      final pulledCourse =
+          await services.enrollmentSyncService.pullLatestTeacherCourse(
+        currentUser: teacher,
+        course: course,
+      );
+      await _refreshMarketplaceState();
+      _setPersistentMessage(
+        'Pulled latest server bundle for "${pulledCourse.subject}". '
+        'Local course content and synced prompt metadata now match the server.',
+        isError: false,
+      );
+    } catch (error) {
+      _setPersistentMessage(
+        'Failed to pull latest server bundle for "${course.subject}": $error',
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _pullingCourseIds.remove(course.id);
+        });
+      }
+    }
+  }
+
+  Future<void> _saveCourseToFolder(CourseVersion course) async {
+    if (_savingCourseIds.contains(course.id)) {
+      return;
+    }
+    setState(() {
+      _savingCourseIds.add(course.id);
+    });
+
+    String? temporarySourcePath;
+    Directory? targetDir;
+    try {
+      final services = context.read<AppServices>();
+      final destinationRoot = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: 'Choose folder to save course',
+      );
+      if (destinationRoot == null || destinationRoot.trim().isEmpty) {
+        return;
+      }
+      final source = await _resolveSaveSourcePath(
+        services: services,
+        course: course,
+      );
+      if (source.deleteAfterCopy) {
+        temporarySourcePath = source.path;
+      }
+      targetDir = await _createUniqueCourseSaveDirectory(
+        parentPath: destinationRoot,
+        courseName: course.subject,
+      );
+      await _copyDirectoryContents(
+        sourcePath: source.path,
+        targetPath: targetDir.path,
+      );
+      final auth = context.read<AuthController>();
+      final teacher = auth.currentUser;
+      if (teacher == null) {
+        throw StateError('Teacher is not signed in.');
+      }
+      final preview = await services.courseService.previewCourseLoad(
+        folderPath: targetDir.path,
+        courseVersionId: course.id,
+      );
+      if (!preview.success) {
+        throw StateError(preview.message);
+      }
+      final loadResult = await services.courseService.applyCourseLoad(
+        teacherId: teacher.id,
+        preview: preview,
+        mode: CourseReloadMode.override,
+      );
+      if (!loadResult.success) {
+        throw StateError(loadResult.message);
+      }
+      _setPersistentMessage(
+        'Saved "${course.subject}" course files to ${targetDir.path} '
+        'and set it as the editable source folder.',
+      );
+    } catch (error) {
+      if (targetDir != null && targetDir.existsSync()) {
+        await targetDir.delete(recursive: true);
+      }
+      _setPersistentMessage(
+        'Failed to save "${course.subject}" course files: $error',
+      );
+    } finally {
+      if (temporarySourcePath != null) {
+        final temporarySource = Directory(temporarySourcePath);
+        if (temporarySource.existsSync()) {
+          await temporarySource.delete(recursive: true);
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _savingCourseIds.remove(course.id);
+        });
+      }
+    }
+  }
+
+  Future<_ResolvedCourseSaveSource> _resolveSaveSourcePath({
+    required AppServices services,
+    required CourseVersion course,
+  }) async {
+    final sourcePath = (course.sourcePath ?? '').trim();
+    if (sourcePath.isNotEmpty &&
+        !CourseSourcePolicy.isDownloadedCoursePath(sourcePath)) {
+      final preview = await services.courseService.previewCourseLoad(
+        folderPath: sourcePath,
+        courseVersionId: course.id,
+      );
+      if (preview.success) {
+        return _ResolvedCourseSaveSource(
+          path: sourcePath,
+          deleteAfterCopy: false,
+        );
+      }
+    }
+
+    final cachedArtifacts =
+        await services.courseArtifactService.readCourseArtifacts(course.id);
+    final cachedBundlePath = cachedArtifacts?.contentBundlePath.trim() ?? '';
+    if (cachedBundlePath.isNotEmpty && File(cachedBundlePath).existsSync()) {
+      final materializedPath =
+          await services.courseArtifactService.materializeStoredContentBundle(
+        courseVersionId: course.id,
+        courseName: course.subject,
+      );
+      return _ResolvedCourseSaveSource(
+        path: materializedPath,
+        deleteAfterCopy: true,
+      );
+    }
+
+    throw StateError(
+      'No cached course bundle or reloadable source folder is available. '
+      'Pull latest server bundle or reload the course first.',
+    );
+  }
+
+  Future<Directory> _createUniqueCourseSaveDirectory({
+    required String parentPath,
+    required String courseName,
+  }) async {
+    final parent = Directory(parentPath);
+    if (!parent.existsSync()) {
+      await parent.create(recursive: true);
+    }
+    final baseName = _sanitizeCourseSaveFolderName(courseName);
+    var candidate = Directory(p.join(parent.path, baseName));
+    if (!candidate.existsSync()) {
+      await candidate.create(recursive: true);
+      return candidate;
+    }
+
+    final timestamp = DateTime.now()
+        .toUtc()
+        .toIso8601String()
+        .replaceAll(RegExp(r'[:.]'), '-');
+    candidate = Directory(p.join(parent.path, '${baseName}_$timestamp'));
+    await candidate.create(recursive: true);
+    return candidate;
+  }
+
+  String _sanitizeCourseSaveFolderName(String value) {
+    var safe = value
+        .trim()
+        .replaceAll(RegExp(r'[<>:"/\\|?*\x00-\x1F]'), '_')
+        .replaceAll(RegExp(r'\s+'), '_')
+        .replaceAll(RegExp(r'_+'), '_');
+    safe = safe.replaceAll(RegExp(r'^[. ]+|[. ]+$'), '');
+    if (safe.isEmpty) {
+      safe = 'course';
+    }
+    const reserved = {
+      'CON',
+      'PRN',
+      'AUX',
+      'NUL',
+      'COM1',
+      'COM2',
+      'COM3',
+      'COM4',
+      'COM5',
+      'COM6',
+      'COM7',
+      'COM8',
+      'COM9',
+      'LPT1',
+      'LPT2',
+      'LPT3',
+      'LPT4',
+      'LPT5',
+      'LPT6',
+      'LPT7',
+      'LPT8',
+      'LPT9',
+    };
+    if (reserved.contains(safe.toUpperCase())) {
+      safe = '${safe}_course';
+    }
+    return safe;
+  }
+
+  Future<void> _copyDirectoryContents({
+    required String sourcePath,
+    required String targetPath,
+  }) async {
+    final source = Directory(sourcePath);
+    if (!source.existsSync()) {
+      throw StateError('Source course folder not found: $sourcePath');
+    }
+    final target = Directory(targetPath);
+    final normalizedSource = p.normalize(source.absolute.path);
+    final normalizedTarget = p.normalize(target.absolute.path);
+    if (p.equals(normalizedSource, normalizedTarget) ||
+        p.isWithin(normalizedSource, normalizedTarget)) {
+      throw StateError('Target folder cannot be inside the source folder.');
+    }
+
+    await target.create(recursive: true);
+    await for (final entity
+        in source.list(recursive: true, followLinks: false)) {
+      final relativePath = p.relative(entity.path, from: source.path);
+      if (relativePath == '.') {
+        continue;
+      }
+      final outputPath = p.join(target.path, relativePath);
+      if (entity is Directory) {
+        await Directory(outputPath).create(recursive: true);
+      } else if (entity is File) {
+        final outputFile = File(outputPath);
+        await outputFile.parent.create(recursive: true);
+        await entity.copy(outputFile.path);
+      }
+    }
+  }
+
+  Future<String> _resolveUploadSourcePath({
+    required AppServices services,
+    required CourseVersion course,
+  }) async {
+    final sourcePath = (course.sourcePath ?? '').trim();
+    if (sourcePath.isEmpty) {
+      return '';
+    }
+    final preview = await services.courseService.previewCourseLoad(
+      folderPath: sourcePath,
+      courseVersionId: course.id,
+    );
+    if (preview.success) {
+      return sourcePath;
+    }
+    final cachedArtifacts =
+        await services.courseArtifactService.readCourseArtifacts(course.id);
+    if (cachedArtifacts == null) {
+      return sourcePath;
+    }
+    return services.courseArtifactService.materializeStoredContentBundle(
+      courseVersionId: course.id,
+      courseName: course.subject,
+    );
   }
 
   TeacherCourseSummary? _findRemoteCourse(String subject) {
@@ -738,11 +1073,16 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
   }
 
   Future<CourseKpDiffSummary> _buildKpDiffAgainstLatestBundle({
+    required AppServices services,
     required CourseBundleService bundleService,
-    required String sourcePath,
+    required CourseVersion course,
     required int latestBundleVersionId,
     required String courseSubject,
   }) async {
+    final sourcePath = await _resolveUploadSourcePath(
+      services: services,
+      course: course,
+    );
     final targetPath = await bundleService.createTempBundlePath(
       label: 'latest_$courseSubject',
     );
@@ -862,6 +1202,16 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     });
   }
 
+  void _clearPersistentError() {
+    if (!mounted || !_persistentMessageIsError || _persistentMessage == null) {
+      return;
+    }
+    setState(() {
+      _persistentMessage = null;
+      _persistentMessageIsError = false;
+    });
+  }
+
   Widget _buildPersistentMessageCard(AppLocalizations l10n) {
     final message = _persistentMessage!;
     final cardColor = _persistentMessageIsError
@@ -910,189 +1260,12 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
     );
   }
 
-  Future<Map<String, dynamic>> _buildPromptBundleMetadata({
-    required User teacher,
-    required CourseVersion course,
-    required int remoteCourseId,
-  }) async {
-    final db = context.read<AppDatabase>();
-    final courseKey = (course.sourcePath ?? '').trim();
-    if (courseKey.isEmpty) {
-      throw StateError('Course path missing.');
-    }
-
-    final scopeTemplates = <PromptTemplate>[];
-    final systemTemplates = await (db.select(db.promptTemplates)
-          ..where((tbl) =>
-              tbl.teacherId.equals(teacher.id) &
-              tbl.isActive.equals(true) &
-              tbl.courseKey.isNull() &
-              tbl.studentId.isNull())
-          ..orderBy([
-            (tbl) =>
-                OrderingTerm(expression: tbl.createdAt, mode: OrderingMode.desc)
-          ]))
-        .get();
-    scopeTemplates.addAll(systemTemplates);
-
-    final courseTemplates = await (db.select(db.promptTemplates)
-          ..where((tbl) =>
-              tbl.teacherId.equals(teacher.id) &
-              tbl.isActive.equals(true) &
-              tbl.courseKey.equals(courseKey))
-          ..orderBy([
-            (tbl) =>
-                OrderingTerm(expression: tbl.createdAt, mode: OrderingMode.desc)
-          ]))
-        .get();
-    scopeTemplates.addAll(courseTemplates);
-
-    final dedupedByScope = <String, PromptTemplate>{};
-    for (final template in scopeTemplates) {
-      final key = [
-        template.promptName,
-        template.courseKey ?? '',
-        template.studentId?.toString() ?? '',
-      ].join('::');
-      dedupedByScope.putIfAbsent(key, () => template);
-    }
-
-    final studentCache = <int, User?>{};
-    final promptTemplatesPayload = <Map<String, dynamic>>[];
-    for (final template in dedupedByScope.values) {
-      final studentId = template.studentId;
-      User? student;
-      if (studentId != null) {
-        student = studentCache[studentId];
-        student ??= await db.getUserById(studentId);
-        studentCache[studentId] = student;
-      }
-
-      String scope = 'teacher';
-      if (template.courseKey != null && template.studentId == null) {
-        scope = 'course';
-      } else if (template.courseKey != null && template.studentId != null) {
-        scope = 'student';
-      }
-
-      promptTemplatesPayload.add({
-        'prompt_name': template.promptName,
-        'scope': scope,
-        'content': template.content,
-        'student_remote_user_id': student?.remoteUserId,
-        'student_username': student?.username,
-        'created_at': template.createdAt.toUtc().toIso8601String(),
-      });
-    }
-
-    final profilesPayload = <Map<String, dynamic>>[];
-    final systemProfile = await db.getStudentPromptProfile(
-      teacherId: teacher.id,
-      courseKey: null,
-      studentId: null,
-    );
-    if (systemProfile != null) {
-      profilesPayload.add(
-        _profileToJson(systemProfile, scope: 'teacher'),
-      );
-    }
-
-    final courseProfile = await db.getStudentPromptProfile(
-      teacherId: teacher.id,
-      courseKey: courseKey,
-      studentId: null,
-    );
-    if (courseProfile != null) {
-      profilesPayload.add(
-        _profileToJson(courseProfile, scope: 'course'),
-      );
-    }
-
-    final studentProfileRows = await (db.select(db.studentPromptProfiles)
-          ..where((tbl) =>
-              tbl.teacherId.equals(teacher.id) &
-              tbl.courseKey.equals(courseKey) &
-              tbl.studentId.isNotNull())
-          ..orderBy([
-            (tbl) => OrderingTerm(
-                  expression: tbl.updatedAt,
-                  mode: OrderingMode.desc,
-                ),
-            (tbl) => OrderingTerm(
-                  expression: tbl.createdAt,
-                  mode: OrderingMode.desc,
-                ),
-          ]))
-        .get();
-
-    final studentIds = <int>{};
-    for (final row in studentProfileRows) {
-      final studentId = row.studentId;
-      if (studentId != null) {
-        studentIds.add(studentId);
-      }
-    }
-
-    for (final studentId in studentIds) {
-      final profile = await db.getStudentPromptProfile(
-        teacherId: teacher.id,
-        courseKey: courseKey,
-        studentId: studentId,
-      );
-      if (profile == null) {
-        continue;
-      }
-      var student = studentCache[studentId];
-      student ??= await db.getUserById(studentId);
-      studentCache[studentId] = student;
-      profilesPayload.add(
-        _profileToJson(
-          profile,
-          scope: 'student',
-          studentRemoteUserId: student?.remoteUserId,
-          studentUsername: student?.username,
-        ),
-      );
-    }
-
-    return {
-      'schema': kCurrentPromptBundleSchema,
-      'remote_course_id': remoteCourseId,
-      'teacher_username': teacher.username,
-      'prompt_templates': promptTemplatesPayload,
-      'student_prompt_profiles': profilesPayload,
-    };
-  }
-
   String _normalizeCourseName(String value) {
     return value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
   }
 
   String _stripVersionSuffix(String value) {
     return value.trim().replaceFirst(RegExp(r'_(\d{10,})$'), '');
-  }
-
-  Map<String, dynamic> _profileToJson(
-    StudentPromptProfile profile, {
-    required String scope,
-    int? studentRemoteUserId,
-    String? studentUsername,
-  }) {
-    return {
-      'scope': scope,
-      'student_remote_user_id': studentRemoteUserId,
-      'student_username': studentUsername,
-      'grade_level': profile.gradeLevel,
-      'reading_level': profile.readingLevel,
-      'preferred_language': profile.preferredLanguage,
-      'interests': profile.interests,
-      'preferred_tone': profile.preferredTone,
-      'preferred_pace': profile.preferredPace,
-      'preferred_format': profile.preferredFormat,
-      'support_notes': profile.supportNotes,
-      'updated_at':
-          (profile.updatedAt ?? profile.createdAt).toUtc().toIso8601String(),
-    };
   }
 
   Future<void> _confirmDeleteCourse(
@@ -1173,16 +1346,31 @@ class _TeacherHomePageState extends State<TeacherHomePage> {
   }
 }
 
+class _ResolvedCourseSaveSource {
+  const _ResolvedCourseSaveSource({
+    required this.path,
+    required this.deleteAfterCopy,
+  });
+
+  final String path;
+  final bool deleteAfterCopy;
+}
+
 class _CourseTile extends StatelessWidget {
   const _CourseTile({
     required this.course,
     required this.remoteCourse,
     required this.isLoaded,
     required this.isUploading,
+    required this.isPulling,
+    required this.isSaving,
     required this.onReload,
+    required this.onCourseEditor,
     required this.onDelete,
     required this.onVersions,
     required this.onEditLabels,
+    required this.onPullLatest,
+    required this.onSave,
     required this.onUpload,
   });
 
@@ -1190,10 +1378,15 @@ class _CourseTile extends StatelessWidget {
   final TeacherCourseSummary? remoteCourse;
   final bool isLoaded;
   final bool isUploading;
+  final bool isPulling;
+  final bool isSaving;
   final VoidCallback onReload;
+  final VoidCallback onCourseEditor;
   final VoidCallback onDelete;
   final VoidCallback onVersions;
   final VoidCallback onEditLabels;
+  final VoidCallback onPullLatest;
+  final VoidCallback onSave;
   final VoidCallback? onUpload;
 
   @override
@@ -1205,24 +1398,46 @@ class _CourseTile extends StatelessWidget {
         remoteCourse == null || remoteCourse!.subjectLabels.isEmpty
             ? 'No subject labels'
             : remoteCourse!.subjectLabels.map((label) => label.name).join(', ');
-    final approvalText =
-        remoteCourse == null || remoteCourse!.approvalStatus.isEmpty
-            ? ''
-            : 'Approval: ${remoteCourse!.approvalStatus}';
+    final approvalStatus =
+        remoteCourse == null ? '' : remoteCourse!.approvalStatus.trim();
+    final approvalText = approvalStatus.isEmpty
+        ? ''
+        : approvalStatus == 'draft'
+            ? 'Approval: not submitted'
+            : 'Approval: $approvalStatus';
+    final canPullLatest =
+        remoteCourse != null && (remoteCourse!.latestBundleVersionId ?? 0) > 0;
     return Card(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              displaySubject,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    displaySubject,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Flexible(
+                  child: Text(
+                    'Labels: $labelText',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.end,
+                  ),
+                ),
+                if (approvalText.isNotEmpty) ...[
+                  const SizedBox(width: 12),
+                  Text(approvalText),
+                ],
+              ],
             ),
-            const SizedBox(height: 6),
-            Text('Labels: $labelText'),
-            if (approvalText.isNotEmpty) Text(approvalText),
             const SizedBox(height: 8),
             Row(
               children: [
@@ -1232,8 +1447,23 @@ class _CourseTile extends StatelessWidget {
                   child: Text(l10n.reloadCourseButton),
                 ),
                 TextButton(
+                  key: Key('course_editor_${course.id}'),
+                  onPressed: onCourseEditor,
+                  child: const Text('Course Editor'),
+                ),
+                TextButton(
                   onPressed: onEditLabels,
                   child: const Text('Subject Labels'),
+                ),
+                TextButton(
+                  onPressed: isPulling || !canPullLatest ? null : onPullLatest,
+                  child: Text(
+                    isPulling ? 'Pulling...' : 'Pull Latest Server',
+                  ),
+                ),
+                TextButton(
+                  onPressed: isSaving ? null : onSave,
+                  child: Text(isSaving ? 'Saving...' : 'Save'),
                 ),
                 TextButton(
                   onPressed: onVersions,

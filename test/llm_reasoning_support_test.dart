@@ -113,6 +113,27 @@ void main() {
       );
       expect(openAiBody['reasoning_effort'], equals(ReasoningEffort.high));
 
+      const openRouter = LlmProvider(
+        id: 'openrouter',
+        label: 'OpenRouter',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        models: <String>['openai/gpt-5.2'],
+        maxTokensParam: MaxTokensParam.maxTokens,
+        reasoningControlStyle: ReasoningControlStyle.openRouterReasoning,
+      );
+      final openRouterBody = <String, dynamic>{};
+      LlmReasoningSupport.applyRequestFields(
+        bodyMap: openRouterBody,
+        provider: openRouter,
+        model: 'openai/gpt-5.2',
+        reasoningEffort: ReasoningEffort.low,
+        maxTokens: 8000,
+      );
+      expect(
+        openRouterBody['reasoning'],
+        equals(<String, dynamic>{'effort': ReasoningEffort.low}),
+      );
+
       const siliconFlow = LlmProvider(
         id: 'siliconflow',
         label: 'SiliconFlow',
@@ -397,6 +418,58 @@ void main() {
       expect(encoded, isNotNull);
       final decoded = jsonDecode(encoded!) as Map<String, dynamic>;
       expect(decoded['reasoning_text'], equals(' Keep exact spacing. '));
+    });
+
+    test('extracts OpenRouter reasoning details and completion tokens', () {
+      const provider = LlmProvider(
+        id: 'openrouter',
+        label: 'OpenRouter',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        models: <String>['google/gemini-2.5-flash'],
+        maxTokensParam: MaxTokensParam.maxTokens,
+        reasoningControlStyle: ReasoningControlStyle.openRouterReasoning,
+      );
+      final payload = <String, dynamic>{
+        'choices': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'message': <String, dynamic>{
+              'reasoning_details': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'type': 'reasoning.text',
+                  'text': 'Check the arithmetic carefully.',
+                },
+              ],
+              'content': jsonEncode(<String, Object?>{
+                'teacher_message': '9.9 is bigger than 9.11.',
+              }),
+            },
+          },
+        ],
+        'usage': <String, dynamic>{
+          'completion_tokens_details': <String, dynamic>{
+            'reasoning_tokens': 123,
+          },
+        },
+      };
+
+      final extracted = LlmReasoningSupport.extractResponse(
+        payload: payload,
+        provider: provider,
+      );
+
+      expect(
+        extracted.responseText,
+        equals(
+          jsonEncode(<String, Object?>{
+            'teacher_message': '9.9 is bigger than 9.11.',
+          }),
+        ),
+      );
+      expect(
+        extracted.reasoningText,
+        equals('Check the arithmetic carefully.'),
+      );
+      expect(extracted.reasoningTokens, equals(123));
     });
   });
 }

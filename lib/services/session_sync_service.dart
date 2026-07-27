@@ -1,234 +1,2699 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
-import 'package:cryptography/cryptography.dart';
 import 'package:drift/drift.dart';
-import 'package:uuid/uuid.dart';
 
 import '../constants.dart';
 import '../db/app_database.dart';
-import '../models/tutor_contract.dart';
-import '../security/pin_hasher.dart';
-import 'remote_teacher_identity_service.dart';
-import 'session_crypto_service.dart';
-import 'session_sync_api_service.dart';
-import 'session_upload_cache_service.dart';
+import 'artifact_sync_api_service.dart';
+import 'remote_student_identity_service.dart';
+import 'student_kp_artifact_store_service.dart';
 import 'sync_log_repository.dart';
-import 'sync_state_repository.dart';
-import 'user_key_service.dart';
+import 'sync_progress.dart';
+
+enum SessionSyncMode {
+  full,
+  downloadOnly,
+  uploadOnly,
+}
 
 class SessionSyncService {
   SessionSyncService({
     required AppDatabase db,
-    required SyncStateRepository secureStorage,
-    required SessionSyncApiService api,
-    required UserKeyService userKeyService,
-    SessionCryptoService? crypto,
-    SessionUploadCacheService? sessionUploadCacheService,
+    required ArtifactSyncApiService api,
+    StudentKpArtifactStoreService? artifactStore,
   })  : _db = db,
-        _secureStorage = secureStorage,
         _api = api,
-        _userKeyService = userKeyService,
-        _crypto = crypto ?? SessionCryptoService(),
-        _sessionUploadCacheService = sessionUploadCacheService;
+        _artifactStore = artifactStore ?? StudentKpArtifactStoreService();
 
   final AppDatabase _db;
-  final SyncStateRepository _secureStorage;
-  final SessionSyncApiService _api;
-  final UserKeyService _userKeyService;
-  final SessionCryptoService _crypto;
-  final SessionUploadCacheService? _sessionUploadCacheService;
-  final RemoteTeacherIdentityService _remoteTeacherIdentity =
-      const RemoteTeacherIdentityService();
-  static final Uuid _uuid = Uuid();
-  static final RegExp _versionSuffixPattern = RegExp(r'_(\d{10,})$');
-  static final RegExp _secondLevelChapterPattern = RegExp(r'^(\d+\.\d+)');
-  static const Duration _syncMinInterval = Duration(seconds: 60);
-  static const String _syncDomainSessionUpload = 'session_upload';
-  static const String _syncDomainSessionGroupUpload = 'session_group_upload';
-  static const String _syncDomainProgressUpload = 'progress_upload';
-  static const String _syncDomainProgressChunkUpload = 'progress_chunk_upload';
-  static const String _syncDomainSessionDownload = 'session_download';
-  static const String _syncDomainProgressDownload = 'progress_download';
-  static const String _syncDomainProgressChunkDownload =
-      'progress_chunk_download';
-  static const String _syncDomainDownloadManifest = 'download_manifest';
-  static const String _syncRunDomainProgressUpload =
-      'session_sync_run_progress_upload';
-  static const String _syncRunDomainSessionUpload =
-      'session_sync_run_session_upload';
-  static const String _syncRunDomainSessionDownload =
-      'session_sync_run_download';
-  static const int _progressUploadBatchSize = 200;
-  static const int _progressChunkUploadBatchSize = 24;
-  static const int _progressUploadIsolationMaxSplits = 24;
-  bool _syncing = false;
+  final ArtifactSyncApiService _api;
+  final StudentKpArtifactStoreService _artifactStore;
+  final RemoteStudentIdentityService _remoteStudentIdentity =
+      const RemoteStudentIdentityService();
+
+  Completer<void>? _activeSyncCompleter;
+  bool _cutoverInitialized = false;
+  int _localMutationSuppressionDepth = 0;
+  final Set<int> _pendingRefreshLocalUserIds = <int>{};
+
+  static const String _artifactClass = 'student_kp';
+  static const String _artifactSchema = 'student_kp_artifact_v1';
+  static const int _batchDownloadThreshold = 3;
+  static const int _batchUploadThreshold = 3;
+  static const int _batchUploadChunkSize = 16;
+  static const int _downloadApplyCheckpointInterval = 64;
+
+  bool get _localMutationSuppressed => _localMutationSuppressionDepth > 0;
+
+  Future<Completer<void>?> _beginSync({
+    required bool waitForActiveSync,
+  }) async {
+    while (true) {
+      final activeSync = _activeSyncCompleter;
+      if (activeSync == null) {
+        break;
+      }
+      if (!waitForActiveSync) {
+        return null;
+      }
+      await activeSync.future;
+    }
+    final completer = Completer<void>();
+    _activeSyncCompleter = completer;
+    return completer;
+  }
+
+  Future<void> _finishSync(Completer<void> syncCompleter) async {
+    try {
+      await _drainPendingRefreshes();
+    } finally {
+      if (identical(_activeSyncCompleter, syncCompleter)) {
+        _activeSyncCompleter = null;
+      }
+      if (!syncCompleter.isCompleted) {
+        syncCompleter.complete();
+      }
+    }
+  }
+
+  Future<T> _runWithLocalMutationSuppressed<T>(
+    Future<T> Function() action,
+  ) async {
+    _localMutationSuppressionDepth++;
+    try {
+      return await action();
+    } finally {
+      _localMutationSuppressionDepth--;
+    }
+  }
+
+  Future<void> ensureLocalCutoverInitialized() async {
+    if (_cutoverInitialized) {
+      return;
+    }
+    final initialized = await _artifactStore.isCutoverInitialized();
+    if (!initialized) {
+      await _runWithLocalMutationSuppressed(() async {
+        await _clearLegacyLocalState();
+        await _artifactStore.clearAllArtifacts();
+        await _artifactStore.markCutoverInitialized();
+      });
+    }
+    _cutoverInitialized = true;
+  }
+
+  Future<void> handleLocalSyncRelevantChange(SyncRelevantChange change) async {
+    if (change.isEmpty || !change.refreshSessionArtifacts) {
+      return;
+    }
+    await ensureLocalCutoverInitialized();
+    // Always enqueue (never drop): _drainPendingRefreshes re-resolves users
+    // and filters non-students / missing remote ids itself.
+    _pendingRefreshLocalUserIds.addAll(
+      change.localUserIds.where((id) => id > 0),
+    );
+    if (_localMutationSuppressed) {
+      // Sync-owned mutation window; the surrounding flow drains the pending
+      // set when it finishes.
+      return;
+    }
+    final syncCompleter = await _beginSync(waitForActiveSync: false);
+    if (syncCompleter == null) {
+      // A sync is active; its _finishSync drains the pending set.
+      return;
+    }
+    // Holding the sync slot serializes manifest rebuilds against sync runs;
+    // _finishSync drains the pending set before releasing the slot.
+    await _finishSync(syncCompleter);
+  }
 
   Future<void> prepareForAutoSync({
     required User currentUser,
     required String password,
   }) async {
-    final remoteUserId = _requireRemoteUserId(currentUser);
-    await _ensureKeyPairWithPassword(
-      remoteUserId: remoteUserId,
-      password: password,
-    );
+    await ensureLocalCutoverInitialized();
   }
 
   Future<SyncRunStats> syncNow({
     required User currentUser,
     required String password,
-  }) async {
-    final stats = SyncRunStats();
-    if (_syncing) {
-      return stats;
-    }
-    _syncing = true;
-    try {
-      final remoteUserId = _requireRemoteUserId(currentUser);
-      final keyPair = await _ensureKeyPairWithPassword(
-        remoteUserId: remoteUserId,
-        password: password,
-      );
-      return await _syncInternal(
-        currentUser,
-        remoteUserId,
-        keyPair,
-        force: true,
-      );
-    } finally {
-      _syncing = false;
-    }
+    SyncProgressCallback? onProgress,
+    SessionSyncMode mode = SessionSyncMode.full,
+  }) {
+    return _syncInternal(
+      currentUser: currentUser,
+      force: true,
+      onProgress: onProgress,
+      mode: mode,
+      refreshLocalArtifactsBeforeSync: true,
+    );
   }
 
-  Future<SyncRunStats> syncIfReady({required User currentUser}) async {
-    final stats = SyncRunStats();
-    if (_syncing) {
-      return stats;
-    }
-    final remoteUserId = currentUser.remoteUserId;
-    if (remoteUserId == null || remoteUserId <= 0) {
-      return stats;
-    }
-    final keyPair = await _userKeyService.tryLoadLocalKeyPair(remoteUserId);
-    if (keyPair == null) {
-      return stats;
-    }
-    _syncing = true;
-    try {
-      return await _syncInternal(
-        currentUser,
-        remoteUserId,
-        keyPair,
-      );
-    } finally {
-      _syncing = false;
-    }
+  Future<SyncRunStats> syncIfReady({
+    required User currentUser,
+    SyncProgressCallback? onProgress,
+    SessionSyncMode mode = SessionSyncMode.full,
+  }) {
+    return _syncInternal(
+      currentUser: currentUser,
+      force: false,
+      onProgress: onProgress,
+      mode: mode,
+      refreshLocalArtifactsBeforeSync: false,
+    );
   }
 
   Future<SyncRunStats> forcePullFromServer({
     required User currentUser,
     bool wipeLocalStudentData = true,
+    SyncProgressCallback? onProgress,
+    SessionSyncMode mode = SessionSyncMode.full,
   }) async {
-    final stats = SyncRunStats();
-    if (_syncing) {
-      return stats;
-    }
+    await ensureLocalCutoverInitialized();
     final remoteUserId = _requireRemoteUserId(currentUser);
-    final keyPair = await _userKeyService.tryLoadLocalKeyPair(remoteUserId);
-    if (keyPair == null) {
-      throw StateError(
-        'Session sync key is not ready. Log out and log in again first.',
-      );
-    }
-    _syncing = true;
-    try {
-      if (currentUser.role == 'student' && wipeLocalStudentData) {
+    if (currentUser.role == 'student' && wipeLocalStudentData) {
+      await _runWithLocalMutationSuppressed(() async {
         await _clearLocalStudentSessionAndProgressData(
           studentId: currentUser.id,
         );
-      }
-      await _resetDownloadSyncState(remoteUserId: remoteUserId);
-      await _runCategoryIfDue(
-        remoteUserId: remoteUserId,
-        runDomain: _syncRunDomainSessionDownload,
-        force: true,
-        action: () => _downloadRemoteData(
-          currentUser,
-          remoteUserId,
-          keyPair,
-          stats: stats,
-        ),
-      );
-      return stats;
-    } finally {
-      _syncing = false;
+      });
     }
+    await _artifactStore.clearUserArtifacts(remoteUserId);
+    return _syncInternal(
+      currentUser: currentUser,
+      force: true,
+      onProgress: onProgress,
+      mode: mode,
+      refreshLocalArtifactsBeforeSync: false,
+    );
   }
 
-  Future<SyncRunStats> _syncInternal(
-      User currentUser, int remoteUserId, SimpleKeyPair keyPair,
-      {bool force = false}) async {
+  Future<SyncRunStats> forcePushLocalToServer({
+    required User currentUser,
+    SyncProgressCallback? onProgress,
+  }) async {
     final stats = SyncRunStats();
-    await _runCategoryIfDue(
-      remoteUserId: remoteUserId,
-      runDomain: _syncRunDomainSessionDownload,
-      force: force,
-      action: () => _downloadRemoteData(
-        currentUser,
-        remoteUserId,
-        keyPair,
+    if (currentUser.role != 'student') {
+      throw StateError('Take this device copy requires a student user.');
+    }
+    final remoteUserId = currentUser.remoteUserId;
+    if (remoteUserId == null || remoteUserId <= 0) {
+      throw StateError(
+        'Take this device copy requires a synced student account.',
+      );
+    }
+    await ensureLocalCutoverInitialized();
+    final syncCompleter = await _beginSync(waitForActiveSync: true);
+    if (syncCompleter == null) {
+      return stats;
+    }
+    Object? syncError;
+    StackTrace? syncStackTrace;
+    try {
+      await _reportProgress(
+        onProgress,
+        const SyncProgress(
+          message: 'Preparing this device copy...',
+          forcePaint: true,
+        ),
+      );
+      await _refreshLocalArtifactsForStudent(currentUser);
+      var manifest = await _artifactStore.loadManifest(remoteUserId);
+      final serverState1 = await _api.getState1(artifactClass: _artifactClass);
+      manifest = await _removeResolvedDeletedEntries(
+        currentUser: currentUser,
+        manifest: manifest,
+        serverItems: serverState1.items,
+      );
+      manifest = await _reconcileMatchingServerBases(
+        manifest: manifest,
+        serverItems: serverState1.items,
+      );
+      manifest = await _deleteServerArtifactsForLocalDeletes(
+        remoteUserId: remoteUserId,
+        manifest: manifest,
+        serverItems: serverState1.items,
         stats: stats,
-      ),
-    );
-    await _runCategoryIfDue(
-      remoteUserId: remoteUserId,
-      runDomain: _syncRunDomainProgressUpload,
-      force: force,
-      action: () => _uploadPendingProgress(
-        currentUser,
-        remoteUserId,
+        onProgress: onProgress,
+      );
+      manifest = await _uploadLocalChanges(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+        manifest: manifest,
+        serverItems: serverState1.items,
         stats: stats,
-      ),
-    );
-    await _runCategoryIfDue(
-      remoteUserId: remoteUserId,
-      runDomain: _syncRunDomainSessionUpload,
-      force: force,
-      action: () => _uploadPendingSessions(
-        currentUser,
-        remoteUserId,
-        stats: stats,
-      ),
-    );
+        onProgress: onProgress,
+        overwriteServer: true,
+        forceAllDivergent: true,
+      );
+      final refreshedState1 = await _api.getState1(
+        artifactClass: _artifactClass,
+      );
+      await _assertNoPendingArtifactConflicts(
+        currentUser: currentUser,
+        manifest: manifest,
+        serverItems: refreshedState1.items,
+      );
+      await _artifactStore.saveManifest(manifest);
+    } catch (error, stackTrace) {
+      syncError = error;
+      syncStackTrace = stackTrace;
+    } finally {
+      try {
+        await _finishSync(syncCompleter);
+      } catch (error, stackTrace) {
+        syncError ??= error;
+        syncStackTrace ??= stackTrace;
+      }
+    }
+    if (syncError != null) {
+      Error.throwWithStackTrace(syncError, syncStackTrace!);
+    }
     return stats;
   }
 
-  Future<void> _resetDownloadSyncState({required int remoteUserId}) async {
-    await _secureStorage.deleteSessionSyncCursor(remoteUserId);
-    await _secureStorage.deleteProgressSyncCursor(remoteUserId);
-    await _secureStorage.clearSyncDomainState(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainDownloadManifest,
+  Future<Map<String, String>> buildCanonicalVisibleArtifactHashes({
+    required User currentUser,
+  }) async {
+    final remoteUserId = currentUser.remoteUserId;
+    if (remoteUserId == null || remoteUserId <= 0) {
+      return const <String, String>{};
+    }
+    await ensureLocalCutoverInitialized();
+    final manifest = await _artifactStore.loadManifest(remoteUserId);
+    final artifactHashesById = <String, String>{};
+    for (final item in manifest.items.values) {
+      if (item.deleted) {
+        continue;
+      }
+      final artifactId = item.artifactId.trim();
+      final sha256 = item.sha256.trim();
+      if (artifactId.isEmpty || sha256.isEmpty) {
+        continue;
+      }
+      artifactHashesById[artifactId] = sha256;
+    }
+    return artifactHashesById;
+  }
+
+  Future<bool> hasPendingCanonicalManifestChanges({
+    required User currentUser,
+  }) async {
+    final remoteUserId = currentUser.remoteUserId;
+    if (remoteUserId == null || remoteUserId <= 0) {
+      return false;
+    }
+    await ensureLocalCutoverInitialized();
+    final manifest = await _artifactStore.loadManifest(remoteUserId);
+    return _hasPendingStudentManifestChanges(
+      currentUser: currentUser,
+      manifest: manifest,
     );
-    await _secureStorage.clearSyncDomainState(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainSessionDownload,
+  }
+
+  Future<SyncRunStats> syncFromCanonicalState1({
+    required User currentUser,
+    required List<ArtifactState1Item> visibleItems,
+    SyncProgressCallback? onProgress,
+    SessionSyncMode mode = SessionSyncMode.downloadOnly,
+  }) async {
+    final stats = SyncRunStats();
+    final remoteUserId = currentUser.remoteUserId;
+    if (remoteUserId == null || remoteUserId <= 0) {
+      return stats;
+    }
+    await ensureLocalCutoverInitialized();
+    final syncCompleter = await _beginSync(waitForActiveSync: false);
+    if (syncCompleter == null) {
+      return stats;
+    }
+    try {
+      final serverItems = visibleItems
+          .where((item) => item.artifactClass == _artifactClass)
+          .toList(growable: false)
+        ..sort((left, right) => left.artifactId.compareTo(right.artifactId));
+      var manifest = await _artifactStore.loadManifest(remoteUserId);
+      manifest = await _removeResolvedDeletedEntries(
+        currentUser: currentUser,
+        manifest: manifest,
+        serverItems: serverItems,
+      );
+      manifest = await _reconcileMatchingServerBases(
+        manifest: manifest,
+        serverItems: serverItems,
+      );
+      if (currentUser.role == 'teacher') {
+        await _reportProgress(
+          onProgress,
+          const SyncProgress(
+            message: 'Refreshing teacher student artifact metadata...',
+            forcePaint: true,
+          ),
+        );
+        manifest = await _reconcileTeacherManifestMetadata(
+          currentUser: currentUser,
+          remoteUserId: remoteUserId,
+          manifest: manifest,
+          serverItems: serverItems,
+        );
+      } else {
+        await _reportProgress(
+          onProgress,
+          const SyncProgress(
+            message: 'Syncing student per-KP artifacts...',
+            forcePaint: true,
+          ),
+        );
+        manifest = await _applyServerDownloads(
+          currentUser: currentUser,
+          remoteUserId: remoteUserId,
+          manifest: manifest,
+          serverItems: serverItems,
+          stats: stats,
+          onProgress: onProgress,
+        );
+        if (mode == SessionSyncMode.full) {
+          manifest = await _uploadLocalChanges(
+            currentUser: currentUser,
+            remoteUserId: remoteUserId,
+            manifest: manifest,
+            serverItems: serverItems,
+            stats: stats,
+            onProgress: onProgress,
+          );
+          final refreshedState1 = await _api.getState1(
+            artifactClass: _artifactClass,
+          );
+          manifest = await _applyServerDownloads(
+            currentUser: currentUser,
+            remoteUserId: remoteUserId,
+            manifest: manifest,
+            serverItems: refreshedState1.items,
+            stats: stats,
+            onProgress: onProgress,
+          );
+          await _assertNoPendingArtifactConflicts(
+            currentUser: currentUser,
+            manifest: manifest,
+            serverItems: refreshedState1.items,
+          );
+        }
+      }
+      await _artifactStore.saveManifest(manifest);
+      return stats;
+    } finally {
+      await _finishSync(syncCompleter);
+    }
+  }
+
+  Future<void> deleteSessionAndResetKpProgress({
+    required User currentUser,
+    required int sessionId,
+  }) async {
+    if (currentUser.role == 'student') {
+      final session = await _db.getSession(sessionId);
+      if (session == null) {
+        throw StateError('Session $sessionId no longer exists.');
+      }
+      if (session.studentId != currentUser.id) {
+        throw StateError('Students can only delete their own sessions.');
+      }
+      await _db.deleteSession(sessionId);
+      return;
+    }
+    if (currentUser.role != 'teacher') {
+      throw StateError(
+          'Only a teacher or the owning student can delete a session.');
+    }
+
+    await ensureLocalCutoverInitialized();
+    final syncCompleter = await _beginSync(waitForActiveSync: true);
+    if (syncCompleter == null) {
+      throw StateError('Could not acquire the session sync lock.');
+    }
+    try {
+      final session = await _db.getSession(sessionId);
+      if (session == null) {
+        throw StateError('Session $sessionId no longer exists.');
+      }
+      final syncId = (session.syncId ?? '').trim();
+      if (syncId.isEmpty) {
+        throw StateError(
+          'This session has no server identity and cannot be deleted by a teacher.',
+        );
+      }
+      final course = await _db.getCourseVersionById(session.courseVersionId);
+      if (course == null || course.teacherId != currentUser.id) {
+        throw StateError(
+            'The current teacher does not own this session course.');
+      }
+      final student = await _db.getUserById(session.studentId);
+      if (student == null || student.role != 'student') {
+        throw StateError('The session student no longer exists.');
+      }
+      final remoteTeacherUserId = _requireRemoteUserId(currentUser);
+      final remoteStudentUserId = _requireRemoteUserId(student);
+      final remoteCourseId =
+          await _db.getRemoteCourseIdForCourseVersion(session.courseVersionId);
+      if (remoteCourseId == null || remoteCourseId <= 0) {
+        throw StateError(
+          'Course version ${session.courseVersionId} is missing its remote course link.',
+        );
+      }
+      final kpKey = session.kpKey.trim();
+      if (kpKey.isEmpty) {
+        throw StateError('The session knowledge-point key is missing.');
+      }
+      final artifactId =
+          'student_kp:$remoteStudentUserId:$remoteCourseId:$kpKey';
+      final teacherManifest =
+          await _artifactStore.loadManifest(remoteTeacherUserId);
+      final teacherItem = teacherManifest.items[artifactId];
+      if (teacherItem == null ||
+          teacherItem.deleted ||
+          teacherItem.baseSha256.trim().isEmpty ||
+          teacherItem.sha256.trim() != teacherItem.baseSha256.trim()) {
+        throw StateError(
+          'The teacher session cache is stale; reload the student sessions and retry.',
+        );
+      }
+
+      try {
+        await _api.deleteStudentSessionAsTeacher(
+          artifactId: artifactId,
+          sessionSyncId: syncId,
+          baseSha256: teacherItem.baseSha256,
+        );
+      } catch (deleteError, deleteStackTrace) {
+        try {
+          await materializeTeacherArtifactsForView(
+            currentUser: currentUser,
+            localStudentId: student.id,
+            courseVersionId: session.courseVersionId,
+          );
+          final reconciledSessions = await _db.getSessionsForNode(
+            studentId: student.id,
+            courseVersionId: session.courseVersionId,
+            kpKey: kpKey,
+          );
+          final deletionReachedServer = !reconciledSessions.any(
+            (candidate) => (candidate.syncId ?? '').trim() == syncId,
+          );
+          if (deletionReachedServer) {
+            await _invalidateCachedArtifact(
+              remoteUserId: remoteStudentUserId,
+              artifactId: artifactId,
+            );
+            return;
+          }
+        } catch (reconcileError, reconcileStackTrace) {
+          Error.throwWithStackTrace(
+            StateError(
+              'The server deletion result was uncertain and this device could not reconcile it: '
+              '$deleteError; refresh failed: $reconcileError',
+            ),
+            reconcileStackTrace,
+          );
+        }
+        Error.throwWithStackTrace(deleteError, deleteStackTrace);
+      }
+      try {
+        await materializeTeacherArtifactsForView(
+          currentUser: currentUser,
+          localStudentId: student.id,
+          courseVersionId: session.courseVersionId,
+        );
+        await _invalidateCachedArtifact(
+          remoteUserId: remoteStudentUserId,
+          artifactId: artifactId,
+        );
+      } catch (error, stackTrace) {
+        Error.throwWithStackTrace(
+          StateError(
+            'The session was deleted on the server, but this device could not refresh its canonical copy: $error',
+          ),
+          stackTrace,
+        );
+      }
+    } finally {
+      await _finishSync(syncCompleter);
+    }
+  }
+
+  Future<void> materializeTeacherArtifactsForView({
+    required User currentUser,
+    required int localStudentId,
+    int? courseVersionId,
+  }) async {
+    if (currentUser.role != 'teacher') {
+      return;
+    }
+    final remoteTeacherUserId = _requireRemoteUserId(currentUser);
+    final student = await _db.getUserById(localStudentId);
+    final remoteStudentUserId = student?.remoteUserId;
+    if (student == null ||
+        student.role != 'student' ||
+        remoteStudentUserId == null ||
+        remoteStudentUserId <= 0) {
+      throw StateError(
+        'Teacher artifact materialization requires a synced local student.',
+      );
+    }
+    int? remoteCourseId;
+    if (courseVersionId != null) {
+      remoteCourseId =
+          await _db.getRemoteCourseIdForCourseVersion(courseVersionId);
+      if (remoteCourseId == null || remoteCourseId <= 0) {
+        throw StateError(
+          'Course version $courseVersionId is missing its remote course link.',
+        );
+      }
+    }
+    await _syncTeacherArtifactsForView(
+      currentUser: currentUser,
+      remoteTeacherUserId: remoteTeacherUserId,
+      remoteStudentUserId: remoteStudentUserId,
+      remoteCourseId: remoteCourseId,
     );
-    await _secureStorage.clearSyncDomainState(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainProgressDownload,
+    final manifest = await _artifactStore.loadManifest(remoteTeacherUserId);
+    final matchingItems = manifest.items.values.where((item) {
+      if (item.deleted) {
+        return false;
+      }
+      final identity = _parseArtifactIdentity(item.artifactId, null);
+      if (identity.remoteStudentUserId != remoteStudentUserId) {
+        return false;
+      }
+      if (remoteCourseId != null && identity.remoteCourseId != remoteCourseId) {
+        return false;
+      }
+      return true;
+    }).toList(growable: false)
+      ..sort((left, right) => left.artifactId.compareTo(right.artifactId));
+    if (matchingItems.isEmpty) {
+      return;
+    }
+    final bytesByArtifactId = await _ensureTeacherArtifactBytesAvailable(
+      currentUser: currentUser,
+      remoteTeacherUserId: remoteTeacherUserId,
+      manifest: manifest,
+      items: matchingItems,
     );
-    await _secureStorage.clearSyncDomainState(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainProgressChunkDownload,
+    final applyContext = _ArtifactApplyContext(
+      initialManifest: manifest,
     );
-    await _secureStorage.clearSyncDomainState(
-      remoteUserId: remoteUserId,
-      domain: _syncRunDomainSessionDownload,
-      clearItemStates: false,
-      clearListEtags: false,
+    await _runWithLocalMutationSuppressed(() async {
+      await _db.transaction(() async {
+        for (final item in matchingItems) {
+          final bytes = bytesByArtifactId[item.artifactId];
+          if (bytes == null) {
+            throw StateError(
+              'Stored teacher artifact bytes missing for ${item.artifactId}.',
+            );
+          }
+          final payload = _artifactStore.readPayload(bytes);
+          await _applyRemoteArtifactPayload(
+            currentUser: currentUser,
+            artifactId: item.artifactId,
+            payload: payload,
+            applyContext: applyContext,
+            replaceExistingLocalScope: true,
+            wrapReplaceTransaction: false,
+          );
+        }
+      });
+    });
+  }
+
+  Future<void> _syncTeacherArtifactsForView({
+    required User currentUser,
+    required int remoteTeacherUserId,
+    required int remoteStudentUserId,
+    required int? remoteCourseId,
+  }) async {
+    final manifest = await _artifactStore.loadManifest(remoteTeacherUserId);
+    final matchingLocalItems = manifest.items.values.where((item) {
+      return _artifactMatchesTeacherViewScope(
+        item.artifactId,
+        remoteStudentUserId: remoteStudentUserId,
+        remoteCourseId: remoteCourseId,
+      );
+    }).toList(growable: false)
+      ..sort((left, right) => left.artifactId.compareTo(right.artifactId));
+    final serverState1 = await _api.getState1(
+      artifactClass: _artifactClass,
+      studentUserId: remoteStudentUserId,
+      courseId: remoteCourseId,
     );
+    final serverArtifactIds = serverState1.items
+        .map((item) => item.artifactId.trim())
+        .where((value) => value.isNotEmpty)
+        .toSet();
+    if (matchingLocalItems.isNotEmpty) {
+      final staleLocalItems = matchingLocalItems
+          .where((item) => !serverArtifactIds.contains(item.artifactId))
+          .toList(growable: false);
+      if (staleLocalItems.isNotEmpty) {
+        await _runWithLocalMutationSuppressed(() async {
+          await _db.transaction(() async {
+            for (final item in staleLocalItems) {
+              await _deleteLocalArtifactScopeById(
+                currentUser: currentUser,
+                artifactId: item.artifactId,
+              );
+            }
+          });
+        });
+        final updatedItems =
+            Map<String, StudentKpArtifactManifestItem>.from(manifest.items);
+        for (final item in staleLocalItems) {
+          await _artifactStore.deleteArtifactFile(
+            remoteUserId: remoteTeacherUserId,
+            storageFile: item.storageFile,
+          );
+          updatedItems.remove(item.artifactId);
+        }
+        await _artifactStore
+            .saveManifest(manifest.copyWith(items: updatedItems));
+      }
+    }
+    if (serverState1.items.isEmpty) {
+      return;
+    }
+    await _applyServerDownloads(
+      currentUser: currentUser,
+      remoteUserId: remoteTeacherUserId,
+      manifest: await _artifactStore.loadManifest(remoteTeacherUserId),
+      serverItems: serverState1.items,
+      stats: SyncRunStats(),
+      onProgress: null,
+      removeMissingLocalArtifacts: false,
+    );
+  }
+
+  bool _artifactMatchesTeacherViewScope(
+    String artifactId, {
+    required int remoteStudentUserId,
+    required int? remoteCourseId,
+  }) {
+    final identity = _parseArtifactIdentity(artifactId, null);
+    if (identity.remoteStudentUserId != remoteStudentUserId) {
+      return false;
+    }
+    if (remoteCourseId != null && identity.remoteCourseId != remoteCourseId) {
+      return false;
+    }
+    return true;
+  }
+
+  Future<void> _invalidateCachedArtifact({
+    required int remoteUserId,
+    required String artifactId,
+  }) async {
+    final manifest = await _artifactStore.loadManifest(remoteUserId);
+    final item = manifest.items[artifactId];
+    if (item == null) {
+      return;
+    }
+    await _artifactStore.deleteArtifactFile(
+      remoteUserId: remoteUserId,
+      storageFile: item.storageFile,
+    );
+    final items =
+        Map<String, StudentKpArtifactManifestItem>.from(manifest.items)
+          ..remove(artifactId);
+    await _artifactStore.saveManifest(manifest.copyWith(items: items));
+  }
+
+  Future<Map<String, Uint8List>> _ensureTeacherArtifactBytesAvailable({
+    required User currentUser,
+    required int remoteTeacherUserId,
+    required StudentKpArtifactManifest manifest,
+    required List<StudentKpArtifactManifestItem> items,
+  }) async {
+    var bytesByArtifactId = await _artifactStore.readPackedArtifactBytes(
+      remoteUserId: remoteTeacherUserId,
+      items: items.where((item) => item.storageFile.trim().isNotEmpty),
+    );
+    final missingItems = items.where((item) {
+      return item.storageFile.trim().isEmpty ||
+          !bytesByArtifactId.containsKey(item.artifactId);
+    }).toList(growable: false);
+    if (missingItems.isEmpty) {
+      return bytesByArtifactId;
+    }
+
+    final downloadedItems = missingItems.length > _batchDownloadThreshold
+        ? await _api.downloadArtifactBatch(
+            missingItems.map((item) => item.artifactId).toList(growable: false),
+          )
+        : <DownloadedArtifact>[
+            for (final item in missingItems)
+              await _api.downloadArtifact(item.artifactId),
+          ];
+    final downloadedByArtifactId = <String, DownloadedArtifact>{
+      for (final item in downloadedItems) item.artifactId.trim(): item,
+    };
+    Map<String, String> storageRefs = const <String, String>{};
+    if (downloadedItems.length > _batchDownloadThreshold) {
+      storageRefs = await _artifactStore.writeArtifactPack(
+        remoteUserId: remoteTeacherUserId,
+        bytesByArtifactId: <String, Uint8List>{
+          for (final item in downloadedItems)
+            item.artifactId.trim(): item.bytes,
+        },
+      );
+    }
+    final nextItems =
+        Map<String, StudentKpArtifactManifestItem>.from(manifest.items);
+    for (final item in missingItems) {
+      final downloaded = downloadedByArtifactId[item.artifactId];
+      if (downloaded == null) {
+        throw StateError(
+          'Teacher artifact materialization download missing ${item.artifactId}.',
+        );
+      }
+      final storageFile = downloadedItems.length > _batchDownloadThreshold
+          ? storageRefs[item.artifactId]
+          : _artifactStore.storageFileNameForArtifact(item.artifactId);
+      if ((storageFile ?? '').trim().isEmpty) {
+        throw StateError(
+          'Teacher artifact storage reference missing for ${item.artifactId}.',
+        );
+      }
+      if (downloadedItems.length <= _batchDownloadThreshold) {
+        await _artifactStore.writeArtifactBytes(
+          remoteUserId: remoteTeacherUserId,
+          storageFile: storageFile!,
+          bytes: downloaded.bytes,
+        );
+      }
+      nextItems[item.artifactId] = item.copyWith(
+        storageFile: storageFile,
+      );
+      bytesByArtifactId[item.artifactId] = downloaded.bytes;
+    }
+    await _artifactStore.saveManifest(
+      manifest.copyWith(items: nextItems),
+    );
+    return bytesByArtifactId;
+  }
+
+  Future<SyncRunStats> _syncInternal({
+    required User currentUser,
+    required bool force,
+    required SyncProgressCallback? onProgress,
+    SessionSyncMode mode = SessionSyncMode.full,
+    required bool refreshLocalArtifactsBeforeSync,
+  }) async {
+    final stats = SyncRunStats();
+    final remoteUserId = currentUser.remoteUserId;
+    if (remoteUserId == null || remoteUserId <= 0) {
+      return stats;
+    }
+    await ensureLocalCutoverInitialized();
+    final syncCompleter = await _beginSync(waitForActiveSync: force);
+    if (syncCompleter == null) {
+      return stats;
+    }
+    Object? syncError;
+    StackTrace? syncStackTrace;
+    try {
+      if (currentUser.role == 'student' &&
+          refreshLocalArtifactsBeforeSync &&
+          mode != SessionSyncMode.downloadOnly) {
+        await _refreshLocalArtifactsForStudent(currentUser);
+      }
+      final initialManifest = await _artifactStore.loadManifest(remoteUserId);
+      if (mode == SessionSyncMode.uploadOnly) {
+        if (currentUser.role == 'student') {
+          await _reportProgress(
+            onProgress,
+            const SyncProgress(
+              message: 'Syncing student artifacts (upload only)...',
+              forcePaint: true,
+            ),
+          );
+          final serverState1 = await _api.getState1(
+            artifactClass: _artifactClass,
+          );
+          final manifest = await _reconcileMatchingServerBases(
+            manifest: initialManifest,
+            serverItems: serverState1.items,
+          );
+          await _uploadLocalChanges(
+            currentUser: currentUser,
+            remoteUserId: remoteUserId,
+            manifest: manifest,
+            serverItems: serverState1.items,
+            stats: stats,
+            onProgress: onProgress,
+          );
+        }
+        return stats;
+      }
+
+      if (!force) {
+        await _reportProgress(
+          onProgress,
+          const SyncProgress(
+            message: 'Checking student artifacts...',
+            forcePaint: true,
+          ),
+        );
+        final remoteState2 =
+            await _api.getState2(artifactClass: _artifactClass);
+        if (remoteState2.trim().isNotEmpty &&
+            remoteState2.trim() == initialManifest.state2.trim() &&
+            !_hasPendingStudentManifestChanges(
+              currentUser: currentUser,
+              manifest: initialManifest,
+            )) {
+          return stats;
+        }
+      }
+
+      await _reportProgress(
+        onProgress,
+        const SyncProgress(
+          message: 'Syncing student per-KP artifacts...',
+          forcePaint: true,
+        ),
+      );
+
+      var manifest = initialManifest;
+      var serverState1 = await _api.getState1(artifactClass: _artifactClass);
+
+      manifest = await _removeResolvedDeletedEntries(
+        currentUser: currentUser,
+        manifest: manifest,
+        serverItems: serverState1.items,
+      );
+      manifest = await _reconcileMatchingServerBases(
+        manifest: manifest,
+        serverItems: serverState1.items,
+      );
+      manifest = await _applyServerDownloads(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+        manifest: manifest,
+        serverItems: serverState1.items,
+        stats: stats,
+        onProgress: onProgress,
+      );
+
+      if (currentUser.role == 'student' && mode == SessionSyncMode.full) {
+        manifest = await _uploadLocalChanges(
+          currentUser: currentUser,
+          remoteUserId: remoteUserId,
+          manifest: manifest,
+          serverItems: serverState1.items,
+          stats: stats,
+          onProgress: onProgress,
+        );
+      }
+
+      if (currentUser.role == 'student' && mode == SessionSyncMode.full) {
+        serverState1 = await _api.getState1(artifactClass: _artifactClass);
+        manifest = await _applyServerDownloads(
+          currentUser: currentUser,
+          remoteUserId: remoteUserId,
+          manifest: manifest,
+          serverItems: serverState1.items,
+          stats: stats,
+          onProgress: onProgress,
+        );
+      }
+
+      if (currentUser.role == 'teacher' || mode == SessionSyncMode.full) {
+        await _assertNoPendingArtifactConflicts(
+          currentUser: currentUser,
+          manifest: manifest,
+          serverItems: serverState1.items,
+        );
+      }
+      await _artifactStore.saveManifest(manifest);
+    } catch (error, stackTrace) {
+      syncError = error;
+      syncStackTrace = stackTrace;
+    } finally {
+      try {
+        await _finishSync(syncCompleter);
+      } catch (error, stackTrace) {
+        syncError ??= error;
+        syncStackTrace ??= stackTrace;
+      }
+    }
+    if (syncError != null) {
+      Error.throwWithStackTrace(syncError, syncStackTrace!);
+    }
+    return stats;
+  }
+
+  Future<void> _drainPendingRefreshes() async {
+    while (_pendingRefreshLocalUserIds.isNotEmpty) {
+      final pendingIds = _pendingRefreshLocalUserIds.toList(growable: false);
+      _pendingRefreshLocalUserIds.clear();
+      final seenRemoteUserIds = <int>{};
+      for (final localUserId in pendingIds) {
+        final user = await _db.getUserById(localUserId);
+        final remoteUserId = user?.remoteUserId;
+        if (user == null ||
+            user.role != 'student' ||
+            remoteUserId == null ||
+            remoteUserId <= 0) {
+          continue;
+        }
+        if (!seenRemoteUserIds.add(remoteUserId)) {
+          continue;
+        }
+        await _refreshLocalArtifactsForStudent(user);
+      }
+    }
+  }
+
+  bool _hasPendingStudentManifestChanges({
+    required User currentUser,
+    required StudentKpArtifactManifest manifest,
+  }) {
+    if (currentUser.role != 'student') {
+      return false;
+    }
+    return manifest.items.values.any((item) {
+      if (item.deleted) {
+        return true;
+      }
+      return item.sha256.trim() != item.baseSha256.trim();
+    });
+  }
+
+  Future<StudentKpArtifactManifest> _reconcileMatchingServerBases({
+    required StudentKpArtifactManifest manifest,
+    required List<ArtifactState1Item> serverItems,
+  }) async {
+    final serverById = <String, ArtifactState1Item>{
+      for (final item in serverItems)
+        if (item.artifactId.trim().isNotEmpty) item.artifactId.trim(): item,
+    };
+    var changed = false;
+    final nextItems = Map<String, StudentKpArtifactManifestItem>.from(
+      manifest.items,
+    );
+    for (final entry in manifest.items.entries) {
+      final localItem = entry.value;
+      final serverItem = serverById[entry.key];
+      if (localItem.deleted || serverItem == null) {
+        continue;
+      }
+      final localSha = localItem.sha256.trim();
+      final serverSha = serverItem.sha256.trim();
+      if (localSha.isEmpty ||
+          localSha != serverSha ||
+          localItem.baseSha256.trim() == serverSha) {
+        continue;
+      }
+      nextItems[entry.key] = localItem.copyWith(baseSha256: serverSha);
+      changed = true;
+    }
+    if (!changed) {
+      return manifest;
+    }
+    final updated = manifest.copyWith(items: nextItems);
+    await _artifactStore.saveManifest(updated);
+    return await _artifactStore.loadManifest(manifest.remoteUserId);
+  }
+
+  Future<StudentKpArtifactManifest> _removeResolvedDeletedEntries({
+    required User currentUser,
+    required StudentKpArtifactManifest manifest,
+    required List<ArtifactState1Item> serverItems,
+  }) async {
+    final serverIds = serverItems
+        .map((item) => item.artifactId.trim())
+        .where((value) => value.isNotEmpty)
+        .toSet();
+    var changed = false;
+    final nextItems = <String, StudentKpArtifactManifestItem>{};
+    for (final entry in manifest.items.entries) {
+      final item = entry.value;
+      if (item.deleted && !serverIds.contains(entry.key)) {
+        changed = true;
+        continue;
+      }
+      nextItems[entry.key] = item;
+    }
+    if (!changed) {
+      return manifest;
+    }
+    final updated = manifest.copyWith(items: nextItems);
+    await _artifactStore.saveManifest(updated);
+    return await _artifactStore.loadManifest(manifest.remoteUserId);
+  }
+
+  Future<StudentKpArtifactManifest> _applyServerDownloads({
+    required User currentUser,
+    required int remoteUserId,
+    required StudentKpArtifactManifest manifest,
+    required List<ArtifactState1Item> serverItems,
+    required SyncRunStats stats,
+    required SyncProgressCallback? onProgress,
+    bool removeMissingLocalArtifacts = true,
+  }) async {
+    final serverById = <String, ArtifactState1Item>{
+      for (final item in serverItems)
+        if (item.artifactId.trim().isNotEmpty) item.artifactId.trim(): item,
+    };
+    final downloadCandidates = <ArtifactState1Item>[];
+    for (final serverItem in serverItems) {
+      final localItem = manifest.items[serverItem.artifactId];
+      if (_shouldDownloadServerArtifact(
+        currentUser: currentUser,
+        localItem: localItem,
+        serverItem: serverItem,
+      )) {
+        downloadCandidates.add(serverItem);
+      }
+    }
+    if (downloadCandidates.isEmpty) {
+      if (removeMissingLocalArtifacts) {
+        return _removeMissingLocalArtifacts(
+          currentUser: currentUser,
+          remoteUserId: remoteUserId,
+          manifest: manifest,
+          serverArtifactIds: serverById.keys.toSet(),
+        );
+      }
+      return manifest;
+    }
+
+    var currentManifest = manifest;
+    var completedCount = 0;
+    var completedBytes = 0;
+    if (downloadCandidates.length > _batchDownloadThreshold) {
+      final downloadedItems = await _api.downloadArtifactBatch(
+        downloadCandidates
+            .map((candidate) => candidate.artifactId)
+            .toList(growable: false),
+      );
+      final downloadedById = <String, DownloadedArtifact>{
+        for (final item in downloadedItems) item.artifactId.trim(): item,
+      };
+      final downloads = downloadCandidates.map((candidate) {
+        final downloaded = downloadedById[candidate.artifactId];
+        if (downloaded == null) {
+          throw StateError(
+            'Downloaded artifact batch is missing ${candidate.artifactId}.',
+          );
+        }
+        return _DownloadedArtifactCandidate(
+          candidate: candidate,
+          downloaded: downloaded,
+        );
+      }).toList(growable: false);
+      final storageFileOverrides =
+          currentUser.role == 'teacher' || currentUser.role == 'student'
+              ? await _artifactStore.writeArtifactPack(
+                  remoteUserId: remoteUserId,
+                  bytesByArtifactId: <String, Uint8List>{
+                    for (final entry in downloads)
+                      entry.candidate.artifactId: entry.downloaded.bytes,
+                  },
+                )
+              : null;
+      currentManifest = await _applyDownloadedArtifactInChunks(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+        manifest: currentManifest,
+        downloads: downloads,
+        storageFileOverrides: storageFileOverrides,
+        onAppliedChunk: (downloadedItems) async {
+          var chunkBytes = 0;
+          for (final downloaded in downloadedItems) {
+            chunkBytes += downloaded.bytes.length;
+          }
+          completedCount += downloadedItems.length;
+          completedBytes += chunkBytes;
+          stats.addDownloaded(count: downloadedItems.length, bytes: chunkBytes);
+          await _reportProgress(
+            onProgress,
+            SyncProgress(
+              message: 'Downloading student artifacts...',
+              completed: completedCount,
+              total: downloadCandidates.length,
+              completedBytes: completedBytes,
+            ),
+          );
+        },
+      );
+    } else {
+      final downloads = <_DownloadedArtifactCandidate>[];
+      final storageFileOverrides = <String, String>{};
+      for (final candidate in downloadCandidates) {
+        if (currentUser.role == 'student') {
+          storageFileOverrides[candidate.artifactId] =
+              _artifactStore.storageFileNameForArtifact(candidate.artifactId);
+        }
+        downloads.add(
+          _DownloadedArtifactCandidate(
+            candidate: candidate,
+            downloaded: await _api.downloadArtifact(candidate.artifactId),
+          ),
+        );
+      }
+      currentManifest = await _applyDownloadedArtifactInChunks(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+        manifest: currentManifest,
+        downloads: downloads,
+        storageFileOverrides:
+            storageFileOverrides.isEmpty ? null : storageFileOverrides,
+        onAppliedChunk: (downloadedItems) async {
+          var chunkBytes = 0;
+          for (final downloaded in downloadedItems) {
+            chunkBytes += downloaded.bytes.length;
+          }
+          completedCount += downloadedItems.length;
+          completedBytes += chunkBytes;
+          stats.addDownloaded(count: downloadedItems.length, bytes: chunkBytes);
+          await _reportProgress(
+            onProgress,
+            SyncProgress(
+              message: 'Downloading student artifacts...',
+              completed: completedCount,
+              total: downloadCandidates.length,
+              completedBytes: completedBytes,
+            ),
+          );
+        },
+      );
+    }
+
+    if (removeMissingLocalArtifacts) {
+      currentManifest = await _removeMissingLocalArtifacts(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+        manifest: currentManifest,
+        serverArtifactIds: serverById.keys.toSet(),
+      );
+    }
+    return await _artifactStore.loadManifest(remoteUserId);
+  }
+
+  Future<StudentKpArtifactManifest> _removeMissingLocalArtifacts({
+    required User currentUser,
+    required int remoteUserId,
+    required StudentKpArtifactManifest manifest,
+    required Set<String> serverArtifactIds,
+  }) async {
+    final localOnlyIds = manifest.items.keys
+        .where((artifactId) => !serverArtifactIds.contains(artifactId))
+        .toList(growable: false)
+      ..sort();
+    final updatedItems =
+        Map<String, StudentKpArtifactManifestItem>.from(manifest.items);
+    var changed = false;
+    for (final artifactId in localOnlyIds) {
+      final localItem = updatedItems[artifactId];
+      if (localItem == null || localItem.deleted) {
+        continue;
+      }
+      final localSha = localItem.sha256.trim();
+      final baseSha = localItem.baseSha256.trim();
+      final isCleanStudentCopy = currentUser.role == 'student' &&
+          baseSha.isNotEmpty &&
+          localSha == baseSha;
+      if (currentUser.role != 'teacher' && !isCleanStudentCopy) {
+        continue;
+      }
+      await _runWithLocalMutationSuppressed(() async {
+        await _deleteLocalArtifactScopeById(
+          currentUser: currentUser,
+          artifactId: artifactId,
+        );
+      });
+      await _artifactStore.deleteArtifactFile(
+        remoteUserId: remoteUserId,
+        storageFile: localItem.storageFile,
+      );
+      updatedItems.remove(artifactId);
+      changed = true;
+    }
+    if (!changed) {
+      return manifest;
+    }
+    final updated = manifest.copyWith(items: updatedItems);
+    await _artifactStore.saveManifest(updated);
+    return await _artifactStore.loadManifest(remoteUserId);
+  }
+
+  Future<StudentKpArtifactManifest> _reconcileTeacherManifestMetadata({
+    required User currentUser,
+    required int remoteUserId,
+    required StudentKpArtifactManifest manifest,
+    required List<ArtifactState1Item> serverItems,
+  }) async {
+    final serverById = <String, ArtifactState1Item>{
+      for (final item in serverItems)
+        if (item.artifactId.trim().isNotEmpty) item.artifactId.trim(): item,
+    };
+    var currentManifest = manifest;
+    final localOnlyIds = currentManifest.items.keys
+        .where((artifactId) => !serverById.containsKey(artifactId))
+        .toList(growable: false)
+      ..sort();
+    for (final artifactId in localOnlyIds) {
+      final localItem = currentManifest.items[artifactId];
+      if (localItem == null) {
+        continue;
+      }
+      if (!localItem.deleted) {
+        await _runWithLocalMutationSuppressed(() async {
+          await _deleteLocalArtifactScopeById(
+            currentUser: currentUser,
+            artifactId: artifactId,
+          );
+        });
+      }
+      await _artifactStore.deleteArtifactFile(
+        remoteUserId: remoteUserId,
+        storageFile: localItem.storageFile,
+      );
+      final updatedItems = Map<String, StudentKpArtifactManifestItem>.from(
+        currentManifest.items,
+      )..remove(artifactId);
+      currentManifest = currentManifest.copyWith(items: updatedItems);
+    }
+
+    final nextItems = Map<String, StudentKpArtifactManifestItem>.from(
+      currentManifest.items,
+    );
+    for (final serverItem in serverItems) {
+      final localItem = nextItems[serverItem.artifactId];
+      if (localItem != null &&
+          localItem.sha256.trim() != serverItem.sha256.trim() &&
+          !localItem.deleted) {
+        await _runWithLocalMutationSuppressed(() async {
+          await _deleteLocalArtifactScopeById(
+            currentUser: currentUser,
+            artifactId: serverItem.artifactId,
+          );
+        });
+        await _artifactStore.deleteArtifactFile(
+          remoteUserId: remoteUserId,
+          storageFile: localItem.storageFile,
+        );
+      }
+      nextItems[serverItem.artifactId] = StudentKpArtifactManifestItem(
+        artifactId: serverItem.artifactId,
+        sha256: serverItem.sha256.trim(),
+        baseSha256: serverItem.sha256.trim(),
+        lastModified: serverItem.lastModified.trim(),
+        storageFile: localItem != null &&
+                localItem.sha256.trim() == serverItem.sha256.trim()
+            ? localItem.storageFile
+            : '',
+        deleted: false,
+      );
+    }
+    return currentManifest.copyWith(items: nextItems);
+  }
+
+  Future<StudentKpArtifactManifest> _applyDownloadedArtifactInChunks({
+    required User currentUser,
+    required int remoteUserId,
+    required StudentKpArtifactManifest manifest,
+    required List<_DownloadedArtifactCandidate> downloads,
+    Map<String, String>? storageFileOverrides,
+    required Future<void> Function(List<DownloadedArtifact> downloaded)
+        onAppliedChunk,
+    bool preferFreshStudentImportFastPath = true,
+  }) async {
+    var currentManifest = manifest;
+    final applyContext = _ArtifactApplyContext(
+      initialManifest: manifest,
+    );
+    final useFreshStudentImportFastPath = preferFreshStudentImportFastPath &&
+        currentUser.role == 'student' &&
+        manifest.items.isEmpty;
+    final deferManifestCheckpoint = storageFileOverrides != null &&
+        (currentUser.role == 'teacher' || useFreshStudentImportFastPath);
+    final checkpointInterval =
+        currentUser.role == 'teacher' || useFreshStudentImportFastPath
+            ? downloads.length
+            : _downloadApplyCheckpointInterval;
+    for (var start = 0; start < downloads.length; start += checkpointInterval) {
+      final end = (start + checkpointInterval < downloads.length)
+          ? start + checkpointInterval
+          : downloads.length;
+      final chunk = downloads.sublist(start, end);
+      final nextItems = Map<String, StudentKpArtifactManifestItem>.from(
+        currentManifest.items,
+      );
+      await _runWithLocalMutationSuppressed(() async {
+        await _db.transaction(() async {
+          if (useFreshStudentImportFastPath) {
+            await _applyDownloadedStudentFreshImportChunk(
+              currentUser: currentUser,
+              remoteUserId: remoteUserId,
+              manifest: currentManifest,
+              chunk: chunk,
+              applyContext: applyContext,
+              nextItems: nextItems,
+              storageFileOverrides: storageFileOverrides,
+            );
+          } else {
+            for (final entry in chunk) {
+              await _applyDownloadedArtifact(
+                currentUser: currentUser,
+                remoteUserId: remoteUserId,
+                manifest: currentManifest,
+                candidate: entry.candidate,
+                downloaded: entry.downloaded,
+                applyContext: applyContext,
+                storageFileOverride:
+                    storageFileOverrides?[entry.candidate.artifactId],
+                nextItems: nextItems,
+                persistManifest: false,
+                wrapLocalMutationSuppression: false,
+                wrapLocalScopeTransaction: false,
+              );
+            }
+          }
+        });
+      });
+      currentManifest = currentManifest.copyWith(items: nextItems);
+      if (!deferManifestCheckpoint) {
+        await _artifactStore.saveManifest(currentManifest);
+      }
+      await onAppliedChunk(
+        chunk.map((entry) => entry.downloaded).toList(growable: false),
+      );
+    }
+    if (deferManifestCheckpoint) {
+      await _artifactStore.saveManifest(currentManifest);
+    }
+    return currentManifest;
+  }
+
+  bool _shouldDownloadServerArtifact({
+    required User currentUser,
+    required StudentKpArtifactManifestItem? localItem,
+    required ArtifactState1Item serverItem,
+  }) {
+    if (localItem == null) {
+      return true;
+    }
+    if (localItem.deleted) {
+      return false;
+    }
+    final localSha = localItem.sha256.trim();
+    final baseSha = localItem.baseSha256.trim();
+    final serverSha = serverItem.sha256.trim();
+    if (localSha == serverSha) {
+      return false;
+    }
+    if (currentUser.role != 'student') {
+      return true;
+    }
+    if (baseSha.isNotEmpty && baseSha == localSha) {
+      return true;
+    }
+    return false;
+  }
+
+  Future<StudentKpArtifactManifest> _uploadLocalChanges({
+    required User currentUser,
+    required int remoteUserId,
+    required StudentKpArtifactManifest manifest,
+    required List<ArtifactState1Item> serverItems,
+    required SyncRunStats stats,
+    required SyncProgressCallback? onProgress,
+    bool overwriteServer = false,
+    bool forceAllDivergent = false,
+  }) async {
+    final serverById = <String, ArtifactState1Item>{
+      for (final item in serverItems)
+        if (item.artifactId.trim().isNotEmpty) item.artifactId.trim(): item,
+    };
+    final uploadCandidates = <StudentKpArtifactManifestItem>[];
+    for (final item in manifest.items.values) {
+      if (item.deleted) {
+        continue;
+      }
+      final serverItem = serverById[item.artifactId];
+      final shouldUpload = forceAllDivergent
+          ? item.sha256.trim().isNotEmpty &&
+              (serverItem == null ||
+                  item.sha256.trim() != serverItem.sha256.trim())
+          : _shouldUploadLocalArtifact(item: item, serverItem: serverItem);
+      if (shouldUpload) {
+        uploadCandidates.add(item);
+      }
+    }
+    if (uploadCandidates.isEmpty) {
+      return manifest;
+    }
+
+    var currentManifest = manifest;
+    var completedCount = 0;
+    var completedBytes = 0;
+    if (uploadCandidates.length > _batchUploadThreshold) {
+      for (var start = 0;
+          start < uploadCandidates.length;
+          start += _batchUploadChunkSize) {
+        final end = (start + _batchUploadChunkSize < uploadCandidates.length)
+            ? start + _batchUploadChunkSize
+            : uploadCandidates.length;
+        final chunk = uploadCandidates.sublist(start, end);
+        final pendingUploads = <PendingArtifactUpload>[];
+        final bytesByArtifactId = <String, Uint8List>{};
+        for (final candidate in chunk) {
+          final bytes = await _artifactStore.readArtifactBytes(
+            remoteUserId: remoteUserId,
+            item: candidate,
+          );
+          if (bytes == null) {
+            throw StateError(
+              'Local artifact bytes missing for ${candidate.artifactId}.',
+            );
+          }
+          final computedSha = sha256.convert(bytes).toString();
+          if (computedSha != candidate.sha256.trim()) {
+            throw StateError(
+              'Local artifact sha256 mismatch for ${candidate.artifactId}.',
+            );
+          }
+          pendingUploads.add(
+            PendingArtifactUpload(
+              artifactId: candidate.artifactId,
+              sha256: candidate.sha256.trim(),
+              bytes: bytes,
+              baseSha256: candidate.baseSha256.trim(),
+              overwriteServer: overwriteServer,
+            ),
+          );
+          bytesByArtifactId[candidate.artifactId] = bytes;
+        }
+        await _api.uploadArtifactBatch(pendingUploads);
+        final updatedItems = Map<String, StudentKpArtifactManifestItem>.from(
+          currentManifest.items,
+        );
+        for (final candidate in chunk) {
+          updatedItems[candidate.artifactId] = candidate.copyWith(
+            baseSha256: candidate.sha256.trim(),
+          );
+          final bytes = bytesByArtifactId[candidate.artifactId]!;
+          completedCount++;
+          completedBytes += bytes.length;
+          stats.addUploaded(count: 1, bytes: bytes.length);
+        }
+        currentManifest = currentManifest.copyWith(items: updatedItems);
+        await _artifactStore.saveManifest(currentManifest);
+        await _reportProgress(
+          onProgress,
+          SyncProgress(
+            message: 'Uploading student artifacts...',
+            completed: completedCount,
+            total: uploadCandidates.length,
+            completedBytes: completedBytes,
+          ),
+        );
+      }
+    } else {
+      for (final candidate in uploadCandidates) {
+        final bytes = await _artifactStore.readArtifactBytes(
+          remoteUserId: remoteUserId,
+          item: candidate,
+        );
+        if (bytes == null) {
+          throw StateError(
+            'Local artifact bytes missing for ${candidate.artifactId}.',
+          );
+        }
+        final computedSha = sha256.convert(bytes).toString();
+        if (computedSha != candidate.sha256.trim()) {
+          throw StateError(
+            'Local artifact sha256 mismatch for ${candidate.artifactId}.',
+          );
+        }
+        await _api.uploadArtifact(
+          artifactId: candidate.artifactId,
+          sha256: candidate.sha256.trim(),
+          bytes: bytes,
+          baseSha256: candidate.baseSha256.trim(),
+          overwriteServer: overwriteServer,
+        );
+        final updatedItems = Map<String, StudentKpArtifactManifestItem>.from(
+            currentManifest.items);
+        updatedItems[candidate.artifactId] = candidate.copyWith(
+          baseSha256: candidate.sha256.trim(),
+        );
+        currentManifest = currentManifest.copyWith(items: updatedItems);
+        await _artifactStore.saveManifest(currentManifest);
+        completedCount++;
+        completedBytes += bytes.length;
+        stats.addUploaded(count: 1, bytes: bytes.length);
+        await _reportProgress(
+          onProgress,
+          SyncProgress(
+            message: 'Uploading student artifacts...',
+            completed: completedCount,
+            total: uploadCandidates.length,
+            completedBytes: completedBytes,
+          ),
+        );
+      }
+    }
+    return await _artifactStore.loadManifest(remoteUserId);
+  }
+
+  Future<StudentKpArtifactManifest> _applyDownloadedArtifact({
+    required User currentUser,
+    required int remoteUserId,
+    required StudentKpArtifactManifest manifest,
+    required ArtifactState1Item candidate,
+    required DownloadedArtifact downloaded,
+    required _ArtifactApplyContext applyContext,
+    String? storageFileOverride,
+    Map<String, StudentKpArtifactManifestItem>? nextItems,
+    bool persistManifest = true,
+    bool wrapLocalMutationSuppression = true,
+    bool wrapLocalScopeTransaction = true,
+  }) async {
+    final computedSha = sha256.convert(downloaded.bytes).toString();
+    if (computedSha != candidate.sha256.trim()) {
+      throw StateError(
+        'Downloaded artifact sha256 mismatch for ${candidate.artifactId}.',
+      );
+    }
+    if (currentUser.role == 'teacher') {
+      await _ensureTeacherArtifactScaffold(
+        currentUser: currentUser,
+        candidate: candidate,
+        downloaded: downloaded,
+        applyContext: applyContext,
+      );
+    } else {
+      final payload = _artifactStore.readPayload(downloaded.bytes);
+      if (wrapLocalMutationSuppression) {
+        await _runWithLocalMutationSuppressed(() async {
+          await _applyRemoteArtifactPayload(
+            currentUser: currentUser,
+            artifactId: candidate.artifactId,
+            payload: payload,
+            applyContext: applyContext,
+            replaceExistingLocalScope:
+                applyContext.hasExistingArtifact(candidate.artifactId),
+            wrapReplaceTransaction: wrapLocalScopeTransaction,
+          );
+        });
+      } else {
+        await _applyRemoteArtifactPayload(
+          currentUser: currentUser,
+          artifactId: candidate.artifactId,
+          payload: payload,
+          applyContext: applyContext,
+          replaceExistingLocalScope:
+              applyContext.hasExistingArtifact(candidate.artifactId),
+          wrapReplaceTransaction: wrapLocalScopeTransaction,
+        );
+      }
+    }
+    final shouldPersistDownloadedBytes = currentUser.role == 'teacher' ||
+        (storageFileOverride ?? '').trim().isNotEmpty;
+    final storageFile = shouldPersistDownloadedBytes
+        ? (storageFileOverride ?? '').trim().isNotEmpty
+            ? storageFileOverride!.trim()
+            : _artifactStore.storageFileNameForArtifact(
+                candidate.artifactId,
+              )
+        : '';
+    if (shouldPersistDownloadedBytes &&
+        (storageFileOverride ?? '').trim().isEmpty) {
+      await _artifactStore.writeArtifactBytes(
+        remoteUserId: remoteUserId,
+        storageFile: storageFile,
+        bytes: downloaded.bytes,
+      );
+    }
+    final updatedItems = nextItems ??
+        Map<String, StudentKpArtifactManifestItem>.from(manifest.items);
+    updatedItems[candidate.artifactId] = StudentKpArtifactManifestItem(
+      artifactId: candidate.artifactId,
+      sha256: candidate.sha256.trim(),
+      baseSha256: candidate.sha256.trim(),
+      lastModified: candidate.lastModified.trim(),
+      storageFile: storageFile,
+      deleted: false,
+    );
+    final updatedManifest = manifest.copyWith(items: updatedItems);
+    if (persistManifest) {
+      await _artifactStore.saveManifest(updatedManifest);
+    }
+    return updatedManifest;
+  }
+
+  Future<void> _ensureTeacherArtifactScaffold({
+    required User currentUser,
+    required ArtifactState1Item candidate,
+    required DownloadedArtifact downloaded,
+    required _ArtifactApplyContext applyContext,
+  }) async {
+    final localCourseVersionId = await _resolveCourseVersionId(
+      candidate.courseId,
+      applyContext: applyContext,
+    );
+    String? usernameHint;
+    if (!applyContext.localStudentIdByRemoteStudentId
+        .containsKey(candidate.studentUserId)) {
+      final payload = _artifactStore.readPayload(downloaded.bytes);
+      usernameHint = (payload['student_username'] as String?)?.trim();
+    }
+    await _resolveLocalStudentId(
+      currentUser: currentUser,
+      remoteStudentUserId: candidate.studentUserId,
+      usernameHint: usernameHint,
+      courseVersionId: localCourseVersionId,
+      applyContext: applyContext,
+    );
+  }
+
+  bool _shouldUploadLocalArtifact({
+    required StudentKpArtifactManifestItem item,
+    required ArtifactState1Item? serverItem,
+  }) {
+    final localSha = item.sha256.trim();
+    final baseSha = item.baseSha256.trim();
+    final serverSha = serverItem?.sha256.trim() ?? '';
+    if (localSha.isEmpty) {
+      return false;
+    }
+    if (serverItem == null) {
+      return baseSha.isEmpty;
+    }
+    if (localSha == serverSha) {
+      return false;
+    }
+    return baseSha.isNotEmpty && baseSha == serverSha;
+  }
+
+  Future<StudentKpArtifactManifest> _deleteServerArtifactsForLocalDeletes({
+    required int remoteUserId,
+    required StudentKpArtifactManifest manifest,
+    required List<ArtifactState1Item> serverItems,
+    required SyncRunStats stats,
+    required SyncProgressCallback? onProgress,
+  }) async {
+    final serverById = <String, ArtifactState1Item>{
+      for (final item in serverItems)
+        if (item.artifactId.trim().isNotEmpty) item.artifactId.trim(): item,
+    };
+    final deleteCandidates = manifest.items.values
+        .where(
+            (item) => item.deleted && serverById.containsKey(item.artifactId))
+        .toList(growable: false)
+      ..sort((left, right) => left.artifactId.compareTo(right.artifactId));
+    if (deleteCandidates.isEmpty) {
+      return manifest;
+    }
+
+    var currentManifest = manifest;
+    var completedCount = 0;
+    for (final candidate in deleteCandidates) {
+      await _api.deleteArtifact(
+        artifactId: candidate.artifactId,
+        baseSha256: candidate.baseSha256.trim(),
+        overwriteServer: true,
+      );
+      final updatedItems = Map<String, StudentKpArtifactManifestItem>.from(
+        currentManifest.items,
+      )..remove(candidate.artifactId);
+      currentManifest = currentManifest.copyWith(items: updatedItems);
+      await _artifactStore.saveManifest(currentManifest);
+      completedCount++;
+      stats.addUploaded(count: 1, bytes: 0);
+      await _reportProgress(
+        onProgress,
+        SyncProgress(
+          message: 'Deleting server student artifacts...',
+          completed: completedCount,
+          total: deleteCandidates.length,
+        ),
+      );
+    }
+    return await _artifactStore.loadManifest(remoteUserId);
+  }
+
+  Future<void> _assertNoPendingArtifactConflicts({
+    required User currentUser,
+    required StudentKpArtifactManifest manifest,
+    required List<ArtifactState1Item> serverItems,
+  }) async {
+    final serverById = <String, ArtifactState1Item>{
+      for (final item in serverItems)
+        if (item.artifactId.trim().isNotEmpty) item.artifactId.trim(): item,
+    };
+    final allArtifactIds = <String>{
+      ...manifest.items.keys,
+      ...serverById.keys,
+    }.toList(growable: false)
+      ..sort();
+    for (final artifactId in allArtifactIds) {
+      final localItem = manifest.items[artifactId];
+      final serverItem = serverById[artifactId];
+      if (localItem == null) {
+        continue;
+      }
+      if (localItem.deleted) {
+        if (serverItem != null) {
+          throw StateError(
+            'Artifact conflict requires explicit delete resolution for '
+            '$artifactId.',
+          );
+        }
+        continue;
+      }
+      if (serverItem == null) {
+        if (currentUser.role == 'teacher') {
+          continue;
+        }
+        if (localItem.baseSha256.trim().isEmpty) {
+          continue;
+        }
+        throw StateError(
+          'Artifact conflict requires explicit delete resolution for '
+          '$artifactId.',
+        );
+      }
+      final localSha = localItem.sha256.trim();
+      final baseSha = localItem.baseSha256.trim();
+      final serverSha = serverItem.sha256.trim();
+      if (localSha == serverSha) {
+        continue;
+      }
+      final canDownload = _shouldDownloadServerArtifact(
+        currentUser: currentUser,
+        localItem: localItem,
+        serverItem: serverItem,
+      );
+      if (canDownload) {
+        continue;
+      }
+      final canUpload = currentUser.role == 'student' &&
+          _shouldUploadLocalArtifact(
+            item: localItem,
+            serverItem: serverItem,
+          );
+      if (canUpload) {
+        continue;
+      }
+      throw StateError(
+        'Artifact conflict requires explicit user choice for $artifactId '
+        '(local=$localSha base=$baseSha server=$serverSha).',
+      );
+    }
+  }
+
+  Future<StudentKpArtifactManifest> _refreshLocalArtifactsForStudent(
+    User student,
+  ) async {
+    final remoteUserId = _requireRemoteUserId(student);
+    final manifest = await _artifactStore.loadManifest(remoteUserId);
+    final scopes = await _listLocalStudentKpScopes(student);
+    final nextItems = Map<String, StudentKpArtifactManifestItem>.from(
+      manifest.items,
+    );
+    final liveArtifactIds = <String>{};
+    for (final scope in scopes) {
+      final artifact = await _buildLocalArtifact(scope);
+      liveArtifactIds.add(artifact.artifactId);
+      final existing = nextItems[artifact.artifactId];
+      final storageFile = _artifactStore.storageFileNameForArtifact(
+        artifact.artifactId,
+      );
+      await _artifactStore.writeArtifactBytes(
+        remoteUserId: remoteUserId,
+        storageFile: storageFile,
+        bytes: artifact.bytes,
+      );
+      nextItems[artifact.artifactId] = StudentKpArtifactManifestItem(
+        artifactId: artifact.artifactId,
+        sha256: artifact.sha256,
+        baseSha256: existing?.baseSha256.trim() ?? '',
+        lastModified: artifact.lastModified,
+        storageFile: storageFile,
+        deleted: false,
+      );
+    }
+
+    final staleArtifactIds = nextItems.keys
+        .where((artifactId) => !liveArtifactIds.contains(artifactId))
+        .toList(growable: false)
+      ..sort();
+    for (final artifactId in staleArtifactIds) {
+      final existing = nextItems[artifactId];
+      if (existing == null) {
+        continue;
+      }
+      await _artifactStore.deleteArtifactFile(
+        remoteUserId: remoteUserId,
+        storageFile: existing.storageFile,
+      );
+      if (existing.baseSha256.trim().isEmpty) {
+        nextItems.remove(artifactId);
+        continue;
+      }
+      nextItems[artifactId] = existing.copyWith(
+        deleted: true,
+        storageFile: '',
+      );
+    }
+
+    final updated = manifest.copyWith(items: nextItems);
+    await _artifactStore.saveManifest(updated);
+    return await _artifactStore.loadManifest(remoteUserId);
+  }
+
+  Future<List<_LocalStudentKpScope>> _listLocalStudentKpScopes(
+    User student,
+  ) async {
+    if (student.role != 'student') {
+      return const <_LocalStudentKpScope>[];
+    }
+    final remoteStudentUserId = _requireRemoteUserId(student);
+    final sessions = await _db.getSessionsForStudent(student.id);
+    final sessionsByCourse = <int, Set<String>>{};
+    for (final session in sessions) {
+      final kpKey = session.kpKey.trim();
+      if (kpKey.isEmpty || kpKey == kTreeViewStateKpKey) {
+        continue;
+      }
+      sessionsByCourse
+          .putIfAbsent(session.courseVersionId, () => <String>{})
+          .add(kpKey);
+    }
+
+    final assignedCourses = await _db.getAssignedCoursesForStudent(student.id);
+    final scopes = <_LocalStudentKpScope>[];
+    for (final course in assignedCourses) {
+      final remoteCourseId = await _db.getRemoteCourseId(course.id);
+      if (remoteCourseId == null || remoteCourseId <= 0) {
+        continue;
+      }
+      final teacher = await _db.getUserById(course.teacherId);
+      if (teacher == null) {
+        throw StateError(
+            'Teacher ${course.teacherId} missing for course ${course.id}.');
+      }
+      final teacherRemoteUserId = _requireRemoteUserId(teacher);
+      final kpKeys = <String>{
+        ...(sessionsByCourse[course.id] ?? const <String>{}),
+      };
+      final progressRows = await _db.getProgressForCourse(
+        studentId: student.id,
+        courseVersionId: course.id,
+      );
+      for (final progress in progressRows) {
+        final kpKey = progress.kpKey.trim();
+        if (kpKey.isEmpty || kpKey == kTreeViewStateKpKey) {
+          continue;
+        }
+        kpKeys.add(kpKey);
+      }
+      final mistakeRows = await _db.getMistakeEntriesForCourse(
+        studentId: student.id,
+        courseVersionId: course.id,
+      );
+      for (final mistake in mistakeRows) {
+        final kpKey = mistake.kpKey.trim();
+        if (kpKey.isEmpty || kpKey == kTreeViewStateKpKey) {
+          continue;
+        }
+        kpKeys.add(kpKey);
+      }
+      final sortedKpKeys = kpKeys.toList(growable: false)..sort();
+      for (final kpKey in sortedKpKeys) {
+        scopes.add(
+          _LocalStudentKpScope(
+            localStudentId: student.id,
+            remoteStudentUserId: remoteStudentUserId,
+            studentUsername: student.username.trim(),
+            courseVersionId: course.id,
+            remoteCourseId: remoteCourseId,
+            courseSubject: course.subject.trim(),
+            teacherRemoteUserId: teacherRemoteUserId,
+            kpKey: kpKey,
+          ),
+        );
+      }
+    }
+    scopes.sort((left, right) {
+      final courseCompare = left.remoteCourseId.compareTo(right.remoteCourseId);
+      if (courseCompare != 0) {
+        return courseCompare;
+      }
+      return left.kpKey.compareTo(right.kpKey);
+    });
+    return scopes;
+  }
+
+  Future<LocalArtifactBuildResult> _buildLocalArtifact(
+    _LocalStudentKpScope scope,
+  ) async {
+    final course = await _db.getCourseVersionById(scope.courseVersionId);
+    if (course == null) {
+      throw StateError('Course version ${scope.courseVersionId} missing.');
+    }
+    final node =
+        await _db.getCourseNodeByKey(scope.courseVersionId, scope.kpKey);
+    final sessions = await _db.getSessionsForNode(
+      studentId: scope.localStudentId,
+      courseVersionId: scope.courseVersionId,
+      kpKey: scope.kpKey,
+    );
+    final progress = await _db.getProgress(
+      studentId: scope.localStudentId,
+      courseVersionId: scope.courseVersionId,
+      kpKey: scope.kpKey,
+    );
+    final mistakes = await _db.getMistakeEntriesForScope(
+      studentId: scope.localStudentId,
+      courseVersionId: scope.courseVersionId,
+      kpKey: scope.kpKey,
+    );
+    if (sessions.isEmpty && progress == null && mistakes.isEmpty) {
+      throw StateError(
+        'Cannot build empty artifact for ${scope.remoteCourseId}:${scope.kpKey}.',
+      );
+    }
+
+    final sessionPayloads = <Map<String, dynamic>>[];
+    final updatedAtValues = <DateTime>[];
+    final sortedSessions = List<ChatSession>.from(sessions)
+      ..sort((left, right) {
+        final leftSyncId = (left.syncId ?? '').trim();
+        final rightSyncId = (right.syncId ?? '').trim();
+        if (leftSyncId != rightSyncId) {
+          return leftSyncId.compareTo(rightSyncId);
+        }
+        final leftUpdatedAt = _resolveSessionUpdatedAt(left);
+        final rightUpdatedAt = _resolveSessionUpdatedAt(right);
+        final updatedCompare = leftUpdatedAt.compareTo(rightUpdatedAt);
+        if (updatedCompare != 0) {
+          return updatedCompare;
+        }
+        return left.id.compareTo(right.id);
+      });
+    for (final session in sortedSessions) {
+      final syncId = (session.syncId ?? '').trim();
+      if (syncId.isEmpty) {
+        throw StateError('Session ${session.id} is missing syncId.');
+      }
+      final sessionUpdatedAt = _resolveSessionUpdatedAt(session);
+      updatedAtValues.add(sessionUpdatedAt);
+      final messages = await _db.getMessagesForSession(session.id);
+      final messagePayloads = messages
+          .map(
+            (message) => <String, dynamic>{
+              'role': message.role.trim(),
+              'content': message.content,
+              if ((message.rawContent ?? '').trim().isNotEmpty)
+                'raw_content': message.rawContent,
+              if ((message.parsedJson ?? '').trim().isNotEmpty)
+                'parsed_json': message.parsedJson!.trim(),
+              if ((message.action ?? '').trim().isNotEmpty)
+                'action': message.action!.trim(),
+              'created_at': message.createdAt.toUtc().toIso8601String(),
+            },
+          )
+          .toList(growable: false);
+      sessionPayloads.add(<String, dynamic>{
+        'session_sync_id': syncId,
+        'course_id': scope.remoteCourseId,
+        if (scope.courseSubject.isNotEmpty)
+          'course_subject': scope.courseSubject,
+        'kp_key': scope.kpKey,
+        if ((node?.title ?? '').trim().isNotEmpty)
+          'kp_title': node!.title.trim(),
+        if ((session.title ?? '').trim().isNotEmpty)
+          'session_title': session.title!.trim(),
+        'started_at': session.startedAt.toUtc().toIso8601String(),
+        if (session.endedAt != null)
+          'ended_at': session.endedAt!.toUtc().toIso8601String(),
+        if ((session.summaryText ?? '').trim().isNotEmpty)
+          'summary_text': session.summaryText!.trim(),
+        if ((session.controlStateJson ?? '').trim().isNotEmpty)
+          'control_state_json': session.controlStateJson!.trim(),
+        if (session.controlStateUpdatedAt != null)
+          'control_state_updated_at':
+              session.controlStateUpdatedAt!.toUtc().toIso8601String(),
+        if ((session.evidenceStateJson ?? '').trim().isNotEmpty)
+          'evidence_state_json': session.evidenceStateJson!.trim(),
+        if (session.evidenceStateUpdatedAt != null)
+          'evidence_state_updated_at':
+              session.evidenceStateUpdatedAt!.toUtc().toIso8601String(),
+        'student_remote_user_id': scope.remoteStudentUserId,
+        if (scope.studentUsername.isNotEmpty)
+          'student_username': scope.studentUsername,
+        'teacher_remote_user_id': scope.teacherRemoteUserId,
+        'updated_at': sessionUpdatedAt.toUtc().toIso8601String(),
+        'messages': messagePayloads,
+      });
+    }
+
+    sessionPayloads.sort((left, right) {
+      final idCompare = ((left['session_sync_id'] as String?) ?? '')
+          .compareTo((right['session_sync_id'] as String?) ?? '');
+      if (idCompare != 0) {
+        return idCompare;
+      }
+      return ((left['updated_at'] as String?) ?? '')
+          .compareTo((right['updated_at'] as String?) ?? '');
+    });
+
+    Map<String, dynamic>? progressPayload;
+    if (progress != null) {
+      updatedAtValues.add(progress.updatedAt.toUtc());
+      progressPayload = <String, dynamic>{
+        'course_id': scope.remoteCourseId,
+        if (scope.courseSubject.isNotEmpty)
+          'course_subject': scope.courseSubject,
+        'kp_key': scope.kpKey,
+        'lit': progress.lit,
+        'lit_percent': progress.litPercent,
+        if (progress.masteryLevel != null)
+          'mastery_level': progress.masteryLevel,
+        if ((progress.questionLevel ?? '').trim().isNotEmpty)
+          'question_level': progress.questionLevel!.trim(),
+        'easy_passed_count': progress.easyPassedCount,
+        'medium_passed_count': progress.mediumPassedCount,
+        'hard_passed_count': progress.hardPassedCount,
+        if ((progress.summaryText ?? '').trim().isNotEmpty)
+          'summary_text': progress.summaryText!.trim(),
+        if ((progress.summaryRawResponse ?? '').trim().isNotEmpty)
+          'summary_raw_response': progress.summaryRawResponse!.trim(),
+        if (progress.summaryValid != null)
+          'summary_valid': progress.summaryValid,
+        'teacher_remote_user_id': scope.teacherRemoteUserId,
+        'student_remote_user_id': scope.remoteStudentUserId,
+        'updated_at': progress.updatedAt.toUtc().toIso8601String(),
+      };
+    }
+
+    final mistakePayloads = mistakes
+        .map(
+          (mistake) => <String, dynamic>{
+            'mistake_tag': mistake.mistakeTagRaw,
+            'mistake_tag_key': mistake.mistakeTagKey,
+            if ((mistake.mistakeNote ?? '').trim().isNotEmpty)
+              'mistake_note': mistake.mistakeNote!.trim(),
+            if ((mistake.questionExcerpt ?? '').trim().isNotEmpty)
+              'question_excerpt': mistake.questionExcerpt!.trim(),
+            if ((mistake.difficulty ?? '').trim().isNotEmpty)
+              'difficulty': mistake.difficulty!.trim(),
+            'evidence_json': mistake.evidenceJson,
+            'occurrences': mistake.occurrences,
+            'first_seen_at': mistake.firstSeenAt.toUtc().toIso8601String(),
+            'last_seen_at': mistake.lastSeenAt.toUtc().toIso8601String(),
+          },
+        )
+        .toList(growable: false)
+      ..sort((left, right) {
+        final keyCompare = ((left['mistake_tag_key'] as String?) ?? '')
+            .compareTo((right['mistake_tag_key'] as String?) ?? '');
+        if (keyCompare != 0) {
+          return keyCompare;
+        }
+        return ((left['last_seen_at'] as String?) ?? '')
+            .compareTo((right['last_seen_at'] as String?) ?? '');
+      });
+    for (final mistake in mistakes) {
+      updatedAtValues.add(mistake.lastSeenAt.toUtc());
+    }
+
+    if (updatedAtValues.isEmpty) {
+      throw StateError(
+        'Artifact updated_at cannot be resolved for ${scope.remoteCourseId}:${scope.kpKey}.',
+      );
+    }
+    var artifactUpdatedAt = updatedAtValues.first;
+    for (final value in updatedAtValues.skip(1)) {
+      if (value.isAfter(artifactUpdatedAt)) {
+        artifactUpdatedAt = value;
+      }
+    }
+
+    return _artifactStore.buildArtifact(
+      LocalArtifactBuildInput(
+        artifactId: _artifactIdForScope(scope),
+        lastModified: artifactUpdatedAt,
+        payload: <String, dynamic>{
+          'schema': _artifactSchema,
+          'course_id': scope.remoteCourseId,
+          if (scope.courseSubject.isNotEmpty)
+            'course_subject': course.subject.trim(),
+          'kp_key': scope.kpKey,
+          'teacher_remote_user_id': scope.teacherRemoteUserId,
+          'student_remote_user_id': scope.remoteStudentUserId,
+          if (scope.studentUsername.isNotEmpty)
+            'student_username': scope.studentUsername,
+          'updated_at': artifactUpdatedAt.toUtc().toIso8601String(),
+          if (progressPayload != null) 'progress': progressPayload,
+          if (mistakePayloads.isNotEmpty) 'mistakes': mistakePayloads,
+          'sessions': sessionPayloads,
+        },
+      ),
+    );
+  }
+
+  Future<void> _applyRemoteArtifactPayload({
+    required User currentUser,
+    required String artifactId,
+    required Map<String, dynamic> payload,
+    required _ArtifactApplyContext applyContext,
+    required bool replaceExistingLocalScope,
+    bool wrapReplaceTransaction = true,
+  }) async {
+    final identity = _parseArtifactIdentity(artifactId, payload);
+    final localCourseVersionId = await _resolveCourseVersionId(
+      identity.remoteCourseId,
+      applyContext: applyContext,
+    );
+    final localStudentId = await _resolveLocalStudentId(
+      currentUser: currentUser,
+      remoteStudentUserId: identity.remoteStudentUserId,
+      usernameHint: (payload['student_username'] as String?)?.trim(),
+      courseVersionId: localCourseVersionId,
+      applyContext: applyContext,
+    );
+    await _replaceLocalArtifactScope(
+      localStudentId: localStudentId,
+      localCourseVersionId: localCourseVersionId,
+      kpKey: identity.kpKey,
+      payload: payload,
+      applyContext: applyContext,
+      replaceExistingLocalScope: replaceExistingLocalScope,
+      wrapTransaction: wrapReplaceTransaction,
+    );
+  }
+
+  Future<int> _resolveLocalStudentId({
+    required User currentUser,
+    required int remoteStudentUserId,
+    required String? usernameHint,
+    required int courseVersionId,
+    required _ArtifactApplyContext applyContext,
+  }) async {
+    if (currentUser.role == 'student') {
+      if (_requireRemoteUserId(currentUser) != remoteStudentUserId) {
+        throw StateError(
+          'Student artifact $remoteStudentUserId does not belong to current user '
+          '${currentUser.remoteUserId}.',
+        );
+      }
+      return currentUser.id;
+    }
+    final cachedLocalStudentId =
+        applyContext.localStudentIdByRemoteStudentId[remoteStudentUserId];
+    if (cachedLocalStudentId != null && cachedLocalStudentId > 0) {
+      return cachedLocalStudentId;
+    }
+    final localCourse = await _db.getCourseVersionById(courseVersionId);
+    if (localCourse == null) {
+      throw StateError('Course version $courseVersionId missing.');
+    }
+    final studentId =
+        await _remoteStudentIdentity.resolveOrCreateLocalStudentId(
+      db: _db,
+      remoteStudentId: remoteStudentUserId,
+      usernameHint: usernameHint,
+      teacherId: localCourse.teacherId,
+    );
+    applyContext.localStudentIdByRemoteStudentId[remoteStudentUserId] =
+        studentId;
+    await _db.assignStudent(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+      notifySyncUsers: false,
+    );
+    applyContext.assignedStudentCoursePairs.add(
+      '$studentId:$courseVersionId',
+    );
+    return studentId;
+  }
+
+  Future<int> _resolveCourseVersionId(
+    int remoteCourseId, {
+    required _ArtifactApplyContext applyContext,
+  }) async {
+    final cachedCourseVersionId =
+        applyContext.localCourseVersionIdByRemoteCourseId[remoteCourseId];
+    if (cachedCourseVersionId != null && cachedCourseVersionId > 0) {
+      return cachedCourseVersionId;
+    }
+    final courseVersionId =
+        await _db.getCourseVersionIdForRemoteCourse(remoteCourseId);
+    if (courseVersionId == null || courseVersionId <= 0) {
+      throw StateError(
+          'Remote course $remoteCourseId is not installed locally.');
+    }
+    applyContext.localCourseVersionIdByRemoteCourseId[remoteCourseId] =
+        courseVersionId;
+    return courseVersionId;
+  }
+
+  Future<void> _replaceLocalArtifactScope({
+    required int localStudentId,
+    required int localCourseVersionId,
+    required String kpKey,
+    required Map<String, dynamic> payload,
+    required _ArtifactApplyContext applyContext,
+    required bool replaceExistingLocalScope,
+    bool wrapTransaction = true,
+  }) async {
+    final assignmentKey = '$localStudentId:$localCourseVersionId';
+    if (!applyContext.assignedStudentCoursePairs.contains(assignmentKey)) {
+      await _db.assignStudent(
+        studentId: localStudentId,
+        courseVersionId: localCourseVersionId,
+        notifySyncUsers: false,
+      );
+      applyContext.assignedStudentCoursePairs.add(assignmentKey);
+    }
+    if (wrapTransaction) {
+      await _db.transaction(() async {
+        await _replaceLocalArtifactScopeBody(
+          localStudentId: localStudentId,
+          localCourseVersionId: localCourseVersionId,
+          kpKey: kpKey,
+          payload: payload,
+          replaceExistingLocalScope: replaceExistingLocalScope,
+        );
+      });
+      return;
+    }
+    await _replaceLocalArtifactScopeBody(
+      localStudentId: localStudentId,
+      localCourseVersionId: localCourseVersionId,
+      kpKey: kpKey,
+      payload: payload,
+      replaceExistingLocalScope: replaceExistingLocalScope,
+    );
+  }
+
+  Future<void> _replaceLocalArtifactScopeBody({
+    required int localStudentId,
+    required int localCourseVersionId,
+    required String kpKey,
+    required Map<String, dynamic> payload,
+    required bool replaceExistingLocalScope,
+  }) async {
+    final preservedMistakeState = replaceExistingLocalScope
+        ? await _db.getMistakeEntriesForScope(
+            studentId: localStudentId,
+            courseVersionId: localCourseVersionId,
+            kpKey: kpKey,
+          )
+        : const <MistakeEntry>[];
+    if (replaceExistingLocalScope) {
+      await _deleteLocalArtifactScope(
+        localStudentId: localStudentId,
+        localCourseVersionId: localCourseVersionId,
+        kpKey: kpKey,
+      );
+    }
+
+    final progressPayload = payload['progress'];
+    if (progressPayload is Map<String, dynamic>) {
+      await _db.upsertProgressFromSync(
+        studentId: localStudentId,
+        courseVersionId: localCourseVersionId,
+        kpKey: kpKey,
+        lit: progressPayload['lit'] == true,
+        litPercent: (progressPayload['lit_percent'] as num?)?.toInt() ?? 0,
+        masteryLevel: (progressPayload['mastery_level'] as num?)?.toInt(),
+        questionLevel: (progressPayload['question_level'] as String?)?.trim(),
+        easyPassedCount:
+            (progressPayload['easy_passed_count'] as num?)?.toInt() ?? 0,
+        mediumPassedCount:
+            (progressPayload['medium_passed_count'] as num?)?.toInt() ?? 0,
+        hardPassedCount:
+            (progressPayload['hard_passed_count'] as num?)?.toInt() ?? 0,
+        summaryText: (progressPayload['summary_text'] as String?)?.trim(),
+        summaryRawResponse:
+            (progressPayload['summary_raw_response'] as String?)?.trim(),
+        summaryValid: progressPayload['summary_valid'] as bool?,
+        updatedAt: _parseIsoTime(progressPayload['updated_at']) ??
+            DateTime.now().toUtc(),
+        mergeWithLocal: false,
+      );
+    }
+
+    final mistakes = payload['mistakes'];
+    await _db.importMistakeEntriesFromArtifact(
+      studentId: localStudentId,
+      courseVersionId: localCourseVersionId,
+      kpKey: kpKey,
+      entries: mistakes is List ? mistakes : const <dynamic>[],
+      replaceScope: replaceExistingLocalScope,
+      preservedLocalState: preservedMistakeState,
+    );
+
+    final sessions = payload['sessions'];
+    if (sessions is! List) {
+      return;
+    }
+    await _insertArtifactSessions(
+      localStudentId: localStudentId,
+      localCourseVersionId: localCourseVersionId,
+      kpKey: kpKey,
+      sessions: sessions,
+    );
+  }
+
+  Future<void> _insertArtifactSessions({
+    required int localStudentId,
+    required int localCourseVersionId,
+    required String kpKey,
+    required List sessions,
+  }) async {
+    for (final rawSession in sessions) {
+      if (rawSession is! Map<String, dynamic>) {
+        throw StateError('Student artifact session entry must be an object.');
+      }
+      final syncId = (rawSession['session_sync_id'] as String?)?.trim() ?? '';
+      if (syncId.isEmpty) {
+        throw StateError('Student artifact session_sync_id missing.');
+      }
+      final startedAt =
+          _parseIsoTime(rawSession['started_at']) ?? DateTime.now().toUtc();
+      final updatedAt = _parseIsoTime(rawSession['updated_at']) ?? startedAt;
+      final sessionId = await _db.into(_db.chatSessions).insert(
+            ChatSessionsCompanion.insert(
+              studentId: localStudentId,
+              courseVersionId: localCourseVersionId,
+              kpKey: kpKey,
+              title: Value(
+                ((rawSession['session_title'] as String?)?.trim() ?? '').isEmpty
+                    ? null
+                    : (rawSession['session_title'] as String).trim(),
+              ),
+              startedAt: Value(startedAt),
+              endedAt: Value(_parseIsoTime(rawSession['ended_at'])),
+              status: const Value('active'),
+              summaryText: Value(
+                ((rawSession['summary_text'] as String?)?.trim() ?? '').isEmpty
+                    ? null
+                    : (rawSession['summary_text'] as String).trim(),
+              ),
+              controlStateJson: Value(
+                _encodeCanonicalJson(rawSession['control_state_json']),
+              ),
+              controlStateUpdatedAt:
+                  Value(_parseIsoTime(rawSession['control_state_updated_at'])),
+              evidenceStateJson: Value(
+                _encodeCanonicalJson(rawSession['evidence_state_json']),
+              ),
+              evidenceStateUpdatedAt:
+                  Value(_parseIsoTime(rawSession['evidence_state_updated_at'])),
+              syncId: Value(syncId),
+              syncUpdatedAt: Value(updatedAt),
+              syncUploadedAt: Value(updatedAt),
+            ),
+          );
+      final rawMessages = rawSession['messages'];
+      if (rawMessages is! List) {
+        continue;
+      }
+      for (final rawMessage in rawMessages) {
+        if (rawMessage is! Map<String, dynamic>) {
+          throw StateError('Student artifact message entry must be an object.');
+        }
+        final role = (rawMessage['role'] as String?)?.trim() ?? '';
+        final content = (rawMessage['content'] as String?) ?? '';
+        if (role.isEmpty) {
+          throw StateError('Student artifact message role missing.');
+        }
+        await _db.into(_db.chatMessages).insert(
+              ChatMessagesCompanion.insert(
+                sessionId: sessionId,
+                role: role,
+                content: content,
+                rawContent: Value(
+                  ((rawMessage['raw_content'] as String?)?.trim() ?? '').isEmpty
+                      ? null
+                      : (rawMessage['raw_content'] as String),
+                ),
+                parsedJson: Value(
+                  _encodeCanonicalJson(rawMessage['parsed_json']),
+                ),
+                action: Value(
+                  ((rawMessage['action'] as String?)?.trim() ?? '').isEmpty
+                      ? null
+                      : (rawMessage['action'] as String).trim(),
+                ),
+                createdAt: Value(
+                  _parseIsoTime(rawMessage['created_at']) ?? updatedAt,
+                ),
+              ),
+            );
+      }
+    }
+  }
+
+  Future<void> _applyDownloadedStudentFreshImportChunk({
+    required User currentUser,
+    required int remoteUserId,
+    required StudentKpArtifactManifest manifest,
+    required List<_DownloadedArtifactCandidate> chunk,
+    required _ArtifactApplyContext applyContext,
+    required Map<String, StudentKpArtifactManifestItem> nextItems,
+    Map<String, String>? storageFileOverrides,
+  }) async {
+    final progressRows = <SyncedProgressUpsert>[];
+    final sessionImports = <_PendingArtifactSessionImport>[];
+    final mistakeImports = <_PendingArtifactMistakeImport>[];
+    for (final entry in chunk) {
+      final candidate = entry.candidate;
+      final downloaded = entry.downloaded;
+      final computedSha = sha256.convert(downloaded.bytes).toString();
+      if (computedSha != candidate.sha256.trim()) {
+        throw StateError(
+          'Downloaded artifact sha256 mismatch for ${candidate.artifactId}.',
+        );
+      }
+      final payload = _artifactStore.readPayload(downloaded.bytes);
+      final identity = _parseArtifactIdentity(candidate.artifactId, payload);
+      final localCourseVersionId = await _resolveCourseVersionId(
+        identity.remoteCourseId,
+        applyContext: applyContext,
+      );
+      final assignmentKey = '${currentUser.id}:$localCourseVersionId';
+      if (!applyContext.assignedStudentCoursePairs.contains(assignmentKey)) {
+        await _db.assignStudent(
+          studentId: currentUser.id,
+          courseVersionId: localCourseVersionId,
+          notifySyncUsers: false,
+        );
+        applyContext.assignedStudentCoursePairs.add(assignmentKey);
+      }
+
+      final progressPayload = payload['progress'];
+      if (progressPayload is Map<String, dynamic>) {
+        progressRows.add(
+          SyncedProgressUpsert(
+            studentId: currentUser.id,
+            courseVersionId: localCourseVersionId,
+            kpKey: identity.kpKey,
+            lit: progressPayload['lit'] == true,
+            litPercent: (progressPayload['lit_percent'] as num?)?.toInt() ?? 0,
+            masteryLevel: (progressPayload['mastery_level'] as num?)?.toInt(),
+            questionLevel:
+                (progressPayload['question_level'] as String?)?.trim(),
+            easyPassedCount:
+                (progressPayload['easy_passed_count'] as num?)?.toInt() ?? 0,
+            mediumPassedCount:
+                (progressPayload['medium_passed_count'] as num?)?.toInt() ?? 0,
+            hardPassedCount:
+                (progressPayload['hard_passed_count'] as num?)?.toInt() ?? 0,
+            summaryText: (progressPayload['summary_text'] as String?)?.trim(),
+            summaryRawResponse:
+                (progressPayload['summary_raw_response'] as String?)?.trim(),
+            summaryValid: progressPayload['summary_valid'] as bool?,
+            updatedAt: _parseIsoTime(progressPayload['updated_at']) ??
+                DateTime.now().toUtc(),
+          ),
+        );
+      }
+
+      final sessions = payload['sessions'];
+      if (sessions is List && sessions.isNotEmpty) {
+        sessionImports.add(
+          _PendingArtifactSessionImport(
+            localStudentId: currentUser.id,
+            localCourseVersionId: localCourseVersionId,
+            kpKey: identity.kpKey,
+            sessions: sessions,
+          ),
+        );
+      }
+      final mistakes = payload['mistakes'];
+      if (mistakes is List && mistakes.isNotEmpty) {
+        mistakeImports.add(
+          _PendingArtifactMistakeImport(
+            localStudentId: currentUser.id,
+            localCourseVersionId: localCourseVersionId,
+            kpKey: identity.kpKey,
+            mistakes: mistakes,
+          ),
+        );
+      }
+
+      final storageFile =
+          (storageFileOverrides?[candidate.artifactId] ?? '').trim();
+      if (storageFile.isNotEmpty && !storageFile.startsWith('@pack:')) {
+        await _artifactStore.writeArtifactBytes(
+          remoteUserId: remoteUserId,
+          storageFile: storageFile,
+          bytes: downloaded.bytes,
+        );
+      }
+
+      nextItems[candidate.artifactId] = StudentKpArtifactManifestItem(
+        artifactId: candidate.artifactId,
+        sha256: candidate.sha256.trim(),
+        baseSha256: candidate.sha256.trim(),
+        lastModified: candidate.lastModified.trim(),
+        storageFile: storageFile,
+        deleted: false,
+      );
+      applyContext.markArtifactApplied(candidate.artifactId);
+    }
+
+    await _db.upsertProgressBatchFromSync(rows: progressRows);
+    for (final sessionImport in sessionImports) {
+      await _insertArtifactSessions(
+        localStudentId: sessionImport.localStudentId,
+        localCourseVersionId: sessionImport.localCourseVersionId,
+        kpKey: sessionImport.kpKey,
+        sessions: sessionImport.sessions,
+      );
+    }
+    for (final mistakeImport in mistakeImports) {
+      await _db.importMistakeEntriesFromArtifact(
+        studentId: mistakeImport.localStudentId,
+        courseVersionId: mistakeImport.localCourseVersionId,
+        kpKey: mistakeImport.kpKey,
+        entries: mistakeImport.mistakes,
+      );
+    }
+  }
+
+  Future<void> _deleteLocalArtifactScopeById({
+    required User currentUser,
+    required String artifactId,
+  }) async {
+    final identity = _parseArtifactIdentity(artifactId, null);
+    final localCourseVersionId = await _db.getCourseVersionIdForRemoteCourse(
+      identity.remoteCourseId,
+    );
+    if (localCourseVersionId == null || localCourseVersionId <= 0) {
+      return;
+    }
+    int? localStudentId;
+    if (currentUser.role == 'student') {
+      if (_requireRemoteUserId(currentUser) != identity.remoteStudentUserId) {
+        return;
+      }
+      localStudentId = currentUser.id;
+    } else {
+      final student =
+          await _db.findUserByRemoteId(identity.remoteStudentUserId);
+      localStudentId = student?.id;
+    }
+    if (localStudentId == null || localStudentId <= 0) {
+      return;
+    }
+    await _deleteLocalArtifactScope(
+      localStudentId: localStudentId,
+      localCourseVersionId: localCourseVersionId,
+      kpKey: identity.kpKey,
+    );
+  }
+
+  Future<void> _deleteLocalArtifactScope({
+    required int localStudentId,
+    required int localCourseVersionId,
+    required String kpKey,
+  }) async {
+    final sessions = await (_db.select(_db.chatSessions)
+          ..where(
+            (tbl) =>
+                tbl.studentId.equals(localStudentId) &
+                tbl.courseVersionId.equals(localCourseVersionId) &
+                tbl.kpKey.equals(kpKey),
+          ))
+        .get();
+    final sessionIds =
+        sessions.map((session) => session.id).toList(growable: false);
+    if (sessionIds.isNotEmpty) {
+      await (_db.delete(_db.mistakeEntries)
+            ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+          .go();
+      await (_db.delete(_db.chatMessages)
+            ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+          .go();
+      await (_db.delete(_db.llmCalls)
+            ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+          .go();
+      await (_db.delete(_db.chatSessions)
+            ..where((tbl) => tbl.id.isIn(sessionIds)))
+          .go();
+    }
+    await (_db.delete(_db.progressEntries)
+          ..where(
+            (tbl) =>
+                tbl.studentId.equals(localStudentId) &
+                tbl.courseVersionId.equals(localCourseVersionId) &
+                tbl.kpKey.equals(kpKey),
+          ))
+        .go();
+    await (_db.delete(_db.mistakeEntries)
+          ..where(
+            (tbl) =>
+                tbl.studentId.equals(localStudentId) &
+                tbl.courseVersionId.equals(localCourseVersionId) &
+                tbl.kpKey.equals(kpKey),
+          ))
+        .go();
+  }
+
+  Future<void> _clearLegacyLocalState() async {
+    await _db.transaction(() async {
+      final sessions = await _db.select(_db.chatSessions).get();
+      final sessionIds =
+          sessions.map((session) => session.id).toList(growable: false);
+      if (sessionIds.isNotEmpty) {
+        await (_db.delete(_db.mistakeEntries)
+              ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+            .go();
+        await (_db.delete(_db.chatMessages)
+              ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+            .go();
+        await (_db.delete(_db.llmCalls)
+              ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+            .go();
+        await (_db.delete(_db.chatSessions)
+              ..where((tbl) => tbl.id.isIn(sessionIds)))
+            .go();
+      }
+      await _db.delete(_db.progressEntries).go();
+      await _db.delete(_db.mistakeEntries).go();
+      await _db.delete(_db.syncItemStates).go();
+      await _db.delete(_db.syncMetadataEntries).go();
+    });
   }
 
   Future<void> _clearLocalStudentSessionAndProgressData({
@@ -238,8 +2703,12 @@ class SessionSyncService {
       final sessions = await (_db.select(_db.chatSessions)
             ..where((tbl) => tbl.studentId.equals(studentId)))
           .get();
-      final sessionIds = sessions.map((session) => session.id).toList();
+      final sessionIds =
+          sessions.map((session) => session.id).toList(growable: false);
       if (sessionIds.isNotEmpty) {
+        await (_db.delete(_db.mistakeEntries)
+              ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+            .go();
         await (_db.delete(_db.chatMessages)
               ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
             .go();
@@ -253,3188 +2722,226 @@ class SessionSyncService {
       await (_db.delete(_db.progressEntries)
             ..where((tbl) => tbl.studentId.equals(studentId)))
           .go();
-      await (_db.delete(_db.llmCalls)
+      await (_db.delete(_db.mistakeEntries)
             ..where((tbl) => tbl.studentId.equals(studentId)))
           .go();
     });
   }
 
-  Future<SimpleKeyPair> _ensureKeyPairWithPassword({
-    required int remoteUserId,
-    required String password,
-  }) {
-    return _userKeyService.ensureUserKeyPair(
-      remoteUserId: remoteUserId,
-      password: password,
-    );
+  DateTime _resolveSessionUpdatedAt(ChatSession session) {
+    return (session.syncUpdatedAt ?? session.startedAt).toUtc();
   }
 
-  Future<void> _runCategoryIfDue({
-    required int remoteUserId,
-    required String runDomain,
-    required Future<void> Function() action,
-    required bool force,
-  }) async {
-    final nowUtc = DateTime.now().toUtc();
-    if (!force) {
-      final lastRun = await _secureStorage.readSyncRunAt(
-        remoteUserId: remoteUserId,
-        domain: runDomain,
-      );
-      if (lastRun != null &&
-          nowUtc.difference(lastRun.toUtc()) < _syncMinInterval) {
-        return;
-      }
-    }
-    await action();
-    await _secureStorage.writeSyncRunAt(
-      remoteUserId: remoteUserId,
-      domain: runDomain,
-      runAt: nowUtc,
-    );
-  }
-
-  Future<void> _uploadPendingProgress(User currentUser, int remoteUserId,
-      {required SyncRunStats stats}) async {
-    if (currentUser.role != 'student') {
-      return;
-    }
-    final latestLocalProgressUpdatedAt =
-        await _db.getLatestProgressUpdatedAtForSync(studentId: currentUser.id);
-    if (latestLocalProgressUpdatedAt == null) {
-      return;
-    }
-    final lastUploadRunAt = await _secureStorage.readSyncRunAt(
-      remoteUserId: remoteUserId,
-      domain: _syncRunDomainProgressUpload,
-    );
-    if (lastUploadRunAt != null &&
-        !latestLocalProgressUpdatedAt.isAfter(lastUploadRunAt.toUtc())) {
-      return;
-    }
-    final entries = await _db.listProgressEntriesForSyncUpload(
-      studentId: currentUser.id,
-      updatedAtOrAfter: lastUploadRunAt?.toUtc(),
-    );
-    if (entries.isEmpty) {
-      return;
-    }
-    try {
-      await _uploadPendingProgressChunks(
-        remoteUserId: remoteUserId,
-        entries: entries,
-        stats: stats,
-      );
-    } on SessionSyncApiException catch (error) {
-      if (error.statusCode != 404) {
-        rethrow;
-      }
-      await _uploadPendingProgressLegacy(
-        remoteUserId: remoteUserId,
-        entries: entries,
-        stats: stats,
-      );
-    }
-  }
-
-  Future<void> _uploadPendingProgressChunks({
-    required int remoteUserId,
-    required List<ProgressEntry> entries,
-    required SyncRunStats stats,
-  }) async {
-    final chapterGroups = <String, _ProgressChunkGroup>{};
-    for (final entry in entries) {
-      if (entry.kpKey == kTreeViewStateKpKey) {
-        continue;
-      }
-      final remoteCourseId = await _db.getRemoteCourseId(entry.courseVersionId);
-      if (remoteCourseId == null || remoteCourseId <= 0) {
-        continue;
-      }
-      final entryUpdatedAt = entry.updatedAt.toUtc();
-      final chapterKey = _extractSecondLevelChapter(entry.kpKey);
-      final groupScopeKey = '$remoteCourseId:$chapterKey';
-      final scopeKey = '$remoteCourseId:${entry.kpKey.trim()}';
-      final payloadHash = _hashProgressPayloadCore(
-        entry: entry,
-        remoteCourseId: remoteCourseId,
-        remoteUserId: remoteUserId,
-      );
-      final group = chapterGroups.putIfAbsent(
-        groupScopeKey,
-        () => _ProgressChunkGroup(
-          scopeKey: groupScopeKey,
-          remoteCourseId: remoteCourseId,
-          chapterKey: chapterKey,
-          courseVersionId: entry.courseVersionId,
-          studentId: entry.studentId,
-        ),
-      );
-      final member = _ProgressChunkMember(
-        entry: entry,
-        scopeKey: scopeKey,
-        updatedAt: entryUpdatedAt,
-        payloadHash: payloadHash,
-      );
-      group.members.add(member);
-      final syncState = await _secureStorage.readSyncItemState(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainProgressUpload,
-        scopeKey: scopeKey,
-      );
-      final downloadedState = await _secureStorage.readSyncItemState(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainProgressDownload,
-        scopeKey: scopeKey,
-      );
-      if (downloadedState != null &&
-          downloadedState.lastChangedAt.toUtc().isAfter(entryUpdatedAt)) {
-        group.blockedByRemoteNewer = true;
-        continue;
-      }
-      if (!_isTimestampNewer(entryUpdatedAt, syncState?.lastSyncedAt)) {
-        continue;
-      }
-      if (syncState != null && syncState.contentHash == payloadHash) {
-        await _secureStorage.writeSyncItemState(
-          remoteUserId: remoteUserId,
-          domain: _syncDomainProgressUpload,
-          scopeKey: scopeKey,
-          contentHash: payloadHash,
-          lastChangedAt: entryUpdatedAt,
-          lastSyncedAt: entryUpdatedAt,
-        );
-        continue;
-      }
-      group.hasPendingChanges = true;
-    }
-    final groupsToUpload = chapterGroups.values
-        .where(
-            (group) => group.hasPendingChanges && !group.blockedByRemoteNewer)
-        .toList(growable: false);
-    if (groupsToUpload.isEmpty) {
-      return;
-    }
-
-    final keysByCourse = <int, CourseKeyBundle>{};
-    final courseSubjectsByVersion = <int, String>{};
-    final preparedUploads = <_PreparedProgressChunkUpload>[];
-    for (final group in groupsToUpload) {
-      var resolvedKeys = keysByCourse[group.remoteCourseId];
-      resolvedKeys ??= await _api.getCourseKeys(
-        courseId: group.remoteCourseId,
-        studentUserId: remoteUserId,
-      );
-      keysByCourse[group.remoteCourseId] = resolvedKeys;
-
-      final chunkItems = <Map<String, dynamic>>[];
-      final itemStateWrites = <_SyncStateWrite>[];
-      var groupUpdatedAt = DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
-      var courseSubject = '';
-      final chapterEntries = await _db.listProgressEntriesForChapterSyncUpload(
-        studentId: group.studentId,
-        courseVersionId: group.courseVersionId,
-        chapterKey: group.chapterKey,
-      );
-      final fullMembers = chapterEntries
-          .map(
-            (entry) => _ProgressChunkMember(
-              entry: entry,
-              scopeKey: '${group.remoteCourseId}:${entry.kpKey.trim()}',
-              updatedAt: entry.updatedAt.toUtc(),
-              payloadHash: _hashProgressPayloadCore(
-                entry: entry,
-                remoteCourseId: group.remoteCourseId,
-                remoteUserId: remoteUserId,
-              ),
-            ),
-          )
-          .toList(growable: false);
-      for (final member in fullMembers) {
-        final entry = member.entry;
-        var resolvedSubject = courseSubjectsByVersion[entry.courseVersionId];
-        if (resolvedSubject == null) {
-          resolvedSubject = await _resolveCourseSubject(entry.courseVersionId);
-          courseSubjectsByVersion[entry.courseVersionId] = resolvedSubject;
-        }
-        if (courseSubject.isEmpty) {
-          courseSubject = resolvedSubject;
-        }
-        final payload = _buildProgressPayload(
-          entry: entry,
-          courseSubject: resolvedSubject,
-          remoteCourseId: group.remoteCourseId,
-          teacherUserId: resolvedKeys.teacherUserId,
-          studentUserId: resolvedKeys.studentUserId,
-        );
-        chunkItems.add(payload);
-        itemStateWrites.add(
-          _SyncStateWrite(
-            domain: _syncDomainProgressUpload,
-            scopeKey: member.scopeKey,
-            contentHash: member.payloadHash,
-            lastChangedAt: member.updatedAt,
-            lastSyncedAt: member.updatedAt,
-          ),
-        );
-        groupUpdatedAt = _latestTimestamp(groupUpdatedAt, member.updatedAt);
-      }
-      chunkItems.sort((left, right) {
-        final leftKp = (left['kp_key'] as String? ?? '').trim();
-        final rightKp = (right['kp_key'] as String? ?? '').trim();
-        if (leftKp == rightKp) {
-          final leftUpdated = (left['updated_at'] as String? ?? '').trim();
-          final rightUpdated = (right['updated_at'] as String? ?? '').trim();
-          return leftUpdated.compareTo(rightUpdated);
-        }
-        return leftKp.compareTo(rightKp);
-      });
-      final chunkPayload = <String, dynamic>{
-        'version': 1,
-        'course_id': group.remoteCourseId,
-        'course_subject': courseSubject,
-        'chapter_key': group.chapterKey,
-        'teacher_remote_user_id': resolvedKeys.teacherUserId,
-        'student_remote_user_id': resolvedKeys.studentUserId,
-        'updated_at': groupUpdatedAt.toUtc().toIso8601String(),
-        'items': chunkItems,
-      };
-      final chunkHash = _hashCanonicalJson(chunkPayload);
-      final groupState = await _secureStorage.readSyncItemState(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainProgressChunkUpload,
-        scopeKey: group.scopeKey,
-      );
-      if (!_isTimestampNewer(groupUpdatedAt, groupState?.lastSyncedAt)) {
-        continue;
-      }
-      if (groupState != null && groupState.contentHash == chunkHash) {
-        for (final stateWrite in itemStateWrites) {
-          await _secureStorage.writeSyncItemState(
-            remoteUserId: remoteUserId,
-            domain: stateWrite.domain,
-            scopeKey: stateWrite.scopeKey,
-            contentHash: stateWrite.contentHash,
-            lastChangedAt: stateWrite.lastChangedAt,
-            lastSyncedAt: stateWrite.lastSyncedAt,
-          );
-        }
-        await _secureStorage.writeSyncItemState(
-          remoteUserId: remoteUserId,
-          domain: _syncDomainProgressChunkUpload,
-          scopeKey: group.scopeKey,
-          contentHash: chunkHash,
-          lastChangedAt: groupUpdatedAt,
-          lastSyncedAt: groupUpdatedAt,
-        );
-        continue;
-      }
-      final envelope = await _crypto.encryptPayload(
-        payload: chunkPayload,
-        recipients: [
-          RecipientPublicKey(
-            userId: resolvedKeys.teacherUserId,
-            publicKey: _crypto.decodePublicKey(resolvedKeys.teacherPublicKey),
-          ),
-          RecipientPublicKey(
-            userId: resolvedKeys.studentUserId,
-            publicKey: _crypto.decodePublicKey(resolvedKeys.studentPublicKey),
-          ),
-        ],
-      );
-      final envelopeJson = jsonEncode(envelope.toJson());
-      preparedUploads.add(
-        _PreparedProgressChunkUpload(
-          upload: ProgressChunkUploadEntry(
-            courseId: group.remoteCourseId,
-            chapterKey: group.chapterKey,
-            itemCount: chunkItems.length,
-            updatedAt: groupUpdatedAt.toUtc().toIso8601String(),
-            envelope: base64Encode(utf8.encode(envelopeJson)),
-            envelopeHash: _hashEnvelope(envelopeJson),
-          ),
-          itemStateWrites: itemStateWrites,
-          groupStateWrite: _SyncStateWrite(
-            domain: _syncDomainProgressChunkUpload,
-            scopeKey: group.scopeKey,
-            contentHash: chunkHash,
-            lastChangedAt: groupUpdatedAt,
-            lastSyncedAt: groupUpdatedAt,
-          ),
-        ),
-      );
-    }
-    if (preparedUploads.isEmpty) {
-      return;
-    }
-    for (var index = 0;
-        index < preparedUploads.length;
-        index += _progressChunkUploadBatchSize) {
-      final endExclusive = index + _progressChunkUploadBatchSize;
-      final chunk = preparedUploads.sublist(
-        index,
-        endExclusive > preparedUploads.length
-            ? preparedUploads.length
-            : endExclusive,
-      );
-      await _api.uploadProgressChunkBatch(
-        chunk.map((item) => item.upload).toList(growable: false),
-      );
-      stats.addUploaded(
-        count: chunk.length,
-        bytes: chunk.fold<int>(
-          0,
-          (total, item) => total + _progressChunkUploadSize(item.upload),
-        ),
-      );
-      for (final prepared in chunk) {
-        await _mirrorProgressChunkUploadToDownloadState(
-          remoteUserId: remoteUserId,
-          entry: prepared.upload,
-        );
-        for (final stateWrite in prepared.itemStateWrites) {
-          await _secureStorage.writeSyncItemState(
-            remoteUserId: remoteUserId,
-            domain: stateWrite.domain,
-            scopeKey: stateWrite.scopeKey,
-            contentHash: stateWrite.contentHash,
-            lastChangedAt: stateWrite.lastChangedAt,
-            lastSyncedAt: stateWrite.lastSyncedAt,
-          );
-        }
-        final groupStateWrite = prepared.groupStateWrite;
-        await _secureStorage.writeSyncItemState(
-          remoteUserId: remoteUserId,
-          domain: groupStateWrite.domain,
-          scopeKey: groupStateWrite.scopeKey,
-          contentHash: groupStateWrite.contentHash,
-          lastChangedAt: groupStateWrite.lastChangedAt,
-          lastSyncedAt: groupStateWrite.lastSyncedAt,
-        );
-      }
-    }
-  }
-
-  Future<void> _uploadPendingProgressLegacy({
-    required int remoteUserId,
-    required List<ProgressEntry> entries,
-    required SyncRunStats stats,
-  }) async {
-    final keysByCourse = <int, CourseKeyBundle>{};
-    final courseSubjectsByVersion = <int, String>{};
-    final pendingUploads = <_PendingProgressUpload>[];
-    for (final entry in entries) {
-      if (entry.kpKey == kTreeViewStateKpKey) {
-        continue;
-      }
-      final remoteCourseId = await _db.getRemoteCourseId(entry.courseVersionId);
-      if (remoteCourseId == null || remoteCourseId <= 0) {
-        continue;
-      }
-      final entryUpdatedAt = entry.updatedAt.toUtc();
-      final scopeKey = '$remoteCourseId:${entry.kpKey}';
-      final syncState = await _secureStorage.readSyncItemState(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainProgressUpload,
-        scopeKey: scopeKey,
-      );
-      final downloadedState = await _secureStorage.readSyncItemState(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainProgressDownload,
-        scopeKey: scopeKey,
-      );
-      if (downloadedState != null &&
-          downloadedState.lastChangedAt.toUtc().isAfter(entryUpdatedAt)) {
-        continue;
-      }
-      if (!_isTimestampNewer(entryUpdatedAt, syncState?.lastSyncedAt)) {
-        continue;
-      }
-      final payloadHash = _hashProgressPayloadCore(
-        entry: entry,
-        remoteCourseId: remoteCourseId,
-        remoteUserId: remoteUserId,
-      );
-      if (syncState != null && syncState.contentHash == payloadHash) {
-        await _secureStorage.writeSyncItemState(
-          remoteUserId: remoteUserId,
-          domain: _syncDomainProgressUpload,
-          scopeKey: scopeKey,
-          contentHash: payloadHash,
-          lastChangedAt: entryUpdatedAt,
-          lastSyncedAt: entryUpdatedAt,
-        );
-        continue;
-      }
-      var resolvedKeys = keysByCourse[remoteCourseId];
-      resolvedKeys ??= await _api.getCourseKeys(
-        courseId: remoteCourseId,
-        studentUserId: remoteUserId,
-      );
-      keysByCourse[remoteCourseId] = resolvedKeys;
-      var courseSubject = courseSubjectsByVersion[entry.courseVersionId];
-      if (courseSubject == null) {
-        courseSubject = await _resolveCourseSubject(entry.courseVersionId);
-        courseSubjectsByVersion[entry.courseVersionId] = courseSubject;
-      }
-      final payload = _buildProgressPayload(
-        entry: entry,
-        courseSubject: courseSubject,
-        remoteCourseId: remoteCourseId,
-        teacherUserId: resolvedKeys.teacherUserId,
-        studentUserId: resolvedKeys.studentUserId,
-      );
-      final envelope = await _crypto.encryptPayload(
-        payload: payload,
-        recipients: [
-          RecipientPublicKey(
-            userId: resolvedKeys.teacherUserId,
-            publicKey: _crypto.decodePublicKey(resolvedKeys.teacherPublicKey),
-          ),
-          RecipientPublicKey(
-            userId: resolvedKeys.studentUserId,
-            publicKey: _crypto.decodePublicKey(resolvedKeys.studentPublicKey),
-          ),
-        ],
-      );
-      final envelopeJson = jsonEncode(envelope.toJson());
-      pendingUploads.add(
-        _PendingProgressUpload(
-          upload: ProgressUploadEntry(
-            courseId: remoteCourseId,
-            kpKey: entry.kpKey,
-            updatedAt: entry.updatedAt.toUtc().toIso8601String(),
-            envelope: base64Encode(utf8.encode(envelopeJson)),
-            envelopeHash: _hashEnvelope(envelopeJson),
-          ),
-          stateWrite: _SyncStateWrite(
-            domain: _syncDomainProgressUpload,
-            scopeKey: scopeKey,
-            contentHash: payloadHash,
-            lastChangedAt: entryUpdatedAt,
-            lastSyncedAt: entryUpdatedAt,
-          ),
-        ),
-      );
-    }
-    if (pendingUploads.isEmpty) {
-      return;
-    }
-    await _uploadProgressInChunksWithIsolation(
-      remoteUserId: remoteUserId,
-      pendingUploads: pendingUploads,
-      stats: stats,
-    );
-  }
-
-  Future<void> _uploadProgressInChunksWithIsolation({
-    required int remoteUserId,
-    required List<_PendingProgressUpload> pendingUploads,
-    required SyncRunStats stats,
-  }) async {
-    final failures = <_FailedProgressUpload>[];
-    final splitBudget = _ProgressIsolationBudget(
-      remaining: _progressUploadIsolationMaxSplits,
-    );
-    for (var index = 0;
-        index < pendingUploads.length;
-        index += _progressUploadBatchSize) {
-      final endExclusive = index + _progressUploadBatchSize;
-      final chunk = pendingUploads.sublist(
-        index,
-        endExclusive > pendingUploads.length
-            ? pendingUploads.length
-            : endExclusive,
-      );
-      await _uploadProgressChunkWithIsolation(
-        remoteUserId: remoteUserId,
-        chunk: chunk,
-        splitBudget: splitBudget,
-        failures: failures,
-        stats: stats,
-      );
-    }
-    if (failures.isEmpty) {
-      return;
-    }
-    final firstFailure = failures.first;
-    final status = firstFailure.error.statusCode;
-    final statusSuffix = status == null ? '' : ' (status $status)';
-    throw SessionSyncApiException(
-      'Progress sync failed for ${failures.length} item(s). '
-      'First failure: course_id=${firstFailure.upload.courseId}, '
-      'kp_key=${firstFailure.upload.kpKey}$statusSuffix: '
-      '${firstFailure.error.message}',
-      statusCode: status,
-    );
-  }
-
-  Future<void> _uploadProgressChunkWithIsolation({
-    required int remoteUserId,
-    required List<_PendingProgressUpload> chunk,
-    required _ProgressIsolationBudget splitBudget,
-    required List<_FailedProgressUpload> failures,
-    required SyncRunStats stats,
-  }) async {
-    if (chunk.isEmpty) {
-      return;
-    }
-    try {
-      await _api.uploadProgressBatch(
-        chunk.map((pending) => pending.upload).toList(growable: false),
-      );
-      stats.addUploaded(
-        count: chunk.length,
-        bytes: chunk.fold<int>(
-          0,
-          (total, pending) => total + _progressUploadSize(pending.upload),
-        ),
-      );
-      for (final pending in chunk) {
-        await _mirrorProgressUploadToDownloadState(
-          remoteUserId: remoteUserId,
-          entry: pending.upload,
-        );
-        final stateWrite = pending.stateWrite;
-        await _secureStorage.writeSyncItemState(
-          remoteUserId: remoteUserId,
-          domain: stateWrite.domain,
-          scopeKey: stateWrite.scopeKey,
-          contentHash: stateWrite.contentHash,
-          lastChangedAt: stateWrite.lastChangedAt,
-          lastSyncedAt: stateWrite.lastSyncedAt,
-        );
-      }
-      return;
-    } on SessionSyncApiException catch (error) {
-      if (!_shouldIsolateProgressUploadError(error)) {
-        rethrow;
-      }
-      if (chunk.length == 1) {
-        failures.add(
-          _FailedProgressUpload(
-            upload: chunk.single.upload,
-            error: error,
-          ),
-        );
-        return;
-      }
-      if (splitBudget.remaining <= 0) {
-        throw SessionSyncApiException(
-          'Progress sync isolation budget exhausted. '
-          'Remaining failures=${failures.length}. Last error: ${error.message}',
-          statusCode: error.statusCode,
-        );
-      }
-      splitBudget.remaining--;
-      final mid = chunk.length ~/ 2;
-      await _uploadProgressChunkWithIsolation(
-        remoteUserId: remoteUserId,
-        chunk: chunk.sublist(0, mid),
-        splitBudget: splitBudget,
-        failures: failures,
-        stats: stats,
-      );
-      await _uploadProgressChunkWithIsolation(
-        remoteUserId: remoteUserId,
-        chunk: chunk.sublist(mid),
-        splitBudget: splitBudget,
-        failures: failures,
-        stats: stats,
-      );
-    }
-  }
-
-  bool _shouldIsolateProgressUploadError(SessionSyncApiException error) {
-    final status = error.statusCode ?? 0;
-    if (status == 400) {
-      return true;
-    }
-    if (status != 500) {
-      return false;
-    }
-    final message = error.message.toLowerCase();
-    return message.contains('progress sync save failed') ||
-        message.contains('progress sync payload');
-  }
-
-  Future<void> _uploadPendingSessions(User currentUser, int remoteUserId,
-      {required SyncRunStats stats}) async {
-    if (_sessionUploadCacheService != null) {
-      await _uploadPendingSessionsFromChapterCache(
-        currentUser: currentUser,
-        remoteUserId: remoteUserId,
-        stats: stats,
-      );
-      return;
-    }
-    await _uploadPendingSessionsLegacy(
-      currentUser: currentUser,
-      remoteUserId: remoteUserId,
-      stats: stats,
-    );
-  }
-
-  Future<void> _uploadPendingSessionsFromChapterCache({
-    required User currentUser,
-    required int remoteUserId,
-    required SyncRunStats stats,
-  }) async {
-    final cacheService = _sessionUploadCacheService;
-    if (cacheService == null) {
-      throw StateError('Session upload cache service is not configured.');
-    }
-    final sessions = await (_db.select(_db.chatSessions)
-          ..where((tbl) =>
-              tbl.syncUpdatedAt.isNotNull() &
-              (tbl.syncUploadedAt.isNull() |
-                  tbl.syncUploadedAt.isSmallerThan(tbl.syncUpdatedAt))))
-        .get();
-    if (sessions.isEmpty) {
-      return;
-    }
-    final pendingChapterLocalKeys = <String>{};
-    final pendingSessionIds = <int>{};
-    for (final session in sessions) {
-      if (session.studentId != currentUser.id) {
-        continue;
-      }
-      pendingSessionIds.add(session.id);
-      final chapterKey = _extractSecondLevelChapter(session.kpKey);
-      pendingChapterLocalKeys.add('${session.courseVersionId}:$chapterKey');
-      final existingChapter = await cacheService.readChapter(
-        courseVersionId: session.courseVersionId,
-        chapterKey: chapterKey,
-      );
-      if (existingChapter != null) {
-        continue;
-      }
-      await cacheService.captureSession(session.id);
-    }
-    final chapterSnapshots = await cacheService.listChapters();
-    if (chapterSnapshots.isEmpty) {
-      return;
-    }
-    final keysByCourse = <int, CourseKeyBundle>{};
-    for (final chapterSnapshot in chapterSnapshots) {
-      if (!pendingChapterLocalKeys.contains(
-          '${chapterSnapshot.courseVersionId}:${chapterSnapshot.chapterKey}')) {
-        continue;
-      }
-      if (chapterSnapshot.members.isEmpty) {
-        continue;
-      }
-      final remoteCourseId =
-          await _db.getRemoteCourseId(chapterSnapshot.courseVersionId);
-      if (remoteCourseId == null || remoteCourseId <= 0) {
-        continue;
-      }
-      final groupScopeKey = '$remoteCourseId:${chapterSnapshot.chapterKey}';
-      final groupState = await _secureStorage.readSyncItemState(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainSessionGroupUpload,
-        scopeKey: groupScopeKey,
-      );
-      if (!_isTimestampNewer(
-        chapterSnapshot.updatedAt,
-        groupState?.lastSyncedAt,
-      )) {
-        for (final item in chapterSnapshot.members) {
-          if (!pendingSessionIds.contains(item.sessionId)) {
-            continue;
-          }
-          await _markSessionUploaded(
-            sessionId: item.sessionId,
-            uploadedAt: item.syncUpdatedAt,
-          );
-        }
-        continue;
-      }
-      if (groupState != null &&
-          groupState.contentHash == chapterSnapshot.contentHash) {
-        for (final item in chapterSnapshot.members) {
-          if (!pendingSessionIds.contains(item.sessionId)) {
-            continue;
-          }
-          await _markSessionUploaded(
-            sessionId: item.sessionId,
-            uploadedAt: item.syncUpdatedAt,
-          );
-        }
-        await _secureStorage.writeSyncItemState(
-          remoteUserId: remoteUserId,
-          domain: _syncDomainSessionGroupUpload,
-          scopeKey: groupScopeKey,
-          contentHash: chapterSnapshot.contentHash,
-          lastChangedAt: chapterSnapshot.updatedAt,
-          lastSyncedAt: chapterSnapshot.updatedAt,
-        );
-        continue;
-      }
-      await _uploadSessionChapterSnapshotGroup(
-        currentUser: currentUser,
-        remoteUserId: remoteUserId,
-        keysByCourse: keysByCourse,
-        chapterSnapshot: chapterSnapshot,
-        remoteCourseId: remoteCourseId,
-        pendingSessionIds: pendingSessionIds,
-        stats: stats,
-      );
-      await _secureStorage.writeSyncItemState(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainSessionGroupUpload,
-        scopeKey: groupScopeKey,
-        contentHash: chapterSnapshot.contentHash,
-        lastChangedAt: chapterSnapshot.updatedAt,
-        lastSyncedAt: chapterSnapshot.updatedAt,
-      );
-    }
-  }
-
-  Future<void> _uploadPendingSessionsLegacy({
-    required User currentUser,
-    required int remoteUserId,
-    required SyncRunStats stats,
-  }) async {
-    final sessions = await (_db.select(_db.chatSessions)
-          ..where((tbl) =>
-              tbl.syncUpdatedAt.isNotNull() &
-              (tbl.syncUploadedAt.isNull() |
-                  tbl.syncUploadedAt.isSmallerThan(tbl.syncUpdatedAt))))
-        .get();
-    if (sessions.isEmpty) {
-      return;
-    }
-    final groupedSessions = <String, List<_PendingSessionUpload>>{};
-    for (final session in sessions) {
-      if (session.studentId != currentUser.id) {
-        continue;
-      }
-      final syncSession = await _ensureSessionSyncMeta(session);
-      final syncId = (syncSession.syncId ?? '').trim();
-      if (syncId.isEmpty) {
-        continue;
-      }
-      final remoteCourseId =
-          await _db.getRemoteCourseId(syncSession.courseVersionId);
-      if (remoteCourseId == null || remoteCourseId <= 0) {
-        continue;
-      }
-      final syncUpdatedAt =
-          (syncSession.syncUpdatedAt ?? DateTime.now()).toUtc();
-      final chapterKey = _extractSecondLevelChapter(syncSession.kpKey);
-      final groupScopeKey = '$remoteCourseId:$chapterKey';
-      groupedSessions
-          .putIfAbsent(groupScopeKey, () => <_PendingSessionUpload>[])
-          .add(
-            _PendingSessionUpload(
-              session: syncSession,
-              syncId: syncId,
-              syncUpdatedAt: syncUpdatedAt,
-              remoteCourseId: remoteCourseId,
-            ),
-          );
-    }
-    if (groupedSessions.isEmpty) {
-      return;
-    }
-    final keysByCourse = <int, CourseKeyBundle>{};
-    for (final groupEntry in groupedSessions.entries) {
-      final groupScopeKey = groupEntry.key;
-      final groupItems = groupEntry.value;
-      if (groupItems.isEmpty) {
-        continue;
-      }
-      final groupUpdatedAt = groupItems
-          .map((item) => item.syncUpdatedAt)
-          .reduce((left, right) => _latestTimestamp(left, right));
-      final groupHash = _hashSessionUploadGroup(groupItems);
-      final groupState = await _secureStorage.readSyncItemState(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainSessionGroupUpload,
-        scopeKey: groupScopeKey,
-      );
-      if (!_isTimestampNewer(groupUpdatedAt, groupState?.lastSyncedAt)) {
-        for (final item in groupItems) {
-          await _markSessionUploaded(
-            sessionId: item.session.id,
-            uploadedAt: item.syncUpdatedAt,
-          );
-        }
-        continue;
-      }
-      if (groupState != null && groupState.contentHash == groupHash) {
-        for (final item in groupItems) {
-          await _markSessionUploaded(
-            sessionId: item.session.id,
-            uploadedAt: item.syncUpdatedAt,
-          );
-        }
-        await _secureStorage.writeSyncItemState(
-          remoteUserId: remoteUserId,
-          domain: _syncDomainSessionGroupUpload,
-          scopeKey: groupScopeKey,
-          contentHash: groupHash,
-          lastChangedAt: groupUpdatedAt,
-          lastSyncedAt: groupUpdatedAt,
-        );
-        continue;
-      }
-      await _uploadSessionGroupLegacy(
-        currentUser: currentUser,
-        remoteUserId: remoteUserId,
-        keysByCourse: keysByCourse,
-        groupItems: groupItems,
-        stats: stats,
-      );
-      await _secureStorage.writeSyncItemState(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainSessionGroupUpload,
-        scopeKey: groupScopeKey,
-        contentHash: groupHash,
-        lastChangedAt: groupUpdatedAt,
-        lastSyncedAt: groupUpdatedAt,
-      );
-    }
-  }
-
-  Future<void> _uploadSessionChapterSnapshotGroup({
-    required User currentUser,
-    required int remoteUserId,
-    required Map<int, CourseKeyBundle> keysByCourse,
-    required SessionUploadChapterSnapshot chapterSnapshot,
-    required int remoteCourseId,
-    required Set<int> pendingSessionIds,
-    required SyncRunStats stats,
-  }) async {
-    final cacheService = _sessionUploadCacheService;
-    if (cacheService == null) {
-      throw StateError('Session upload cache service is not configured.');
-    }
-    final preparedUploads = <_PreparedSessionUpload>[];
-    final batchEntries = <SessionUploadEntry>[];
-    var resolvedKeys = keysByCourse[remoteCourseId];
-    for (final member in chapterSnapshot.members) {
-      if (!pendingSessionIds.contains(member.sessionId)) {
-        continue;
-      }
-      final syncState = await _secureStorage.readSyncItemState(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainSessionUpload,
-        scopeKey: member.syncId,
-      );
-      final downloadedState = await _secureStorage.readSyncItemState(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainSessionDownload,
-        scopeKey: member.syncId,
-      );
-      if (downloadedState != null &&
-          downloadedState.lastChangedAt.toUtc().isAfter(member.syncUpdatedAt)) {
-        continue;
-      }
-      if (!_isTimestampNewer(member.syncUpdatedAt, syncState?.lastSyncedAt)) {
-        await _markSessionUploaded(
-          sessionId: member.sessionId,
-          uploadedAt: member.syncUpdatedAt,
-        );
-        continue;
-      }
-      var snapshot = await cacheService.readSession(
-        sessionId: member.sessionId,
-        syncUpdatedAt: member.syncUpdatedAt,
-      );
-      if (snapshot == null) {
-        final existingSession = await _db.getSession(member.sessionId);
-        if (existingSession == null) {
-          continue;
-        }
-        await cacheService.captureSession(member.sessionId);
-        snapshot = await cacheService.readSession(
-          sessionId: member.sessionId,
-          syncUpdatedAt: member.syncUpdatedAt,
-        );
-      }
-      if (snapshot == null) {
-        throw StateError(
-          'Session upload cache is missing for session ${member.sessionId}.',
-        );
-      }
-      resolvedKeys ??= await _api.getCourseKeys(
-        courseId: remoteCourseId,
-        studentUserId: remoteUserId,
-      );
-      keysByCourse[remoteCourseId] = resolvedKeys;
-      final payload = _buildPayloadFromCache(
-        snapshot: snapshot,
-        remoteCourseId: remoteCourseId,
-        teacherUserId: resolvedKeys.teacherUserId,
-        studentUserId: resolvedKeys.studentUserId,
-        studentUsername: currentUser.username,
-      );
-      final payloadHash = _hashCanonicalJson(payload);
-      if (syncState != null && syncState.contentHash == payloadHash) {
-        await _markSessionUploaded(
-          sessionId: member.sessionId,
-          uploadedAt: member.syncUpdatedAt,
-        );
-        await _secureStorage.writeSyncItemState(
-          remoteUserId: remoteUserId,
-          domain: _syncDomainSessionUpload,
-          scopeKey: member.syncId,
-          contentHash: payloadHash,
-          lastChangedAt: member.syncUpdatedAt,
-          lastSyncedAt: member.syncUpdatedAt,
-        );
-        continue;
-      }
-      final envelope = await _crypto.encryptPayload(
-        payload: payload,
-        recipients: [
-          RecipientPublicKey(
-            userId: resolvedKeys.teacherUserId,
-            publicKey: _crypto.decodePublicKey(resolvedKeys.teacherPublicKey),
-          ),
-          RecipientPublicKey(
-            userId: resolvedKeys.studentUserId,
-            publicKey: _crypto.decodePublicKey(resolvedKeys.studentPublicKey),
-          ),
-        ],
-      );
-      final envelopeJson = jsonEncode(envelope.toJson());
-      final envelopeBase64 = base64Encode(utf8.encode(envelopeJson));
-      final envelopeHash = _hashEnvelope(envelopeJson);
-      batchEntries.add(
-        SessionUploadEntry(
-          sessionSyncId: payload['session_sync_id'] as String,
-          courseId: remoteCourseId,
-          studentUserId: resolvedKeys.studentUserId,
-          chapterKey: chapterSnapshot.chapterKey,
-          updatedAt: (payload['updated_at'] as String?) ??
-              DateTime.now().toUtc().toIso8601String(),
-          envelope: envelopeBase64,
-          envelopeHash: envelopeHash,
-        ),
-      );
-      preparedUploads.add(
-        _PreparedSessionUpload(
-          sessionId: member.sessionId,
-          syncUpdatedAt: member.syncUpdatedAt,
-          syncStateWrite: _SyncStateWrite(
-            domain: _syncDomainSessionUpload,
-            scopeKey: member.syncId,
-            contentHash: payloadHash,
-            lastChangedAt: member.syncUpdatedAt,
-            lastSyncedAt: member.syncUpdatedAt,
-          ),
-        ),
-      );
-    }
-    if (batchEntries.isEmpty) {
-      return;
-    }
-    try {
-      await _api.uploadSessionBatch(batchEntries);
-    } on SessionSyncApiException catch (error) {
-      if (error.statusCode != 404) {
-        rethrow;
-      }
-      for (final entry in batchEntries) {
-        await _api.uploadSession(
-          sessionSyncId: entry.sessionSyncId,
-          courseId: entry.courseId,
-          studentUserId: entry.studentUserId,
-          chapterKey: entry.chapterKey,
-          updatedAt: entry.updatedAt,
-          envelope: entry.envelope,
-          envelopeHash: entry.envelopeHash,
-        );
-      }
-    }
-    stats.addUploaded(
-      count: batchEntries.length,
-      bytes: batchEntries.fold<int>(
-        0,
-        (total, entry) => total + _sessionUploadSize(entry),
-      ),
-    );
-    for (final entry in batchEntries) {
-      await _mirrorSessionUploadToDownloadState(
-        remoteUserId: remoteUserId,
-        entry: entry,
-      );
-    }
-    for (final prepared in preparedUploads) {
-      await _markSessionUploaded(
-        sessionId: prepared.sessionId,
-        uploadedAt: prepared.syncUpdatedAt,
-      );
-      final syncStateWrite = prepared.syncStateWrite;
-      await _secureStorage.writeSyncItemState(
-        remoteUserId: remoteUserId,
-        domain: syncStateWrite.domain,
-        scopeKey: syncStateWrite.scopeKey,
-        contentHash: syncStateWrite.contentHash,
-        lastChangedAt: syncStateWrite.lastChangedAt,
-        lastSyncedAt: syncStateWrite.lastSyncedAt,
-      );
-    }
-  }
-
-  Future<void> _uploadSessionGroupLegacy({
-    required User currentUser,
-    required int remoteUserId,
-    required Map<int, CourseKeyBundle> keysByCourse,
-    required List<_PendingSessionUpload> groupItems,
-    required SyncRunStats stats,
-  }) async {
-    final preparedUploads = <_PreparedSessionUpload>[];
-    final batchEntries = <SessionUploadEntry>[];
-    for (final pending in groupItems) {
-      final syncSession = pending.session;
-      final syncId = pending.syncId;
-      final syncUpdatedAt = pending.syncUpdatedAt;
-      final syncState = await _secureStorage.readSyncItemState(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainSessionUpload,
-        scopeKey: syncId,
-      );
-      final downloadedState = await _secureStorage.readSyncItemState(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainSessionDownload,
-        scopeKey: syncId,
-      );
-      if (downloadedState != null &&
-          downloadedState.lastChangedAt.toUtc().isAfter(syncUpdatedAt)) {
-        continue;
-      }
-      if (!_isTimestampNewer(syncUpdatedAt, syncState?.lastSyncedAt)) {
-        await _markSessionUploaded(
-          sessionId: syncSession.id,
-          uploadedAt: syncUpdatedAt,
-        );
-        continue;
-      }
-      final remoteCourseId = pending.remoteCourseId;
-      var resolvedKeys = keysByCourse[remoteCourseId];
-      resolvedKeys ??= await _api.getCourseKeys(
-        courseId: remoteCourseId,
-        studentUserId: remoteUserId,
-      );
-      keysByCourse[remoteCourseId] = resolvedKeys;
-      final payload = await _prepareSessionUploadPayload(
-        currentUser: currentUser,
-        syncSession: syncSession,
-        remoteCourseId: remoteCourseId,
-        resolvedKeys: resolvedKeys,
-        syncUpdatedAt: syncUpdatedAt,
-      );
-      final payloadHash = _hashCanonicalJson(payload);
-      if (syncState != null && syncState.contentHash == payloadHash) {
-        await _markSessionUploaded(
-          sessionId: syncSession.id,
-          uploadedAt: syncUpdatedAt,
-        );
-        await _secureStorage.writeSyncItemState(
-          remoteUserId: remoteUserId,
-          domain: _syncDomainSessionUpload,
-          scopeKey: syncId,
-          contentHash: payloadHash,
-          lastChangedAt: syncUpdatedAt,
-          lastSyncedAt: syncUpdatedAt,
-        );
-        continue;
-      }
-      final envelope = await _crypto.encryptPayload(
-        payload: payload,
-        recipients: [
-          RecipientPublicKey(
-            userId: resolvedKeys.teacherUserId,
-            publicKey: _crypto.decodePublicKey(resolvedKeys.teacherPublicKey),
-          ),
-          RecipientPublicKey(
-            userId: resolvedKeys.studentUserId,
-            publicKey: _crypto.decodePublicKey(resolvedKeys.studentPublicKey),
-          ),
-        ],
-      );
-      final envelopeJson = jsonEncode(envelope.toJson());
-      final envelopeBase64 = base64Encode(utf8.encode(envelopeJson));
-      final envelopeHash = _hashEnvelope(envelopeJson);
-      batchEntries.add(
-        SessionUploadEntry(
-          sessionSyncId: payload['session_sync_id'] as String,
-          courseId: remoteCourseId,
-          studentUserId: resolvedKeys.studentUserId,
-          chapterKey: _extractSecondLevelChapter(syncSession.kpKey),
-          updatedAt: (payload['updated_at'] as String?) ??
-              DateTime.now().toUtc().toIso8601String(),
-          envelope: envelopeBase64,
-          envelopeHash: envelopeHash,
-        ),
-      );
-      preparedUploads.add(
-        _PreparedSessionUpload(
-          sessionId: syncSession.id,
-          syncUpdatedAt: syncUpdatedAt,
-          syncStateWrite: _SyncStateWrite(
-            domain: _syncDomainSessionUpload,
-            scopeKey: syncId,
-            contentHash: payloadHash,
-            lastChangedAt: syncUpdatedAt,
-            lastSyncedAt: syncUpdatedAt,
-          ),
-        ),
-      );
-    }
-    if (batchEntries.isEmpty) {
-      return;
-    }
-    try {
-      await _api.uploadSessionBatch(batchEntries);
-    } on SessionSyncApiException catch (error) {
-      if (error.statusCode != 404) {
-        rethrow;
-      }
-      for (final entry in batchEntries) {
-        await _api.uploadSession(
-          sessionSyncId: entry.sessionSyncId,
-          courseId: entry.courseId,
-          studentUserId: entry.studentUserId,
-          chapterKey: entry.chapterKey,
-          updatedAt: entry.updatedAt,
-          envelope: entry.envelope,
-          envelopeHash: entry.envelopeHash,
-        );
-      }
-    }
-    stats.addUploaded(
-      count: batchEntries.length,
-      bytes: batchEntries.fold<int>(
-        0,
-        (total, entry) => total + _sessionUploadSize(entry),
-      ),
-    );
-    for (final entry in batchEntries) {
-      await _mirrorSessionUploadToDownloadState(
-        remoteUserId: remoteUserId,
-        entry: entry,
-      );
-    }
-    for (final prepared in preparedUploads) {
-      await _markSessionUploaded(
-        sessionId: prepared.sessionId,
-        uploadedAt: prepared.syncUpdatedAt,
-      );
-      final syncStateWrite = prepared.syncStateWrite;
-      await _secureStorage.writeSyncItemState(
-        remoteUserId: remoteUserId,
-        domain: syncStateWrite.domain,
-        scopeKey: syncStateWrite.scopeKey,
-        contentHash: syncStateWrite.contentHash,
-        lastChangedAt: syncStateWrite.lastChangedAt,
-        lastSyncedAt: syncStateWrite.lastSyncedAt,
-      );
-    }
-  }
-
-  Future<void> _downloadRemoteData(
-      User currentUser, int remoteUserId, SimpleKeyPair keyPair,
-      {required SyncRunStats stats}) async {
-    final includeProgress =
-        currentUser.role == 'student' || currentUser.role == 'teacher';
-    final manifestScopeKey = _downloadManifestScopeKey(currentUser);
-    final manifestEtag = await _secureStorage.readSyncListEtag(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainDownloadManifest,
-      scopeKey: manifestScopeKey,
-    );
-    final manifest = await _api.getDownloadManifest(
-      includeProgress: includeProgress,
-      ifNoneMatch: manifestEtag,
-    );
-    await _writeSyncListEtag(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainDownloadManifest,
-      scopeKey: manifestScopeKey,
-      etag: manifest.etag,
-    );
-    if (manifest.notModified) {
-      return;
-    }
-
-    final localProgressUpdatedAtByRemoteScope =
-        includeProgress && currentUser.role == 'student'
-            ? _scopeProgressUpdatedAtByStudentRemoteId(
-                await _db.getProgressUpdatedAtByRemoteCourseAndKp(
-                  studentId: currentUser.id,
-                ),
-                currentUser.remoteUserId ?? remoteUserId,
-              )
-            : <String, DateTime>{};
-    final sessionFetchIds = <String>[];
-    final progressChunkFetchKeys = <ProgressChunkFetchKey>[];
-    final progressRowFetchKeys = <ProgressRowFetchKey>[];
-
-    for (final item in manifest.sessions) {
-      if (await _shouldFetchSessionManifestItem(
-        remoteUserId: remoteUserId,
-        item: item,
-      )) {
-        sessionFetchIds.add(item.sessionSyncId.trim());
-      }
-    }
-    if (includeProgress) {
-      for (final item in manifest.progressChunks) {
-        if (await _shouldFetchProgressChunkManifestItem(
-          remoteUserId: remoteUserId,
-          item: item,
-        )) {
-          progressChunkFetchKeys.add(
-            ProgressChunkFetchKey(
-              studentUserId: item.studentUserId,
-              courseId: item.courseId,
-              chapterKey: item.chapterKey.trim(),
-            ),
-          );
-        }
-      }
-      for (final item in manifest.progressRows) {
-        if (await _shouldFetchProgressRowManifestItem(
-          remoteUserId: remoteUserId,
-          item: item,
-          localProgressUpdatedAtByRemoteScope:
-              localProgressUpdatedAtByRemoteScope,
-        )) {
-          progressRowFetchKeys.add(
-            ProgressRowFetchKey(
-              studentUserId: item.studentUserId,
-              courseId: item.courseId,
-              kpKey: item.kpKey.trim(),
-            ),
-          );
-        }
-      }
-    }
-
-    if (sessionFetchIds.isEmpty &&
-        progressChunkFetchKeys.isEmpty &&
-        progressRowFetchKeys.isEmpty) {
-      return;
-    }
-
-    final payload = await _api.fetchDownloadPayload(
-      request: SyncDownloadFetchRequest(
-        sessionSyncIds: sessionFetchIds,
-        progressChunks: progressChunkFetchKeys,
-        progressRows: progressRowFetchKeys,
-      ),
-    );
-    stats.addDownloaded(
-      count: payload.sessions.length +
-          payload.progressChunks.length +
-          payload.progressRows.length,
-      bytes: payload.sessions.fold<int>(
-            0,
-            (total, item) => total + _sessionDownloadSize(item),
-          ) +
-          payload.progressChunks.fold<int>(
-            0,
-            (total, item) => total + _progressChunkDownloadSize(item),
-          ) +
-          payload.progressRows.fold<int>(
-            0,
-            (total, item) => total + _progressDownloadSize(item),
-          ),
-    );
-
-    for (final item in payload.sessions) {
-      await _applyDownloadedSessionItem(
-        currentUser: currentUser,
-        remoteUserId: remoteUserId,
-        keyPair: keyPair,
-        item: item,
-      );
-    }
-    for (final chunkItem in payload.progressChunks) {
-      final progressItems = await _resolveProgressChunkItems(
-        chunkItem: chunkItem,
-        remoteUserId: remoteUserId,
-        keyPair: keyPair,
-      );
-      for (final progressItem in progressItems) {
-        await _applyDownloadedProgressItem(
-          currentUser: currentUser,
-          remoteUserId: remoteUserId,
-          keyPair: keyPair,
-          item: progressItem,
-          localProgressUpdatedAtByRemoteScope:
-              localProgressUpdatedAtByRemoteScope,
-        );
-      }
-      final chunkScopeKey = _progressChunkDownloadScopeKey(
-        studentRemoteId: chunkItem.studentUserId,
-        courseId: chunkItem.courseId,
-        chapterKey: chunkItem.chapterKey,
-      );
-      final itemUpdatedAt = DateTime.tryParse(chunkItem.updatedAt)?.toUtc() ??
-          DateTime.now().toUtc();
-      final resolvedChunkHash = _resolveSyncHash(
-        primaryHash: chunkItem.envelopeHash,
-        fallbackValue: chunkItem.envelope,
-      );
-      await _secureStorage.writeSyncItemState(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainProgressChunkDownload,
-        scopeKey: chunkScopeKey,
-        contentHash: resolvedChunkHash,
-        lastChangedAt: itemUpdatedAt,
-        lastSyncedAt: itemUpdatedAt,
-      );
-    }
-    for (final item in payload.progressRows) {
-      await _applyDownloadedProgressItem(
-        currentUser: currentUser,
-        remoteUserId: remoteUserId,
-        keyPair: keyPair,
-        item: item,
-        localProgressUpdatedAtByRemoteScope:
-            localProgressUpdatedAtByRemoteScope,
-      );
-    }
-  }
-
-  Future<bool> _shouldFetchSessionManifestItem({
-    required int remoteUserId,
-    required SessionSyncManifestItem item,
-  }) async {
-    final sessionSyncId = item.sessionSyncId.trim();
-    if (sessionSyncId.isEmpty) {
-      return false;
-    }
-    final itemUpdatedAt =
-        DateTime.tryParse(item.updatedAt)?.toUtc() ?? DateTime.now().toUtc();
-    final syncState = await _secureStorage.readSyncItemState(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainSessionDownload,
-      scopeKey: sessionSyncId,
-    );
-    final remoteHash = _resolveSyncHash(
-      primaryHash: item.envelopeHash,
-      fallbackValue: sessionSyncId,
-    );
-    if (syncState != null &&
-        !_isTimestampNewer(itemUpdatedAt, syncState.lastChangedAt) &&
-        (remoteHash.isEmpty || syncState.contentHash == remoteHash)) {
-      return false;
-    }
-    if (syncState != null &&
-        remoteHash.isNotEmpty &&
-        syncState.contentHash == remoteHash &&
-        !itemUpdatedAt.isAfter(syncState.lastChangedAt.toUtc())) {
-      return false;
-    }
-    final existingLocalSession = await (_db.select(_db.chatSessions)
-          ..where((tbl) => tbl.syncId.equals(sessionSyncId))
-          ..limit(1))
-        .getSingleOrNull();
-    if (existingLocalSession != null) {
-      final localUpdatedAt =
-          (existingLocalSession.syncUpdatedAt ?? existingLocalSession.startedAt)
-              .toUtc();
-      if (localUpdatedAt.isAfter(itemUpdatedAt)) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  Future<bool> _shouldFetchProgressChunkManifestItem({
-    required int remoteUserId,
-    required ProgressSyncChunkManifestItem item,
-  }) async {
-    final scopeKey = _progressChunkDownloadScopeKey(
-      studentRemoteId: item.studentUserId,
-      courseId: item.courseId,
-      chapterKey: item.chapterKey,
-    );
-    final itemUpdatedAt =
-        DateTime.tryParse(item.updatedAt)?.toUtc() ?? DateTime.now().toUtc();
-    final syncState = await _secureStorage.readSyncItemState(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainProgressChunkDownload,
-      scopeKey: scopeKey,
-    );
-    final remoteHash = _resolveSyncHash(
-      primaryHash: item.envelopeHash,
-      fallbackValue: scopeKey,
-    );
-    if (syncState != null &&
-        remoteHash.isNotEmpty &&
-        syncState.contentHash == remoteHash &&
-        !itemUpdatedAt.isAfter(syncState.lastChangedAt.toUtc())) {
-      return false;
-    }
-    return true;
-  }
-
-  Future<bool> _shouldFetchProgressRowManifestItem({
-    required int remoteUserId,
-    required ProgressSyncManifestItem item,
-    required Map<String, DateTime> localProgressUpdatedAtByRemoteScope,
-  }) async {
-    final kpKey = item.kpKey.trim();
-    if (item.courseId <= 0 || kpKey.isEmpty) {
-      return false;
-    }
-    final scopeKey = _progressDownloadScopeKey(
-      studentRemoteId: item.studentUserId,
-      courseId: item.courseId,
-      kpKey: kpKey,
-    );
-    final itemUpdatedAt =
-        DateTime.tryParse(item.updatedAt)?.toUtc() ?? DateTime.now().toUtc();
-    final indexedLocalUpdatedAt = localProgressUpdatedAtByRemoteScope[scopeKey];
-    if (indexedLocalUpdatedAt != null &&
-        !itemUpdatedAt.isAfter(indexedLocalUpdatedAt.toUtc())) {
-      return false;
-    }
-    final syncState = await _secureStorage.readSyncItemState(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainProgressDownload,
-      scopeKey: scopeKey,
-    );
-    final remoteHash = _resolveSyncHash(
-      primaryHash: item.envelopeHash,
-      fallbackValue: scopeKey,
-    );
-    if (syncState != null &&
-        remoteHash.isNotEmpty &&
-        syncState.contentHash == remoteHash &&
-        !itemUpdatedAt.isAfter(syncState.lastChangedAt.toUtc())) {
-      return false;
-    }
-    return true;
-  }
-
-  Future<void> _applyDownloadedSessionItem({
-    required User currentUser,
-    required int remoteUserId,
-    required SimpleKeyPair keyPair,
-    required SessionSyncItem item,
-  }) async {
-    final itemUpdatedAt =
-        DateTime.tryParse(item.updatedAt)?.toUtc() ?? DateTime.now().toUtc();
-    final sessionSyncId = item.sessionSyncId.trim();
-    if (sessionSyncId.isEmpty) {
-      return;
-    }
-    final remoteHash = _resolveSyncHash(
-      primaryHash: item.envelopeHash,
-      fallbackValue: item.envelope,
-    );
-    final payload = await _decryptItem(item, remoteUserId, keyPair);
-    await _importPayload(
-      currentUser,
-      payload,
-      teacherRemoteIdHint: item.teacherUserId,
-    );
-    final updatedAt =
-        DateTime.tryParse(payload['updated_at'] as String? ?? '')?.toUtc() ??
-            itemUpdatedAt;
-    final resolvedHash =
-        remoteHash.isNotEmpty ? remoteHash : _hashCanonicalJson(payload);
-    await _secureStorage.writeSyncItemState(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainSessionDownload,
-      scopeKey: sessionSyncId,
-      contentHash: resolvedHash,
-      lastChangedAt: updatedAt,
-      lastSyncedAt: updatedAt,
-    );
-  }
-
-  String _downloadManifestScopeKey(User currentUser) {
-    return currentUser.role == 'student' ? 'student' : 'teacher';
-  }
-
-  Future<void> _applyDownloadedProgressItem({
-    required User currentUser,
-    required int remoteUserId,
-    required SimpleKeyPair keyPair,
-    required ProgressSyncItem item,
-    required Map<String, DateTime> localProgressUpdatedAtByRemoteScope,
-  }) async {
-    final itemUpdatedAt =
-        DateTime.tryParse(item.updatedAt)?.toUtc() ?? DateTime.now().toUtc();
-    final kpKey = item.kpKey.trim();
-    if (item.courseId <= 0 || kpKey.isEmpty) {
-      return;
-    }
-    final scopeKey = _progressDownloadScopeKey(
-      studentRemoteId: item.studentUserId,
-      courseId: item.courseId,
-      kpKey: kpKey,
-    );
-    final indexedLocalUpdatedAt = localProgressUpdatedAtByRemoteScope[scopeKey];
-    if (indexedLocalUpdatedAt != null &&
-        !itemUpdatedAt.isAfter(indexedLocalUpdatedAt.toUtc())) {
-      return;
-    }
-    final syncState = await _secureStorage.readSyncItemState(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainProgressDownload,
-      scopeKey: scopeKey,
-    );
-    if (!_isTimestampNewer(itemUpdatedAt, syncState?.lastChangedAt)) {
-      return;
-    }
-    final fallbackHash = _hashProgressSyncItem(item);
-    final remoteHash = _resolveSyncHash(
-      primaryHash: item.envelopeHash,
-      fallbackValue:
-          item.envelope.trim().isNotEmpty ? item.envelope : fallbackHash,
-    );
-    if (syncState != null &&
-        remoteHash.isNotEmpty &&
-        syncState.contentHash == remoteHash) {
-      await _secureStorage.writeSyncItemState(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainProgressDownload,
-        scopeKey: scopeKey,
-        contentHash: remoteHash,
-        lastChangedAt: itemUpdatedAt,
-        lastSyncedAt: itemUpdatedAt,
-      );
-      return;
-    }
-    final resolved = await _resolveProgressPayload(
-      item: item,
-      remoteUserId: remoteUserId,
-      keyPair: keyPair,
-    );
-    final localTeacherId = await _resolveLocalTeacherId(
-      currentUser: currentUser,
-      teacherRemoteId: item.teacherUserId,
-    );
-    var courseVersionId = await _db.getCourseVersionIdForRemoteCourse(
-      resolved.courseId,
-    );
-    var shouldBindRemoteCourseLink = courseVersionId != null;
-    if (courseVersionId == null && localTeacherId != null) {
-      courseVersionId = await _findLocalCourseVersionBySubject(
-        teacherId: localTeacherId,
-        subject: resolved.courseSubject,
-      );
-    }
-    if (courseVersionId == null && currentUser.role == 'student') {
-      courseVersionId = await _findAssignedCourseVersionBySubject(
-        studentId: currentUser.id,
-        subject: resolved.courseSubject,
-      );
-    }
-    if (courseVersionId == null) {
-      courseVersionId = await _db.createCourseVersion(
-        teacherId: localTeacherId ?? currentUser.id,
-        subject: resolved.courseSubject.trim().isEmpty
-            ? 'Course'
-            : resolved.courseSubject.trim(),
-        granularity: 1,
-        textbookText: '',
-        sourcePath: null,
-      );
-      shouldBindRemoteCourseLink = true;
-    }
-    if (localTeacherId != null) {
-      await _ensureCourseTeacher(
-        courseVersionId: courseVersionId,
-        expectedTeacherId: localTeacherId,
-      );
-    }
-    if (shouldBindRemoteCourseLink) {
-      await _bindRemoteCourseLinkIfNeeded(
-        courseVersionId: courseVersionId,
-        remoteCourseId: resolved.courseId,
-      );
-    }
-    final localStudentId = await _resolveLocalStudentId(
-      currentUser: currentUser,
-      studentRemoteId: item.studentUserId,
-      studentUsername: null,
-    );
-    await _db.assignStudent(
-      studentId: localStudentId,
-      courseVersionId: courseVersionId,
-    );
-    final updatedAt =
-        DateTime.tryParse(resolved.updatedAt)?.toUtc() ?? itemUpdatedAt;
-    final existingLocalProgress = await _db.getProgress(
-      studentId: localStudentId,
-      courseVersionId: courseVersionId,
-      kpKey: resolved.kpKey,
-    );
-    if (existingLocalProgress != null &&
-        existingLocalProgress.updatedAt.toUtc().isAfter(updatedAt)) {
-      final resolvedHash =
-          remoteHash.isNotEmpty ? remoteHash : _hashResolvedProgress(resolved);
-      await _secureStorage.writeSyncItemState(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainProgressDownload,
-        scopeKey: scopeKey,
-        contentHash: resolvedHash,
-        lastChangedAt: itemUpdatedAt,
-        lastSyncedAt: itemUpdatedAt,
-      );
-      localProgressUpdatedAtByRemoteScope[scopeKey] =
-          existingLocalProgress.updatedAt.toUtc();
-      return;
-    }
-    await _db.upsertProgressFromSync(
-      studentId: localStudentId,
-      courseVersionId: courseVersionId,
-      kpKey: resolved.kpKey,
-      lit: resolved.lit,
-      litPercent: resolved.litPercent,
-      easyPassedCount: resolved.easyPassedCount,
-      mediumPassedCount: resolved.mediumPassedCount,
-      hardPassedCount: resolved.hardPassedCount,
-      questionLevel:
-          resolved.questionLevel.isEmpty ? null : resolved.questionLevel,
-      summaryText: resolved.summaryText.isEmpty ? null : resolved.summaryText,
-      summaryRawResponse: resolved.summaryRawResponse.isEmpty
-          ? null
-          : resolved.summaryRawResponse,
-      summaryValid: resolved.summaryValid,
-      updatedAt: updatedAt,
-    );
-    final updatedAtUtc = updatedAt.toUtc();
-    final resolvedHash =
-        remoteHash.isNotEmpty ? remoteHash : _hashResolvedProgress(resolved);
-    await _secureStorage.writeSyncItemState(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainProgressDownload,
-      scopeKey: scopeKey,
-      contentHash: resolvedHash,
-      lastChangedAt: updatedAtUtc,
-      lastSyncedAt: updatedAtUtc,
-    );
-    localProgressUpdatedAtByRemoteScope[scopeKey] = updatedAtUtc;
-  }
-
-  Future<List<ProgressSyncItem>> _resolveProgressChunkItems({
-    required ProgressSyncChunkItem chunkItem,
-    required int remoteUserId,
-    required SimpleKeyPair keyPair,
-  }) async {
-    if (chunkItem.envelope.trim().isEmpty) {
-      throw StateError('Progress chunk sync envelope missing.');
-    }
-    final envelopeJson = utf8.decode(base64Decode(chunkItem.envelope));
-    if (chunkItem.envelopeHash.trim().isNotEmpty) {
-      final computed = _hashEnvelope(envelopeJson);
-      if (computed != chunkItem.envelopeHash.trim()) {
-        throw StateError('Progress chunk sync envelope hash mismatch.');
-      }
-    }
-    final decoded = jsonDecode(envelopeJson);
-    if (decoded is! Map<String, dynamic>) {
-      throw StateError('Progress chunk sync envelope invalid.');
-    }
-    final envelope = EncryptedEnvelope.fromJson(decoded);
-    final payload = await _crypto.decryptEnvelope(
-      envelope: envelope,
-      userKeyPair: keyPair,
-      userId: remoteUserId,
-    );
-
-    final payloadStudentID = _parsePayloadInt(
-      payload['student_remote_user_id'],
-      field: 'student_remote_user_id',
-    );
-    if (payloadStudentID != chunkItem.studentUserId) {
-      throw StateError('Progress chunk payload student mismatch.');
-    }
-    final payloadCourseID = _parsePayloadInt(
-      payload['course_id'],
-      field: 'course_id',
-    );
-    if (payloadCourseID != chunkItem.courseId) {
-      throw StateError('Progress chunk payload course mismatch.');
-    }
-    final payloadTeacherID = _parsePayloadInt(
-      payload['teacher_remote_user_id'],
-      field: 'teacher_remote_user_id',
-    );
-    final payloadCourseSubject = _parsePayloadString(
-      payload['course_subject'],
-      field: 'course_subject',
-      isRequired: false,
-    ).trim();
-    final itemList = payload['items'];
-    if (itemList is! List) {
-      throw StateError('Progress chunk payload items invalid.');
-    }
-    final results = <ProgressSyncItem>[];
-    for (final rawItem in itemList) {
-      if (rawItem is! Map<String, dynamic>) {
-        continue;
-      }
-      final kpKey =
-          _parsePayloadString(rawItem['kp_key'], field: 'kp_key').trim();
-      if (kpKey.isEmpty) {
-        continue;
-      }
-      final updatedAt = _parsePayloadString(
-        rawItem['updated_at'],
-        field: 'updated_at',
-      );
-      final litPercentRaw = _parsePayloadInt(
-        rawItem['lit_percent'],
-        field: 'lit_percent',
-      );
-      final easyPassedCount = _parsePayloadOptionalInt(
-        rawItem['easy_passed_count'],
-        field: 'easy_passed_count',
-      );
-      final mediumPassedCount = _parsePayloadOptionalInt(
-        rawItem['medium_passed_count'],
-        field: 'medium_passed_count',
-      );
-      final hardPassedCount = _parsePayloadOptionalInt(
-        rawItem['hard_passed_count'],
-        field: 'hard_passed_count',
-      );
-      results.add(
-        ProgressSyncItem(
-          cursorId: 0,
-          courseId: payloadCourseID,
-          courseSubject: payloadCourseSubject.isNotEmpty
-              ? payloadCourseSubject
-              : chunkItem.courseSubject,
-          teacherUserId: payloadTeacherID,
-          studentUserId: payloadStudentID,
-          kpKey: kpKey,
-          lit: _parsePayloadBool(rawItem['lit'], field: 'lit'),
-          litPercent: litPercentRaw.clamp(0, 100).toInt(),
-          questionLevel: _parsePayloadString(
-            rawItem['question_level'],
-            field: 'question_level',
-            isRequired: false,
-          ),
-          easyPassedCount: easyPassedCount < 0 ? 0 : easyPassedCount,
-          mediumPassedCount: mediumPassedCount < 0 ? 0 : mediumPassedCount,
-          hardPassedCount: hardPassedCount < 0 ? 0 : hardPassedCount,
-          summaryText: _parsePayloadString(
-            rawItem['summary_text'],
-            field: 'summary_text',
-            isRequired: false,
-          ),
-          summaryRawResponse: _parsePayloadString(
-            rawItem['summary_raw_response'],
-            field: 'summary_raw_response',
-            isRequired: false,
-          ),
-          summaryValid: _parsePayloadNullableBool(
-            rawItem['summary_valid'],
-            field: 'summary_valid',
-          ),
-          updatedAt: updatedAt,
-          envelope: '',
-          envelopeHash: '',
-        ),
-      );
-    }
-    return results;
-  }
-
-  Future<Map<String, dynamic>> _decryptItem(
-    SessionSyncItem item,
-    int remoteUserId,
-    SimpleKeyPair keyPair,
-  ) async {
-    if (item.envelope.trim().isEmpty) {
-      throw StateError('Session sync envelope missing.');
-    }
-    final envelopeJson = utf8.decode(base64Decode(item.envelope));
-    if (item.envelopeHash.trim().isNotEmpty) {
-      final computed = _hashEnvelope(envelopeJson);
-      if (computed != item.envelopeHash.trim()) {
-        throw StateError('Session sync envelope hash mismatch.');
-      }
-    }
-    final decoded = jsonDecode(envelopeJson);
-    if (decoded is! Map<String, dynamic>) {
-      throw StateError('Session sync envelope invalid.');
-    }
-    final envelope = EncryptedEnvelope.fromJson(decoded);
-    return _crypto.decryptEnvelope(
-      envelope: envelope,
-      userKeyPair: keyPair,
-      userId: remoteUserId,
-    );
-  }
-
-  Future<void> _importPayload(
-    User currentUser,
-    Map<String, dynamic> payload, {
-    required int teacherRemoteIdHint,
-  }) async {
-    final sessionSyncId = (payload['session_sync_id'] as String?) ?? '';
-    if (sessionSyncId.trim().isEmpty) {
-      throw StateError('Session sync id missing.');
-    }
-    final courseId = (payload['course_id'] as num?)?.toInt() ?? 0;
-    final studentRemoteId =
-        (payload['student_remote_user_id'] as num?)?.toInt() ?? 0;
-    final teacherRemoteId =
-        (payload['teacher_remote_user_id'] as num?)?.toInt() ??
-            teacherRemoteIdHint;
-    final studentUsername = (payload['student_username'] as String?)?.trim();
-    final courseSubject = (payload['course_subject'] as String?)?.trim() ?? '';
-    final kpKey = (payload['kp_key'] as String?)?.trim() ?? '';
-    final kpTitle = (payload['kp_title'] as String?)?.trim();
-    final title = (payload['session_title'] as String?)?.trim();
-    final summary = (payload['summary_text'] as String?)?.trim();
-    final startedAt = DateTime.tryParse(payload['started_at'] as String? ?? '');
-    final endedAt = DateTime.tryParse(payload['ended_at'] as String? ?? '');
-    final updatedAt =
-        DateTime.tryParse(payload['updated_at'] as String? ?? '') ??
-            DateTime.now();
-    final messages = _parseMessages(payload['messages']);
-    if (courseId <= 0 || studentRemoteId <= 0) {
-      throw StateError('Session payload missing course or student id.');
-    }
-
-    final localStudentId = await _resolveLocalStudentId(
-      currentUser: currentUser,
-      studentRemoteId: studentRemoteId,
-      studentUsername: studentUsername,
-    );
-    final localTeacherId = await _resolveLocalTeacherId(
-      currentUser: currentUser,
-      teacherRemoteId: teacherRemoteId,
-    );
-
-    var courseVersionId = await _db.getCourseVersionIdForRemoteCourse(courseId);
-    var shouldBindRemoteCourseLink = courseVersionId != null;
-    if (courseVersionId == null && localTeacherId != null) {
-      courseVersionId = await _findLocalCourseVersionBySubject(
-        teacherId: localTeacherId,
-        subject: courseSubject,
-      );
-    }
-    if (courseVersionId == null && currentUser.role == 'student') {
-      courseVersionId = await _findAssignedCourseVersionBySubject(
-        studentId: currentUser.id,
-        subject: courseSubject,
-      );
-    }
-    if (courseVersionId == null) {
-      courseVersionId = await _db.createCourseVersion(
-        teacherId: localTeacherId ?? currentUser.id,
-        subject: courseSubject.isNotEmpty ? courseSubject : 'Course',
-        granularity: 1,
-        textbookText: '',
-        sourcePath: null,
-      );
-      shouldBindRemoteCourseLink = true;
-    }
-    if (localTeacherId != null) {
-      await _ensureCourseTeacher(
-        courseVersionId: courseVersionId,
-        expectedTeacherId: localTeacherId,
-      );
-    }
-    if (shouldBindRemoteCourseLink) {
-      await _bindRemoteCourseLinkIfNeeded(
-        courseVersionId: courseVersionId,
-        remoteCourseId: courseId,
-      );
-    }
-    if (courseSubject.isNotEmpty) {
-      await _ensureCourseSubject(
-        courseVersionId: courseVersionId,
-        expectedSubject: courseSubject,
-      );
-    }
-    if (kpKey.isNotEmpty) {
-      final existingNode = await _db.getCourseNodeByKey(courseVersionId, kpKey);
-      if (existingNode == null) {
-        await _db.into(_db.courseNodes).insert(
-              CourseNodesCompanion.insert(
-                courseVersionId: courseVersionId,
-                kpKey: kpKey,
-                title: kpTitle ?? kpKey,
-                description: kpTitle ?? kpKey,
-                orderIndex: 0,
-              ),
-              mode: InsertMode.insertOrIgnore,
-            );
-      }
-    }
-
-    await _db.assignStudent(
-      studentId: localStudentId,
-      courseVersionId: courseVersionId,
-    );
-
-    final existing = await (_db.select(_db.chatSessions)
-          ..where((tbl) => tbl.syncId.equals(sessionSyncId)))
-        .getSingleOrNull();
-    if (existing != null) {
-      final localUpdatedAt =
-          (existing.syncUpdatedAt ?? existing.startedAt).toUtc();
-      if (localUpdatedAt.isAfter(updatedAt.toUtc())) {
-        return;
-      }
-    }
-    await _db.transaction(() async {
-      int sessionId;
-      if (existing == null) {
-        sessionId = await _db.into(_db.chatSessions).insert(
-              ChatSessionsCompanion.insert(
-                studentId: localStudentId,
-                courseVersionId: courseVersionId!,
-                kpKey: kpKey.isNotEmpty ? kpKey : 'session',
-                title: Value(title),
-                status: const Value('active'),
-                startedAt: Value(startedAt ?? updatedAt),
-                endedAt: Value(endedAt),
-                summaryText: Value(summary),
-                controlStateJson: Value(
-                  (payload['control_state_json'] as String?)?.trim().isEmpty ==
-                          false
-                      ? (payload['control_state_json'] as String).trim()
-                      : null,
-                ),
-                controlStateUpdatedAt: Value(
-                  DateTime.tryParse(
-                    (payload['control_state_updated_at'] as String?) ?? '',
-                  ),
-                ),
-                evidenceStateJson: Value(
-                  (payload['evidence_state_json'] as String?)?.trim().isEmpty ==
-                          false
-                      ? (payload['evidence_state_json'] as String).trim()
-                      : null,
-                ),
-                evidenceStateUpdatedAt: Value(
-                  DateTime.tryParse(
-                    (payload['evidence_state_updated_at'] as String?) ?? '',
-                  ),
-                ),
-                syncId: Value(sessionSyncId),
-                syncUpdatedAt: Value(updatedAt),
-                syncUploadedAt: Value(updatedAt),
-              ),
-            );
-      } else {
-        sessionId = existing.id;
-        await (_db.update(_db.chatSessions)
-              ..where((tbl) => tbl.id.equals(existing.id)))
-            .write(
-          ChatSessionsCompanion(
-            studentId: Value(localStudentId),
-            courseVersionId: Value(courseVersionId!),
-            kpKey: Value(kpKey.isNotEmpty ? kpKey : existing.kpKey),
-            title: Value(title),
-            startedAt: Value(startedAt ?? existing.startedAt),
-            endedAt: Value(endedAt),
-            summaryText: Value(summary),
-            controlStateJson: Value(
-              (payload['control_state_json'] as String?)?.trim().isEmpty ==
-                      false
-                  ? (payload['control_state_json'] as String).trim()
-                  : existing.controlStateJson,
-            ),
-            controlStateUpdatedAt: Value(
-              DateTime.tryParse(
-                    (payload['control_state_updated_at'] as String?) ?? '',
-                  ) ??
-                  existing.controlStateUpdatedAt,
-            ),
-            evidenceStateJson: Value(
-              (payload['evidence_state_json'] as String?)?.trim().isEmpty ==
-                      false
-                  ? (payload['evidence_state_json'] as String).trim()
-                  : existing.evidenceStateJson,
-            ),
-            evidenceStateUpdatedAt: Value(
-              DateTime.tryParse(
-                    (payload['evidence_state_updated_at'] as String?) ?? '',
-                  ) ??
-                  existing.evidenceStateUpdatedAt,
-            ),
-            syncUpdatedAt: Value(updatedAt),
-            syncUploadedAt: Value(updatedAt),
-          ),
-        );
-        await (_db.delete(_db.chatMessages)
-              ..where((tbl) => tbl.sessionId.equals(existing.id)))
-            .go();
-      }
-
-      for (final message in messages) {
-        await _db.into(_db.chatMessages).insert(
-              ChatMessagesCompanion.insert(
-                sessionId: sessionId,
-                role: message.role,
-                content: message.content,
-                rawContent: Value(message.rawContent),
-                parsedJson: Value(message.parsedJson),
-                action: Value(message.action),
-                createdAt: Value(message.createdAt),
-              ),
-            );
-      }
-
-      final existingEvidence = TutorEvidenceState.fromJsonText(
-              payload['evidence_state_json'] as String?) ??
-          TutorEvidenceState.initial();
-      final rebuiltEvidence = TutorEvidenceState.rebuildFromAssistantTurns(
-        seed: existingEvidence,
-        turns: messages.where((message) => message.role == 'assistant').map(
-              (message) => TutorEvidenceAssistantTurn(
-                actionMode: message.action ?? '',
-                parsed: _tryDecodeJsonObject(
-                    message.parsedJson ?? message.rawContent),
-              ),
-            ),
-      );
-      if (rebuiltEvidence.toJsonText() != existingEvidence.toJsonText()) {
-        await _db.updateSessionContracts(
-          sessionId: sessionId,
-          controlStateJson: (payload['control_state_json'] as String?)?.trim(),
-          controlStateUpdatedAt: DateTime.tryParse(
-            (payload['control_state_updated_at'] as String?) ?? '',
-          ),
-          evidenceStateJson: rebuiltEvidence.toJsonText(),
-          evidenceStateUpdatedAt: DateTime.now(),
-        );
-      }
-    });
-  }
-
-  Future<int> _resolveLocalStudentId({
-    required User currentUser,
-    required int studentRemoteId,
-    required String? studentUsername,
-  }) async {
-    if (currentUser.remoteUserId == studentRemoteId) {
-      return currentUser.id;
-    }
-    final existing = await _db.findUserByRemoteId(studentRemoteId);
-    if (existing != null) {
-      if (currentUser.role == 'teacher' &&
-          existing.teacherId != currentUser.id) {
-        await _db.updateStudentTeacherId(
-          studentId: existing.id,
-          teacherId: currentUser.id,
-        );
-      }
-      return existing.id;
-    }
-    final username = (studentUsername ?? '').trim();
-    final resolvedUsername =
-        username.isNotEmpty ? username : 'student_$studentRemoteId';
-    return _db.createUser(
-      username: resolvedUsername,
-      pinHash: PinHasher.hash('remote_user_placeholder'),
-      role: 'student',
-      teacherId: currentUser.role == 'teacher' ? currentUser.id : null,
-      remoteUserId: studentRemoteId,
-    );
-  }
-
-  Map<String, DateTime> _scopeProgressUpdatedAtByStudentRemoteId(
-    Map<String, DateTime> updatedAtByRemoteCourseAndKp,
-    int studentRemoteId,
+  _ArtifactIdentity _parseArtifactIdentity(
+    String artifactId,
+    Map<String, dynamic>? payload,
   ) {
-    final result = <String, DateTime>{};
-    for (final entry in updatedAtByRemoteCourseAndKp.entries) {
-      result['$studentRemoteId:${entry.key}'] = entry.value.toUtc();
+    final parts = artifactId.trim().split(':');
+    if (parts.length != 4 || parts.first != _artifactClass) {
+      throw StateError('Unsupported student artifact id: $artifactId');
     }
-    return result;
-  }
-
-  String _progressChunkDownloadScopeKey({
-    required int studentRemoteId,
-    required int courseId,
-    required String chapterKey,
-  }) {
-    final normalizedChapterKey =
-        chapterKey.trim().isEmpty ? 'ungrouped' : chapterKey.trim();
-    return '${studentRemoteId > 0 ? studentRemoteId : 0}:$courseId:$normalizedChapterKey';
-  }
-
-  String _progressDownloadScopeKey({
-    required int studentRemoteId,
-    required int courseId,
-    required String kpKey,
-  }) {
-    return '${studentRemoteId > 0 ? studentRemoteId : 0}:$courseId:${kpKey.trim()}';
-  }
-
-  Future<int?> _resolveLocalTeacherId({
-    required User currentUser,
-    required int teacherRemoteId,
-  }) async {
-    if (teacherRemoteId <= 0) {
-      return null;
+    final remoteStudentUserId = int.tryParse(parts[1]) ?? 0;
+    final remoteCourseId = int.tryParse(parts[2]) ?? 0;
+    final kpKey = parts[3].trim();
+    if (remoteStudentUserId <= 0 || remoteCourseId <= 0 || kpKey.isEmpty) {
+      throw StateError('Student artifact id is invalid: $artifactId');
     }
-    if (currentUser.remoteUserId == teacherRemoteId) {
-      if (currentUser.role != 'teacher') {
-        throw StateError('Teacher remote id maps to non-teacher current user.');
-      }
-      return currentUser.id;
-    }
-    return _remoteTeacherIdentity.resolveOrCreateLocalTeacherId(
-      db: _db,
-      remoteTeacherId: teacherRemoteId,
-    );
-  }
-
-  List<_SyncMessage> _parseMessages(Object? raw) {
-    if (raw is! List) {
-      return [];
-    }
-    final messages = <_SyncMessage>[];
-    for (final entry in raw) {
-      if (entry is! Map<String, dynamic>) {
-        continue;
-      }
-      final role = (entry['role'] as String?)?.trim();
-      final content = (entry['content'] as String?)?.trim();
-      if (role == null || role.isEmpty || content == null || content.isEmpty) {
-        continue;
-      }
-      final rawContent = (entry['raw_content'] as String?)?.trim();
-      final parsedJson = (entry['parsed_json'] as String?)?.trim();
-      final action = (entry['action'] as String?)?.trim();
-      final createdAt =
-          DateTime.tryParse(entry['created_at'] as String? ?? '') ??
-              DateTime.now();
-      messages.add(
-        _SyncMessage(
-          role: role,
-          content: content,
-          rawContent:
-              rawContent == null || rawContent.isEmpty ? null : rawContent,
-          parsedJson:
-              parsedJson == null || parsedJson.isEmpty ? null : parsedJson,
-          action: action == null || action.isEmpty ? null : action,
-          createdAt: createdAt,
-        ),
-      );
-    }
-    return messages;
-  }
-
-  Map<String, dynamic>? _tryDecodeJsonObject(String? input) {
-    final text = input?.trim() ?? '';
-    if (text.isEmpty) {
-      return null;
-    }
-    try {
-      final decoded = jsonDecode(text);
-      if (decoded is Map<String, dynamic>) {
-        return decoded;
-      }
-    } catch (_) {
-      return null;
-    }
-    return null;
-  }
-
-  Map<String, dynamic> _buildPayload({
-    required ChatSession session,
-    required CourseVersion courseVersion,
-    required CourseNode? node,
-    required List<ChatMessage> messages,
-    required int remoteCourseId,
-    required int teacherUserId,
-    required int studentUserId,
-    required String studentUsername,
-    required DateTime updatedAt,
-  }) {
-    final syncId = session.syncId ?? _uuid.v4();
-    return {
-      'version': 1,
-      'session_sync_id': syncId,
-      'course_id': remoteCourseId,
-      'course_subject': courseVersion.subject,
-      'kp_key': session.kpKey,
-      'kp_title': node?.title ?? '',
-      'session_title': session.title ?? '',
-      'started_at': session.startedAt.toUtc().toIso8601String(),
-      'ended_at': session.endedAt?.toUtc().toIso8601String(),
-      'summary_text': session.summaryText ?? '',
-      'control_state_json': session.controlStateJson ?? '',
-      'control_state_updated_at':
-          session.controlStateUpdatedAt?.toUtc().toIso8601String(),
-      'evidence_state_json': session.evidenceStateJson ?? '',
-      'evidence_state_updated_at':
-          session.evidenceStateUpdatedAt?.toUtc().toIso8601String(),
-      'student_remote_user_id': studentUserId,
-      'student_username': studentUsername,
-      'teacher_remote_user_id': teacherUserId,
-      'updated_at': updatedAt.toUtc().toIso8601String(),
-      'messages': messages
-          .map(
-            (message) => {
-              'role': message.role,
-              'content': message.content,
-              'raw_content': message.rawContent ?? '',
-              'parsed_json': message.parsedJson ?? '',
-              'action': message.action ?? '',
-              'created_at': message.createdAt.toUtc().toIso8601String(),
-            },
-          )
-          .toList(),
-    };
-  }
-
-  Future<Map<String, dynamic>> _prepareSessionUploadPayload({
-    required User currentUser,
-    required ChatSession syncSession,
-    required int remoteCourseId,
-    required CourseKeyBundle resolvedKeys,
-    required DateTime syncUpdatedAt,
-  }) async {
-    if (_sessionUploadCacheService != null) {
-      var cachedSnapshot = await _sessionUploadCacheService.readSession(
-        sessionId: syncSession.id,
-        syncUpdatedAt: syncUpdatedAt,
-      );
-      if (cachedSnapshot == null) {
-        await _sessionUploadCacheService.captureSession(syncSession.id);
-        cachedSnapshot = await _sessionUploadCacheService.readSession(
-          sessionId: syncSession.id,
-          syncUpdatedAt: syncUpdatedAt,
-        );
-      }
-      if (cachedSnapshot == null) {
+    if (payload != null) {
+      final payloadStudentId =
+          (payload['student_remote_user_id'] as num?)?.toInt() ?? 0;
+      final payloadCourseId = (payload['course_id'] as num?)?.toInt() ?? 0;
+      final payloadKpKey = (payload['kp_key'] as String?)?.trim() ?? '';
+      if (payloadStudentId != remoteStudentUserId ||
+          payloadCourseId != remoteCourseId ||
+          payloadKpKey != kpKey) {
         throw StateError(
-          'Session upload cache is missing for session ${syncSession.id}.',
+          'Student artifact payload identity mismatch for $artifactId.',
         );
       }
-      return _buildPayloadFromCache(
-        snapshot: cachedSnapshot,
-        remoteCourseId: remoteCourseId,
-        teacherUserId: resolvedKeys.teacherUserId,
-        studentUserId: resolvedKeys.studentUserId,
-        studentUsername: currentUser.username,
-      );
+      final schema = (payload['schema'] as String?)?.trim() ?? '';
+      if (schema != _artifactSchema) {
+        throw StateError('Unsupported student artifact schema: $schema');
+      }
     }
-    return _buildLiveSessionPayload(
-      session: syncSession,
+    return _ArtifactIdentity(
+      remoteStudentUserId: remoteStudentUserId,
       remoteCourseId: remoteCourseId,
-      teacherUserId: resolvedKeys.teacherUserId,
-      studentUserId: resolvedKeys.studentUserId,
-      studentUsername: currentUser.username,
-      updatedAt: syncUpdatedAt,
+      kpKey: kpKey,
     );
   }
 
-  Future<Map<String, dynamic>> _buildLiveSessionPayload({
-    required ChatSession session,
-    required int remoteCourseId,
-    required int teacherUserId,
-    required int studentUserId,
-    required String studentUsername,
-    required DateTime updatedAt,
-  }) async {
-    final courseVersion =
-        await _db.getCourseVersionById(session.courseVersionId);
-    if (courseVersion == null) {
-      throw StateError(
-        'Course version ${session.courseVersionId} is missing for session '
-        '${session.id}.',
-      );
-    }
-    final node =
-        await _db.getCourseNodeByKey(session.courseVersionId, session.kpKey);
-    final messages = await _db.getMessagesForSession(session.id);
-    return _buildPayload(
-      session: session,
-      courseVersion: courseVersion,
-      node: node,
-      messages: messages,
-      remoteCourseId: remoteCourseId,
-      teacherUserId: teacherUserId,
-      studentUserId: studentUserId,
-      studentUsername: studentUsername,
-      updatedAt: updatedAt,
-    );
-  }
-
-  Map<String, dynamic> _buildPayloadFromCache({
-    required SessionUploadCacheSnapshot snapshot,
-    required int remoteCourseId,
-    required int teacherUserId,
-    required int studentUserId,
-    required String studentUsername,
-  }) {
-    return {
-      'version': 1,
-      'session_sync_id': snapshot.syncId,
-      'course_id': remoteCourseId,
-      'course_subject': snapshot.courseSubject,
-      'kp_key': snapshot.kpKey,
-      'kp_title': snapshot.kpTitle,
-      'session_title': snapshot.sessionTitle,
-      'started_at': snapshot.startedAt.toUtc().toIso8601String(),
-      'ended_at': snapshot.endedAt?.toUtc().toIso8601String(),
-      'summary_text': snapshot.summaryText,
-      'control_state_json': snapshot.controlStateJson,
-      'control_state_updated_at':
-          snapshot.controlStateUpdatedAt?.toUtc().toIso8601String(),
-      'evidence_state_json': snapshot.evidenceStateJson,
-      'evidence_state_updated_at':
-          snapshot.evidenceStateUpdatedAt?.toUtc().toIso8601String(),
-      'student_remote_user_id': studentUserId,
-      'student_username': studentUsername,
-      'teacher_remote_user_id': teacherUserId,
-      'updated_at': snapshot.syncUpdatedAt.toUtc().toIso8601String(),
-      'messages': snapshot.messages
-          .map(
-            (message) => {
-              'role': message.role,
-              'content': message.content,
-              'raw_content': message.rawContent ?? '',
-              'parsed_json': message.parsedJson ?? '',
-              'action': message.action ?? '',
-              'created_at': message.createdAt.toUtc().toIso8601String(),
-            },
-          )
-          .toList(growable: false),
-    };
-  }
-
-  Map<String, dynamic> _buildProgressPayload({
-    required ProgressEntry entry,
-    required String courseSubject,
-    required int remoteCourseId,
-    required int teacherUserId,
-    required int studentUserId,
-  }) {
-    return {
-      'version': 1,
-      'course_id': remoteCourseId,
-      'course_subject': courseSubject,
-      'kp_key': entry.kpKey,
-      'lit': entry.lit,
-      'lit_percent': entry.litPercent,
-      'question_level': entry.questionLevel ?? '',
-      'easy_passed_count': entry.easyPassedCount,
-      'medium_passed_count': entry.mediumPassedCount,
-      'hard_passed_count': entry.hardPassedCount,
-      'summary_text': entry.summaryText ?? '',
-      'summary_raw_response': entry.summaryRawResponse ?? '',
-      'summary_valid': entry.summaryValid,
-      'teacher_remote_user_id': teacherUserId,
-      'student_remote_user_id': studentUserId,
-      'updated_at': entry.updatedAt.toUtc().toIso8601String(),
-    };
-  }
-
-  String _hashProgressPayloadCore({
-    required ProgressEntry entry,
-    required int remoteCourseId,
-    required int remoteUserId,
-  }) {
-    return _hashCanonicalJson(
-      <String, Object?>{
-        'course_id': remoteCourseId,
-        'student_remote_user_id': remoteUserId,
-        'kp_key': entry.kpKey,
-        'lit': entry.lit,
-        'lit_percent': entry.litPercent,
-        'question_level': entry.questionLevel ?? '',
-        'easy_passed_count': entry.easyPassedCount,
-        'medium_passed_count': entry.mediumPassedCount,
-        'hard_passed_count': entry.hardPassedCount,
-        'summary_text': entry.summaryText ?? '',
-        'summary_raw_response': entry.summaryRawResponse ?? '',
-        'summary_valid': entry.summaryValid,
-        'updated_at': entry.updatedAt.toUtc().toIso8601String(),
-      },
-    );
-  }
-
-  String _hashProgressSyncItem(ProgressSyncItem item) {
-    return _hashCanonicalJson(
-      <String, Object?>{
-        'course_id': item.courseId,
-        'course_subject': item.courseSubject,
-        'teacher_user_id': item.teacherUserId,
-        'student_user_id': item.studentUserId,
-        'kp_key': item.kpKey,
-        'lit': item.lit,
-        'lit_percent': item.litPercent,
-        'question_level': item.questionLevel,
-        'easy_passed_count': item.easyPassedCount,
-        'medium_passed_count': item.mediumPassedCount,
-        'hard_passed_count': item.hardPassedCount,
-        'summary_text': item.summaryText,
-        'summary_raw_response': item.summaryRawResponse,
-        'summary_valid': item.summaryValid,
-        'updated_at': item.updatedAt,
-      },
-    );
-  }
-
-  String _hashResolvedProgress(_ResolvedProgressPayload payload) {
-    return _hashCanonicalJson(
-      <String, Object?>{
-        'course_id': payload.courseId,
-        'course_subject': payload.courseSubject,
-        'kp_key': payload.kpKey,
-        'lit': payload.lit,
-        'lit_percent': payload.litPercent,
-        'question_level': payload.questionLevel,
-        'easy_passed_count': payload.easyPassedCount,
-        'medium_passed_count': payload.mediumPassedCount,
-        'hard_passed_count': payload.hardPassedCount,
-        'summary_text': payload.summaryText,
-        'summary_raw_response': payload.summaryRawResponse,
-        'summary_valid': payload.summaryValid,
-        'updated_at': payload.updatedAt,
-      },
-    );
-  }
-
-  String _hashSessionUploadGroup(List<_PendingSessionUpload> groupItems) {
-    final fingerprints = groupItems
-        .map(
-          (item) =>
-              '${item.syncId}|${item.syncUpdatedAt.toUtc().toIso8601String()}',
-        )
-        .toList()
-      ..sort();
-    return _hashEnvelope(fingerprints.join('\n'));
-  }
-
-  String _extractSecondLevelChapter(String kpKey) {
-    final trimmed = kpKey.trim();
-    if (trimmed.isEmpty || trimmed == kTreeViewStateKpKey) {
-      return 'ungrouped';
-    }
-    final match = _secondLevelChapterPattern.firstMatch(trimmed);
-    if (match != null) {
-      final value = match.group(1);
-      if (value != null && value.isNotEmpty) {
-        return value;
-      }
-    }
-    final parts = trimmed.split('.');
-    if (parts.length >= 2) {
-      final first = parts[0].trim();
-      final second = parts[1].trim();
-      if (int.tryParse(first) != null && int.tryParse(second) != null) {
-        return '$first.$second';
-      }
-    }
-    return trimmed;
-  }
-
-  String _hashCanonicalJson(Map<String, Object?> payload) {
-    return _hashEnvelope(jsonEncode(payload));
-  }
-
-  int _sessionUploadSize(SessionUploadEntry entry) {
-    return utf8.encode(jsonEncode(entry.toJson())).length;
-  }
-
-  int _progressUploadSize(ProgressUploadEntry entry) {
-    return utf8.encode(jsonEncode(entry.toJson())).length;
-  }
-
-  int _progressChunkUploadSize(ProgressChunkUploadEntry entry) {
-    return utf8.encode(jsonEncode(entry.toJson())).length;
-  }
-
-  int _sessionDownloadSize(SessionSyncItem item) {
-    return utf8
-        .encode(
-          jsonEncode(<String, Object?>{
-            'cursor_id': item.cursorId,
-            'session_sync_id': item.sessionSyncId,
-            'course_id': item.courseId,
-            'teacher_user_id': item.teacherUserId,
-            'student_user_id': item.studentUserId,
-            'sender_user_id': item.senderUserId,
-            'chapter_key': item.chapterKey,
-            'updated_at': item.updatedAt,
-            'envelope': item.envelope,
-            'envelope_hash': item.envelopeHash,
-          }),
-        )
-        .length;
-  }
-
-  int _progressChunkDownloadSize(ProgressSyncChunkItem item) {
-    return utf8
-        .encode(
-          jsonEncode(<String, Object?>{
-            'cursor_id': item.cursorId,
-            'course_id': item.courseId,
-            'course_subject': item.courseSubject,
-            'teacher_user_id': item.teacherUserId,
-            'student_user_id': item.studentUserId,
-            'chapter_key': item.chapterKey,
-            'item_count': item.itemCount,
-            'updated_at': item.updatedAt,
-            'envelope': item.envelope,
-            'envelope_hash': item.envelopeHash,
-          }),
-        )
-        .length;
-  }
-
-  int _progressDownloadSize(ProgressSyncItem item) {
-    return utf8
-        .encode(
-          jsonEncode(<String, Object?>{
-            'cursor_id': item.cursorId,
-            'course_id': item.courseId,
-            'course_subject': item.courseSubject,
-            'teacher_user_id': item.teacherUserId,
-            'student_user_id': item.studentUserId,
-            'kp_key': item.kpKey,
-            'lit': item.lit,
-            'lit_percent': item.litPercent,
-            'question_level': item.questionLevel,
-            'easy_passed_count': item.easyPassedCount,
-            'medium_passed_count': item.mediumPassedCount,
-            'hard_passed_count': item.hardPassedCount,
-            'summary_text': item.summaryText,
-            'summary_raw_response': item.summaryRawResponse,
-            'summary_valid': item.summaryValid,
-            'updated_at': item.updatedAt,
-            'envelope': item.envelope,
-            'envelope_hash': item.envelopeHash,
-          }),
-        )
-        .length;
-  }
-
-  Future<void> _mirrorSessionUploadToDownloadState({
-    required int remoteUserId,
-    required SessionUploadEntry entry,
-  }) async {
-    final updatedAt =
-        DateTime.tryParse(entry.updatedAt)?.toUtc() ?? DateTime.now().toUtc();
-    await _secureStorage.writeSyncItemState(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainSessionDownload,
-      scopeKey: entry.sessionSyncId,
-      contentHash: _resolveSyncHash(
-        primaryHash: entry.envelopeHash,
-        fallbackValue: entry.envelope,
-      ),
-      lastChangedAt: updatedAt,
-      lastSyncedAt: updatedAt,
-    );
-  }
-
-  Future<void> _mirrorProgressUploadToDownloadState({
-    required int remoteUserId,
-    required ProgressUploadEntry entry,
-  }) async {
-    final updatedAt =
-        DateTime.tryParse(entry.updatedAt)?.toUtc() ?? DateTime.now().toUtc();
-    await _secureStorage.writeSyncItemState(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainProgressDownload,
-      scopeKey: _progressDownloadScopeKey(
-        studentRemoteId: remoteUserId,
-        courseId: entry.courseId,
-        kpKey: entry.kpKey,
-      ),
-      contentHash: _resolveSyncHash(
-        primaryHash: entry.envelopeHash,
-        fallbackValue: entry.envelope,
-      ),
-      lastChangedAt: updatedAt,
-      lastSyncedAt: updatedAt,
-    );
-  }
-
-  Future<void> _mirrorProgressChunkUploadToDownloadState({
-    required int remoteUserId,
-    required ProgressChunkUploadEntry entry,
-  }) async {
-    final updatedAt =
-        DateTime.tryParse(entry.updatedAt)?.toUtc() ?? DateTime.now().toUtc();
-    await _secureStorage.writeSyncItemState(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainProgressChunkDownload,
-      scopeKey: _progressChunkDownloadScopeKey(
-        studentRemoteId: remoteUserId,
-        courseId: entry.courseId,
-        chapterKey: entry.chapterKey,
-      ),
-      contentHash: _resolveSyncHash(
-        primaryHash: entry.envelopeHash,
-        fallbackValue: entry.envelope,
-      ),
-      lastChangedAt: updatedAt,
-      lastSyncedAt: updatedAt,
-    );
-  }
-
-  Future<void> _writeSyncListEtag({
-    required int remoteUserId,
-    required String domain,
-    required String scopeKey,
-    required String? etag,
-  }) async {
-    final normalized = (etag ?? '').trim();
-    if (normalized.isEmpty) {
-      return;
-    }
-    await _secureStorage.writeSyncListEtag(
-      remoteUserId: remoteUserId,
-      domain: domain,
-      scopeKey: scopeKey,
-      etag: normalized,
-    );
-  }
-
-  String _resolveSyncHash({
-    required String primaryHash,
-    required String fallbackValue,
-  }) {
-    final trimmedPrimary = primaryHash.trim();
-    if (trimmedPrimary.isNotEmpty) {
-      return trimmedPrimary;
-    }
-    final trimmedFallback = fallbackValue.trim();
-    if (trimmedFallback.isEmpty) {
-      return '';
-    }
-    return _hashEnvelope(trimmedFallback);
-  }
-
-  bool _isTimestampNewer(DateTime candidate, DateTime? baseline) {
-    if (baseline == null) {
-      return true;
-    }
-    return candidate.isAfter(baseline.toUtc());
-  }
-
-  DateTime _latestTimestamp(DateTime? current, DateTime candidate) {
-    if (current == null) {
-      return candidate;
-    }
-    return candidate.isAfter(current) ? candidate : current;
-  }
-
-  Future<_ResolvedProgressPayload> _resolveProgressPayload({
-    required ProgressSyncItem item,
-    required int remoteUserId,
-    required SimpleKeyPair keyPair,
-  }) async {
-    if (item.studentUserId <= 0) {
-      throw StateError('Progress payload student mismatch.');
-    }
-    if (item.envelope.trim().isEmpty) {
-      final kpKey = item.kpKey.trim();
-      if (item.courseId <= 0 || kpKey.isEmpty) {
-        throw StateError('Progress payload missing course_id or kp_key.');
-      }
-      return _ResolvedProgressPayload(
-        courseId: item.courseId,
-        courseSubject: item.courseSubject,
-        kpKey: kpKey,
-        lit: item.lit,
-        litPercent: item.litPercent.clamp(0, 100).toInt(),
-        questionLevel: item.questionLevel,
-        easyPassedCount: item.easyPassedCount,
-        mediumPassedCount: item.mediumPassedCount,
-        hardPassedCount: item.hardPassedCount,
-        summaryText: item.summaryText,
-        summaryRawResponse: item.summaryRawResponse,
-        summaryValid: item.summaryValid,
-        updatedAt: item.updatedAt,
-      );
-    }
-
-    final envelopeJson = utf8.decode(base64Decode(item.envelope));
-    if (item.envelopeHash.trim().isNotEmpty) {
-      final computed = _hashEnvelope(envelopeJson);
-      if (computed != item.envelopeHash.trim()) {
-        throw StateError('Progress sync envelope hash mismatch.');
-      }
-    }
-    final decoded = jsonDecode(envelopeJson);
-    if (decoded is! Map<String, dynamic>) {
-      throw StateError('Progress sync envelope invalid.');
-    }
-    final envelope = EncryptedEnvelope.fromJson(decoded);
-    final payload = await _crypto.decryptEnvelope(
-      envelope: envelope,
-      userKeyPair: keyPair,
-      userId: remoteUserId,
-    );
-
-    final payloadStudentID = _parsePayloadInt(
-      payload['student_remote_user_id'],
-      field: 'student_remote_user_id',
-    );
-    if (payloadStudentID != item.studentUserId) {
-      throw StateError('Progress payload student mismatch.');
-    }
-    final litPercentRaw = _parsePayloadInt(
-      payload['lit_percent'],
-      field: 'lit_percent',
-    );
-    final easyPassedCount = _parsePayloadOptionalInt(
-      payload['easy_passed_count'],
-      field: 'easy_passed_count',
-    );
-    final mediumPassedCount = _parsePayloadOptionalInt(
-      payload['medium_passed_count'],
-      field: 'medium_passed_count',
-    );
-    final hardPassedCount = _parsePayloadOptionalInt(
-      payload['hard_passed_count'],
-      field: 'hard_passed_count',
-    );
-    final payloadCourseSubject = _parsePayloadString(
-      payload['course_subject'],
-      field: 'course_subject',
-      isRequired: false,
-    ).trim();
-    return _ResolvedProgressPayload(
-      courseId: _parsePayloadInt(payload['course_id'], field: 'course_id'),
-      courseSubject: payloadCourseSubject.isNotEmpty
-          ? payloadCourseSubject
-          : item.courseSubject.trim(),
-      kpKey: _parsePayloadString(payload['kp_key'], field: 'kp_key').trim(),
-      lit: _parsePayloadBool(payload['lit'], field: 'lit'),
-      litPercent: litPercentRaw.clamp(0, 100).toInt(),
-      questionLevel: _parsePayloadString(payload['question_level'],
-          field: 'question_level'),
-      easyPassedCount: easyPassedCount < 0 ? 0 : easyPassedCount,
-      mediumPassedCount: mediumPassedCount < 0 ? 0 : mediumPassedCount,
-      hardPassedCount: hardPassedCount < 0 ? 0 : hardPassedCount,
-      summaryText:
-          _parsePayloadString(payload['summary_text'], field: 'summary_text'),
-      summaryRawResponse: _parsePayloadString(
-        payload['summary_raw_response'],
-        field: 'summary_raw_response',
-      ),
-      summaryValid: _parsePayloadNullableBool(
-        payload['summary_valid'],
-        field: 'summary_valid',
-      ),
-      updatedAt:
-          _parsePayloadString(payload['updated_at'], field: 'updated_at'),
-    );
-  }
-
-  Future<ChatSession> _ensureSessionSyncMeta(ChatSession session) async {
-    var syncId = session.syncId;
-    var updatedAt = session.syncUpdatedAt;
-    if (syncId == null || syncId.trim().isEmpty) {
-      syncId = _uuid.v4();
-    }
-    if (updatedAt == null) {
-      updatedAt = session.startedAt;
-    }
-    if (syncId != session.syncId || updatedAt != session.syncUpdatedAt) {
-      await (_db.update(_db.chatSessions)
-            ..where((tbl) => tbl.id.equals(session.id)))
-          .write(
-        ChatSessionsCompanion(
-          syncId: Value(syncId),
-          syncUpdatedAt: Value(updatedAt),
-        ),
-      );
-      final refreshed = await _db.getSession(session.id);
-      if (refreshed != null) {
-        return refreshed;
-      }
-    }
-    return session;
-  }
-
-  Future<void> _markSessionUploaded({
-    required int sessionId,
-    required DateTime uploadedAt,
-  }) {
-    final normalized = uploadedAt.toUtc();
-    return (_db.update(_db.chatSessions)
-          ..where((tbl) => tbl.id.equals(sessionId)))
-        .write(
-      ChatSessionsCompanion(
-        syncUploadedAt: Value(normalized),
-      ),
-    );
+  String _artifactIdForScope(_LocalStudentKpScope scope) {
+    return '$_artifactClass:${scope.remoteStudentUserId}:${scope.remoteCourseId}:${scope.kpKey}';
   }
 
   int _requireRemoteUserId(User user) {
-    final remoteId = user.remoteUserId;
-    if (remoteId == null || remoteId <= 0) {
-      throw StateError('Remote user id missing.');
+    final remoteUserId = user.remoteUserId;
+    if (remoteUserId == null || remoteUserId <= 0) {
+      throw StateError(
+          'User ${user.id} (${user.username}) is missing remoteUserId.');
     }
-    return remoteId;
+    return remoteUserId;
   }
 
-  String _hashEnvelope(String json) {
-    final sum = sha256.convert(utf8.encode(json));
-    return sum.toString();
+  DateTime? _parseIsoTime(dynamic raw) {
+    if (raw == null) {
+      return null;
+    }
+    if (raw is DateTime) {
+      return raw.toUtc();
+    }
+    if (raw is String) {
+      final trimmed = raw.trim();
+      if (trimmed.isEmpty) {
+        return null;
+      }
+      final parsed = DateTime.tryParse(trimmed);
+      if (parsed == null) {
+        throw StateError('Invalid RFC3339 timestamp: $trimmed');
+      }
+      return parsed.toUtc();
+    }
+    throw StateError('Unsupported timestamp value: $raw');
   }
 
-  int _parsePayloadInt(
-    Object? value, {
-    required String field,
-  }) {
-    if (value is int) {
-      return value;
-    }
-    if (value is num) {
-      return value.toInt();
-    }
-    if (value is String) {
-      final parsed = int.tryParse(value.trim());
-      if (parsed != null) {
-        return parsed;
-      }
-    }
-    throw StateError('Progress payload field "$field" invalid.');
-  }
-
-  int _parsePayloadOptionalInt(
-    Object? value, {
-    required String field,
-  }) {
-    if (value == null) {
-      return 0;
-    }
-    return _parsePayloadInt(value, field: field);
-  }
-
-  bool _parsePayloadBool(
-    Object? value, {
-    required String field,
-  }) {
-    if (value is bool) {
-      return value;
-    }
-    if (value is num) {
-      if (value == 1) {
-        return true;
-      }
-      if (value == 0) {
-        return false;
-      }
-    }
-    if (value is String) {
-      final normalized = value.trim().toLowerCase();
-      if (normalized == 'true' || normalized == '1') {
-        return true;
-      }
-      if (normalized == 'false' || normalized == '0') {
-        return false;
-      }
-    }
-    throw StateError('Progress payload field "$field" invalid.');
-  }
-
-  bool? _parsePayloadNullableBool(
-    Object? value, {
-    required String field,
-  }) {
+  String? _encodeCanonicalJson(dynamic value) {
     if (value == null) {
       return null;
     }
-    return _parsePayloadBool(value, field: field);
-  }
-
-  String _parsePayloadString(
-    Object? value, {
-    required String field,
-    bool isRequired = true,
-  }) {
     if (value is String) {
-      return value;
+      final trimmed = value.trim();
+      return trimmed.isEmpty ? null : trimmed;
     }
-    if (!isRequired && value == null) {
-      return '';
-    }
-    throw StateError('Progress payload field "$field" invalid.');
+    return jsonEncode(_canonicalizeJson(value));
   }
 
-  Future<String> _resolveCourseSubject(int courseVersionId) async {
-    final course = await (_db.select(_db.courseVersions)
-          ..where((tbl) => tbl.id.equals(courseVersionId)))
-        .getSingleOrNull();
-    if (course == null) {
-      return '';
+  dynamic _canonicalizeJson(dynamic value) {
+    if (value is Map) {
+      final entries = value.entries
+          .where((entry) => entry.key is String && entry.value != null)
+          .map(
+            (entry) => MapEntry(
+              entry.key as String,
+              _canonicalizeJson(entry.value),
+            ),
+          )
+          .toList(growable: false)
+        ..sort((left, right) => left.key.compareTo(right.key));
+      return <String, dynamic>{
+        for (final entry in entries)
+          if (entry.value != null) entry.key: entry.value,
+      };
     }
-    return course.subject.trim();
+    if (value is List) {
+      return value
+          .map(_canonicalizeJson)
+          .where((item) => item != null)
+          .toList(growable: false);
+    }
+    return value;
   }
 
-  Future<int?> _findLocalCourseVersionBySubject({
-    required int teacherId,
-    required String subject,
-  }) async {
-    final normalizedTarget = _normalizeCourseName(_stripVersionSuffix(subject));
-    if (normalizedTarget.isEmpty) {
-      return null;
-    }
-    final courses = await _db.getCourseVersionsForTeacher(teacherId);
-    for (final course in courses) {
-      final normalizedCourse =
-          _normalizeCourseName(_stripVersionSuffix(course.subject));
-      if (normalizedCourse == normalizedTarget) {
-        return course.id;
-      }
-    }
-    return null;
-  }
-
-  Future<int?> _findAssignedCourseVersionBySubject({
-    required int studentId,
-    required String subject,
-  }) async {
-    final normalizedTarget = _normalizeCourseName(_stripVersionSuffix(subject));
-    if (normalizedTarget.isEmpty) {
-      return null;
-    }
-    final assignedCourses = await _db.getAssignedCoursesForStudent(studentId);
-    for (final course in assignedCourses) {
-      final normalizedCourse =
-          _normalizeCourseName(_stripVersionSuffix(course.subject));
-      if (normalizedCourse == normalizedTarget) {
-        return course.id;
-      }
-    }
-    return null;
-  }
-
-  Future<void> _ensureCourseTeacher({
-    required int courseVersionId,
-    required int expectedTeacherId,
-  }) async {
-    final existing = await _db.getCourseVersionById(courseVersionId);
-    if (existing == null || existing.teacherId == expectedTeacherId) {
-      return;
-    }
-    await _db.updateCourseVersionTeacherId(
-      id: courseVersionId,
-      teacherId: expectedTeacherId,
-    );
-  }
-
-  Future<void> _bindRemoteCourseLinkIfNeeded({
-    required int courseVersionId,
-    required int remoteCourseId,
-  }) async {
-    final existingRemoteCourseId = await _db.getRemoteCourseId(courseVersionId);
-    if (existingRemoteCourseId == null ||
-        existingRemoteCourseId <= 0 ||
-        existingRemoteCourseId == remoteCourseId) {
-      await _db.upsertCourseRemoteLink(
-        courseVersionId: courseVersionId,
-        remoteCourseId: remoteCourseId,
-      );
-    }
-  }
-
-  Future<void> _ensureCourseSubject({
-    required int courseVersionId,
-    required String expectedSubject,
-  }) async {
-    final normalizedExpected = expectedSubject.trim();
-    if (normalizedExpected.isEmpty) {
-      return;
-    }
-    final course = await _db.getCourseVersionById(courseVersionId);
-    if (course == null) {
-      return;
-    }
-    if (course.subject.trim() == normalizedExpected) {
-      return;
-    }
-    await _db.updateCourseVersionSubject(
-      id: courseVersionId,
-      subject: normalizedExpected,
-    );
-  }
-
-  String _normalizeCourseName(String value) {
-    return value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
-  }
-
-  String _stripVersionSuffix(String value) {
-    return value.trim().replaceFirst(_versionSuffixPattern, '');
+  Future<void> _reportProgress(
+    SyncProgressCallback? onProgress,
+    SyncProgress progress,
+  ) async {
+    onProgress?.call(progress);
   }
 }
 
-class _SyncMessage {
-  _SyncMessage({
-    required this.role,
-    required this.content,
-    required this.rawContent,
-    required this.parsedJson,
-    required this.action,
-    required this.createdAt,
-  });
-
-  final String role;
-  final String content;
-  final String? rawContent;
-  final String? parsedJson;
-  final String? action;
-  final DateTime createdAt;
-}
-
-class _ResolvedProgressPayload {
-  _ResolvedProgressPayload({
-    required this.courseId,
-    required this.courseSubject,
-    required this.kpKey,
-    required this.lit,
-    required this.litPercent,
-    required this.questionLevel,
-    required this.easyPassedCount,
-    required this.mediumPassedCount,
-    required this.hardPassedCount,
-    required this.summaryText,
-    required this.summaryRawResponse,
-    required this.summaryValid,
-    required this.updatedAt,
-  });
-
-  final int courseId;
-  final String courseSubject;
-  final String kpKey;
-  final bool lit;
-  final int litPercent;
-  final String questionLevel;
-  final int easyPassedCount;
-  final int mediumPassedCount;
-  final int hardPassedCount;
-  final String summaryText;
-  final String summaryRawResponse;
-  final bool? summaryValid;
-  final String updatedAt;
-}
-
-class _PendingSessionUpload {
-  _PendingSessionUpload({
-    required this.session,
-    required this.syncId,
-    required this.syncUpdatedAt,
-    required this.remoteCourseId,
-  });
-
-  final ChatSession session;
-  final String syncId;
-  final DateTime syncUpdatedAt;
-  final int remoteCourseId;
-}
-
-class _ProgressChunkGroup {
-  _ProgressChunkGroup({
-    required this.scopeKey,
-    required this.remoteCourseId,
-    required this.chapterKey,
+class _LocalStudentKpScope {
+  const _LocalStudentKpScope({
+    required this.localStudentId,
+    required this.remoteStudentUserId,
+    required this.studentUsername,
     required this.courseVersionId,
-    required this.studentId,
+    required this.remoteCourseId,
+    required this.courseSubject,
+    required this.teacherRemoteUserId,
+    required this.kpKey,
   });
 
-  final String scopeKey;
-  final int remoteCourseId;
-  final String chapterKey;
+  final int localStudentId;
+  final int remoteStudentUserId;
+  final String studentUsername;
   final int courseVersionId;
-  final int studentId;
-  final List<_ProgressChunkMember> members = <_ProgressChunkMember>[];
-  bool hasPendingChanges = false;
-  bool blockedByRemoteNewer = false;
+  final int remoteCourseId;
+  final String courseSubject;
+  final int teacherRemoteUserId;
+  final String kpKey;
 }
 
-class _ProgressChunkMember {
-  _ProgressChunkMember({
-    required this.entry,
-    required this.scopeKey,
-    required this.updatedAt,
-    required this.payloadHash,
+class _PendingArtifactSessionImport {
+  const _PendingArtifactSessionImport({
+    required this.localStudentId,
+    required this.localCourseVersionId,
+    required this.kpKey,
+    required this.sessions,
   });
 
-  final ProgressEntry entry;
-  final String scopeKey;
-  final DateTime updatedAt;
-  final String payloadHash;
+  final int localStudentId;
+  final int localCourseVersionId;
+  final String kpKey;
+  final List sessions;
 }
 
-class _PendingProgressUpload {
-  _PendingProgressUpload({
-    required this.upload,
-    required this.stateWrite,
+class _PendingArtifactMistakeImport {
+  const _PendingArtifactMistakeImport({
+    required this.localStudentId,
+    required this.localCourseVersionId,
+    required this.kpKey,
+    required this.mistakes,
   });
 
-  final ProgressUploadEntry upload;
-  final _SyncStateWrite stateWrite;
+  final int localStudentId;
+  final int localCourseVersionId;
+  final String kpKey;
+  final List mistakes;
 }
 
-class _PreparedProgressChunkUpload {
-  _PreparedProgressChunkUpload({
-    required this.upload,
-    required this.itemStateWrites,
-    required this.groupStateWrite,
+class _ArtifactIdentity {
+  const _ArtifactIdentity({
+    required this.remoteStudentUserId,
+    required this.remoteCourseId,
+    required this.kpKey,
   });
 
-  final ProgressChunkUploadEntry upload;
-  final List<_SyncStateWrite> itemStateWrites;
-  final _SyncStateWrite groupStateWrite;
+  final int remoteStudentUserId;
+  final int remoteCourseId;
+  final String kpKey;
 }
 
-class _PreparedSessionUpload {
-  _PreparedSessionUpload({
-    required this.sessionId,
-    required this.syncUpdatedAt,
-    required this.syncStateWrite,
+class _DownloadedArtifactCandidate {
+  const _DownloadedArtifactCandidate({
+    required this.candidate,
+    required this.downloaded,
   });
 
-  final int sessionId;
-  final DateTime syncUpdatedAt;
-  final _SyncStateWrite syncStateWrite;
+  final ArtifactState1Item candidate;
+  final DownloadedArtifact downloaded;
 }
 
-class _FailedProgressUpload {
-  _FailedProgressUpload({
-    required this.upload,
-    required this.error,
-  });
+class _ArtifactApplyContext {
+  _ArtifactApplyContext({
+    required StudentKpArtifactManifest initialManifest,
+  }) : _existingArtifactIds = initialManifest.items.keys.toSet();
 
-  final ProgressUploadEntry upload;
-  final SessionSyncApiException error;
-}
+  final Set<String> _existingArtifactIds;
+  final Map<int, int> localCourseVersionIdByRemoteCourseId = <int, int>{};
+  final Map<int, int> localStudentIdByRemoteStudentId = <int, int>{};
+  final Set<String> assignedStudentCoursePairs = <String>{};
 
-class _ProgressIsolationBudget {
-  _ProgressIsolationBudget({
-    required this.remaining,
-  });
+  bool hasExistingArtifact(String artifactId) {
+    if (artifactId.trim().isEmpty) {
+      return false;
+    }
+    return _existingArtifactIds.contains(artifactId);
+  }
 
-  int remaining;
-}
-
-class _SyncStateWrite {
-  _SyncStateWrite({
-    required this.domain,
-    required this.scopeKey,
-    required this.contentHash,
-    required this.lastChangedAt,
-    required this.lastSyncedAt,
-  });
-
-  final String domain;
-  final String scopeKey;
-  final String contentHash;
-  final DateTime lastChangedAt;
-  final DateTime lastSyncedAt;
+  void markArtifactApplied(String artifactId) {
+    if (artifactId.trim().isEmpty) {
+      return;
+    }
+    _existingArtifactIds.add(artifactId);
+  }
 }

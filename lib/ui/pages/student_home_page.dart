@@ -7,17 +7,22 @@ import 'package:provider/provider.dart';
 import '../../db/app_database.dart';
 import '../../models/skill_tree.dart';
 import '../../services/app_services.dart';
+import '../../services/home_sync_coordinator.dart';
 import '../../services/marketplace_api_service.dart';
-import '../../services/sync_log_repository.dart';
+import '../../services/student_server_copy_service.dart';
+import '../../services/sync_progress.dart';
 import '../../state/auth_controller.dart';
 import '../../state/study_mode_controller.dart';
 import '../app_settings_page.dart';
 import '../app_close_button.dart';
 import '../quit_app_flow.dart';
 import '../progress_display.dart';
+import '../widgets/action_indicators.dart';
 import 'marketplace_page.dart';
+import 'mistake_book_page.dart';
 import 'skill_tree_page.dart';
 import '../widgets/server_sync_overlay.dart';
+import '../../services/session_sync_service.dart';
 
 class StudentHomePage extends StatefulWidget {
   const StudentHomePage({super.key});
@@ -26,14 +31,21 @@ class StudentHomePage extends StatefulWidget {
   State<StudentHomePage> createState() => _StudentHomePageState();
 }
 
-class _StudentHomePageState extends State<StudentHomePage> {
+class _StudentHomePageState extends State<StudentHomePage>
+    with WidgetsBindingObserver {
   static const Duration _autoSyncInterval = Duration(seconds: 60);
+  static const Duration _resumeSyncDelay = Duration(seconds: 3);
   bool _syncStarted = false;
   bool _syncInProgress = false;
   bool _syncingFromServer = false;
   String _syncProgressMessage = '';
+  double? _syncProgressValue;
+  String? _syncProgressDetail;
   Timer? _autoSyncTimer;
+  Timer? _resumeSyncTimer;
   late final MarketplaceApiService _marketplaceApi;
+  late final HomeSyncCoordinator _syncCoordinator;
+  late final StudentServerCopyService _serverCopyService;
   final Map<int, int> _remoteCourseIdByLocalCourseId = {};
   final Map<int, EnrollmentSummary> _enrollmentsByRemoteCourseId = {};
   final Set<int> _pendingQuitRemoteCourseIds = {};
@@ -44,9 +56,16 @@ class _StudentHomePageState extends State<StudentHomePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final services = context.read<AppServices>();
     _marketplaceApi =
         MarketplaceApiService(secureStorage: services.secureStorage);
+    _syncCoordinator = HomeSyncCoordinator(
+      enrollmentSyncService: services.enrollmentSyncService,
+      sessionSyncService: services.sessionSyncService,
+      syncLogRepository: services.syncLogRepository,
+    );
+    _serverCopyService = StudentServerCopyService.fromAppServices(services);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _startSync();
       _startAutoSync();
@@ -55,8 +74,19 @@ class _StudentHomePageState extends State<StudentHomePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _autoSyncTimer?.cancel();
+    _resumeSyncTimer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _scheduleResumeSync();
+      return;
+    }
+    _stopAutoSync();
   }
 
   Future<void> _refreshRemoteEnrollmentState() async {
@@ -126,6 +156,27 @@ class _StudentHomePageState extends State<StudentHomePage> {
     });
   }
 
+  void _stopAutoSync() {
+    _autoSyncTimer?.cancel();
+    _autoSyncTimer = null;
+    _resumeSyncTimer?.cancel();
+    _resumeSyncTimer = null;
+  }
+
+  void _scheduleResumeSync() {
+    if (!_syncStarted || !mounted) {
+      return;
+    }
+    _resumeSyncTimer?.cancel();
+    _resumeSyncTimer = Timer(_resumeSyncDelay, () async {
+      if (!mounted) {
+        return;
+      }
+      _startAutoSync();
+      await _runSyncCycle(showOverlay: false);
+    });
+  }
+
   Future<void> _runSyncCycle({required bool showOverlay}) async {
     if (!mounted || _syncInProgress) {
       return;
@@ -135,7 +186,9 @@ class _StudentHomePageState extends State<StudentHomePage> {
       syncing: showOverlay,
       message: showOverlay ? 'Syncing enrollments from server...' : '',
     );
-    final l10n = AppLocalizations.of(context)!;
+    if (showOverlay) {
+      await Future<void>.delayed(Duration.zero);
+    }
     final auth = context.read<AuthController>();
     final user = auth.currentUser;
     if (user == null) {
@@ -145,65 +198,72 @@ class _StudentHomePageState extends State<StudentHomePage> {
     }
     final services = context.read<AppServices>();
     final studyModeController = context.read<StudyModeController>();
-    final stats = SyncRunStats();
     final trigger = showOverlay ? 'login' : 'timer';
-    Object? syncError;
+    String? syncError;
     try {
-      stats.absorb(
-        await services.enrollmentSyncService.syncIfReady(currentUser: user),
-      );
-      _setSyncState(
-        syncing: showOverlay,
-        message: showOverlay ? 'Syncing sessions/progress from server...' : '',
-      );
-      stats.absorb(
-        await services.sessionSyncService.syncIfReady(currentUser: user),
-      );
+      if (showOverlay) {
+        await _syncCoordinator.runLoginSync(
+          user: user,
+          trigger: trigger,
+          onProgress: _applySyncProgress,
+          includeSessionSync: true,
+          sessionSyncMode: SessionSyncMode.downloadOnly,
+        );
+        _clearPersistentError();
+      } else {
+        await _syncCoordinator.runCoreSync(
+          user: user,
+          trigger: trigger,
+          onProgress: null,
+          includeEnrollmentSync: false,
+          includeSessionSync: true,
+          sessionSyncMode: SessionSyncMode.full,
+        );
+        _clearPersistentError();
+      }
+      if (showOverlay) {
+        unawaited(_refreshLoginUiState(services: services, user: user));
+      } else {
+        await _syncRemoteStudyMode(
+          services: services,
+          user: user,
+          studyModeController: studyModeController,
+        );
+        await _refreshRemoteEnrollmentState();
+      }
+    } on HomeSyncException catch (error) {
+      syncError = error.message;
+    } on Object catch (error) {
+      syncError = describeSyncFailure(
+        stage: 'Sync',
+        error: error,
+      ).userMessage;
+    } finally {
+      _setSyncState(syncing: false, message: '');
+      _syncInProgress = false;
+    }
+    if (syncError != null) {
+      _setPersistentMessage(syncError);
+    }
+  }
+
+  Future<void> _refreshLoginUiState({
+    required AppServices services,
+    required User user,
+  }) async {
+    if (!mounted) {
+      return;
+    }
+    final studyModeController = context.read<StudyModeController>();
+    try {
       await _syncRemoteStudyMode(
         services: services,
         user: user,
         studyModeController: studyModeController,
       );
-    } catch (error) {
-      syncError = error;
-    } finally {
-      _setSyncState(
-        syncing: showOverlay,
-        message: showOverlay ? 'Refreshing enrollment status...' : '',
-      );
       await _refreshRemoteEnrollmentState();
-      _setSyncState(syncing: false, message: '');
-      _syncInProgress = false;
-    }
-    if (syncError != null) {
-      var reportedError = '$syncError';
-      try {
-        await services.syncLogRepository.appendRunEvent(
-          trigger: trigger,
-          actorRole: user.role,
-          actorUserId: user.id,
-          stats: stats,
-          success: false,
-          error: reportedError,
-        );
-      } catch (logError) {
-        reportedError = '$reportedError; sync log write failed: $logError';
-      }
-      _setPersistentMessage(l10n.sessionSyncFailed(reportedError));
-      return;
-    }
-    try {
-      await services.syncLogRepository.appendRunEvent(
-        trigger: trigger,
-        actorRole: user.role,
-        actorUserId: user.id,
-        stats: stats,
-        success: true,
-      );
-    } catch (logError) {
-      _setPersistentMessage(
-        l10n.sessionSyncFailed('Sync log write failed: $logError'),
-      );
+    } catch (error) {
+      _setPersistentMessage('Failed to refresh student status: $error');
     }
   }
 
@@ -244,8 +304,9 @@ class _StudentHomePageState extends State<StudentHomePage> {
       builder: (context) => AlertDialog(
         title: const Text('Take server copy'),
         content: const Text(
-          'This will replace this device\'s local session/progress data '
-          'with a forced server download. Continue?',
+          'This will clear this device\'s local course/session/progress '
+          'cache and replace it with a forced server copy. Unsynced local '
+          'session/progress data on this device will be discarded. Continue?',
         ),
         actions: [
           TextButton(
@@ -263,31 +324,77 @@ class _StudentHomePageState extends State<StudentHomePage> {
       return;
     }
 
-    final services = context.read<AppServices>();
     _syncInProgress = true;
-    _setSyncState(
-      syncing: true,
-      message: 'Taking server copy: syncing enrollments...',
-    );
+    _setSyncState(syncing: true, message: '');
     try {
-      await services.enrollmentSyncService.forcePullFromServer(
+      await _serverCopyService.takeServerCopy(
         currentUser: user,
-      );
-      _setSyncState(
-        syncing: true,
-        message: 'Taking server copy: downloading sessions/progress...',
-      );
-      await services.sessionSyncService.forcePullFromServer(
-        currentUser: user,
-        wipeLocalStudentData: true,
+        onProgress: _applySyncProgress,
       );
       await _refreshRemoteEnrollmentState();
       _setPersistentMessage(
-        'Server copy completed. Local session/progress now matches server data.',
+        'Server copy completed. Local course/session/progress cache now '
+        'matches server data.',
         isError: false,
       );
     } catch (error) {
       _setPersistentMessage('Take server copy failed: $error');
+    } finally {
+      _setSyncState(syncing: false, message: '');
+      _syncInProgress = false;
+    }
+  }
+
+  Future<void> _takeThisDeviceCopy() async {
+    if (!mounted || _syncInProgress) {
+      return;
+    }
+    final auth = context.read<AuthController>();
+    final user = auth.currentUser;
+    if (user == null || user.role != 'student') {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Take this device copy'),
+        content: const Text(
+          'This will keep the server course assignments, then overwrite '
+          'server sessions/progress with this device\'s local copy. Other '
+          'devices will receive this device\'s sessions/progress on their '
+          'next sync. Continue?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Take this device copy'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    _syncInProgress = true;
+    _setSyncState(syncing: true, message: '');
+    try {
+      await _serverCopyService.takeThisDeviceCopy(
+        currentUser: user,
+        onProgress: _applySyncProgress,
+      );
+      await _refreshRemoteEnrollmentState();
+      _setPersistentMessage(
+        'This device copy completed. Server sessions/progress now match '
+        'this device.',
+        isError: false,
+      );
+    } catch (error) {
+      _setPersistentMessage('Take this device copy failed: $error');
     } finally {
       _setSyncState(syncing: false, message: '');
       _syncInProgress = false;
@@ -399,6 +506,16 @@ class _StudentHomePageState extends State<StudentHomePage> {
     });
   }
 
+  void _clearPersistentError() {
+    if (!mounted || !_persistentMessageIsError || _persistentMessage == null) {
+      return;
+    }
+    setState(() {
+      _persistentMessage = null;
+      _persistentMessageIsError = false;
+    });
+  }
+
   Widget _buildPersistentMessageCard(AppLocalizations l10n) {
     final message = _persistentMessage!;
     final color = _persistentMessageIsError
@@ -447,13 +564,35 @@ class _StudentHomePageState extends State<StudentHomePage> {
             actions: buildAppBarActionsWithClose(
               context,
               actions: [
+                StreamBuilder<List<CourseVersion>>(
+                  stream: db.watchAssignedCourses(student.id),
+                  builder: (context, snapshot) {
+                    final hasNoSubscribedCourses =
+                        snapshot.hasData && (snapshot.data ?? []).isEmpty;
+                    return AttentionIconButton(
+                      icon: Icons.store,
+                      tooltip: l10n.marketplaceTitle,
+                      highlighted: hasNoSubscribedCourses,
+                      highlightKey:
+                          const Key('student_marketplace_attention_button'),
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const MarketplacePage(),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
                 IconButton(
-                  icon: const Icon(Icons.store),
-                  tooltip: l10n.marketplaceTitle,
+                  tooltip: 'Mistake Book',
+                  icon: const Icon(Icons.menu_book_outlined),
                   onPressed: () {
                     Navigator.of(context).push(
                       MaterialPageRoute(
-                          builder: (_) => const MarketplacePage()),
+                        builder: (_) => MistakeBookPage(studentId: student.id),
+                      ),
                     );
                   },
                 ),
@@ -467,14 +606,7 @@ class _StudentHomePageState extends State<StudentHomePage> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.logout),
-                  onPressed: () async {
-                    final confirmed =
-                        await AppQuitFlow.confirmTeacherPinIfRequired(context);
-                    if (!confirmed) {
-                      return;
-                    }
-                    await auth.logout();
-                  },
+                  onPressed: () => AppQuitFlow.handleLogout(context),
                 ),
               ],
             ),
@@ -490,10 +622,21 @@ class _StudentHomePageState extends State<StudentHomePage> {
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                 child: Align(
                   alignment: Alignment.centerLeft,
-                  child: OutlinedButton.icon(
-                    onPressed: _syncInProgress ? null : _takeServerCopy,
-                    icon: const Icon(Icons.cloud_download_outlined),
-                    label: const Text('Take Server Copy'),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _syncInProgress ? null : _takeServerCopy,
+                        icon: const Icon(Icons.cloud_download_outlined),
+                        label: const Text('Take Server Copy'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: _syncInProgress ? null : _takeThisDeviceCopy,
+                        icon: const Icon(Icons.cloud_upload_outlined),
+                        label: const Text('Take This Device Copy'),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -551,14 +694,29 @@ class _StudentHomePageState extends State<StudentHomePage> {
           ),
         ),
         if (_syncingFromServer)
-          ServerSyncOverlay(message: _syncProgressMessage),
+          ServerSyncOverlay(
+            message: _syncProgressMessage,
+            progressValue: _syncProgressValue,
+            progressDetail: _syncProgressDetail,
+          ),
       ],
+    );
+  }
+
+  void _applySyncProgress(SyncProgress progress) {
+    _setSyncState(
+      syncing: true,
+      message: progress.message,
+      progressValue: progress.value,
+      progressDetail: progress.detail,
     );
   }
 
   void _setSyncState({
     required bool syncing,
     String message = '',
+    double? progressValue,
+    String? progressDetail,
   }) {
     if (!mounted) {
       return;
@@ -566,6 +724,8 @@ class _StudentHomePageState extends State<StudentHomePage> {
     setState(() {
       _syncingFromServer = syncing;
       _syncProgressMessage = message;
+      _syncProgressValue = syncing ? progressValue : null;
+      _syncProgressDetail = syncing ? progressDetail : null;
     });
   }
 }

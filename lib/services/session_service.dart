@@ -15,7 +15,9 @@ import '../llm/prompt_renderer.dart';
 import '../models/tutor_action.dart';
 import '../models/tutor_contract.dart';
 import '../llm/prompt_repository.dart';
+import 'course_artifact_service.dart';
 import 'llm_log_repository.dart';
+import 'prompt_variable_registry.dart';
 import 'session_upload_cache_service.dart';
 import 'settings_repository.dart';
 
@@ -86,6 +88,8 @@ class _TutorRequestContext {
     required this.llmContext,
     required this.dedupeKey,
     required this.isStructuredPrompt,
+    required this.availableReviewDifficulties,
+    this.reviewQuestionDifficulty,
     this.reviewPassedLevel,
   });
 
@@ -100,6 +104,8 @@ class _TutorRequestContext {
   final LlmCallContext llmContext;
   final String dedupeKey;
   final bool isStructuredPrompt;
+  final Set<String> availableReviewDifficulties;
+  final String? reviewQuestionDifficulty;
   final String? reviewPassedLevel;
 }
 
@@ -126,14 +132,17 @@ class SessionService {
     this._promptRepository,
     this._settingsRepository,
     this._llmLogRepository, {
+    CourseArtifactService? courseArtifactService,
     SessionUploadCacheService? sessionUploadCacheService,
-  }) : _sessionUploadCacheService = sessionUploadCacheService;
+  })  : _courseArtifactService = courseArtifactService,
+        _sessionUploadCacheService = sessionUploadCacheService;
 
   final AppDatabase _db;
   final LlmService _llmService;
   final PromptRepository _promptRepository;
   final SettingsRepository _settingsRepository;
   final LlmLogRepository _llmLogRepository;
+  final CourseArtifactService? _courseArtifactService;
   final SessionUploadCacheService? _sessionUploadCacheService;
   final PromptRenderer _renderer = PromptRenderer();
   final Map<String, LlmRequestHandle> _inflightTutorByKey = {};
@@ -155,6 +164,27 @@ class SessionService {
       kpKey: kpKey,
       title: title,
     );
+  }
+
+  /// One-shot mistake focus per session: the next REVIEW_INIT for that session
+  /// lists this tag first in its "Mistake focus:" prefix. App mechanics only —
+  /// the prompt still selects the actual question.
+  final Map<int, String> _pendingMistakeFocusTags = <int, String>{};
+
+  /// Occurrence cap for mistake evidence: the prompt may re-describe the same
+  /// mistake on several turns of one question, so each (session, active
+  /// question, tag) bumps occurrences at most once per app run.
+  final Map<int, Set<String>> _persistedQuestionTags = <int, Set<String>>{};
+
+  void setPendingMistakeFocusTag({
+    required int sessionId,
+    required String tag,
+  }) {
+    final trimmed = tag.trim();
+    if (sessionId <= 0 || trimmed.isEmpty) {
+      return;
+    }
+    _pendingMistakeFocusTags[sessionId] = trimmed;
   }
 
   Future<int> _createSession({
@@ -236,6 +266,21 @@ class SessionService {
     );
     if (_sessionUploadCacheService != null) {
       await _sessionUploadCacheService.captureSession(sessionId);
+    }
+  }
+
+  Future<void> waitForInFlightTutorActions() async {
+    while (_inflightTutorByKey.isNotEmpty) {
+      final handles = _inflightTutorByKey.values.toList(growable: false);
+      await Future.wait(handles.map(_waitForTutorHandleQuietly));
+    }
+  }
+
+  Future<void> _waitForTutorHandleQuietly(LlmRequestHandle handle) async {
+    try {
+      await handle.future;
+    } catch (_) {
+      // The final sync should still upload the saved user message/error state.
     }
   }
 
@@ -350,19 +395,41 @@ class SessionService {
       sessionControl: controlState,
     );
     final promptName = promptResolution.promptName;
+    var questionTextsByLevel = const <String, String>{};
+    var availableReviewDifficulties = const <String>{};
+    String? reviewQuestionDifficulty;
+    if (actionMode == 'review') {
+      questionTextsByLevel = await _loadQuestionTextsByLevel(
+        courseVersion: courseVersion,
+        kpKey: node.kpKey,
+      );
+      availableReviewDifficulties =
+          _availableReviewDifficulties(questionTextsByLevel);
+      reviewQuestionDifficulty = _resolveReviewQuestionDifficulty(
+        promptName: promptName,
+        controlState: controlState,
+        progress: progress,
+        helpBias: resolvedHelpBias,
+        availableLevels: availableReviewDifficulties,
+      );
+    }
     final history = _buildHistory(messages);
     final recentChat = _buildRecentChat(messages);
     final passedCounts = _resolvePassedCounts(
       progress: progress,
       evidenceState: evidenceState,
     );
-    final currentDifficultyLevel =
-        _reviewDifficultyLevelFromPassedCounts(passedCounts);
-    final errorBookSummary = _buildErrorBookSummary(
+    final failedCounts = _resolveFailedCounts(
+      evidenceState: evidenceState,
+    );
+    final errorBookSummary = await _buildErrorBookSummary(
       messages: messages,
       progress: progress,
       previousJson: promptResolution.prevJson,
       evidenceState: evidenceState,
+      studentId: session?.studentId,
+      courseVersionId: courseVersion.id,
+      kpKey: node.kpKey,
     );
     final courseKey = _normalizeCourseKey(courseVersion.sourcePath);
     final studentPromptContext = await _db.resolveStudentPromptContext(
@@ -384,46 +451,62 @@ class SessionService {
       studentId: session?.studentId,
     );
     final settings = await _settingsRepository.load();
-    final values = {
-      'kp_title': node.title,
-      'kp_description': node.description,
-      'student_input': studentInput.trim(),
-      'recent_chat': recentChat,
-      'help_bias': resolvedHelpBias,
-      'student_summary': progress?.summaryText ?? session?.summaryText ?? '',
-      'student_profile': studentPromptContext.profileText,
-      'student_preferences': studentPromptContext.preferencesText,
-      'lesson_content': '',
-      'error_book_summary': errorBookSummary,
-      'presented_questions': '',
-      'active_review_question_json': controlState.activeReviewQuestion == null
+    final values = PromptVariableRegistry.buildTutorPromptValues(
+      kpTitle: node.title,
+      kpDescription: node.description,
+      studentInput: studentInput.trim(),
+      recentChat: recentChat,
+      conversationHistory: history,
+      helpBias: resolvedHelpBias,
+      studentSummary: progress?.summaryText ?? session?.summaryText ?? '',
+      studentContext: _buildStudentContext(
+        helpBias: resolvedHelpBias,
+        studentProfile: studentPromptContext.profileText,
+        studentPreferences: studentPromptContext.preferencesText,
+      ),
+      studentProfile: studentPromptContext.profileText,
+      studentPreferences: studentPromptContext.preferencesText,
+      lessonContent: '',
+      errorBookSummary: errorBookSummary,
+      presentedQuestions: '',
+      activeReviewQuestionJson: controlState.activeReviewQuestion == null
           ? 'null'
           : jsonEncode(controlState.activeReviewQuestion),
-      'target_difficulty': _resolveTargetDifficulty(
-        controlState: controlState,
-        fallbackDifficulty: currentDifficultyLevel,
-      ),
-      'review_correct_total': evidenceState.reviewCorrectTotal.toString(),
-      'review_attempt_total': evidenceState.reviewAttemptTotal.toString(),
-      'conversation_history': history,
-      'session_history': history,
-    };
+      reviewPassCounts: jsonEncode(passedCounts),
+      reviewFailCounts: jsonEncode(failedCounts),
+      reviewCorrectTotal: evidenceState.reviewCorrectTotal.toString(),
+      reviewAttemptTotal: evidenceState.reviewAttemptTotal.toString(),
+    );
     final needsLessonContent = promptName == 'learn';
     if (needsLessonContent) {
-      values['lesson_content'] = await _loadLectureTextIfPresent(
+      final lessonContent = await _loadLectureTextIfPresent(
         courseVersion: courseVersion,
         kpKey: node.kpKey,
       );
+      values[PromptVariableRegistry.lessonContent] = lessonContent;
     }
     if (actionMode == 'review') {
-      values['presented_questions'] = await _loadQuestionsText(
-        courseVersion: courseVersion,
-        kpKey: node.kpKey,
-        level: _resolveTargetDifficulty(
-          controlState: controlState,
-          fallbackDifficulty: currentDifficultyLevel,
-        ),
-      );
+      if (promptName == PromptVariableRegistry.reviewInitPrompt) {
+        final presentedQuestions = _questionsTextForDifficulty(
+          questionTextsByLevel: questionTextsByLevel,
+          difficulty: reviewQuestionDifficulty,
+        );
+        final dueMistakes = session == null
+            ? const <MistakeEntry>[]
+            : await _db.getDueMistakeEntriesForCourse(
+                studentId: session.studentId,
+                courseVersionId: courseVersion.id,
+                kpKey: node.kpKey,
+              );
+        final pendingFocusTag =
+            session == null ? null : _pendingMistakeFocusTags.remove(session.id);
+        values[PromptVariableRegistry.presentedQuestions] =
+            _questionsWithMistakeFocus(
+          questionsText: presentedQuestions,
+          mistakes: dueMistakes,
+          pendingTag: pendingFocusTag,
+        );
+      }
     }
     final renderResult = _renderWithHistoryLimit(
       template: template,
@@ -460,10 +543,12 @@ class SessionService {
       llmContext: llmContext,
       dedupeKey: dedupeKey,
       isStructuredPrompt: _isStructuredPrompt(promptName),
+      availableReviewDifficulties: availableReviewDifficulties,
+      reviewQuestionDifficulty: reviewQuestionDifficulty,
       reviewPassedLevel: _reviewPassedLevelForPrompt(
         promptName: promptName,
-        currentDifficultyLevel: currentDifficultyLevel,
-        previousAssistantJson: promptResolution.prevJson,
+        controlState: controlState,
+        reviewQuestionDifficulty: reviewQuestionDifficulty,
       ),
     );
   }
@@ -649,26 +734,33 @@ class SessionService {
     required _StructuredPayloadResolution resolution,
     int? assistantMessageId,
   }) async {
-    final parsed = resolution.payload.parsedJson == null
+    final decodedParsed = resolution.payload.parsedJson == null
         ? null
         : _tryDecodeJsonObject(resolution.payload.parsedJson!);
+    final parsed = _augmentReviewParsedJsonForPersistence(
+      request: request,
+      parsed: decodedParsed,
+    );
+    final parsedJsonText = parsed == null ? null : jsonEncode(parsed);
+    final int persistedMessageId;
     if (assistantMessageId == null) {
-      await _db.into(_db.chatMessages).insert(
+      persistedMessageId = await _db.into(_db.chatMessages).insert(
             ChatMessagesCompanion.insert(
               sessionId: request.sessionId,
               role: 'assistant',
               content: resolution.payload.displayText,
               rawContent: Value(resolution.payload.rawText),
-              parsedJson: Value(resolution.payload.parsedJson),
+              parsedJson: Value(parsedJsonText),
               action: Value(request.actionMode),
             ),
           );
     } else {
+      persistedMessageId = assistantMessageId;
       await _db.updateChatMessageAssistantPayload(
         messageId: assistantMessageId,
         content: resolution.payload.displayText,
         rawContent: resolution.payload.rawText,
-        parsedJson: resolution.payload.parsedJson,
+        parsedJson: parsedJsonText,
       );
     }
     final session = await _db.getSession(request.sessionId);
@@ -678,10 +770,13 @@ class SessionService {
           request.actionMode == 'review' ? TutorMode.review : TutorMode.learn,
     );
     final currentEvidence = _loadSessionEvidenceState(session);
+    final shouldCountReviewAttempt = request.actionMode == 'review' &&
+        currentControl.hasActiveReviewQuestion;
     final nextEvidence = TutorEvidenceState.updateFromAssistantPayload(
       current: currentEvidence,
       actionMode: request.actionMode,
       parsed: parsed,
+      hadActiveReviewQuestion: shouldCountReviewAttempt,
       passedLevel: request.reviewPassedLevel,
     );
     final studentId = request.llmContext.studentId;
@@ -709,8 +804,16 @@ class SessionService {
       courseVersionId: request.courseVersionId,
       kpKey: request.kpKey,
       studentIntent: request.resolvedStudentIntent,
-      parsedJsonText: resolution.payload.parsedJson,
+      parsedJsonText: parsedJsonText,
       passedLevel: request.reviewPassedLevel,
+      shouldCountReviewAttempt: shouldCountReviewAttempt,
+    );
+    final reflaggedTagKeys = await _persistMistakeEntriesIfNeeded(
+      request: request,
+      parsed: parsed,
+      currentControl: currentControl,
+      messageId: persistedMessageId,
+      shouldCountReviewAttempt: shouldCountReviewAttempt,
     );
     if (request.actionMode == 'review' && studentId != null && studentId > 0) {
       final progress = await _db.getProgress(
@@ -750,11 +853,29 @@ class SessionService {
     final nextControl = _deriveNextControlState(
       current: currentControl,
       actionMode: request.actionMode,
+      promptName: request.promptName,
       parsed: parsed,
+      displayText: resolution.payload.displayText,
+      reviewQuestionDifficulty: request.reviewQuestionDifficulty,
+      availableReviewDifficulties: request.availableReviewDifficulties,
       helpBias: _normalizeHelpBias(parsed?['next_help_bias'] as String?),
     ).copyWith(
       justPassedKpEvent: nextJustPassedKpEvent,
     );
+    final nextQuestionLevel = _normalizeLevel(
+      nextControl.currentReviewDifficulty,
+    );
+    if (request.actionMode == 'review' &&
+        studentId != null &&
+        studentId > 0 &&
+        nextQuestionLevel != null) {
+      await _db.setProgressQuestionLevel(
+        studentId: studentId,
+        courseVersionId: request.courseVersionId,
+        kpKey: request.kpKey,
+        questionLevel: nextQuestionLevel,
+      );
+    }
     await _db.updateSessionContracts(
       sessionId: request.sessionId,
       controlStateJson: nextControl.toJsonText(),
@@ -767,6 +888,40 @@ class SessionService {
       resolution: resolution,
     );
     await _touchSessionSync(request.sessionId);
+    final isGradedReviewTurn = request.actionMode == 'review' &&
+        request.promptName == PromptVariableRegistry.reviewContPrompt &&
+        shouldCountReviewAttempt &&
+        parsed != null &&
+        studentId != null &&
+        studentId > 0;
+    if (isGradedReviewTurn && parsed['finished'] == true) {
+      try {
+        // A question completed: open, currently-due mistakes for this KP that
+        // the LLM did NOT re-flag count as a successful review and get pushed
+        // out along the spaced-resurfacing ladder (drains the due queue).
+        await _db.creditReviewedDueMistakes(
+          studentId: studentId,
+          courseVersionId: request.courseVersionId,
+          kpKey: request.kpKey,
+          reflaggedTagKeys: reflaggedTagKeys,
+        );
+      } catch (_) {
+        // Best-effort scheduling; the turn itself is already persisted.
+      }
+    }
+    // Mark artifacts stale when durable evidence changed: a completed (graded)
+    // turn, OR any turn that recorded mistake evidence (incl. wrong-answer
+    // finished==false turns — otherwise that evidence stays unsynced until a
+    // later finished turn or app quit).
+    if (isGradedReviewTurn &&
+        (parsed['finished'] == true || reflaggedTagKeys.isNotEmpty)) {
+      try {
+        await _db.notifySessionArtifactsChanged(studentId);
+      } catch (_) {
+        // Best-effort: the turn itself is already persisted, and the next
+        // sync run rebuilds artifacts anyway.
+      }
+    }
   }
 
   Future<void> _appendTutorPersistLog({
@@ -807,13 +962,15 @@ class SessionService {
     required Map<String, Object?> values,
     required int maxTokens,
   }) {
-    final historyValue = (values['conversation_history'] ?? '').toString();
-    final usesHistory = _hasVariable(template, 'conversation_history') ||
-        _hasVariable(template, 'session_history');
+    final historyValue =
+        (values[PromptVariableRegistry.conversationHistory] ?? '').toString();
+    final usesHistory =
+        _hasVariable(template, PromptVariableRegistry.conversationHistory) ||
+            _hasVariable(template, PromptVariableRegistry.sessionHistory);
     String renderWithHistory(String history) {
       final updated = Map<String, Object?>.from(values);
-      updated['conversation_history'] = history;
-      updated['session_history'] = history;
+      updated[PromptVariableRegistry.conversationHistory] = history;
+      updated[PromptVariableRegistry.sessionHistory] = history;
       return _renderer.render(template, updated);
     }
 
@@ -915,44 +1072,11 @@ class SessionService {
         'Response preview: ${_summarizeResponseForError(responseText)}',
       );
     }
-    if (promptName == 'learn') {
-      final difficulty = _normalizeLevel(parsed['difficulty']);
-      if (difficulty == null) {
-        throw StateError(
-          'LLM response for "$promptName" has invalid "difficulty". '
-          'Response preview: ${_summarizeResponseForError(responseText)}',
-        );
-      }
-      final mistakes = parsed['mistakes'];
-      if (mistakes is! List ||
-          mistakes.any(
-            (item) => item is! String || item.trim().isEmpty,
-          )) {
-        throw StateError(
-          'LLM response for "$promptName" has invalid "mistakes". '
-          'Response preview: ${_summarizeResponseForError(responseText)}',
-        );
-      }
-      final nextAction = _normalizeNextAction(parsed['next_action']);
-      if (nextAction == null) {
-        throw StateError(
-          'LLM response for "$promptName" has invalid "next_action". '
-          'Response preview: ${_summarizeResponseForError(responseText)}',
-        );
-      }
-    }
-    if (promptName == 'review') {
+    if (promptName == PromptVariableRegistry.reviewContPrompt) {
       final finished = parsed['finished'];
       if (finished is! bool) {
         throw StateError(
           'LLM response for "$promptName" is missing boolean "finished". '
-          'Response preview: ${_summarizeResponseForError(responseText)}',
-        );
-      }
-      final difficultyLevel = _normalizeLevel(parsed['difficulty']);
-      if (difficultyLevel == null) {
-        throw StateError(
-          'LLM response for "$promptName" has invalid "difficulty". '
           'Response preview: ${_summarizeResponseForError(responseText)}',
         );
       }
@@ -966,10 +1090,11 @@ class SessionService {
           'Response preview: ${_summarizeResponseForError(responseText)}',
         );
       }
-      final nextAction = _normalizeNextAction(parsed['next_action']);
-      if (nextAction == null) {
+      final difficultyAdjustment =
+          _normalizeDifficultyAdjustment(parsed['difficulty_adjustment']);
+      if (difficultyAdjustment == null) {
         throw StateError(
-          'LLM response for "$promptName" has invalid "next_action". '
+          'LLM response for "$promptName" has invalid "difficulty_adjustment". '
           'Response preview: ${_summarizeResponseForError(responseText)}',
         );
       }
@@ -978,20 +1103,12 @@ class SessionService {
 
   Set<String> _requiredStructuredKeys(String promptName) {
     switch (promptName) {
-      case 'learn':
+      case PromptVariableRegistry.reviewContPrompt:
         return {
           'text',
-          'difficulty',
           'mistakes',
-          'next_action',
-        };
-      case 'review':
-        return {
-          'text',
-          'difficulty',
-          'mistakes',
-          'next_action',
           'finished',
+          'difficulty_adjustment',
         };
       default:
         return {'text'};
@@ -1017,6 +1134,112 @@ class SessionService {
     if (normalized == 'easy' ||
         normalized == 'medium' ||
         normalized == 'hard') {
+      return normalized;
+    }
+    return null;
+  }
+
+  String _resolveReviewQuestionDifficulty({
+    required String promptName,
+    required TutorControlState controlState,
+    required ProgressEntry? progress,
+    required String helpBias,
+    required Set<String> availableLevels,
+  }) {
+    if (promptName == PromptVariableRegistry.reviewContPrompt) {
+      final activeDifficulty =
+          _normalizeLevel(controlState.activeReviewQuestion?['difficulty']);
+      if (activeDifficulty != null) {
+        return _clampReviewDifficulty(
+          activeDifficulty,
+          availableLevels: availableLevels,
+        );
+      }
+    }
+    final bias = helpBias.trim().toUpperCase();
+    final target = bias == TutorHelpBias.harder.wireValue
+        ? 'hard'
+        : bias == TutorHelpBias.easier.wireValue
+            ? 'easy'
+            : _normalizeLevel(controlState.currentReviewDifficulty) ??
+                _normalizeLevel(progress?.questionLevel) ??
+                'medium';
+    return _clampReviewDifficulty(
+      target,
+      availableLevels: availableLevels,
+    );
+  }
+
+  String _applyReviewDifficultyAdjustment({
+    required String? currentDifficulty,
+    required Object? adjustment,
+    required Set<String> availableLevels,
+  }) {
+    final normalizedAdjustment = _normalizeDifficultyAdjustment(adjustment);
+    final current = _clampReviewDifficulty(
+      _normalizeLevel(currentDifficulty) ?? 'medium',
+      availableLevels: availableLevels,
+    );
+    if (normalizedAdjustment == null || normalizedAdjustment == 'same') {
+      return current;
+    }
+    const order = <String>['easy', 'medium', 'hard'];
+    final currentIndex = order.indexOf(current);
+    final rawTargetIndex =
+        normalizedAdjustment == 'harder' ? currentIndex + 1 : currentIndex - 1;
+    final targetIndex = rawTargetIndex < 0
+        ? 0
+        : rawTargetIndex >= order.length
+            ? order.length - 1
+            : rawTargetIndex;
+    return _clampReviewDifficulty(
+      order[targetIndex],
+      availableLevels: availableLevels,
+      tieBias: normalizedAdjustment,
+    );
+  }
+
+  String _clampReviewDifficulty(
+    String target, {
+    required Set<String> availableLevels,
+    String tieBias = 'harder',
+  }) {
+    final normalizedTarget = _normalizeLevel(target) ?? 'medium';
+    final normalizedAvailable =
+        availableLevels.map(_normalizeLevel).whereType<String>().toSet();
+    if (normalizedAvailable.isEmpty ||
+        normalizedAvailable.contains(normalizedTarget)) {
+      return normalizedTarget;
+    }
+    const order = <String>['easy', 'medium', 'hard'];
+    final targetIndex = order.indexOf(normalizedTarget);
+    var best = normalizedAvailable.first;
+    var bestIndex = order.indexOf(best);
+    var bestDistance = (bestIndex - targetIndex).abs();
+    for (final candidate in normalizedAvailable.skip(1)) {
+      final candidateIndex = order.indexOf(candidate);
+      final distance = (candidateIndex - targetIndex).abs();
+      final shouldPreferTie = tieBias == 'easier'
+          ? candidateIndex < bestIndex
+          : candidateIndex > bestIndex;
+      if (distance < bestDistance ||
+          (distance == bestDistance && shouldPreferTie)) {
+        best = candidate;
+        bestIndex = candidateIndex;
+        bestDistance = distance;
+      }
+    }
+    return best;
+  }
+
+  String? _normalizeDifficultyAdjustment(Object? value) {
+    if (value is! String) {
+      return null;
+    }
+    final normalized = value.trim().toLowerCase();
+    if (normalized == 'easier' ||
+        normalized == 'same' ||
+        normalized == 'harder') {
       return normalized;
     }
     return null;
@@ -1053,64 +1276,190 @@ class SessionService {
     };
   }
 
-  String? _reviewPassedLevelForPrompt({
-    required String promptName,
-    required String currentDifficultyLevel,
-    required Map<String, dynamic>? previousAssistantJson,
+  Map<String, int> _resolveFailedCounts({
+    required TutorEvidenceState evidenceState,
   }) {
-    if (promptName == 'review') {
-      final level = _normalizeLevel(previousAssistantJson?['difficulty']) ??
-          _normalizeLevel(currentDifficultyLevel);
-      return level;
-    }
-    return null;
+    return <String, int>{
+      'easy': evidenceState.easyFailedCount,
+      'medium': evidenceState.mediumFailedCount,
+      'hard': evidenceState.hardFailedCount,
+    };
   }
 
-  String _reviewDifficultyLevelFromPassedCounts(Map<String, int> counts) {
-    if ((counts['medium'] ?? 0) > 0 || (counts['hard'] ?? 0) > 0) {
-      return 'hard';
+  String _buildStudentContext({
+    required String helpBias,
+    required String studentProfile,
+    required String studentPreferences,
+  }) {
+    final lines = <String>[];
+    final normalizedHelpBias = helpBias.trim();
+    if (normalizedHelpBias.isNotEmpty &&
+        normalizedHelpBias != TutorHelpBias.unchanged.wireValue) {
+      lines.add('Help bias: $normalizedHelpBias');
     }
-    if ((counts['easy'] ?? 0) > 0) {
-      return 'medium';
+    final profile = studentProfile.trim();
+    if (profile.isNotEmpty) {
+      lines.add('Profile: $profile');
     }
-    return 'easy';
+    final preferences = studentPreferences.trim();
+    if (preferences.isNotEmpty) {
+      lines.add('Preferences: $preferences');
+    }
+    return lines.join('\n');
+  }
+
+  String? _reviewPassedLevelForPrompt({
+    required String promptName,
+    required TutorControlState controlState,
+    required String? reviewQuestionDifficulty,
+  }) {
+    if (promptName == PromptVariableRegistry.reviewContPrompt) {
+      return _normalizeLevel(
+              controlState.activeReviewQuestion?['difficulty']) ??
+          reviewQuestionDifficulty;
+    }
+    return null;
   }
 
   Future<String> _loadLectureText({
     required CourseVersion courseVersion,
     required String kpKey,
   }) async {
-    final basePath = _requireCourseBasePath(courseVersion);
-    final path = p.join(basePath, '${kpKey}_lecture.txt');
-    final legacy = p.join(basePath, kpKey, 'lecture.txt');
-    final file = File(path).existsSync() ? File(path) : File(legacy);
-    if (!file.existsSync()) {
-      throw StateError('Missing lecture file: $path');
+    final basePath = courseVersion.sourcePath?.trim() ?? '';
+    if (basePath.isNotEmpty) {
+      final path = p.join(basePath, '${kpKey}_lecture.txt');
+      final legacy = p.join(basePath, kpKey, 'lecture.txt');
+      final file = File(path).existsSync() ? File(path) : File(legacy);
+      if (file.existsSync()) {
+        return file.readAsString(encoding: utf8);
+      }
     }
-    return file.readAsString(encoding: utf8);
+    final fallback = await _readTextFromStoredBundle(
+      courseVersionId: courseVersion.id,
+      candidateRelativePaths: <String>[
+        '${kpKey}_lecture.txt',
+        p.join(kpKey, 'lecture.txt'),
+      ],
+    );
+    if (fallback != null) {
+      return fallback;
+    }
+    throw StateError(
+        'Missing lecture file for course ${courseVersion.id}: $kpKey');
   }
 
-  Future<String> _loadQuestionsText({
+  Future<Map<String, String>> _loadQuestionTextsByLevel({
+    required CourseVersion courseVersion,
+    required String kpKey,
+  }) async {
+    final result = <String, String>{};
+    for (final level in const <String>['easy', 'medium', 'hard']) {
+      final text = await _loadQuestionTextForLevel(
+        courseVersion: courseVersion,
+        kpKey: kpKey,
+        level: level,
+      );
+      final trimmed = text.trim();
+      if (trimmed.isEmpty) {
+        continue;
+      }
+      result[level] = trimmed;
+    }
+    return result;
+  }
+
+  Set<String> _availableReviewDifficulties(Map<String, String> textsByLevel) {
+    return textsByLevel.entries
+        .where((entry) => entry.value.trim().isNotEmpty)
+        .map((entry) => entry.key)
+        .where((level) => _normalizeLevel(level) != null)
+        .toSet();
+  }
+
+  String _questionsTextForDifficulty({
+    required Map<String, String> questionTextsByLevel,
+    required String? difficulty,
+  }) {
+    final normalized = _normalizeLevel(difficulty);
+    if (normalized == null) {
+      return '';
+    }
+    return questionTextsByLevel[normalized]?.trim() ?? '';
+  }
+
+  String _questionsWithMistakeFocus({
+    required String questionsText,
+    required List<MistakeEntry> mistakes,
+    String? pendingTag,
+  }) {
+    final focusTags = <String>[];
+    final seenKeys = <String>{};
+    final trimmedPending = pendingTag?.trim() ?? '';
+    if (trimmedPending.isNotEmpty) {
+      final key = AppDatabase.normalizeMistakeTagKey(trimmedPending);
+      if (key.isNotEmpty && seenKeys.add(key)) {
+        focusTags.add(trimmedPending);
+      }
+    }
+    for (final mistake in mistakes) {
+      if (focusTags.length >= 3) {
+        break;
+      }
+      if (mistake.dismissed || mistake.status != 'open') {
+        continue;
+      }
+      if (mistake.mistakeTagKey.isNotEmpty &&
+          seenKeys.add(mistake.mistakeTagKey)) {
+        focusTags.add(mistake.mistakeTagRaw);
+      }
+    }
+    if (focusTags.isEmpty) {
+      return questionsText;
+    }
+    final focus = focusTags.map((tag) => '- $tag').join('\n');
+    final trimmedQuestions = questionsText.trim();
+    if (trimmedQuestions.isEmpty) {
+      return 'Mistake focus:\n$focus';
+    }
+    return 'Mistake focus:\n$focus\n\n$trimmedQuestions';
+  }
+
+  Future<String> _loadQuestionTextForLevel({
     required CourseVersion courseVersion,
     required String kpKey,
     required String level,
   }) async {
-    final basePath = _requireCourseBasePath(courseVersion);
-    final path = p.join(basePath, '${kpKey}_$level.txt');
-    final legacy = p.join(basePath, kpKey, level, 'questions.txt');
-    final file = File(path).existsSync() ? File(path) : File(legacy);
-    if (!file.existsSync()) {
-      return '';
+    final basePath = courseVersion.sourcePath?.trim() ?? '';
+    if (basePath.isNotEmpty) {
+      final path = p.join(basePath, '${kpKey}_$level.txt');
+      final legacy = p.join(basePath, kpKey, level, 'questions.txt');
+      final file = File(path).existsSync() ? File(path) : File(legacy);
+      if (file.existsSync()) {
+        return file.readAsString(encoding: utf8);
+      }
     }
-    return file.readAsString(encoding: utf8);
+    return await _readTextFromStoredBundle(
+          courseVersionId: courseVersion.id,
+          candidateRelativePaths: <String>[
+            '${kpKey}_$level.txt',
+            p.join(kpKey, level, 'questions.txt'),
+          ],
+        ) ??
+        '';
   }
 
-  String _requireCourseBasePath(CourseVersion courseVersion) {
-    final basePath = courseVersion.sourcePath;
-    if (basePath == null || basePath.trim().isEmpty) {
-      throw StateError('Course not loaded. Load the folder first.');
+  Future<String?> _readTextFromStoredBundle({
+    required int courseVersionId,
+    required List<String> candidateRelativePaths,
+  }) async {
+    final artifactService = _courseArtifactService;
+    if (artifactService == null) {
+      return null;
     }
-    return basePath;
+    return artifactService.readStoredTextEntry(
+      courseVersionId: courseVersionId,
+      candidateRelativePaths: candidateRelativePaths,
+    );
   }
 
   String _resolveActionMode(String mode) {
@@ -1137,13 +1486,33 @@ class SessionService {
   }) {
     final normalized = mode.trim().toLowerCase();
     final actionMode = _resolveActionMode(normalized);
-    if (actionMode == 'learn' || actionMode == 'review') {
+    if (actionMode == 'learn') {
       final previous = _findLastAssistantForActionMode(
         messages: messages,
         actionMode: actionMode,
       );
       return _TutorPromptResolution(
-        promptName: actionMode,
+        promptName: PromptVariableRegistry.learnPrompt,
+        lastAssistantIndex: previous?.index,
+        prevJson: previous?.json,
+      );
+    }
+    if (actionMode == 'review') {
+      final previous = _findLastAssistantForActionMode(
+        messages: messages,
+        actionMode: actionMode,
+      );
+      final explicitReviewPrompt =
+          normalized == PromptVariableRegistry.reviewInitPrompt ||
+              normalized == PromptVariableRegistry.reviewContPrompt;
+      final promptName = explicitReviewPrompt
+          ? normalized
+          : (sessionControl.hasActiveReviewQuestion ||
+                  studentInput.trim().isNotEmpty
+              ? PromptVariableRegistry.reviewContPrompt
+              : PromptVariableRegistry.reviewInitPrompt);
+      return _TutorPromptResolution(
+        promptName: promptName,
         lastAssistantIndex: previous?.index,
         prevJson: previous?.json,
       );
@@ -1189,47 +1558,81 @@ class SessionService {
     return _buildHistory(messages.sublist(start));
   }
 
-  String _resolveTargetDifficulty({
-    required TutorControlState controlState,
-    required String fallbackDifficulty,
-  }) {
-    final activeDifficulty = _normalizeLevel(
-      controlState.activeReviewQuestion?['difficulty'],
-    );
-    return activeDifficulty ?? fallbackDifficulty;
-  }
-
   TutorControlState _deriveNextControlState({
     required TutorControlState current,
     required String actionMode,
+    required String promptName,
     required Map<String, dynamic>? parsed,
+    required String displayText,
+    required String? reviewQuestionDifficulty,
+    required Set<String> availableReviewDifficulties,
     required String helpBias,
   }) {
     final resolvedHelpBias =
         TutorHelpBias.fromWire(helpBias) ?? current.helpBias;
+    if (actionMode == 'review' &&
+        promptName == PromptVariableRegistry.reviewInitPrompt) {
+      final difficulty = _clampReviewDifficulty(
+        reviewQuestionDifficulty ??
+            _normalizeLevel(current.currentReviewDifficulty) ??
+            'medium',
+        availableLevels: availableReviewDifficulties,
+      );
+      return current.copyWith(
+        mode: TutorMode.review,
+        step: TutorTurnStep.continueTurn,
+        turnFinished: false,
+        helpBias: resolvedHelpBias,
+        recommendedAction: null,
+        activeReviewQuestion: _buildInitialActiveReviewQuestion(
+          text: displayText,
+          difficulty: difficulty,
+        ),
+        currentReviewDifficulty: difficulty,
+      );
+    }
     if (parsed == null) {
+      if (actionMode == 'learn') {
+        return current.copyWith(
+          mode: TutorMode.learn,
+          step: TutorTurnStep.newTurn,
+          turnFinished: true,
+          helpBias: resolvedHelpBias,
+          recommendedAction: null,
+          activeReviewQuestion: null,
+        );
+      }
       return current.copyWith(helpBias: resolvedHelpBias);
     }
-    if (actionMode == 'review') {
+    if (actionMode == 'review' &&
+        promptName == PromptVariableRegistry.reviewContPrompt) {
       final finished = parsed['finished'];
       if (finished is bool) {
+        final currentQuestionDifficulty =
+            _normalizeLevel(current.activeReviewQuestion?['difficulty']) ??
+                _normalizeLevel(reviewQuestionDifficulty) ??
+                _normalizeLevel(current.currentReviewDifficulty) ??
+                'medium';
+        final nextDifficulty = _applyReviewDifficultyAdjustment(
+          currentDifficulty: currentQuestionDifficulty,
+          adjustment: parsed['difficulty_adjustment'],
+          availableLevels: availableReviewDifficulties,
+        );
         final nextQuestion = finished
             ? null
             : _buildActiveReviewQuestion(
                 currentQuestion: current.activeReviewQuestion,
                 parsed: parsed,
+                fallbackDifficulty: currentQuestionDifficulty,
               );
-        final nextAction = TutorFinishedAction.fromWire(
-          _normalizeNextAction(parsed['next_action'])?.toUpperCase(),
-        );
         return current.copyWith(
           mode: TutorMode.review,
           step: finished ? TutorTurnStep.newTurn : TutorTurnStep.continueTurn,
           turnFinished: finished,
           helpBias: resolvedHelpBias,
-          allowedActions: const <TutorFinishedAction>[],
-          recommendedAction: nextAction,
+          recommendedAction: null,
           activeReviewQuestion: nextQuestion,
+          currentReviewDifficulty: nextDifficulty,
         );
       }
     }
@@ -1242,7 +1645,6 @@ class SessionService {
         step: TutorTurnStep.newTurn,
         turnFinished: true,
         helpBias: resolvedHelpBias,
-        allowedActions: const <TutorFinishedAction>[],
         recommendedAction: nextAction,
         activeReviewQuestion: null,
       );
@@ -1257,16 +1659,15 @@ class SessionService {
   Map<String, dynamic>? _buildActiveReviewQuestion({
     required Map<String, dynamic>? currentQuestion,
     required Map<String, dynamic> parsed,
+    required String fallbackDifficulty,
   }) {
     final next = <String, dynamic>{};
     if (currentQuestion != null) {
       next.addAll(currentQuestion);
     }
-    final text = (parsed['text'] as String?)?.trim();
-    if (text != null && text.isNotEmpty) {
-      next['text'] = text;
-    }
-    final difficultyLevel = _normalizeLevel(parsed['difficulty']);
+    final difficultyLevel = _normalizeLevel(next['difficulty']) ??
+        _normalizeLevel(parsed['difficulty']) ??
+        _normalizeLevel(fallbackDifficulty);
     if (difficultyLevel != null) {
       next['difficulty'] = difficultyLevel;
     }
@@ -1279,6 +1680,17 @@ class SessionService {
           .toList(growable: false);
     }
     return next.isEmpty ? null : next;
+  }
+
+  Map<String, dynamic> _buildInitialActiveReviewQuestion({
+    required String text,
+    required String difficulty,
+  }) {
+    final trimmedText = text.trim();
+    return <String, dynamic>{
+      if (trimmedText.isNotEmpty) 'text': trimmedText,
+      'difficulty': difficulty,
+    };
   }
 
   TutorControlState _loadSessionControlState(
@@ -1321,12 +1733,172 @@ class SessionService {
     );
   }
 
-  String _buildErrorBookSummary({
+  /// Persists mistake evidence for a graded review turn and returns the set of
+  /// normalized tag keys the LLM flagged this turn (used to widen the sync
+  /// notify and to credit spaced reviews). Empty when nothing applies.
+  Future<Set<String>> _persistMistakeEntriesIfNeeded({
+    required _TutorRequestContext request,
+    required Map<String, dynamic>? parsed,
+    required TutorControlState currentControl,
+    required int messageId,
+    required bool shouldCountReviewAttempt,
+  }) async {
+    final studentId = request.llmContext.studentId;
+    // The frozen prompt reports mistakes on wrong answers (finished=false), so
+    // unfinished turns must persist too. Inflation is prevented below by
+    // capping occurrences at one bump per (session, active question, tag).
+    if (request.actionMode != 'review' ||
+        request.promptName != PromptVariableRegistry.reviewContPrompt ||
+        !shouldCountReviewAttempt ||
+        studentId == null ||
+        studentId <= 0 ||
+        parsed == null ||
+        parsed['finished'] is! bool) {
+      return const <String>{};
+    }
+    final drafts = _mistakeDraftsFromReviewPayload(parsed);
+    if (drafts.isEmpty) {
+      return const <String>{};
+    }
+    final reflaggedTagKeys = <String>{
+      for (final draft in drafts) AppDatabase.normalizeMistakeTagKey(draft.tag),
+    }..removeWhere((key) => key.isEmpty);
+    final activeQuestion = currentControl.activeReviewQuestion;
+    final questionExcerpt = _activeQuestionExcerpt(activeQuestion);
+    final difficulty = _normalizeLevel(activeQuestion?['difficulty']) ??
+        _normalizeLevel(request.reviewQuestionDifficulty);
+    // Key on the question text: the control state rebuilds the active-question
+    // map between turns, but the text is stable for the life of one question.
+    final questionFingerprint = questionExcerpt ?? jsonEncode(activeQuestion);
+    final seenForSession = _persistedQuestionTags.putIfAbsent(
+      request.sessionId,
+      () => <String>{},
+    );
+    for (final draft in drafts) {
+      final tagKey = AppDatabase.normalizeMistakeTagKey(draft.tag);
+      if (!seenForSession.add('$questionFingerprint|$tagKey')) {
+        continue;
+      }
+      await _db.upsertMistakeEvidence(
+        studentId: studentId,
+        courseVersionId: request.courseVersionId,
+        kpKey: request.kpKey,
+        sessionId: request.sessionId,
+        messageId: messageId,
+        mistakeTag: draft.tag,
+        mistakeNote: draft.note,
+        questionExcerpt: questionExcerpt,
+        difficulty: difficulty,
+        evidenceJson: jsonEncode(<String, dynamic>{
+          'prompt_name': request.promptName,
+          'active_question': activeQuestion,
+          'assistant_payload': parsed,
+        }),
+      );
+    }
+    return reflaggedTagKeys;
+  }
+
+  List<_MistakeDraft> _mistakeDraftsFromReviewPayload(
+    Map<String, dynamic> parsed,
+  ) {
+    final drafts = <_MistakeDraft>[];
+    final update = parsed['error_book_update'];
+    if (update is Map) {
+      final tag = update['mistake_tag']?.toString().trim() ?? '';
+      if (tag.isNotEmpty) {
+        drafts.add(
+          _MistakeDraft(
+            tag: tag,
+            note: update['mistake_note']?.toString(),
+          ),
+        );
+      }
+    }
+    final source = parsed['mistakes'] ?? parsed['mistake_tags'];
+    if (source is List) {
+      for (final item in source) {
+        if (item is String) {
+          final tag = item.trim();
+          if (tag.isNotEmpty) {
+            drafts.add(_MistakeDraft(tag: tag));
+          }
+          continue;
+        }
+        if (item is Map) {
+          final tag =
+              (item['mistake_tag'] ?? item['tag'])?.toString().trim() ?? '';
+          if (tag.isNotEmpty) {
+            drafts.add(
+              _MistakeDraft(
+                tag: tag,
+                note: item['mistake_note']?.toString() ??
+                    item['note']?.toString(),
+              ),
+            );
+          }
+        }
+      }
+    }
+    final seen = <String>{};
+    return drafts.where((draft) {
+      final key = AppDatabase.normalizeMistakeTagKey(draft.tag);
+      return key.isNotEmpty && seen.add(key);
+    }).toList(growable: false);
+  }
+
+  String? _activeQuestionExcerpt(Map<String, dynamic>? activeQuestion) {
+    if (activeQuestion == null) {
+      return null;
+    }
+    final text = activeQuestion['text']?.toString().trim();
+    if (text != null && text.isNotEmpty) {
+      return text;
+    }
+    final questionText = activeQuestion['question_text']?.toString().trim();
+    if (questionText != null && questionText.isNotEmpty) {
+      return questionText;
+    }
+    return null;
+  }
+
+  Future<String> _buildErrorBookSummary({
     required List<ChatMessage> messages,
     ProgressEntry? progress,
     Map<String, dynamic>? previousJson,
     TutorEvidenceState? evidenceState,
-  }) {
+    int? studentId,
+    int? courseVersionId,
+    String? kpKey,
+  }) async {
+    if (studentId != null &&
+        studentId > 0 &&
+        courseVersionId != null &&
+        courseVersionId > 0 &&
+        (kpKey ?? '').trim().isNotEmpty) {
+      final durableMistakes = await _db.getMistakeEntriesForScope(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+        kpKey: kpKey!.trim(),
+      );
+      if (durableMistakes.isNotEmpty) {
+        return jsonEncode(<String, dynamic>{
+          'source': 'mistake_entries',
+          'top_mistakes': durableMistakes
+              .take(5)
+              .map(
+                (mistake) => <String, dynamic>{
+                  'mistake_tag': mistake.mistakeTagRaw,
+                  'count': mistake.occurrences,
+                  if ((mistake.mistakeNote ?? '').trim().isNotEmpty)
+                    'last_note': mistake.mistakeNote!.trim(),
+                  'status': mistake.status,
+                },
+              )
+              .toList(growable: false),
+        });
+      }
+    }
     final aggregated = _aggregateErrorBook(messages);
     if (aggregated != null && aggregated.isNotEmpty) {
       return jsonEncode(aggregated);
@@ -1507,6 +2079,25 @@ class SessionService {
     return 'UNCHANGED';
   }
 
+  Map<String, dynamic>? _augmentReviewParsedJsonForPersistence({
+    required _TutorRequestContext request,
+    required Map<String, dynamic>? parsed,
+  }) {
+    if (parsed == null ||
+        request.promptName != PromptVariableRegistry.reviewContPrompt) {
+      return parsed;
+    }
+    final passedLevel =
+        _normalizeLevel(parsed['difficulty']) ?? request.reviewPassedLevel;
+    if (passedLevel == null) {
+      return parsed;
+    }
+    return <String, dynamic>{
+      ...parsed,
+      'difficulty': passedLevel,
+    };
+  }
+
   Future<void> _updateReviewProgressIfNeeded({
     required String actionMode,
     required int? studentId,
@@ -1515,8 +2106,12 @@ class SessionService {
     required String studentIntent,
     required String? parsedJsonText,
     required String? passedLevel,
+    required bool shouldCountReviewAttempt,
   }) async {
-    if (actionMode != 'review' || studentId == null || studentId <= 0) {
+    if (actionMode != 'review' ||
+        studentId == null ||
+        studentId <= 0 ||
+        !shouldCountReviewAttempt) {
       return;
     }
     final parsed =
@@ -1856,15 +2451,13 @@ class SessionService {
   }
 
   bool _isStructuredPrompt(String promptName) {
-    return promptName == 'learn' || promptName == 'review';
+    return promptName == PromptVariableRegistry.reviewContPrompt;
   }
 
   Future<Map<String, dynamic>?> _loadStructuredSchema(String promptName) async {
     switch (promptName) {
-      case 'learn':
-        return _promptRepository.loadSchema('learn');
-      case 'review':
-        return _promptRepository.loadSchema('review');
+      case PromptVariableRegistry.reviewContPrompt:
+        return _promptRepository.loadSchema('review_cont');
       default:
         return null;
     }
@@ -1985,6 +2578,16 @@ class _AssistantJsonRef {
 
   final int index;
   final Map<String, dynamic>? json;
+}
+
+class _MistakeDraft {
+  const _MistakeDraft({
+    required this.tag,
+    this.note,
+  });
+
+  final String tag;
+  final String? note;
 }
 
 class _ErrorBookAggregate {

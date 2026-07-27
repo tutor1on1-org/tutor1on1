@@ -194,7 +194,16 @@ class _TeacherMarketplaceCoursesPageState
         : l10n.marketplaceBundleUploaded;
     return Card(
       child: ListTile(
-        title: Text(course.subject),
+        title: Row(
+          children: [
+            Expanded(child: Text(course.subject)),
+            IconButton(
+              tooltip: l10n.editCourseDescriptionTooltip,
+              icon: const Icon(Icons.edit_outlined),
+              onPressed: () => _editDescription(context, course),
+            ),
+          ],
+        ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -321,6 +330,61 @@ class _TeacherMarketplaceCoursesPageState
         return;
       }
       _setStickyMessage(l10n.marketplaceRequestFailed('$error'));
+    }
+  }
+
+  Future<void> _editDescription(
+    BuildContext context,
+    TeacherCourseSummary course,
+  ) async {
+    final l10n = AppLocalizations.of(context)!;
+    final descriptionController = TextEditingController(
+      text: course.description,
+    );
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(l10n.editCourseDescriptionTitle),
+          content: TextField(
+            controller: descriptionController,
+            decoration: InputDecoration(labelText: l10n.descriptionLabel),
+            maxLines: 4,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(l10n.cancelButton),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(l10n.saveButton),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) {
+        return;
+      }
+      await _api.updateCourseMetadata(
+        courseId: course.courseId,
+        description: descriptionController.text,
+      );
+      if (!mounted) {
+        return;
+      }
+      _setStickyMessage(
+        l10n.courseDescriptionUpdatedMessage,
+        isError: false,
+      );
+      await _load();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _setStickyMessage(l10n.marketplaceRequestFailed('$error'));
+    } finally {
+      descriptionController.dispose();
     }
   }
 

@@ -21,7 +21,8 @@ void main() {
     final repository = PromptRepository(assetBundle: _AlwaysFailAssetBundle());
     const promptNames = <String>[
       'learn',
-      'review',
+      'review_init',
+      'review_cont',
     ];
 
     for (final promptName in promptNames) {

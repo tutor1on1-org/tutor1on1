@@ -16,6 +16,7 @@ import '../../state/auth_controller.dart';
 import '../app_close_button.dart';
 import '../tutor_session_page.dart';
 import '../widgets/pan_scroll_view.dart';
+import 'course_builder_conversation_page.dart';
 
 class SkillTreePage extends StatefulWidget {
   const SkillTreePage({
@@ -23,11 +24,21 @@ class SkillTreePage extends StatefulWidget {
     required this.courseVersionId,
     required this.isTeacherView,
     this.teacherStudentId,
+    this.titleOverride,
+    this.enableSessionNavigation = true,
+    this.enableCourseEditorActions = false,
+    this.allowTextbookOnly = false,
+    this.embedded = false,
   });
 
   final int courseVersionId;
   final bool isTeacherView;
   final int? teacherStudentId;
+  final String? titleOverride;
+  final bool enableSessionNavigation;
+  final bool enableCourseEditorActions;
+  final bool allowTextbookOnly;
+  final bool embedded;
 
   @override
   State<SkillTreePage> createState() => _SkillTreePageState();
@@ -117,24 +128,44 @@ class _SkillTreePageState extends State<SkillTreePage> {
   }
 
   Future<void> _loadTeacherAssignment() async {
+    final auth = context.read<AuthController>();
+    final currentUser = auth.currentUser;
     if (widget.teacherStudentId != null) {
-      if (!mounted) {
-        return;
+      if (mounted) {
+        setState(() {
+          _teacherStudentId = widget.teacherStudentId;
+        });
       }
-      setState(() {
-        _teacherStudentId = widget.teacherStudentId;
-      });
+      if (currentUser != null && currentUser.role == 'teacher') {
+        final services = context.read<AppServices>();
+        await services.sessionSyncService.materializeTeacherArtifactsForView(
+          currentUser: currentUser,
+          localStudentId: widget.teacherStudentId!,
+          courseVersionId: widget.courseVersionId,
+        );
+      }
       return;
     }
     final assignments =
         await _db.getAssignmentsForCourse(widget.courseVersionId);
+    final selectedStudentId =
+        assignments.isNotEmpty ? assignments.first.studentId : null;
     if (!mounted) {
       return;
     }
     setState(() {
-      _teacherStudentId =
-          assignments.isNotEmpty ? assignments.first.studentId : null;
+      _teacherStudentId = selectedStudentId;
     });
+    if (selectedStudentId != null &&
+        currentUser != null &&
+        currentUser.role == 'teacher') {
+      final services = context.read<AppServices>();
+      await services.sessionSyncService.materializeTeacherArtifactsForView(
+        currentUser: currentUser,
+        localStudentId: selectedStudentId,
+        courseVersionId: widget.courseVersionId,
+      );
+    }
   }
 
   Future<void> _loadTree() async {
@@ -146,7 +177,8 @@ class _SkillTreePageState extends State<SkillTreePage> {
       });
       return;
     }
-    if (course.sourcePath == null || course.sourcePath!.trim().isEmpty) {
+    if (!widget.allowTextbookOnly &&
+        (course.sourcePath == null || course.sourcePath!.trim().isEmpty)) {
       setState(() {
         _error = 'Course not loaded. Load the folder first.';
         _loading = false;
@@ -256,27 +288,23 @@ class _SkillTreePageState extends State<SkillTreePage> {
     final l10n = AppLocalizations.of(context)!;
     final auth = context.read<AuthController>();
     final currentUser = auth.currentUser;
-    final isStudent = currentUser?.role == 'student';
-    final isTeacher = currentUser?.role == 'teacher';
+    final isStudent =
+        widget.enableSessionNavigation && currentUser?.role == 'student';
+    final isTeacher =
+        widget.enableSessionNavigation && currentUser?.role == 'teacher';
     final db = context.read<AppDatabase>();
     final targetStudentId = isStudent ? currentUser?.id : _teacherStudentId;
 
     if (_loading) {
-      return Scaffold(
-        appBar: AppBar(
-          title: Text(l10n.skillTreeTitle),
-          actions: buildAppBarActionsWithClose(context),
-        ),
+      return _wrapPage(
+        context,
         body: const Center(child: CircularProgressIndicator()),
       );
     }
 
     if (_parseResult == null) {
-      return Scaffold(
-        appBar: AppBar(
-          title: Text(l10n.skillTreeTitle),
-          actions: buildAppBarActionsWithClose(context),
-        ),
+      return _wrapPage(
+        context,
         body: Padding(
           padding: const EdgeInsets.all(16),
           child: SelectableText(_error ?? l10n.noNodesYet),
@@ -284,11 +312,8 @@ class _SkillTreePageState extends State<SkillTreePage> {
       );
     }
     if (_parseResult!.nodes.isEmpty) {
-      return Scaffold(
-        appBar: AppBar(
-          title: Text(l10n.skillTreeTitle),
-          actions: buildAppBarActionsWithClose(context),
-        ),
+      return _wrapPage(
+        context,
         body: Padding(
           padding: const EdgeInsets.all(16),
           child: SelectableText(_rawContent ?? l10n.noNodesYet),
@@ -301,24 +326,22 @@ class _SkillTreePageState extends State<SkillTreePage> {
         ? <SkillNode>[]
         : nodes.values
             .where((node) => !node.isPlaceholder)
+            .where((node) => !_isHiddenInTree(node))
             .where(
               (node) =>
                   node.id.contains(_searchQuery) ||
                   node.title.toLowerCase().contains(_searchQuery.toLowerCase()),
             )
             .toList()
-      ..sort((a, b) => a.id.compareTo(b.id));
+      ..sort((a, b) => compareSkillNodeIds(a.id, b.id));
 
     final selectedNode = _selectedId == null
         ? null
         : (nodes[_selectedId!] ??
             (_selectedId == 'math' ? _parseResult!.root : null));
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(l10n.skillTreeTitle),
-        actions: buildAppBarActionsWithClose(context),
-      ),
+    return _wrapPage(
+      context,
       body: StreamBuilder<List<ProgressEntry>>(
         stream: targetStudentId == null
             ? const Stream.empty()
@@ -338,326 +361,384 @@ class _SkillTreePageState extends State<SkillTreePage> {
             ..addAll(_calculateNodeProgress(_parseResult!.root, litPercentMap));
           final graph = _graph ?? (Graph()..isTree = true);
 
-          return LayoutBuilder(
-            builder: (context, constraints) {
-              final bottomItems = <Widget>[];
-              if (_parseResult!.unparsedLines.isNotEmpty) {
-                bottomItems.add(
-                  Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            l10n.unparsedLinesLabel(
-                              _parseResult!.unparsedLines.length,
-                            ),
-                          ),
-                        ),
-                        TextButton(
-                          onPressed: () {
-                            setState(() => _showRaw = !_showRaw);
-                            _scheduleViewStateSave();
-                          },
-                          child: Text(
-                            _showRaw ? l10n.hideRawButton : l10n.showRawButton,
-                          ),
-                        ),
-                      ],
-                    ),
+          return StreamBuilder<List<MistakeEntry>>(
+            stream: targetStudentId == null
+                ? const Stream.empty()
+                : db.watchMistakeEntriesForCourse(
+                    targetStudentId,
+                    widget.courseVersionId,
                   ),
-                );
-                if (_showRaw) {
-                  bottomItems.add(
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      child: SizedBox(
-                        height: 120,
-                        child: SingleChildScrollView(
-                          child: SelectableText(
-                            _parseResult!.unparsedLines.join('\n'),
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
-                }
-              }
-
-              if (selectedNode != null) {
-                bottomItems.add(
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color:
-                          Theme.of(context).colorScheme.surfaceContainerHighest,
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children:
-                          _detailNodesForSelection(selectedNode).map((node) {
-                        final text = _nodeDisplayText(node);
-                        final isActive = node.id == _selectedId;
-                        final studentId = targetStudentId;
-                        final showTeacherControls = widget.isTeacherView &&
-                            isActive &&
-                            studentId != null;
-                        final isLit = _isNodeFullyLit(node, litMap);
-                        final background = _nodeColor(node.id, isLit: isLit);
-                        final idLabel =
-                            node.id == _parseResult!.root.id ? '' : node.id;
-                        return InkWell(
-                          onTap: () => _handleNodeTap(
-                            node,
-                            isStudent,
-                            isTeacher,
-                            db,
-                            currentUser?.id,
-                            targetStudentId,
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 4),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 6,
-                                horizontal: 8,
-                              ),
-                              decoration: BoxDecoration(
-                                color: background,
-                                borderRadius: BorderRadius.circular(6),
-                                border: Border.all(
-                                  color: isActive
-                                      ? Colors.orange
-                                      : Colors.transparent,
-                                  width: isActive ? 2 : 1,
+            builder: (context, mistakeSnapshot) {
+              final mistakeCountMap = _nodeMistakeCounts(
+                mistakeSnapshot.data ?? const <MistakeEntry>[],
+              );
+              return LayoutBuilder(
+                builder: (context, constraints) {
+                  final bottomItems = <Widget>[];
+                  if (_parseResult!.unparsedLines.isNotEmpty) {
+                    bottomItems.add(
+                      Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                l10n.unparsedLinesLabel(
+                                  _parseResult!.unparsedLines.length,
                                 ),
                               ),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  SizedBox(
-                                    width: 80,
-                                    child: Text(
-                                      idLabel,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                  Expanded(
-                                    child: Text(text),
-                                  ),
-                                  if (showTeacherControls)
-                                    Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        FilledButton(
-                                          style: FilledButton.styleFrom(
-                                            backgroundColor: isLit
-                                                ? Colors.green
-                                                : Colors.grey,
-                                            foregroundColor: Colors.white,
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 10,
-                                              vertical: 6,
-                                            ),
-                                            minimumSize: const Size(0, 32),
-                                          ),
-                                          onPressed: () => _toggleNodeLit(
-                                            node: node,
-                                            litMap: litMap,
-                                            db: db,
-                                            studentId: studentId,
-                                            includeAll: !_isLeafNode(node),
-                                          ),
-                                          child: const Text('lit'),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        OutlinedButton(
-                                          style: OutlinedButton.styleFrom(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 10,
-                                              vertical: 6,
-                                            ),
-                                            minimumSize: const Size(0, 32),
-                                          ),
-                                          onPressed: () => _toggleNodeLit(
-                                            node: node,
-                                            litMap: litMap,
-                                            db: db,
-                                            studentId: studentId,
-                                            includeAll: true,
-                                          ),
-                                          child: const Text('all'),
-                                        ),
-                                      ],
-                                    ),
-                                ],
+                            ),
+                            TextButton(
+                              onPressed: () {
+                                setState(() => _showRaw = !_showRaw);
+                                _scheduleViewStateSave();
+                              },
+                              child: Text(
+                                _showRaw
+                                    ? l10n.hideRawButton
+                                    : l10n.showRawButton,
                               ),
                             ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  ),
-                );
-              }
-
-              final showBottom = bottomItems.isNotEmpty;
-              final maxBottomHeight =
-                  math.min(260.0, constraints.maxHeight * 0.35);
-
-              return Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: TextField(
-                      controller: _searchController,
-                      decoration: InputDecoration(
-                        labelText: l10n.searchNodeLabel,
-                        hintText: l10n.searchNodeHint,
-                        prefixIcon: const Icon(Icons.search),
-                        border: const OutlineInputBorder(),
+                          ],
+                        ),
                       ),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: Wrap(
-                      spacing: 12,
-                      runSpacing: 8,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        SizedBox(
-                          width: 160,
-                          child: DropdownButtonFormField<int>(
-                            initialValue: _levelLimit,
-                            decoration: InputDecoration(
-                              labelText: l10n.levelFilterLabel,
-                              border: const OutlineInputBorder(),
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 10,
+                    );
+                    if (_showRaw) {
+                      bottomItems.add(
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: SizedBox(
+                            height: 120,
+                            child: SingleChildScrollView(
+                              child: SelectableText(
+                                _parseResult!.unparsedLines.join('\n'),
                               ),
                             ),
-                            items: List.generate(
-                              _maxDepth,
-                              (index) => DropdownMenuItem(
-                                value: index + 1,
-                                child: Text('${index + 1}'),
-                              ),
-                            ),
-                            onChanged: (value) {
-                              if (value == null) {
-                                return;
-                              }
-                              setState(() {
-                                _levelLimit = value;
-                                _expanded
-                                  ..clear()
-                                  ..addAll(_expandedForLevel(value));
-                                _graph = _buildGraphForLevel(_levelLimit);
-                                _graphRevision++;
-                              });
-                              _scheduleViewStateSave();
-                            },
                           ),
                         ),
-                        SizedBox(
-                          width: 180,
-                          child: DropdownButtonFormField<int?>(
-                            initialValue: _yearFilter,
-                            decoration: InputDecoration(
-                              labelText: l10n.yearFilterLabel,
-                              border: const OutlineInputBorder(),
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 10,
-                              ),
-                            ),
-                            items: [
-                              DropdownMenuItem<int?>(
-                                value: null,
-                                child: Text(l10n.yearFilterAll),
-                              ),
-                              ..._yearOptions().map(
-                                (year) => DropdownMenuItem<int?>(
-                                  value: year,
-                                  child: Text('Y$year'),
-                                ),
-                              ),
-                            ],
-                            onChanged: (value) {
-                              setState(() {
-                                _yearFilter = value;
-                                _graph = _buildGraphForLevel(_levelLimit);
-                                _graphRevision++;
-                              });
-                              _scheduleViewStateSave();
-                            },
-                          ),
+                      );
+                    }
+                  }
+
+                  if (selectedNode != null) {
+                    bottomItems.add(
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest,
                         ),
-                      ],
-                    ),
-                  ),
-                  if (_searchQuery.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      child: matches.isEmpty
-                          ? Align(
-                              alignment: Alignment.centerLeft,
-                              child: Text(l10n.noSearchResults),
-                            )
-                          : Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: matches
-                                  .take(12)
-                                  .map(
-                                    (node) => ActionChip(
-                                      label: Text(node.id),
-                                      onPressed: () => _selectNode(node),
-                                    ),
-                                  )
-                                  .toList(),
-                            ),
-                    ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: PanScrollView(
-                      padding: const EdgeInsets.all(200),
-                      child: GraphView(
-                        key: ValueKey('graph_${_graphRevision}'),
-                        graph: graph,
-                        algorithm: _graphAlgorithm,
-                        animated: false,
-                        builder: (Node node) {
-                          final data = _graphNodeData[node];
-                          if (data == null) {
-                            return const SizedBox.shrink();
-                          }
-                          return _buildNodeWidget(data, litPercentMap, litMap);
-                        },
-                      ),
-                    ),
-                  ),
-                  if (showBottom)
-                    SizedBox(
-                      height: maxBottomHeight,
-                      child: PanScrollView(
-                        horizontal: false,
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          children: bottomItems,
+                          children: _detailNodesForSelection(selectedNode)
+                              .map((node) {
+                            final text = _nodeDisplayText(node);
+                            final isActive = node.id == _selectedId;
+                            final studentId = targetStudentId;
+                            final showTeacherControls = widget.isTeacherView &&
+                                isActive &&
+                                studentId != null;
+                            final isLit = _isNodeFullyLit(node, litMap);
+                            final background =
+                                _nodeColor(node.id, isLit: isLit);
+                            final idLabel =
+                                node.id == _parseResult!.root.id ? '' : node.id;
+                            return GestureDetector(
+                              onSecondaryTapDown:
+                                  widget.enableCourseEditorActions
+                                      ? (details) => _showCourseEditorMenu(
+                                            node,
+                                            details.globalPosition,
+                                          )
+                                      : null,
+                              child: InkWell(
+                                onTap: () => _handleNodeTap(
+                                  node,
+                                  isStudent,
+                                  isTeacher,
+                                  db,
+                                  currentUser?.id,
+                                  targetStudentId,
+                                ),
+                                child: Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 4),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 6,
+                                      horizontal: 8,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: background,
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(
+                                        color: isActive
+                                            ? Colors.orange
+                                            : Colors.transparent,
+                                        width: isActive ? 2 : 1,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        SizedBox(
+                                          width: 80,
+                                          child: Text(
+                                            idLabel,
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                        Expanded(
+                                          child: Text(text),
+                                        ),
+                                        if (showTeacherControls)
+                                          Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              FilledButton(
+                                                style: FilledButton.styleFrom(
+                                                  backgroundColor: isLit
+                                                      ? Colors.green
+                                                      : Colors.grey,
+                                                  foregroundColor: Colors.white,
+                                                  padding: const EdgeInsets
+                                                      .symmetric(
+                                                    horizontal: 10,
+                                                    vertical: 6,
+                                                  ),
+                                                  minimumSize:
+                                                      const Size(0, 32),
+                                                ),
+                                                onPressed: () => _toggleNodeLit(
+                                                  node: node,
+                                                  litMap: litMap,
+                                                  db: db,
+                                                  studentId: studentId,
+                                                  includeAll:
+                                                      !_isLeafNode(node),
+                                                ),
+                                                child: const Text('lit'),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              OutlinedButton(
+                                                style: OutlinedButton.styleFrom(
+                                                  padding: const EdgeInsets
+                                                      .symmetric(
+                                                    horizontal: 10,
+                                                    vertical: 6,
+                                                  ),
+                                                  minimumSize:
+                                                      const Size(0, 32),
+                                                ),
+                                                onPressed: () => _toggleNodeLit(
+                                                  node: node,
+                                                  litMap: litMap,
+                                                  db: db,
+                                                  studentId: studentId,
+                                                  includeAll: true,
+                                                ),
+                                                child: const Text('all'),
+                                              ),
+                                            ],
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          }).toList(),
                         ),
                       ),
-                    ),
-                ],
+                    );
+                  }
+
+                  final showBottom = bottomItems.isNotEmpty;
+                  final maxBottomHeight =
+                      math.min(260.0, constraints.maxHeight * 0.35);
+
+                  return Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: TextField(
+                          controller: _searchController,
+                          decoration: InputDecoration(
+                            labelText: l10n.searchNodeLabel,
+                            hintText: l10n.searchNodeHint,
+                            prefixIcon: const Icon(Icons.search),
+                            border: const OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Wrap(
+                          spacing: 12,
+                          runSpacing: 8,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            SizedBox(
+                              width: 160,
+                              child: DropdownButtonFormField<int>(
+                                initialValue: _levelLimit,
+                                isExpanded: true,
+                                decoration: InputDecoration(
+                                  labelText: l10n.levelFilterLabel,
+                                  border: const OutlineInputBorder(),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                ),
+                                items: List.generate(
+                                  _maxDepth,
+                                  (index) => DropdownMenuItem(
+                                    value: index + 1,
+                                    child: Text('${index + 1}'),
+                                  ),
+                                ),
+                                onChanged: (value) {
+                                  if (value == null) {
+                                    return;
+                                  }
+                                  setState(() {
+                                    _levelLimit = value;
+                                    _expanded
+                                      ..clear()
+                                      ..addAll(_expandedForLevel(value));
+                                    _graph = _buildGraphForLevel(_levelLimit);
+                                    _graphRevision++;
+                                  });
+                                  _scheduleViewStateSave();
+                                },
+                              ),
+                            ),
+                            SizedBox(
+                              width: 180,
+                              child: DropdownButtonFormField<int?>(
+                                initialValue: _yearFilter,
+                                isExpanded: true,
+                                decoration: InputDecoration(
+                                  labelText: l10n.yearFilterLabel,
+                                  border: const OutlineInputBorder(),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                ),
+                                items: [
+                                  DropdownMenuItem<int?>(
+                                    value: null,
+                                    child: Text(l10n.yearFilterAll),
+                                  ),
+                                  ..._yearOptions().map(
+                                    (year) => DropdownMenuItem<int?>(
+                                      value: year,
+                                      child: Text('Y$year'),
+                                    ),
+                                  ),
+                                ],
+                                onChanged: (value) {
+                                  setState(() {
+                                    _yearFilter = value;
+                                    _graph = _buildGraphForLevel(_levelLimit);
+                                    _graphRevision++;
+                                  });
+                                  _scheduleViewStateSave();
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (_searchQuery.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: matches.isEmpty
+                              ? Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(l10n.noSearchResults),
+                                )
+                              : Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: matches
+                                      .take(12)
+                                      .map(
+                                        (node) => ActionChip(
+                                          label: Text(node.id),
+                                          onPressed: () => _selectNode(node),
+                                        ),
+                                      )
+                                      .toList(),
+                                ),
+                        ),
+                      const SizedBox(height: 8),
+                      Expanded(
+                        child: PanScrollView(
+                          padding: const EdgeInsets.all(200),
+                          child: GraphView(
+                            key: ValueKey('graph_${_graphRevision}'),
+                            graph: graph,
+                            algorithm: _graphAlgorithm,
+                            animated: false,
+                            builder: (Node node) {
+                              final data = _graphNodeData[node];
+                              if (data == null) {
+                                return const SizedBox.shrink();
+                              }
+                              return _buildNodeWidget(
+                                data,
+                                litPercentMap,
+                                litMap,
+                                mistakeCountMap,
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                      if (showBottom)
+                        SizedBox(
+                          height: maxBottomHeight,
+                          child: PanScrollView(
+                            horizontal: false,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: bottomItems,
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                },
               );
             },
           );
         },
       ),
+    );
+  }
+
+  Widget _wrapPage(
+    BuildContext context, {
+    required Widget body,
+  }) {
+    if (widget.embedded) {
+      return body;
+    }
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          widget.titleOverride ?? AppLocalizations.of(context)!.skillTreeTitle,
+        ),
+        actions: buildAppBarActionsWithClose(context),
+      ),
+      body: body,
     );
   }
 
@@ -711,27 +792,389 @@ class _SkillTreePageState extends State<SkillTreePage> {
     SkillNode node,
     Map<String, int> litPercentMap,
     Map<String, bool> litMap,
+    Map<String, int> mistakeCountMap,
   ) {
     final isSelected = _selectedId == node.id;
     final size = _nodeSizeFor(node);
     final isLit = _isNodeFullyLit(node, litMap);
     final baseColor = _nodeColor(node.id, isLit: isLit);
-    final content = Container(
+    final mistakeCount = mistakeCountMap[node.id] ?? 0;
+    final content = SizedBox(
       width: size,
       height: size,
-      decoration: BoxDecoration(
-        color: baseColor,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(
-          color: isSelected ? Colors.orange : Colors.transparent,
-          width: 2,
-        ),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned.fill(
+            child: Container(
+              decoration: BoxDecoration(
+                color: baseColor,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: isSelected ? Colors.orange : Colors.transparent,
+                  width: 2,
+                ),
+              ),
+            ),
+          ),
+          if (mistakeCount > 0)
+            Positioned(
+              top: -7,
+              right: -7,
+              child: Container(
+                constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+                padding: const EdgeInsets.symmetric(horizontal: 5),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.error,
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  mistakeCount > 99 ? '99+' : mistakeCount.toString(),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onError,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
     return GestureDetector(
       onTap: () => _selectNode(node),
+      onSecondaryTapDown: widget.enableCourseEditorActions
+          ? (details) => _showCourseEditorMenu(node, details.globalPosition)
+          : null,
       child: content,
     );
+  }
+
+  Future<void> _showCourseEditorMenu(SkillNode node, Offset position) async {
+    if (node.id == 'math' || node.isPlaceholder || _isHiddenInTree(node)) {
+      return;
+    }
+    _focusNodeForContextMenu(node);
+    final choice = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        position.dx,
+        position.dy,
+        position.dx,
+        position.dy,
+      ),
+      items: const [
+        PopupMenuItem(
+          value: 'ai_edit_content',
+          child: Text('AI edit content'),
+        ),
+        PopupMenuItem(
+          value: 'edit_title',
+          child: Text('Edit title'),
+        ),
+        PopupMenuItem(
+          value: 'add_sub',
+          child: Text('Add sub'),
+        ),
+        PopupMenuItem(
+          value: 'add_sibling',
+          child: Text('Add sibling'),
+        ),
+        PopupMenuItem(
+          value: 'hide',
+          child: Text('Hide'),
+        ),
+      ],
+    );
+    if (!mounted || choice == null) {
+      return;
+    }
+    switch (choice) {
+      case 'ai_edit_content':
+        await _openAiCourseEditor(node);
+        break;
+      case 'edit_title':
+        await _editCourseNodeTitle(node);
+        break;
+      case 'add_sub':
+        await _addCourseNode(parentId: node.id, insertAfterId: node.id);
+        break;
+      case 'add_sibling':
+        await _addCourseNode(parentId: node.parentId, insertAfterId: node.id);
+        break;
+      case 'hide':
+        await _hideCourseNode(node);
+        break;
+    }
+  }
+
+  void _focusNodeForContextMenu(SkillNode node) {
+    setState(() {
+      _selectedId = node.id;
+      _expandToNode(node.id);
+      _graph = _buildGraphForLevel(_levelLimit);
+      _graphRevision++;
+    });
+    _scheduleViewStateSave();
+  }
+
+  Future<void> _openAiCourseEditor(SkillNode node) async {
+    final course = await _db.getCourseVersionById(widget.courseVersionId);
+    if (!mounted || course == null) {
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CourseBuilderConversationPage(
+          courseVersion: course,
+          kpKey: node.id,
+          kpTitle: _nodeDisplayText(node),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _editCourseNodeTitle(SkillNode node) async {
+    final title = await _showCourseTextDialog(
+      title: 'Edit title',
+      label: 'Title',
+      initialValue: _nodeDisplayText(node),
+    );
+    if (title == null) {
+      return;
+    }
+    final next = _replaceCourseNodeLine(
+      nodeId: node.id,
+      title: title,
+      hidden: node.isHidden,
+    );
+    if (next != null) {
+      await _applyCourseContentsEdit(next, selectedId: node.id);
+    }
+  }
+
+  Future<void> _addCourseNode({
+    required String? parentId,
+    required String insertAfterId,
+  }) async {
+    final result = _parseResult;
+    if (result == null) {
+      return;
+    }
+    final newId = _nextCourseNodeId(parentId);
+    final title = await _showCourseTextDialog(
+      title: parentId == null ? 'Add top-level KP' : 'Add KP',
+      label: 'Title',
+      initialValue: '',
+    );
+    if (title == null) {
+      return;
+    }
+    final next = _insertCourseNodeLine(
+      insertAfterId: insertAfterId,
+      newId: newId,
+      title: title,
+    );
+    await _applyCourseContentsEdit(next, selectedId: newId);
+  }
+
+  Future<void> _hideCourseNode(SkillNode node) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Hide KP'),
+        content: Text(
+          'Hide ${node.id} ${_nodeDisplayText(node)} from the course tree?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(AppLocalizations.of(context)!.cancelButton),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Hide'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+    final next = _replaceCourseNodeLine(
+      nodeId: node.id,
+      title: _nodeDisplayText(node),
+      hidden: true,
+    );
+    if (next != null) {
+      await _applyCourseContentsEdit(next, selectedId: node.parentId);
+    }
+  }
+
+  Future<String?> _showCourseTextDialog({
+    required String title,
+    required String label,
+    required String initialValue,
+  }) async {
+    final controller = TextEditingController(text: initialValue);
+    final value = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: InputDecoration(labelText: label),
+          onSubmitted: (_) {
+            final text = controller.text.trim();
+            if (text.isNotEmpty) {
+              Navigator.of(context).pop(text);
+            }
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(AppLocalizations.of(context)!.cancelButton),
+          ),
+          FilledButton(
+            onPressed: () {
+              final text = controller.text.trim();
+              if (text.isNotEmpty) {
+                Navigator.of(context).pop(text);
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    final trimmed = value?.trim();
+    return trimmed == null || trimmed.isEmpty ? null : trimmed;
+  }
+
+  Future<void> _applyCourseContentsEdit(
+    String contents, {
+    required String? selectedId,
+  }) async {
+    final result =
+        await context.read<AppServices>().courseService.applyCourseContentsEdit(
+              courseVersionId: widget.courseVersionId,
+              contents: contents,
+            );
+    if (!mounted) {
+      return;
+    }
+    if (!result.success) {
+      await _showLeafError(result.message);
+      return;
+    }
+    await _loadTree();
+    if (!mounted || selectedId == null) {
+      return;
+    }
+    final node = _nodeById(selectedId);
+    if (node != null) {
+      _focusNodeForContextMenu(node);
+    }
+  }
+
+  String? _replaceCourseNodeLine({
+    required String nodeId,
+    required String title,
+    required bool hidden,
+  }) {
+    final raw = _rawContent;
+    if (raw == null) {
+      return null;
+    }
+    final lines = _splitCourseLines(raw);
+    for (var index = 0; index < lines.length; index++) {
+      if (_lineNodeId(lines[index]) == nodeId) {
+        lines[index] = _formatCourseNodeLine(
+          nodeId: nodeId,
+          title: title,
+          hidden: hidden,
+        );
+        return lines.join('\n');
+      }
+    }
+    return null;
+  }
+
+  String _insertCourseNodeLine({
+    required String insertAfterId,
+    required String newId,
+    required String title,
+  }) {
+    final lines = _splitCourseLines(_rawContent ?? '');
+    final insertAt = _subtreeEndLineIndex(lines, insertAfterId) + 1;
+    lines.insert(
+      insertAt.clamp(0, lines.length),
+      _formatCourseNodeLine(nodeId: newId, title: title),
+    );
+    return lines.join('\n');
+  }
+
+  String _nextCourseNodeId(String? parentId) {
+    final result = _parseResult;
+    if (result == null) {
+      return parentId == null ? '1' : '$parentId.1';
+    }
+    var maxPart = 0;
+    for (final node in result.nodes.values) {
+      if (node.isPlaceholder) {
+        continue;
+      }
+      final currentParent = node.parentId;
+      if (currentParent != parentId) {
+        continue;
+      }
+      final tail = node.id.split('.').last;
+      final number = int.tryParse(tail);
+      if (number != null && number > maxPart) {
+        maxPart = number;
+      }
+    }
+    final nextPart = maxPart + 1;
+    return parentId == null ? '$nextPart' : '$parentId.$nextPart';
+  }
+
+  int _subtreeEndLineIndex(List<String> lines, String nodeId) {
+    var end = -1;
+    for (var index = 0; index < lines.length; index++) {
+      final id = _lineNodeId(lines[index]);
+      if (id == null) {
+        continue;
+      }
+      if (id == nodeId || id.startsWith('$nodeId.')) {
+        end = index;
+      }
+    }
+    return end == -1 ? lines.length - 1 : end;
+  }
+
+  List<String> _splitCourseLines(String raw) {
+    final lines = raw.split(RegExp(r'\r\n|\n|\r'));
+    while (lines.isNotEmpty && lines.last.trim().isEmpty) {
+      lines.removeLast();
+    }
+    return lines;
+  }
+
+  String? _lineNodeId(String line) {
+    final match = RegExp(r'^\s*(\d+(?:\.\d+)*)\s+').firstMatch(line);
+    return match?.group(1);
+  }
+
+  String _formatCourseNodeLine({
+    required String nodeId,
+    required String title,
+    bool hidden = false,
+  }) {
+    final marker = hidden ? '[hidden] ' : '';
+    return '$nodeId $marker${title.trim()}';
   }
 
   Future<void> _handleNodeTap(
@@ -853,19 +1296,19 @@ class _SkillTreePageState extends State<SkillTreePage> {
     final parent = node.parentId == null ? node : _nodeById(node.parentId!);
     if (parent != null) {
       for (final sibling in parent.children) {
-        if (!result.contains(sibling)) {
+        if (!result.contains(sibling) && !_isHiddenInTree(sibling)) {
           result.add(sibling);
         }
       }
     }
     if (node.children.isNotEmpty && _expanded.contains(node.id)) {
       for (final child in node.children) {
-        if (!result.contains(child)) {
+        if (!result.contains(child) && !_isHiddenInTree(child)) {
           result.add(child);
         }
       }
     }
-    result.sort((a, b) => a.id.compareTo(b.id));
+    result.sort((a, b) => compareSkillNodeIds(a.id, b.id));
     return result;
   }
 
@@ -1114,10 +1557,28 @@ class _SkillTreePageState extends State<SkillTreePage> {
   }
 
   bool _isLeafNode(SkillNode node) {
-    if (node.isPlaceholder) {
+    if (node.isPlaceholder || _isHiddenInTree(node)) {
       return false;
     }
-    return node.children.isEmpty;
+    return node.children.where((child) => !_isHiddenInTree(child)).isEmpty;
+  }
+
+  bool _isHiddenInTree(SkillNode node) {
+    if (node.isHidden) {
+      return true;
+    }
+    var parentId = node.parentId;
+    while (parentId != null) {
+      final parent = _parseResult?.nodes[parentId];
+      if (parent == null) {
+        return false;
+      }
+      if (parent.isHidden) {
+        return true;
+      }
+      parentId = parent.parentId;
+    }
+    return false;
   }
 
   bool _isNodeFullyLit(SkillNode node, Map<String, bool> litMap) {
@@ -1139,6 +1600,9 @@ class _SkillTreePageState extends State<SkillTreePage> {
         return;
       }
       for (final child in current.children) {
+        if (_isHiddenInTree(child)) {
+          continue;
+        }
         walk(child);
       }
     }
@@ -1221,6 +1685,21 @@ class _SkillTreePageState extends State<SkillTreePage> {
     return progress;
   }
 
+  Map<String, int> _nodeMistakeCounts(List<MistakeEntry> mistakes) {
+    final counts = <String, int>{};
+    for (final mistake in mistakes) {
+      if (mistake.dismissed || mistake.status != 'open') {
+        continue;
+      }
+      counts.update(
+        mistake.kpKey,
+        (value) => value + mistake.occurrences,
+        ifAbsent: () => mistake.occurrences,
+      );
+    }
+    return counts;
+  }
+
   int _resolveLitPercent(ProgressEntry entry) {
     return resolveProgressDisplayPercent(
       lit: entry.lit,
@@ -1290,6 +1769,9 @@ class _SkillTreePageState extends State<SkillTreePage> {
 
   bool _hasMatchingDescendant(SkillNode node) {
     for (final child in node.children) {
+      if (_isHiddenInTree(child)) {
+        continue;
+      }
       if (_matchesYear(child)) {
         return true;
       }
@@ -1314,6 +1796,9 @@ class _SkillTreePageState extends State<SkillTreePage> {
   bool _isNodeVisible(SkillNode node) {
     if (node.id == 'math') {
       return true;
+    }
+    if (_isHiddenInTree(node)) {
+      return false;
     }
     if (!_passesFilters(node)) {
       return false;
@@ -1344,7 +1829,7 @@ class _SkillTreePageState extends State<SkillTreePage> {
     }
     final expanded = <String>{'math'};
     for (final node in _parseResult!.nodes.values) {
-      if (node.children.isEmpty) {
+      if (node.children.isEmpty || _isHiddenInTree(node)) {
         continue;
       }
       if (_nodeDepth(node) < level) {

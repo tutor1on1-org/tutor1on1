@@ -48,15 +48,20 @@ class ModelListService {
     required String baseUrl,
     required String apiKey,
   }) async {
+    if (provider.usesOpenAiCodexOAuth) {
+      return ModelListResult(
+        models: provider.models
+            .map((model) => ApiModelInfo(id: model))
+            .toList(growable: false),
+      );
+    }
     final normalized = _normalizeBaseUrl(baseUrl);
     final url = Uri.parse('$normalized/models');
     final headers = <String, String>{
       'Content-Type': 'application/json',
       provider.authHeader: '${provider.authPrefix}${apiKey.trim()}',
+      ...provider.extraHeaders,
     };
-    if (provider.id == 'anthropic') {
-      headers['anthropic-version'] = '2023-06-01';
-    }
     try {
       final response = await http
           .get(url, headers: headers)
@@ -99,14 +104,13 @@ class ModelListService {
 
   static ApiModelLists splitModels({
     required List<ApiModelInfo> models,
-    required String baseUrl,
-    required String providerId,
+    required LlmProvider provider,
   }) {
-    final normalized = _normalizeBaseUrl(baseUrl).toLowerCase();
+    final normalized = _normalizeBaseUrl(provider.baseUrl).toLowerCase();
     final isOpenAi =
-        providerId == 'openai' || normalized.contains('openai.com');
+        provider.id == 'openai' || normalized.contains('openai.com');
     final isSilicon =
-        providerId == 'siliconflow' || normalized.contains('siliconflow');
+        provider.id == 'siliconflow' || normalized.contains('siliconflow');
     final text = <String>{};
     final tts = <String>{};
     final stt = <String>{};
@@ -115,20 +119,22 @@ class ModelListService {
       if (id.isEmpty) {
         continue;
       }
-      if (isOpenAi || isSilicon) {
-        final kind = _inferAudioKind(
-          model: model,
-          isOpenAi: isOpenAi,
-          isSilicon: isSilicon,
-        );
-        if (kind == _AudioKind.tts) {
+      final kind = _inferAudioKind(
+        model: model,
+        isOpenAi: isOpenAi,
+        isSilicon: isSilicon,
+      );
+      if (kind == _AudioKind.tts) {
+        if (provider.supportsTts) {
           tts.add(id);
-          continue;
         }
-        if (kind == _AudioKind.stt) {
+        continue;
+      }
+      if (kind == _AudioKind.stt) {
+        if (provider.supportsStt) {
           stt.add(id);
-          continue;
         }
+        continue;
       }
       text.add(id);
     }
@@ -192,6 +198,17 @@ class ModelListService {
       if (id.contains('tts')) {
         return _AudioKind.tts;
       }
+    }
+    if (id.contains('transcribe') ||
+        id.contains('transcription') ||
+        id.contains('speech-to-text') ||
+        id.contains('speech_to_text')) {
+      return _AudioKind.stt;
+    }
+    if (id.contains('tts') ||
+        id.contains('text-to-speech') ||
+        id.contains('text_to_speech')) {
+      return _AudioKind.tts;
     }
     if (type.contains('speech') || type.contains('audio')) {
       if (subType.contains('recognition') || subType.contains('asr')) {

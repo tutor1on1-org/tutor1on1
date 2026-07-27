@@ -13,17 +13,22 @@ import '../llm/llm_models.dart';
 import '../llm/llm_providers.dart';
 import '../models/tutor_action.dart';
 import '../models/tutor_contract.dart';
+import '../security/hash_utils.dart';
 import '../services/app_services.dart';
+import '../services/openai_codex_oauth_service.dart';
 import '../services/stt_service.dart';
+import '../services/text_model_selection.dart';
 import '../services/tts_chunker.dart';
 import '../services/tts_service.dart';
 import '../services/tts_text_sanitizer.dart';
 import '../state/auth_controller.dart';
 import '../state/settings_controller.dart';
 import 'app_close_button.dart';
+import 'pages/mistake_book_page.dart';
 import 'session_progress_display.dart';
 import 'tutor_turn_logic.dart';
 import 'widgets/math_markdown_view.dart';
+import 'widgets/searchable_model_picker.dart';
 
 class ChatSessionPage extends StatefulWidget {
   const ChatSessionPage({
@@ -32,12 +37,17 @@ class ChatSessionPage extends StatefulWidget {
     required this.courseVersion,
     required this.node,
     this.readOnly = false,
+    this.startInReview = false,
   });
 
   final int sessionId;
   final CourseVersion courseVersion;
   final CourseNode node;
   final bool readOnly;
+
+  /// Auto-start the first turn in review mode (explicit Review intent, e.g.
+  /// launched from a Mistake Book entry) instead of the default learn mode.
+  final bool startInReview;
 
   @override
   State<ChatSessionPage> createState() => _ChatSessionPageState();
@@ -105,6 +115,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   int _inputLineCount = 1;
   final GlobalKey _sttCancelKey = GlobalKey();
   final LayerLink _sttButtonLink = LayerLink();
+  final Map<String, Future<String?>> _apiKeyHashFutures = {};
 
   @override
   void initState() {
@@ -195,6 +206,10 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       return;
     }
     _autoStartAttempted = true;
+    if (widget.startInReview) {
+      await _startNewReviewTurn();
+      return;
+    }
     await _sendMessage(allowEmpty: true);
   }
 
@@ -262,7 +277,10 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     if (_loadingSession) {
       return Scaffold(
         appBar: AppBar(
-          actions: buildAppBarActionsWithClose(context),
+          actions: buildAppBarActionsWithClose(
+            context,
+            closeEnabled: !_sending,
+          ),
         ),
         body: const Center(child: CircularProgressIndicator()),
       );
@@ -292,6 +310,12 @@ class _ChatSessionPageState extends State<ChatSessionPage>
               ),
               actions: buildAppBarActionsWithClose(
                 context,
+                closeEnabled: !_sending &&
+                    !_sttPressActive &&
+                    !_sttRecording &&
+                    !_sttTranscribing,
+                disabledCloseTooltip:
+                    'Wait for the current tutor response to finish',
                 actions: [
                   if (!_closed && !widget.readOnly)
                     IconButton(
@@ -402,75 +426,84 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                   final hasAudio = audioPath != null &&
                                       File(audioPath).existsSync() &&
                                       File(audioPath).lengthSync() > 0;
-                                  return StreamBuilder<TtsPlaybackState>(
-                                    stream: ttsService.playbackStream,
-                                    builder: (context, playbackSnapshot) {
-                                      final playback = playbackSnapshot.data;
-                                      final isPlaying =
-                                          playback?.messageId == message.id &&
-                                              playback?.isPlaying == true;
-                                      final isPaused =
-                                          playback?.messageId == message.id &&
-                                              playback?.isPaused == true;
-                                      final duration = playback?.duration;
-                                      final position =
-                                          playback?.position ?? Duration.zero;
-                                      final progressValue = (duration == null ||
-                                              duration.inMilliseconds <= 0)
-                                          ? null
-                                          : (position.inMilliseconds /
-                                                  duration.inMilliseconds)
-                                              .clamp(0.0, 1.0);
-                                      final showProgress =
-                                          playback?.messageId == message.id &&
-                                              duration != null &&
-                                              duration.inMilliseconds > 0;
-                                      final contentWidget = message.role ==
-                                              'assistant'
-                                          ? MathMarkdownView(
-                                              key:
-                                                  ValueKey('msg_${message.id}'),
-                                              content: message.content,
-                                              textStyle: contentStyle,
-                                            )
-                                          : SelectableText(
-                                              message.content,
-                                              style: contentStyle,
-                                            );
-                                      final messageBody = showProgress
-                                          ? Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                contentWidget,
-                                                Padding(
-                                                  padding:
-                                                      const EdgeInsets.only(
-                                                          top: 6),
-                                                  child:
-                                                      LinearProgressIndicator(
-                                                    value: progressValue,
-                                                  ),
-                                                ),
-                                              ],
-                                            )
-                                          : contentWidget;
-                                      final actions = _buildMessageActions(
-                                        message,
-                                        lastUserId,
-                                        l10n,
-                                        hasAudio: hasAudio,
-                                        audioPath: audioPath,
-                                        isPlaying: isPlaying,
-                                        isPaused: isPaused,
-                                      );
-                                      final actionStrip = Wrap(
-                                        spacing: 4,
-                                        runSpacing: 4,
-                                        children: actions,
-                                      );
-                                      final messageSubtitle =
-                                          isNarrow && actions.isNotEmpty
+                                  return Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      StreamBuilder<TtsPlaybackState>(
+                                        stream: ttsService.playbackStream,
+                                        builder: (context, playbackSnapshot) {
+                                          final playback =
+                                              playbackSnapshot.data;
+                                          final isPlaying =
+                                              playback?.messageId ==
+                                                      message.id &&
+                                                  playback?.isPlaying == true;
+                                          final isPaused =
+                                              playback?.messageId ==
+                                                      message.id &&
+                                                  playback?.isPaused == true;
+                                          final duration = playback?.duration;
+                                          final position = playback?.position ??
+                                              Duration.zero;
+                                          final progressValue = (duration ==
+                                                      null ||
+                                                  duration.inMilliseconds <= 0)
+                                              ? null
+                                              : (position.inMilliseconds /
+                                                      duration.inMilliseconds)
+                                                  .clamp(0.0, 1.0);
+                                          final showProgress =
+                                              playback?.messageId ==
+                                                      message.id &&
+                                                  duration != null &&
+                                                  duration.inMilliseconds > 0;
+                                          final contentWidget =
+                                              message.role == 'assistant'
+                                                  ? MathMarkdownView(
+                                                      key: ValueKey(
+                                                          'msg_${message.id}'),
+                                                      content: message.content,
+                                                      textStyle: contentStyle,
+                                                    )
+                                                  : SelectableText(
+                                                      message.content,
+                                                      style: contentStyle,
+                                                    );
+                                          final messageBody = showProgress
+                                              ? Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                    contentWidget,
+                                                    Padding(
+                                                      padding:
+                                                          const EdgeInsets.only(
+                                                              top: 6),
+                                                      child:
+                                                          LinearProgressIndicator(
+                                                        value: progressValue,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                )
+                                              : contentWidget;
+                                          final actions = _buildMessageActions(
+                                            message,
+                                            lastUserId,
+                                            l10n,
+                                            hasAudio: hasAudio,
+                                            audioPath: audioPath,
+                                            isPlaying: isPlaying,
+                                            isPaused: isPaused,
+                                          );
+                                          final actionStrip = Wrap(
+                                            spacing: 4,
+                                            runSpacing: 4,
+                                            children: actions,
+                                          );
+                                          final messageSubtitle = isNarrow &&
+                                                  actions.isNotEmpty
                                               ? Column(
                                                   crossAxisAlignment:
                                                       CrossAxisAlignment.start,
@@ -485,20 +518,30 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                                   ],
                                                 )
                                               : messageBody;
-                                      return ListTile(
-                                        title: Text(
-                                          '$label - $timeLabel',
-                                          style: labelStyle,
-                                        ),
-                                        subtitle: messageSubtitle,
-                                        trailing: isNarrow || actions.isEmpty
-                                            ? null
-                                            : Row(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: actions,
-                                              ),
-                                      );
-                                    },
+                                          return ListTile(
+                                            title: Text(
+                                              '$label - $timeLabel',
+                                              style: labelStyle,
+                                            ),
+                                            subtitle: messageSubtitle,
+                                            trailing:
+                                                isNarrow || actions.isEmpty
+                                                    ? null
+                                                    : Row(
+                                                        mainAxisSize:
+                                                            MainAxisSize.min,
+                                                        children: actions,
+                                                      ),
+                                          );
+                                        },
+                                      ),
+                                      const Divider(
+                                        height: 1,
+                                        thickness: 1,
+                                        indent: 0,
+                                        endIndent: 0,
+                                      ),
+                                    ],
                                   );
                                 },
                               );
@@ -508,11 +551,13 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                       ),
                     ),
                     if (canInteract)
-                      StreamBuilder<List<ChatMessage>>(
-                        stream: db.watchMessagesForSession(widget.sessionId),
+                      StreamBuilder<List<MistakeEntry>>(
+                        stream: db.watchMistakeEntriesForSession(
+                          widget.sessionId,
+                        ),
                         builder: (context, snapshot) {
                           final preview = _buildErrorBookPreview(
-                            snapshot.data ?? const <ChatMessage>[],
+                            snapshot.data ?? const <MistakeEntry>[],
                           );
                           if (preview.isEmpty) {
                             return const SizedBox.shrink();
@@ -543,10 +588,21 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                   ...preview.map(
                                     (item) => Tooltip(
                                       message: item.lastNote,
-                                      child: Chip(
+                                      child: ActionChip(
                                         label: Text(
                                           '${item.mistakeTag} x${item.count}',
                                         ),
+                                        onPressed: () {
+                                          Navigator.of(context).push(
+                                            MaterialPageRoute(
+                                              builder: (_) => MistakeBookPage(
+                                                studentId: item.studentId,
+                                                courseVersionId:
+                                                    widget.courseVersion.id,
+                                              ),
+                                            ),
+                                          );
+                                        },
                                       ),
                                     ),
                                   ),
@@ -692,6 +748,9 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                                 db: db,
                                                 currentModel:
                                                     settings?.model ?? '',
+                                                activeBaseUrl:
+                                                    settings?.baseUrl ??
+                                                        provider.baseUrl,
                                                 provider: provider,
                                                 l10n: l10n,
                                               ),
@@ -795,6 +854,9 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                               db: db,
                                               currentModel:
                                                   settings?.model ?? '',
+                                              activeBaseUrl:
+                                                  settings?.baseUrl ??
+                                                      provider.baseUrl,
                                               provider: provider,
                                               l10n: l10n,
                                             ),
@@ -1587,10 +1649,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     final modelOverride = _resolveModelOverride();
     _prepareTts();
     try {
-      final resolvedPromptName = _resolvePromptNameForAction(
-        action: action,
-        preferredStep: TutorTurnStep.continueTurn,
-      );
+      final resolvedPromptName = _resolvePromptNameForAction(action: action);
       await _persistVisibleControl(turnFinished: false);
       final llmHandle = await sessionService.startTutorAction(
         sessionId: widget.sessionId,
@@ -1670,7 +1729,6 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       );
       final mode = _resolvePromptNameForAction(
         action: message.action ?? _mode.promptName,
-        preferredStep: TutorTurnStep.continueTurn,
       );
       await _persistVisibleControl(turnFinished: false);
       final llmHandle = await sessionService.startTutorAction(
@@ -1834,6 +1892,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   Widget _buildModelSelector({
     required AppDatabase db,
     required String currentModel,
+    required String activeBaseUrl,
     required LlmProvider provider,
     required AppLocalizations l10n,
   }) {
@@ -1841,71 +1900,52 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       stream: db.watchApiConfigs(),
       builder: (context, snapshot) {
         final configs = snapshot.data ?? [];
-        final models = <String>{
-          ...provider.models.map((model) => model.trim()).where(
-                (model) => model.isNotEmpty,
-              ),
-          if (currentModel.trim().isNotEmpty) currentModel.trim(),
-          ...configs
-              .where(
-                (config) =>
-                    _normalizeBaseUrl(config.baseUrl) ==
-                    _normalizeBaseUrl(provider.baseUrl),
-              )
-              .map((config) => config.model.trim())
-              .where((m) => m.isNotEmpty),
-        }.toList()
-          ..sort();
-        final selected = (_sessionModel?.trim().isNotEmpty == true)
-            ? _sessionModel!.trim()
-            : currentModel.trim();
-        final value = models.contains(selected)
-            ? selected
-            : (models.isNotEmpty ? models.first : selected);
-        if ((_sessionModel == null ||
-                !_sessionModel!.trim().isNotEmpty ||
-                !models.contains(_sessionModel!.trim())) &&
-            value.isNotEmpty) {
-          _sessionModel = value;
-        }
-        return DropdownButtonFormField<String>(
-          key: ValueKey(value),
-          initialValue: value.isNotEmpty ? value : null,
-          isExpanded: true,
-          decoration: InputDecoration(
-            labelText: l10n.modelLabel,
-            border: const OutlineInputBorder(),
-          ),
-          selectedItemBuilder: (context) => models
-              .map(
-                (model) => Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    model,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              )
-              .toList(),
-          items: models
-              .map(
-                (model) => DropdownMenuItem(
-                  value: model,
-                  child: Text(
-                    model,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              )
-              .toList(),
-          onChanged: _sending
-              ? null
-              : (value) {
-                  if (value == null) {
-                    return;
-                  }
-                  setState(() => _sessionModel = value);
-                },
+        return FutureBuilder<String?>(
+          future: _credentialHashForProvider(provider, activeBaseUrl),
+          builder: (context, hashSnapshot) {
+            final apiKeyHash = hashSnapshot.data;
+            return StreamBuilder<List<ApiModelCache>>(
+              stream: db.watchApiModelCaches(),
+              builder: (context, modelCacheSnapshot) {
+                final modelCaches = modelCacheSnapshot.data ?? [];
+                final cachedModelLists = AppDatabase.cachedModelListsFor(
+                  modelCaches,
+                  baseUrl: activeBaseUrl,
+                  apiKeyHash: apiKeyHash,
+                );
+                final savedModels = configs
+                    .where(
+                      (config) =>
+                          _sameBaseUrl(config.baseUrl, activeBaseUrl) &&
+                          apiKeyHash != null &&
+                          config.apiKeyHash.trim() == apiKeyHash,
+                    )
+                    .map((config) => config.model);
+                final models = TextModelSelection.buildOptions(
+                  modelsLoaded: cachedModelLists != null,
+                  loadedModels:
+                      cachedModelLists?.textModels ?? const <String>[],
+                  defaultModels: provider.models,
+                  savedModels: savedModels,
+                  settingsModel: currentModel,
+                );
+                final selected = TextModelSelection.resolveModel(
+                  availableOptions: models,
+                  selection: _sessionModel,
+                  fallback: currentModel,
+                );
+                return SearchableModelPicker(
+                  key: ValueKey('session_model_${selected}_${models.length}'),
+                  label: l10n.modelLabel,
+                  options: models,
+                  value: selected,
+                  emptyMessage: l10n.modelsNotLoadedMessage,
+                  enabled: !_sending,
+                  onChanged: (value) => _selectSessionModel(value, provider),
+                );
+              },
+            );
+          },
         );
       },
     );
@@ -1914,94 +1954,92 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   Widget _buildCompactModelSelector({
     required AppDatabase db,
     required String currentModel,
+    required String activeBaseUrl,
     required LlmProvider provider,
     required AppLocalizations l10n,
   }) {
-    return StreamBuilder<List<ApiConfig>>(
-      stream: db.watchApiConfigs(),
-      builder: (context, snapshot) {
-        final configs = snapshot.data ?? [];
-        final models = <String>{
-          ...provider.models.map((model) => model.trim()).where(
-                (model) => model.isNotEmpty,
-              ),
-          if (currentModel.trim().isNotEmpty) currentModel.trim(),
-          ...configs
-              .where(
-                (config) =>
-                    _normalizeBaseUrl(config.baseUrl) ==
-                    _normalizeBaseUrl(provider.baseUrl),
-              )
-              .map((config) => config.model.trim())
-              .where((m) => m.isNotEmpty),
-        }.toList()
-          ..sort();
-        final selected = (_sessionModel?.trim().isNotEmpty == true)
-            ? _sessionModel!.trim()
-            : currentModel.trim();
-        final value = models.contains(selected)
-            ? selected
-            : (models.isNotEmpty ? models.first : selected);
-        if ((_sessionModel == null ||
-                !_sessionModel!.trim().isNotEmpty ||
-                !models.contains(_sessionModel!.trim())) &&
-            value.isNotEmpty) {
-          _sessionModel = value;
-        }
-        return PopupMenuButton<String>(
-          key: ValueKey('compact_model_$value'),
-          enabled: !_sending && models.isNotEmpty,
-          tooltip: l10n.modelLabel,
-          onSelected: (model) {
-            setState(() => _sessionModel = model);
-          },
-          itemBuilder: (context) => models
-              .map(
-                (model) => PopupMenuItem<String>(
-                  value: model,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 280),
-                    child: Text(model, overflow: TextOverflow.ellipsis),
-                  ),
-                ),
-              )
-              .toList(),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              border: Border.all(
-                color: Theme.of(context).colorScheme.outline,
-              ),
-              borderRadius: BorderRadius.circular(20),
-              color: Theme.of(context).colorScheme.surface,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.tune, size: 18),
-                const SizedBox(width: 6),
-                Text(_compactModelLabel(value, l10n.modelLabel)),
-                const SizedBox(width: 4),
-                const Icon(Icons.arrow_drop_down),
-              ],
-            ),
-          ),
-        );
-      },
+    return SizedBox(
+      width: 260,
+      child: _buildModelSelector(
+        db: db,
+        currentModel: currentModel,
+        activeBaseUrl: activeBaseUrl,
+        provider: provider,
+        l10n: l10n,
+      ),
     );
   }
 
-  String _compactModelLabel(String model, String fallback) {
-    final trimmed = model.trim();
-    if (trimmed.isEmpty) {
-      return fallback;
+  Future<String?> _credentialHashForProvider(
+    LlmProvider provider,
+    String baseUrl,
+  ) {
+    final normalized =
+        '${provider.id}:${_normalizeBaseUrl(baseUrl)}'.toLowerCase();
+    return _apiKeyHashFutures.putIfAbsent(normalized, () async {
+      if (provider.usesOpenAiCodexOAuth) {
+        final credentials = await OpenAiCodexOAuthService(
+          _services.secureStorage,
+        ).readCredentials();
+        return OpenAiCodexOAuthService.credentialHash(credentials);
+      }
+      final apiKey = await _services.secureStorage.readApiKeyForBaseUrl(
+        baseUrl,
+      );
+      final trimmed = apiKey?.trim() ?? '';
+      if (trimmed.isEmpty) {
+        return null;
+      }
+      return sha256Hex(trimmed);
+    });
+  }
+
+  Future<void> _selectSessionModel(
+    String? value,
+    LlmProvider provider,
+  ) async {
+    final model = value?.trim() ?? '';
+    if (model.isEmpty) {
+      return;
     }
-    final slashIndex = trimmed.lastIndexOf('/');
-    final base = slashIndex >= 0 ? trimmed.substring(slashIndex + 1) : trimmed;
-    if (base.length <= 22) {
-      return base;
+    setState(() => _sessionModel = model);
+    final settingsController = context.read<SettingsController>();
+    final settings = settingsController.settings;
+    if (settings == null || settings.model.trim() == model) {
+      return;
     }
-    return '${base.substring(0, 22)}...';
+    final l10n = AppLocalizations.of(context)!;
+    try {
+      await settingsController.update(
+        providerId: (settings.providerId ?? '').trim().isNotEmpty
+            ? settings.providerId!.trim()
+            : provider.id,
+        baseUrl: settings.baseUrl.trim().isNotEmpty
+            ? settings.baseUrl
+            : provider.baseUrl,
+        model: model,
+        reasoningEffort: settings.reasoningEffort,
+        ttsModel: settings.ttsModel ?? '',
+        sttModel: settings.sttModel ?? '',
+        timeoutSeconds: settings.timeoutSeconds,
+        maxTokens: settings.maxTokens,
+        ttsInitialDelayMs: settings.ttsInitialDelayMs,
+        ttsTextLeadMs: settings.ttsTextLeadMs,
+        ttsAudioPath: settings.ttsAudioPath ?? '',
+        logDirectory: settings.logDirectory ?? '',
+        llmMode: settings.llmMode,
+        sttAutoSend: settings.sttAutoSend,
+        enterToSend: settings.enterToSend,
+        locale: settings.locale,
+      );
+    } catch (e) {
+      _showPersistentMessage('${l10n.requestFailedTitle}: $e');
+    }
+  }
+
+  bool _sameBaseUrl(String left, String right) {
+    return _normalizeBaseUrl(left).toLowerCase() ==
+        _normalizeBaseUrl(right).toLowerCase();
   }
 
   String _normalizeBaseUrl(String value) {
@@ -2188,10 +2226,10 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         step: _step,
         turnFinished: turnFinished,
         helpBias: _helpBias,
-        allowedActions: const <TutorFinishedAction>[],
         recommendedAction: turnFinished ? recommendedAction : null,
         activeReviewQuestion:
             preserveActiveQuestion ? existing.activeReviewQuestion : null,
+        currentReviewDifficulty: existing.currentReviewDifficulty,
         justPassedKpEvent: existing.justPassedKpEvent,
       ),
     );
@@ -2219,16 +2257,10 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   }
 
   String _resolvePromptNameForSend() {
-    return _resolvePromptNameForAction(
-      action: _mode.promptName,
-      preferredStep: _step,
-    );
+    return _resolvePromptNameForAction(action: _mode.promptName);
   }
 
-  String _resolvePromptNameForAction({
-    required String action,
-    required TutorTurnStep preferredStep,
-  }) {
+  String _resolvePromptNameForAction({required String action}) {
     return action.trim().toLowerCase();
   }
 
@@ -2244,41 +2276,23 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   }
 
   List<_ErrorBookPreviewItem> _buildErrorBookPreview(
-    List<ChatMessage> messages,
+    List<MistakeEntry> mistakes,
   ) {
-    final aggregates = <String, _ErrorBookPreviewItem>{};
-    for (final message in messages) {
-      if (message.role != 'assistant' || message.action != 'review') {
-        continue;
-      }
-      final parsed = _extractMessageJson(message);
-      final update = parsed?['error_book_update'];
-      if (update is! Map<String, dynamic>) {
-        continue;
-      }
-      final mistakeTag = (update['mistake_tag'] as String?)?.trim() ?? '';
-      if (mistakeTag.isEmpty) {
-        continue;
-      }
-      final note = (update['mistake_note'] as String?)?.trim() ?? '';
-      final existing = aggregates[mistakeTag];
-      if (existing == null) {
-        aggregates[mistakeTag] = _ErrorBookPreviewItem(
-          mistakeTag: mistakeTag,
-          count: 1,
-          lastNote: note.isEmpty ? 'No note.' : note,
-        );
-      } else {
-        existing.count += 1;
-        if (note.isNotEmpty) {
-          existing.lastNote = note;
-        }
-      }
-    }
-    if (aggregates.isEmpty) {
+    if (mistakes.isEmpty) {
       return const <_ErrorBookPreviewItem>[];
     }
-    final sorted = aggregates.values.toList()
+    final sorted = mistakes
+        .map(
+          (mistake) => _ErrorBookPreviewItem(
+            studentId: mistake.studentId,
+            mistakeTag: mistake.mistakeTagRaw,
+            count: mistake.occurrences,
+            lastNote: (mistake.mistakeNote ?? '').trim().isEmpty
+                ? 'No note.'
+                : mistake.mistakeNote!.trim(),
+          ),
+        )
+        .toList(growable: false)
       ..sort((left, right) => right.count.compareTo(left.count));
     return sorted.take(3).toList(growable: false);
   }
@@ -2860,11 +2874,17 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     if (_assistantMessageId == null) {
       return;
     }
+    final finalizedContent = _ttsRawBuffer.toString();
+    if (finalizedContent.isEmpty) {
+      // Never flush an empty buffer over a message that may already hold a
+      // valid assistant payload.
+      return;
+    }
     final services = context.read<AppServices>();
     final db = services.db;
     await db.updateChatMessageContent(
       messageId: _assistantMessageId!,
-      content: _ttsRawBuffer.toString(),
+      content: finalizedContent,
     );
     final settings = await services.settingsRepository.load();
     await services.llmLogRepository.appendEntry(
@@ -2973,11 +2993,13 @@ class _TtsQueuedChunk {
 
 class _ErrorBookPreviewItem {
   _ErrorBookPreviewItem({
+    required this.studentId,
     required this.mistakeTag,
     required this.count,
     required this.lastNote,
   });
 
+  final int studentId;
   final String mistakeTag;
   int count;
   String lastNote;

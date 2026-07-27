@@ -87,6 +87,12 @@ class PreparedCourseUploadBundle {
 }
 
 class CourseArtifactService {
+  static const List<String> _questionLevels = <String>[
+    'easy',
+    'medium',
+    'hard',
+  ];
+
   CourseArtifactService({
     Future<Directory> Function()? artifactsRootProvider,
     CourseBundleService? bundleService,
@@ -159,6 +165,225 @@ class CourseArtifactService {
     return CourseArtifactManifest.fromJson(decoded);
   }
 
+  Future<void> replaceStoredContentBundle({
+    required int courseVersionId,
+    required File bundleFile,
+  }) async {
+    if (courseVersionId <= 0) {
+      throw StateError('Course version id must be positive.');
+    }
+    if (!bundleFile.existsSync()) {
+      throw StateError('Bundle file not found: ${bundleFile.path}');
+    }
+    final manifest = await readCourseArtifacts(courseVersionId);
+    if (manifest == null) {
+      throw StateError(
+        'Cached course artifacts are missing for course version '
+        '$courseVersionId.',
+      );
+    }
+    final target = File(manifest.contentBundlePath);
+    await target.parent.create(recursive: true);
+    await bundleFile.copy(target.path);
+    await _deletePreparedUploadBundle(courseVersionId);
+  }
+
+  Future<String> updateStoredTextEntry({
+    required int courseVersionId,
+    required String preferredRelativePath,
+    required List<String> candidateRelativePaths,
+    required String text,
+  }) async {
+    if (courseVersionId <= 0) {
+      throw StateError('Course version id must be positive.');
+    }
+    final preferred = _normalizeArchivePath(preferredRelativePath);
+    if (preferred.isEmpty) {
+      throw StateError('Preferred course entry path must not be empty.');
+    }
+    final candidates = <String>[
+      ...candidateRelativePaths.map(_normalizeArchivePath),
+      preferred,
+    ].where((value) => value.isNotEmpty).toList(growable: false);
+    final manifest = await readCourseArtifacts(courseVersionId);
+    if (manifest == null) {
+      throw StateError(
+        'Cached course artifacts are missing for course version '
+        '$courseVersionId.',
+      );
+    }
+    final contentBundle = File(manifest.contentBundlePath);
+    if (!contentBundle.existsSync()) {
+      throw StateError(
+        'Cached course content bundle is missing: ${contentBundle.path}',
+      );
+    }
+
+    final input = InputFileStream(contentBundle.path);
+    Archive? sourceArchive;
+    Archive? archive;
+    try {
+      sourceArchive = ZipDecoder().decodeBuffer(input);
+      archive = Archive();
+      final existingNames = sourceArchive.files
+          .where((entry) => entry.isFile)
+          .map((entry) => _normalizeArchivePath(entry.name))
+          .where((name) => name.isNotEmpty)
+          .toSet();
+      var targetPath = preferred;
+      for (final candidate in candidates) {
+        if (existingNames.contains(candidate)) {
+          targetPath = candidate;
+          break;
+        }
+        final rooted = existingNames.where(
+          (name) => name.endsWith('/$candidate'),
+        );
+        if (rooted.isNotEmpty) {
+          targetPath = rooted.first;
+          break;
+        }
+      }
+
+      for (final entry in sourceArchive.files) {
+        if (!entry.isFile) {
+          continue;
+        }
+        final normalized = _normalizeArchivePath(entry.name);
+        if (normalized.isEmpty || normalized == targetPath) {
+          continue;
+        }
+        archive.addFile(
+          ArchiveFile(
+            entry.name,
+            entry.size,
+            _entryBytes(entry),
+          ),
+        );
+      }
+      final bytes = utf8.encode(text);
+      archive.addFile(
+        ArchiveFile(
+          targetPath,
+          bytes.length,
+          bytes,
+        ),
+      );
+      final encoded = ZipEncoder().encode(archive);
+      if (encoded == null) {
+        throw StateError('Failed to encode cached course bundle.');
+      }
+      await contentBundle.writeAsBytes(encoded, flush: true);
+      await _deletePreparedUploadBundle(courseVersionId);
+      final updatedManifest = CourseArtifactManifest(
+        courseVersionId: manifest.courseVersionId,
+        folderPath: manifest.folderPath,
+        contentBundlePath: manifest.contentBundlePath,
+        chapters: manifest.chapters,
+        builtAt: DateTime.now().toUtc(),
+      );
+      await _writeManifest(
+        await _resolveCourseArtifactDirectory(courseVersionId),
+        updatedManifest,
+      );
+      return targetPath;
+    } finally {
+      archive?.clearSync();
+      sourceArchive?.clearSync();
+      input.close();
+    }
+  }
+
+  Future<CourseArtifactManifest> storeImportedContentBundle({
+    required int courseVersionId,
+    required String folderPath,
+    required File bundleFile,
+    bool buildChapterArtifacts = true,
+  }) async {
+    if (courseVersionId <= 0) {
+      throw StateError('Course version id must be positive.');
+    }
+    final normalizedFolderPath = p.normalize(folderPath);
+    final sourceFolder = Directory(normalizedFolderPath);
+    if (!sourceFolder.existsSync()) {
+      throw StateError('Course folder not found: $normalizedFolderPath');
+    }
+    if (!bundleFile.existsSync()) {
+      throw StateError('Bundle file not found: ${bundleFile.path}');
+    }
+
+    final courseDir = await _resolveCourseArtifactDirectory(courseVersionId);
+    if (courseDir.existsSync()) {
+      await courseDir.delete(recursive: true);
+    }
+    await courseDir.create(recursive: true);
+
+    final contentBundlePath = p.join(courseDir.path, 'content_bundle.zip');
+    final contentBundle = File(contentBundlePath);
+    await bundleFile.copy(contentBundle.path);
+
+    var chapterArtifacts = const <CourseChapterArtifact>[];
+    if (buildChapterArtifacts) {
+      final chaptersDir = Directory(p.join(courseDir.path, 'chapters'));
+      await chaptersDir.create(recursive: true);
+      chapterArtifacts = await _buildChapterArchives(
+        folderPath: normalizedFolderPath,
+        outputDirectory: chaptersDir,
+      );
+    }
+
+    final manifest = CourseArtifactManifest(
+      courseVersionId: courseVersionId,
+      folderPath: normalizedFolderPath,
+      contentBundlePath: contentBundle.path,
+      chapters: chapterArtifacts,
+      builtAt: DateTime.now().toUtc(),
+    );
+    await _writeManifest(courseDir, manifest);
+    return manifest;
+  }
+
+  Future<String> materializeStoredContentBundle({
+    required int courseVersionId,
+    required String courseName,
+  }) async {
+    final manifest = await readCourseArtifacts(courseVersionId);
+    if (manifest == null) {
+      throw StateError(
+        'Cached course artifacts are missing for course version '
+        '$courseVersionId.',
+      );
+    }
+    final contentBundle = File(manifest.contentBundlePath);
+    if (!contentBundle.existsSync()) {
+      throw StateError(
+        'Cached course content bundle is missing: ${contentBundle.path}',
+      );
+    }
+    return _bundleService.extractBundleFromFile(
+      bundleFile: contentBundle,
+      courseName: courseName,
+    );
+  }
+
+  Future<String?> readStoredTextEntry({
+    required int courseVersionId,
+    required List<String> candidateRelativePaths,
+  }) async {
+    final manifest = await readCourseArtifacts(courseVersionId);
+    if (manifest == null) {
+      return null;
+    }
+    final contentBundle = File(manifest.contentBundlePath);
+    if (!contentBundle.existsSync()) {
+      return null;
+    }
+    return _bundleService.readTextEntryFromBundleFile(
+      bundleFile: contentBundle,
+      candidateRelativePaths: candidateRelativePaths,
+    );
+  }
+
   Future<PreparedCourseUploadBundle> prepareUploadBundle({
     required int courseVersionId,
     required Map<String, dynamic>? promptMetadata,
@@ -177,14 +402,34 @@ class CourseArtifactService {
         'Cached course content bundle is missing: ${contentBundle.path}',
       );
     }
-    final bundleFile = await _bundleService.cloneBundleWithPromptMetadata(
+    final inputFingerprint =
+        await _bundleService.computeBundleSemanticHashFromBundle(
+      contentBundle,
+      promptMetadataOverride: promptMetadata,
+    );
+    final cached = await _readPreparedUploadBundle(
+      courseVersionId: courseVersionId,
+      expectedInputFingerprint: inputFingerprint,
+    );
+    if (cached != null) {
+      return cached;
+    }
+    final tempBundle = await _bundleService.cloneBundleWithPromptMetadata(
       sourceBundle: contentBundle,
       promptMetadata: promptMetadata,
       label: bundleLabel,
     );
-    final hash = await _bundleService.computeBundleSemanticHashFromBundle(
-      contentBundle,
-      promptMetadataOverride: promptMetadata,
+    final bundleFile = await _writePreparedUploadBundle(
+      courseVersionId: courseVersionId,
+      tempBundle: tempBundle,
+    );
+    final hash = await _bundleService.computeBundleByteHash(bundleFile);
+    await _writePreparedUploadBundleMetadata(
+      courseVersionId: courseVersionId,
+      metadata: _StoredUploadBundleMetadata(
+        inputFingerprint: inputFingerprint,
+        sha256: hash,
+      ),
     );
     return PreparedCourseUploadBundle(
       bundleFile: bundleFile,
@@ -215,6 +460,68 @@ class CourseArtifactService {
     );
   }
 
+  Future<bool> hasStoredContentBundle(int courseVersionId) async {
+    if (courseVersionId <= 0) {
+      throw StateError('Course version id must be positive.');
+    }
+    final manifest = await readCourseArtifacts(courseVersionId);
+    if (manifest == null) {
+      return false;
+    }
+    final contentBundlePath = manifest.contentBundlePath.trim();
+    if (contentBundlePath.isEmpty) {
+      return false;
+    }
+    return File(contentBundlePath).existsSync();
+  }
+
+  Future<String?> computeStoredContentBundleByteHash(
+      int courseVersionId) async {
+    if (courseVersionId <= 0) {
+      throw StateError('Course version id must be positive.');
+    }
+    final manifest = await readCourseArtifacts(courseVersionId);
+    if (manifest == null) {
+      return null;
+    }
+    final contentBundlePath = manifest.contentBundlePath.trim();
+    if (contentBundlePath.isEmpty) {
+      return null;
+    }
+    final contentBundle = File(contentBundlePath);
+    if (!contentBundle.existsSync()) {
+      return null;
+    }
+    return _bundleService.computeBundleByteHash(contentBundle);
+  }
+
+  Future<PreparedCourseUploadBundle?> readPreparedUploadBundle(
+    int courseVersionId,
+  ) async {
+    if (courseVersionId <= 0) {
+      throw StateError('Course version id must be positive.');
+    }
+    final metadata = await _readPreparedUploadBundleMetadata(courseVersionId);
+    if (metadata == null) {
+      return null;
+    }
+    final bundleFile = await _preparedUploadBundleFile(courseVersionId);
+    if (!bundleFile.existsSync()) {
+      return null;
+    }
+    final hash = metadata.sha256.trim();
+    if (hash.isEmpty) {
+      throw StateError(
+        'Prepared upload bundle metadata is missing sha256 for course '
+        '$courseVersionId.',
+      );
+    }
+    return PreparedCourseUploadBundle(
+      bundleFile: bundleFile,
+      hash: hash,
+    );
+  }
+
   Future<void> _writeManifest(
     Directory courseDir,
     CourseArtifactManifest manifest,
@@ -224,6 +531,99 @@ class CourseArtifactService {
       jsonEncode(manifest.toJson()),
       encoding: utf8,
     );
+  }
+
+  Future<PreparedCourseUploadBundle?> _readPreparedUploadBundle({
+    required int courseVersionId,
+    required String expectedInputFingerprint,
+  }) async {
+    final metadata = await _readPreparedUploadBundleMetadata(courseVersionId);
+    if (metadata == null ||
+        metadata.inputFingerprint.trim() != expectedInputFingerprint.trim()) {
+      return null;
+    }
+    final bundleFile = await _preparedUploadBundleFile(courseVersionId);
+    if (!bundleFile.existsSync()) {
+      return null;
+    }
+    final hash = metadata.sha256.trim();
+    if (hash.isEmpty) {
+      return null;
+    }
+    return PreparedCourseUploadBundle(
+      bundleFile: bundleFile,
+      hash: hash,
+    );
+  }
+
+  Future<File> _writePreparedUploadBundle({
+    required int courseVersionId,
+    required File tempBundle,
+  }) async {
+    try {
+      final bundleFile = await _preparedUploadBundleFile(courseVersionId);
+      await bundleFile.parent.create(recursive: true);
+      if (bundleFile.existsSync()) {
+        await bundleFile.delete();
+      }
+      await tempBundle.copy(bundleFile.path);
+      return bundleFile;
+    } finally {
+      if (tempBundle.existsSync()) {
+        await tempBundle.delete();
+      }
+    }
+  }
+
+  Future<File> _preparedUploadBundleFile(int courseVersionId) async {
+    final courseDir = await _resolveCourseArtifactDirectory(courseVersionId);
+    return File(p.join(courseDir.path, 'sync_upload_bundle.zip'));
+  }
+
+  Future<File> _preparedUploadBundleMetadataFile(int courseVersionId) async {
+    final courseDir = await _resolveCourseArtifactDirectory(courseVersionId);
+    return File(p.join(courseDir.path, 'sync_upload_bundle.json'));
+  }
+
+  Future<_StoredUploadBundleMetadata?> _readPreparedUploadBundleMetadata(
+    int courseVersionId,
+  ) async {
+    final metadataFile =
+        await _preparedUploadBundleMetadataFile(courseVersionId);
+    if (!metadataFile.existsSync()) {
+      return null;
+    }
+    final decoded = jsonDecode(await metadataFile.readAsString(encoding: utf8));
+    if (decoded is! Map<String, dynamic>) {
+      throw StateError('Prepared upload bundle metadata is invalid.');
+    }
+    return _StoredUploadBundleMetadata.fromJson(decoded);
+  }
+
+  Future<void> _writePreparedUploadBundleMetadata({
+    required int courseVersionId,
+    required _StoredUploadBundleMetadata metadata,
+  }) async {
+    final metadataFile =
+        await _preparedUploadBundleMetadataFile(courseVersionId);
+    await metadataFile.parent.create(recursive: true);
+    await metadataFile.writeAsString(
+      jsonEncode(metadata.toJson()),
+      encoding: utf8,
+    );
+  }
+
+  Future<void> _deletePreparedUploadBundle(int courseVersionId) async {
+    final bundleFile = await _preparedUploadBundleFile(courseVersionId);
+    if (bundleFile.existsSync()) {
+      await bundleFile.delete();
+    }
+    final metadataFile = await _preparedUploadBundleMetadataFile(
+      courseVersionId,
+    );
+    if (metadataFile.existsSync()) {
+      await metadataFile.delete();
+    }
   }
 
   Future<List<CourseChapterArtifact>> _buildChapterArchives({
@@ -258,6 +658,15 @@ class CourseArtifactService {
         p.relative(lectureSource.path, from: normalizedFolder),
       );
       group[archivePath] = lectureSource;
+      for (final questionSource in _resolveQuestionFiles(
+        folderPath: normalizedFolder,
+        nodeId: node.id,
+      )) {
+        final questionArchivePath = _normalizeArchivePath(
+          p.relative(questionSource.path, from: normalizedFolder),
+        );
+        group[questionArchivePath] = questionSource;
+      }
     }
 
     final chapters = <CourseChapterArtifact>[];
@@ -347,6 +756,26 @@ class CourseArtifactService {
     throw StateError('Missing lecture file for node "$nodeId".');
   }
 
+  List<File> _resolveQuestionFiles({
+    required String folderPath,
+    required String nodeId,
+  }) {
+    final files = <File>[];
+    for (final level in _questionLevels) {
+      final flatQuestion = File(p.join(folderPath, '${nodeId}_$level.txt'));
+      if (flatQuestion.existsSync()) {
+        files.add(flatQuestion);
+      }
+      final legacyQuestion = File(
+        p.join(folderPath, nodeId, level, 'questions.txt'),
+      );
+      if (legacyQuestion.existsSync()) {
+        files.add(legacyQuestion);
+      }
+    }
+    return files;
+  }
+
   String _topLevelChapterKey(String nodeId) {
     final trimmed = nodeId.trim();
     if (trimmed.isEmpty) {
@@ -375,6 +804,14 @@ class CourseArtifactService {
         .replaceFirst(RegExp(r'^/+'), '');
   }
 
+  List<int> _entryBytes(ArchiveFile file) {
+    final content = file.content;
+    if (content is List<int>) {
+      return List<int>.from(content);
+    }
+    throw StateError('Unsupported archive entry content type.');
+  }
+
   Future<Directory> _resolveCourseArtifactDirectory(int courseVersionId) async {
     final root = await _resolveArtifactsRoot();
     final directory = Directory(p.join(root.path, 'course_$courseVersionId'));
@@ -398,6 +835,28 @@ class CourseArtifactService {
       root.createSync(recursive: true);
     }
     return root;
+  }
+}
+
+class _StoredUploadBundleMetadata {
+  _StoredUploadBundleMetadata({
+    required this.inputFingerprint,
+    required this.sha256,
+  });
+
+  final String inputFingerprint;
+  final String sha256;
+
+  Map<String, dynamic> toJson() => {
+        'input_fingerprint': inputFingerprint,
+        'sha256': sha256,
+      };
+
+  factory _StoredUploadBundleMetadata.fromJson(Map<String, dynamic> json) {
+    return _StoredUploadBundleMetadata(
+      inputFingerprint: (json['input_fingerprint'] as String?) ?? '',
+      sha256: (json['sha256'] as String?) ?? '',
+    );
   }
 }
 

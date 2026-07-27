@@ -20,7 +20,8 @@ Future<void> _withMockTempDir(
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   messenger.setMockMethodCallHandler(_pathProviderChannel, (call) async {
     if (call.method == 'getTemporaryDirectory' ||
-        call.method == 'getApplicationDocumentsDirectory') {
+        call.method == 'getApplicationDocumentsDirectory' ||
+        call.method == 'getApplicationSupportDirectory') {
       return tempDirPath;
     }
     return null;
@@ -80,6 +81,67 @@ void main() {
         await expectLater(service.validateBundleForImport(zipFile), completes);
       } finally {
         await tempDir.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'extractBundleScaffoldFromFile releases large bundle before caller cleanup',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'course_bundle_scaffold_release_test_',
+      );
+      try {
+        await _withMockTempDir(tempDir.path, () async {
+          final zipFile = File(p.join(tempDir.path, 'large_bundle.zip'));
+          final archive = Archive();
+
+          final contentsBytes = Uint8List.fromList(
+            '1 Root branch\n1.1 Intro lesson\n'.codeUnits,
+          );
+          archive.addFile(
+            ArchiveFile('contents.txt', contentsBytes.length, contentsBytes),
+          );
+
+          final lectureBytes =
+              Uint8List.fromList('This is the lecture body.'.codeUnits);
+          archive.addFile(
+            ArchiveFile('1_lecture.txt', lectureBytes.length, lectureBytes),
+          );
+          archive.addFile(
+            ArchiveFile('1.1_lecture.txt', lectureBytes.length, lectureBytes),
+          );
+
+          final random = Random(20260427);
+          final filler = Uint8List.fromList(
+            List<int>.generate(
+              2 * 1024 * 1024,
+              (_) => random.nextInt(256),
+            ),
+          );
+          archive.addFile(
+            ArchiveFile('filler/random.bin', filler.length, filler),
+          );
+
+          final encoded = ZipEncoder().encode(archive);
+          expect(encoded, isNotNull);
+          await zipFile.writeAsBytes(encoded!, flush: true);
+
+          final service = CourseBundleService();
+          final scaffoldPath = await service.extractBundleScaffoldFromFile(
+            bundleFile: zipFile,
+            courseName: 'Math Deep',
+          );
+          expect(
+              File(p.join(scaffoldPath, 'contents.txt')).existsSync(), isTrue);
+
+          await expectLater(zipFile.delete(), completes);
+          expect(zipFile.existsSync(), isFalse);
+        });
+      } finally {
+        if (tempDir.existsSync()) {
+          await tempDir.delete(recursive: true);
+        }
       }
     },
   );
@@ -166,6 +228,168 @@ void main() {
           expect(diff.addedCount, equals(0));
           expect(diff.removedCount, equals(0));
           expect(diff.updatedCount, equals(0));
+        });
+      } finally {
+        await tempDir.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'extractBundleScaffoldFromFile only materializes scaffold files',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'course_bundle_scaffold_test_',
+      );
+      try {
+        await _withMockTempDir(tempDir.path, () async {
+          final zipFile = File(p.join(tempDir.path, 'scaffold_bundle.zip'));
+          final archive = Archive();
+
+          final contentsBytes = Uint8List.fromList(
+            utf8.encode('1 Root branch\n1.1 Intro lesson\n'),
+          );
+          final lectureBytes = Uint8List.fromList(
+            utf8.encode('Lecture body'),
+          );
+          archive.addFile(
+            ArchiveFile(
+              'nested_course/contents.txt',
+              contentsBytes.length,
+              contentsBytes,
+            ),
+          );
+          archive.addFile(
+            ArchiveFile(
+              'nested_course/1_lecture.txt',
+              lectureBytes.length,
+              lectureBytes,
+            ),
+          );
+          archive.addFile(
+            ArchiveFile(
+              'nested_course/1.1_lecture.txt',
+              lectureBytes.length,
+              lectureBytes,
+            ),
+          );
+          final encoded = ZipEncoder().encode(archive);
+          expect(encoded, isNotNull);
+          await zipFile.writeAsBytes(encoded!, flush: true);
+
+          final service = CourseBundleService();
+          final scaffoldPath = await service.extractBundleScaffoldFromFile(
+            bundleFile: zipFile,
+            courseName: 'Scaffold Course',
+          );
+
+          expect(
+            File(p.join(scaffoldPath, 'contents.txt')).existsSync(),
+            isTrue,
+          );
+          expect(
+            File(p.join(scaffoldPath, '1_lecture.txt')).existsSync(),
+            isFalse,
+          );
+          expect(
+            File(p.join(scaffoldPath, '1.1_lecture.txt')).existsSync(),
+            isFalse,
+          );
+        });
+      } finally {
+        await tempDir.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'extractBundleScaffoldFromFile writes lightweight scaffold and bundle entry reads stay available',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'course_bundle_scaffold_test_',
+      );
+      try {
+        await _withMockTempDir(tempDir.path, () async {
+          final zipFile = File(p.join(tempDir.path, 'scaffold_bundle.zip'));
+          final archive = Archive();
+          final contentsBytes = Uint8List.fromList(
+            utf8.encode('1 Root branch\n1.1 Intro lesson\n'),
+          );
+          final contextBytes = Uint8List.fromList(
+            utf8.encode('Context body'),
+          );
+          final lectureBytes = Uint8List.fromList(
+            utf8.encode('Lecture body'),
+          );
+          final questionBytes = Uint8List.fromList(
+            utf8.encode('Question body'),
+          );
+          archive.addFile(
+            ArchiveFile(
+              'nested_course/contents.txt',
+              contentsBytes.length,
+              contentsBytes,
+            ),
+          );
+          archive.addFile(
+            ArchiveFile(
+              'nested_course/context.txt',
+              contextBytes.length,
+              contextBytes,
+            ),
+          );
+          archive.addFile(
+            ArchiveFile(
+              'nested_course/1.1_lecture.txt',
+              lectureBytes.length,
+              lectureBytes,
+            ),
+          );
+          archive.addFile(
+            ArchiveFile(
+              'nested_course/1.1_easy.txt',
+              questionBytes.length,
+              questionBytes,
+            ),
+          );
+          final encoded = ZipEncoder().encode(archive);
+          expect(encoded, isNotNull);
+          await zipFile.writeAsBytes(encoded!, flush: true);
+
+          final service = CourseBundleService();
+          final scaffoldPath = await service.extractBundleScaffoldFromFile(
+            bundleFile: zipFile,
+            courseName: 'Algebra',
+          );
+
+          expect(
+              File(p.join(scaffoldPath, 'contents.txt')).existsSync(), isTrue);
+          expect(
+              File(p.join(scaffoldPath, 'context.txt')).existsSync(), isTrue);
+          expect(
+            File(p.join(scaffoldPath, '1.1_lecture.txt')).existsSync(),
+            isFalse,
+          );
+          expect(
+            await service.readTextEntryFromBundleFile(
+              bundleFile: zipFile,
+              candidateRelativePaths: const <String>[
+                '1.1_lecture.txt',
+                '1.1/lecture.txt',
+              ],
+            ),
+            'Lecture body',
+          );
+          expect(
+            await service.readTextEntryFromBundleFile(
+              bundleFile: zipFile,
+              candidateRelativePaths: const <String>[
+                '1.1_easy.txt',
+                '1.1/easy/questions.txt',
+              ],
+            ),
+            'Question body',
+          );
         });
       } finally {
         await tempDir.delete(recursive: true);
@@ -314,6 +538,86 @@ void main() {
   );
 
   test(
+    'computeBundleSemanticHash treats legacy and current prompt metadata forms as equivalent',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'course_bundle_hash_prompt_compat_test_',
+      );
+      try {
+        Future<File> writeBundle({
+          required String fileName,
+          required String metadataEntryPath,
+          required Map<String, dynamic> metadata,
+        }) async {
+          final archive = Archive();
+          final contentsBytes = Uint8List.fromList(
+            utf8.encode('1 Root branch\n1.1 Intro lesson\n'),
+          );
+          archive.addFile(
+            ArchiveFile('contents.txt', contentsBytes.length, contentsBytes),
+          );
+          final lecture1 = Uint8List.fromList(utf8.encode('Lecture 1'));
+          final lecture2 = Uint8List.fromList(utf8.encode('Lecture 1.1'));
+          archive.addFile(
+            ArchiveFile('1_lecture.txt', lecture1.length, lecture1),
+          );
+          archive.addFile(
+            ArchiveFile('1.1_lecture.txt', lecture2.length, lecture2),
+          );
+          final metadataBytes =
+              Uint8List.fromList(utf8.encode(jsonEncode(metadata)));
+          archive.addFile(
+            ArchiveFile(
+              metadataEntryPath,
+              metadataBytes.length,
+              metadataBytes,
+            ),
+          );
+          final zipBytes = ZipEncoder().encode(archive);
+          expect(zipBytes, isNotNull);
+          final file = File(p.join(tempDir.path, fileName));
+          await file.writeAsBytes(zipBytes!, flush: true);
+          return file;
+        }
+
+        final legacyBundle = await writeBundle(
+          fileName: 'bundle_legacy.zip',
+          metadataEntryPath: kLegacyPromptMetadataEntryPath,
+          metadata: {
+            'schema': kLegacyPromptBundleSchema,
+            'teacher_username': 'alice',
+            'prompt_templates': [
+              {'prompt_name': 'learn', 'content': 'A'}
+            ],
+          },
+        );
+        final currentBundle = await writeBundle(
+          fileName: 'bundle_current.zip',
+          metadataEntryPath: kCurrentPromptMetadataEntryPath,
+          metadata: {
+            'schema': kCurrentPromptBundleSchema,
+            'teacher_username': 'alice',
+            'prompt_templates': [
+              {'prompt_name': 'learn', 'content': 'A'}
+            ],
+          },
+        );
+
+        final service = CourseBundleService();
+        final legacyHash =
+            await service.computeBundleSemanticHash(legacyBundle);
+        final currentHash =
+            await service.computeBundleSemanticHash(currentBundle);
+
+        expect(legacyHash, isNotEmpty);
+        expect(legacyHash, equals(currentHash));
+      } finally {
+        await tempDir.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
     'compareCourseFolderWithBundle reports added removed and updated KP counts',
     () async {
       final tempDir = await Directory.systemTemp.createTemp(
@@ -382,8 +686,59 @@ void main() {
     },
   );
 
+  test('compareCourseFolderWithBundle reports question bank changes', () async {
+    final tempDir = await Directory.systemTemp.createTemp(
+      'course_bundle_question_diff_test_',
+    );
+    try {
+      final localFolder = Directory(p.join(tempDir.path, 'local_course'))
+        ..createSync(recursive: true);
+      await File(p.join(localFolder.path, 'contents.txt')).writeAsString(
+        '1 Root branch\n',
+        encoding: utf8,
+      );
+      await File(p.join(localFolder.path, '1_lecture.txt')).writeAsString(
+        'Lecture unchanged',
+        encoding: utf8,
+      );
+      await File(p.join(localFolder.path, '1_medium.txt')).writeAsString(
+        'New question bank',
+        encoding: utf8,
+      );
+
+      final archive = Archive();
+      final contents = Uint8List.fromList(utf8.encode('1 Root branch\n'));
+      final lecture = Uint8List.fromList(utf8.encode('Lecture unchanged'));
+      final oldQuestions = Uint8List.fromList(utf8.encode('Old question bank'));
+      archive.addFile(
+        ArchiveFile('contents.txt', contents.length, contents),
+      );
+      archive.addFile(
+        ArchiveFile('1_lecture.txt', lecture.length, lecture),
+      );
+      archive.addFile(
+        ArchiveFile('1_medium.txt', oldQuestions.length, oldQuestions),
+      );
+      final zipBytes = ZipEncoder().encode(archive);
+      expect(zipBytes, isNotNull);
+      final oldBundle = File(p.join(tempDir.path, 'old_bundle.zip'));
+      await oldBundle.writeAsBytes(zipBytes!, flush: true);
+
+      final service = CourseBundleService();
+      final diff = await service.compareCourseFolderWithBundle(
+        folderPath: localFolder.path,
+        bundleFile: oldBundle,
+      );
+      expect(diff.addedCount, equals(0));
+      expect(diff.removedCount, equals(0));
+      expect(diff.updatedCount, equals(1));
+    } finally {
+      await tempDir.delete(recursive: true);
+    }
+  });
+
   test(
-    'createBundleFromFolder includes only required course/prompt txt files',
+    'createBundleFromFolder includes course prompt and question bank txt files',
     () async {
       final tempDir = await Directory.systemTemp.createTemp(
         'course_bundle_create_test_',
@@ -402,6 +757,18 @@ void main() {
           );
           await File(p.join(courseDir.path, '1.1_lecture.txt')).writeAsString(
             'Lecture child',
+            encoding: utf8,
+          );
+          await File(p.join(courseDir.path, '1.1_medium.txt')).writeAsString(
+            'Question child',
+            encoding: utf8,
+          );
+          final legacyQuestionDir =
+              Directory(p.join(courseDir.path, '1.1', 'hard'))
+                ..createSync(recursive: true);
+          await File(p.join(legacyQuestionDir.path, 'questions.txt'))
+              .writeAsString(
+            'Legacy hard question child',
             encoding: utf8,
           );
           final promptsDir = Directory(p.join(courseDir.path, 'prompts'))
@@ -446,6 +813,8 @@ void main() {
               'contents.txt',
               '1_lecture.txt',
               '1.1_lecture.txt',
+              '1.1/hard/questions.txt',
+              '1.1_medium.txt',
               'prompts/learn.txt',
               CourseBundleService.promptMetadataEntryPath,
             }),
@@ -501,13 +870,196 @@ void main() {
 
           expect(hashB, equals(hashA));
 
+          await File(p.join(courseDir.path, '1_medium.txt')).writeAsString(
+            'Question bank content',
+            encoding: utf8,
+          );
+          final bundleWithQuestion =
+              await service.createBundleFromFolder(courseDir.path);
+          final hashWithQuestion =
+              await service.computeBundleSemanticHash(bundleWithQuestion);
+          expect(hashWithQuestion, isNot(equals(hashA)));
+
           await File(lecturePath).writeAsString(
             'Changed lecture content',
             encoding: utf8,
           );
           final bundleC = await service.createBundleFromFolder(courseDir.path);
           final hashC = await service.computeBundleSemanticHash(bundleC);
-          expect(hashC, isNot(equals(hashA)));
+          expect(hashC, isNot(equals(hashWithQuestion)));
+        });
+      } finally {
+        await tempDir.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'semantic hash ignores prompt metadata transport fields, order, and legacy scope aliases',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'course_bundle_prompt_hash_test_',
+      );
+      try {
+        await _withMockTempDir(tempDir.path, () async {
+          final courseDir = Directory(p.join(tempDir.path, 'course'))
+            ..createSync(recursive: true);
+          await File(p.join(courseDir.path, 'contents.txt')).writeAsString(
+            '1 Root branch\n',
+            encoding: utf8,
+          );
+          await File(p.join(courseDir.path, '1_lecture.txt')).writeAsString(
+            'Stable lecture content',
+            encoding: utf8,
+          );
+
+          final service = CourseBundleService();
+          final baseBundle =
+              await service.createBundleFromFolder(courseDir.path);
+
+          Future<File> buildBundleWithPromptMetadata({
+            required String fileName,
+            required String metadataEntryPath,
+            required Map<String, dynamic> metadata,
+          }) async {
+            final sourceArchive = ZipDecoder().decodeBytes(
+              await baseBundle.readAsBytes(),
+            );
+            final archive = Archive();
+            for (final entry in sourceArchive.files) {
+              if (!entry.isFile) {
+                continue;
+              }
+              final normalizedName = entry.name.replaceAll('\\', '/');
+              if (normalizedName == kCurrentPromptMetadataEntryPath ||
+                  normalizedName == kLegacyPromptMetadataEntryPath) {
+                continue;
+              }
+              archive.addFile(
+                ArchiveFile(
+                  entry.name,
+                  entry.size,
+                  List<int>.from(entry.content as List<int>),
+                ),
+              );
+            }
+            final metadataBytes = utf8.encode(jsonEncode(metadata));
+            archive.addFile(
+              ArchiveFile(
+                metadataEntryPath,
+                metadataBytes.length,
+                metadataBytes,
+              ),
+            );
+            final encoded = ZipEncoder().encode(archive);
+            expect(encoded, isNotNull);
+            final output = File(p.join(tempDir.path, fileName));
+            await output.writeAsBytes(encoded!, flush: true);
+            return output;
+          }
+
+          final bundleA = await buildBundleWithPromptMetadata(
+            fileName: 'bundle_a.zip',
+            metadataEntryPath: kCurrentPromptMetadataEntryPath,
+            metadata: <String, dynamic>{
+              'schema': kCurrentPromptBundleSchema,
+              'remote_course_id': 111,
+              'teacher_username': 'alice',
+              'prompt_templates': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'prompt_name': 'review',
+                  'scope': 'teacher',
+                  'content': 'Teacher review prompt',
+                  'created_at': '2024-01-01T00:00:00Z',
+                },
+                <String, dynamic>{
+                  'prompt_name': 'learn',
+                  'scope': 'student_course',
+                  'student_remote_user_id': 77,
+                  'student_username': 'amy',
+                  'content': 'Student learn prompt',
+                  'created_at': '2024-01-02T00:00:00Z',
+                },
+              ],
+              'student_prompt_profiles': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'scope': 'student_course',
+                  'student_remote_user_id': 77,
+                  'student_username': 'amy',
+                  'preferred_tone': 'calm',
+                  'updated_at': '2024-01-03T00:00:00Z',
+                },
+              ],
+              'student_pass_configs': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'student_remote_user_id': 77,
+                  'student_username': 'amy',
+                  'easy_weight': 1,
+                  'medium_weight': 2,
+                  'hard_weight': 3,
+                  'pass_threshold': 0.7,
+                  'updated_at': '2024-01-04T00:00:00Z',
+                },
+              ],
+            },
+          );
+
+          final bundleB = await buildBundleWithPromptMetadata(
+            fileName: 'bundle_b.zip',
+            metadataEntryPath: kLegacyPromptMetadataEntryPath,
+            metadata: <String, dynamic>{
+              'schema': kLegacyPromptBundleSchema,
+              'remote_course_id': 999,
+              'teacher_username': 'alice_renamed',
+              'prompt_templates': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'prompt_name': 'learn',
+                  'scope': 'student',
+                  'student_remote_user_id': 77,
+                  'student_username': 'amy_renamed',
+                  'content': 'Student learn prompt',
+                  'created_at': '2025-02-02T00:00:00Z',
+                },
+                <String, dynamic>{
+                  'prompt_name': 'review',
+                  'scope': 'teacher',
+                  'content': 'Teacher review prompt',
+                  'created_at': '2025-02-01T00:00:00Z',
+                },
+              ],
+              'student_prompt_profiles': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'scope': 'student',
+                  'student_remote_user_id': 77,
+                  'student_username': 'amy_renamed',
+                  'preferred_tone': 'calm',
+                  'updated_at': '2025-02-03T00:00:00Z',
+                },
+              ],
+              'student_pass_configs': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'student_remote_user_id': 77,
+                  'student_username': 'amy_renamed',
+                  'easy_weight': 1.0,
+                  'medium_weight': 2.0,
+                  'hard_weight': 3.0,
+                  'pass_threshold': 0.7,
+                  'updated_at': '2025-02-04T00:00:00Z',
+                },
+              ],
+            },
+          );
+
+          final hashA = await service.computeBundleSemanticHash(bundleA);
+          final hashB = await service.computeBundleSemanticHash(bundleB);
+
+          expect(
+            hashA,
+            equals(
+              '6663c7def98c404b383698ca74264b9b8ad3f9182368118c0b9cc64238c25b04',
+            ),
+          );
+          expect(hashB, equals(hashA));
         });
       } finally {
         await tempDir.delete(recursive: true);

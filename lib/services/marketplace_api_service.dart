@@ -2,9 +2,10 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
-import 'package:http/io_client.dart';
 
 import '../constants.dart';
+import 'api_http_client.dart';
+import 'auth_token_refresh_coordinator.dart';
 import 'secure_storage_service.dart';
 
 class MarketplaceApiException implements Exception {
@@ -222,6 +223,46 @@ class EnrollmentSummary {
   }
 }
 
+class TeacherEnrollmentSummary {
+  TeacherEnrollmentSummary({
+    required this.enrollmentId,
+    required this.courseId,
+    required this.studentRemoteUserId,
+    required this.studentUsername,
+    required this.status,
+    required this.assignedAt,
+    required this.courseSubject,
+    required this.latestBundleVersionId,
+    this.latestBundleHash = '',
+  });
+
+  final int enrollmentId;
+  final int courseId;
+  final int studentRemoteUserId;
+  final String studentUsername;
+  final String status;
+  final String assignedAt;
+  final String courseSubject;
+  final int? latestBundleVersionId;
+  final String latestBundleHash;
+
+  factory TeacherEnrollmentSummary.fromJson(Map<String, dynamic> json) {
+    return TeacherEnrollmentSummary(
+      enrollmentId: (json['enrollment_id'] as num?)?.toInt() ?? 0,
+      courseId: (json['course_id'] as num?)?.toInt() ?? 0,
+      studentRemoteUserId:
+          (json['student_remote_user_id'] as num?)?.toInt() ?? 0,
+      studentUsername: (json['student_username'] as String?) ?? '',
+      status: (json['status'] as String?) ?? '',
+      assignedAt: (json['assigned_at'] as String?) ?? '',
+      courseSubject: (json['course_subject'] as String?) ?? '',
+      latestBundleVersionId:
+          (json['latest_bundle_version_id'] as num?)?.toInt(),
+      latestBundleHash: (json['latest_bundle_hash'] as String?) ?? '',
+    );
+  }
+}
+
 class TeacherRequestSummary {
   TeacherRequestSummary({
     required this.requestId,
@@ -287,35 +328,6 @@ class TeacherQuitRequestSummary {
       studentUsername: (json['student_username'] as String?) ?? '',
       reason: (json['reason'] as String?) ?? '',
       status: (json['status'] as String?) ?? '',
-      createdAt: (json['created_at'] as String?) ?? '',
-    );
-  }
-}
-
-class EnrollmentDeletionEvent {
-  EnrollmentDeletionEvent({
-    required this.eventId,
-    required this.studentId,
-    required this.teacherUserId,
-    required this.courseId,
-    required this.reason,
-    required this.createdAt,
-  });
-
-  final int eventId;
-  final int studentId;
-  final int teacherUserId;
-  final int courseId;
-  final String reason;
-  final String createdAt;
-
-  factory EnrollmentDeletionEvent.fromJson(Map<String, dynamic> json) {
-    return EnrollmentDeletionEvent(
-      eventId: (json['event_id'] as num?)?.toInt() ?? 0,
-      studentId: (json['student_id'] as num?)?.toInt() ?? 0,
-      teacherUserId: (json['teacher_user_id'] as num?)?.toInt() ?? 0,
-      courseId: (json['course_id'] as num?)?.toInt() ?? 0,
-      reason: (json['reason'] as String?) ?? '',
       createdAt: (json['created_at'] as String?) ?? '',
     );
   }
@@ -880,13 +892,21 @@ class MarketplaceApiService {
     required SecureStorageService secureStorage,
     String? baseUrl,
     http.Client? client,
-  })  : _secureStorage = secureStorage,
+    FirstPartyApiHttpClientFactory? clientFactory,
+  })  : assert(client == null || clientFactory == null),
+        _secureStorage = secureStorage,
         _baseUrl = _normalizeBaseUrl(baseUrl ?? kAuthBaseUrl),
-        _client = client ?? _buildClient(kAuthAllowInsecureTls);
+        _clientFactory =
+            clientFactory ?? (() => _buildClient(kAuthAllowInsecureTls)),
+        _ownsClient = client == null,
+        _client = client ??
+            (clientFactory ?? (() => _buildClient(kAuthAllowInsecureTls)))();
 
   final SecureStorageService _secureStorage;
   final String _baseUrl;
-  final http.Client _client;
+  final FirstPartyApiHttpClientFactory _clientFactory;
+  final bool _ownsClient;
+  http.Client _client;
 
   Future<List<CatalogCourse>> listCourses({
     String? query,
@@ -997,6 +1017,14 @@ class MarketplaceApiService {
     );
   }
 
+  Future<List<TeacherEnrollmentSummary>> listTeacherEnrollments() async {
+    final response = await _get('/api/teacher/enrollments');
+    return _decodeList(
+      response,
+      (json) => TeacherEnrollmentSummary.fromJson(json),
+    );
+  }
+
   Future<void> approveRequest(int requestId) async {
     await _post('/api/teacher/enrollment-requests/$requestId/approve', {});
   }
@@ -1011,21 +1039,6 @@ class MarketplaceApiService {
 
   Future<void> rejectQuitRequest(int requestId) async {
     await _post('/api/teacher/quit-requests/$requestId/reject', {});
-  }
-
-  Future<List<EnrollmentDeletionEvent>> listEnrollmentDeletionEvents({
-    int? sinceId,
-  }) async {
-    final params = <String, String>{};
-    if ((sinceId ?? 0) > 0) {
-      params['since_id'] = sinceId.toString();
-    }
-    final response =
-        await _get('/api/enrollments/deletion-events', params: params);
-    return _decodeList(
-      response,
-      (json) => EnrollmentDeletionEvent.fromJson(json),
-    );
   }
 
   Future<List<TeacherCourseSummary>> listTeacherCourses() async {
@@ -1257,6 +1270,30 @@ class MarketplaceApiService {
     });
   }
 
+  Future<TeacherCourseSummary> updateCourseMetadata({
+    required int courseId,
+    required String description,
+  }) async {
+    final trimmedDescription = description.trim();
+    final response = await _post('/api/teacher/courses/$courseId/metadata', {
+      'description': trimmedDescription,
+    });
+    if (response is! Map<String, dynamic>) {
+      throw MarketplaceApiException('Unexpected response format.');
+    }
+    return TeacherCourseSummary(
+      courseId: (response['course_id'] as num?)?.toInt() ?? courseId,
+      subject: '',
+      grade: '',
+      description: (response['description'] as String?) ?? trimmedDescription,
+      visibility: 'private',
+      publishedAt: '',
+      latestBundleVersionId: null,
+      status: (response['status'] as String?) ?? 'updated',
+      approvalStatus: '',
+    );
+  }
+
   Future<TeacherCourseSummary> updateCourseSubjectLabels({
     required int courseId,
     required List<int> subjectLabelIds,
@@ -1268,21 +1305,17 @@ class MarketplaceApiService {
     if (response is! Map<String, dynamic>) {
       throw MarketplaceApiException('Unexpected response format.');
     }
-    final refreshed = await listTeacherCourses();
-    return refreshed.firstWhere(
-      (course) => course.courseId == courseId,
-      orElse: () => TeacherCourseSummary(
-        courseId: courseId,
-        subject: '',
-        grade: '',
-        description: '',
-        visibility: 'private',
-        publishedAt: '',
-        latestBundleVersionId: null,
-        status: 'updated',
-        approvalStatus: '',
-        subjectLabels: _decodeSubjectLabelsList(response['subject_labels']),
-      ),
+    return TeacherCourseSummary(
+      courseId: (response['course_id'] as num?)?.toInt() ?? courseId,
+      subject: '',
+      grade: '',
+      description: '',
+      visibility: 'private',
+      publishedAt: '',
+      latestBundleVersionId: null,
+      status: (response['status'] as String?) ?? 'updated',
+      approvalStatus: '',
+      subjectLabels: _decodeSubjectLabelsList(response['subject_labels']),
     );
   }
 
@@ -1295,7 +1328,7 @@ class MarketplaceApiService {
     return _decodeList(response, (json) => AdminUserSummary.fromJson(json));
   }
 
-  Future<void> deleteAdminTeacher(int userId) async {
+  Future<void> deleteAdminUser(int userId) async {
     await _post('/api/admin/users/$userId/delete', {});
   }
 
@@ -1495,17 +1528,18 @@ class MarketplaceApiService {
       },
     );
     Future<http.StreamedResponse> send(String token) async {
-      final request = http.MultipartRequest('POST', uri);
-      request.headers['Authorization'] = 'Bearer $token';
-      request.files.add(await http.MultipartFile.fromPath(
-        'bundle',
-        bundleFile.path,
-      ));
-      try {
-        return await _client.send(request);
-      } on Exception catch (error) {
-        throw MarketplaceApiException('Request failed: $error');
-      }
+      return _runRequest(
+        uri: uri,
+        action: () async {
+          final request = http.MultipartRequest('POST', uri);
+          request.headers['Authorization'] = 'Bearer $token';
+          request.files.add(await http.MultipartFile.fromPath(
+            'bundle',
+            bundleFile.path,
+          ));
+          return _client.send(request);
+        },
+      );
     }
 
     var token = await _requireAccessToken();
@@ -1532,13 +1566,14 @@ class MarketplaceApiService {
       },
     );
     Future<http.StreamedResponse> send(String token) async {
-      final request = http.Request('GET', uri);
-      request.headers['Authorization'] = 'Bearer $token';
-      try {
-        return await _client.send(request);
-      } on Exception catch (error) {
-        throw MarketplaceApiException('Request failed: $error');
-      }
+      return _runRequest(
+        uri: uri,
+        action: () {
+          final request = http.Request('GET', uri);
+          request.headers['Authorization'] = 'Bearer $token';
+          return _client.send(request);
+        },
+      );
     }
 
     var token = await _requireAccessToken();
@@ -1594,12 +1629,10 @@ class MarketplaceApiService {
     Map<String, String>? params,
   }) async {
     final uri = Uri.parse('$_baseUrl$path').replace(queryParameters: params);
-    http.Response response;
-    try {
-      response = await _client.get(uri);
-    } on Exception catch (error) {
-      throw MarketplaceApiException('Request failed: $error');
-    }
+    final response = await _runRequest(
+      uri: uri,
+      action: () => _client.get(uri),
+    );
     return _decodeResponse(response);
   }
 
@@ -1615,14 +1648,13 @@ class MarketplaceApiService {
       if (etag.isNotEmpty) {
         headers['If-None-Match'] = etag;
       }
-      try {
-        return await _client.get(
+      return _runRequest(
+        uri: uri,
+        action: () => _client.get(
           uri,
           headers: headers,
-        );
-      } on Exception catch (error) {
-        throw MarketplaceApiException('Request failed: $error');
-      }
+        ),
+      );
     }
 
     var token = await _requireAccessToken();
@@ -1641,15 +1673,14 @@ class MarketplaceApiService {
   }) async {
     final uri = Uri.parse('$_baseUrl$path').replace(queryParameters: params);
     Future<http.Response> send(String token) async {
-      try {
-        return await _client.post(
+      return _runRequest(
+        uri: uri,
+        action: () => _client.post(
           uri,
           headers: _authHeaders(token),
           body: jsonEncode(body),
-        );
-      } on Exception catch (error) {
-        throw MarketplaceApiException('Request failed: $error');
-      }
+        ),
+      );
     }
 
     var token = await _requireAccessToken();
@@ -1677,45 +1708,34 @@ class MarketplaceApiService {
   }
 
   Future<bool> _refreshAccessToken() async {
-    final refreshToken = await _secureStorage.readAuthRefreshToken();
-    if (refreshToken == null || refreshToken.trim().isEmpty) {
-      return false;
-    }
-    http.Response response;
     try {
-      response = await _client.post(
-        Uri.parse('$_baseUrl/api/auth/refresh'),
-        headers: const {'Content-Type': 'application/json'},
-        body: jsonEncode({'refresh_token': refreshToken.trim()}),
+      return await AuthTokenRefreshCoordinator.refresh(
+        client: _client,
+        secureStorage: _secureStorage,
+        baseUrl: _baseUrl,
       );
-    } on Exception catch (error) {
-      throw MarketplaceApiException('Token refresh failed: $error');
-    }
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      if (response.statusCode == 400 || response.statusCode == 401) {
-        await _secureStorage.deleteAuthTokens();
-        return false;
+    } on AuthTokenRefreshException catch (error) {
+      if (_ownsClient && isFreshFirstPartyApiClientRetryableError(error)) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        _rebuildClient();
+        try {
+          return await AuthTokenRefreshCoordinator.refresh(
+            client: _client,
+            secureStorage: _secureStorage,
+            baseUrl: _baseUrl,
+          );
+        } on AuthTokenRefreshException catch (retryError) {
+          throw MarketplaceApiException(
+            'Token refresh failed after fresh-client retry. first_error=${error.message}; retry_error=${retryError.message}',
+            statusCode: retryError.statusCode,
+          );
+        }
       }
       throw MarketplaceApiException(
-        _extractError(response.body) ?? 'Token refresh failed.',
-        statusCode: response.statusCode,
+        error.message,
+        statusCode: error.statusCode,
       );
     }
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map<String, dynamic>) {
-      throw MarketplaceApiException('Token refresh response invalid.');
-    }
-    final accessToken = (decoded['access_token'] as String?)?.trim() ?? '';
-    final nextRefreshToken =
-        (decoded['refresh_token'] as String?)?.trim() ?? '';
-    if (accessToken.isEmpty || nextRefreshToken.isEmpty) {
-      throw MarketplaceApiException('Token refresh response missing tokens.');
-    }
-    await _secureStorage.writeAuthTokens(
-      accessToken: accessToken,
-      refreshToken: nextRefreshToken,
-    );
-    return true;
   }
 
   dynamic _decodeResponse(http.Response response) {
@@ -1746,12 +1766,43 @@ class MarketplaceApiService {
   }
 
   static http.Client _buildClient(bool allowInsecureTls) {
-    if (!allowInsecureTls) {
-      return http.Client();
+    return buildFirstPartyApiHttpClient(
+      allowInsecureTls: allowInsecureTls,
+    );
+  }
+
+  Future<T> _runRequest<T>({
+    required Uri uri,
+    required Future<T> Function() action,
+  }) async {
+    try {
+      return await action();
+    } on MarketplaceApiException {
+      rethrow;
+    } catch (error) {
+      if (_ownsClient && isFreshFirstPartyApiClientRetryableError(error)) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        _rebuildClient();
+        try {
+          return await action();
+        } on MarketplaceApiException {
+          rethrow;
+        } catch (retryError) {
+          throw MarketplaceApiException(
+            'Request to $uri failed after fresh-client retry. first_error=$error; retry_error=$retryError',
+          );
+        }
+      }
+      throw MarketplaceApiException('Request failed: $error');
     }
-    final httpClient = HttpClient()
-      ..badCertificateCallback = (cert, host, port) => true;
-    return IOClient(httpClient);
+  }
+
+  void _rebuildClient() {
+    if (!_ownsClient) {
+      return;
+    }
+    _client.close();
+    _client = _clientFactory();
   }
 
   static String _normalizeBaseUrl(String value) {

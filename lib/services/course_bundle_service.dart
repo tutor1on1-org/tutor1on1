@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 import 'dart:convert';
 
@@ -26,6 +27,12 @@ class CourseKpDiffSummary {
 
 class CourseBundleService {
   static const String promptMetadataEntryPath = kCurrentPromptMetadataEntryPath;
+  static const int _backgroundBundleThresholdBytes = 256 * 1024;
+  static const List<String> _questionLevels = <String>[
+    'easy',
+    'medium',
+    'hard',
+  ];
   static final RegExp _idPattern = RegExp(r'^(\d+(?:\.\d+)*)\s*(.+)$');
 
   Future<File> createBundleFromFolder(
@@ -97,16 +104,54 @@ class CourseBundleService {
     final targetDir = Directory(targetPath);
     targetDir.createSync(recursive: true);
     final input = InputFileStream(bundleFile.path);
+    Archive? archive;
     try {
-      final archive = ZipDecoder().decodeBuffer(input);
+      archive = ZipDecoder().decodeBuffer(input);
       _validateArchivePaths(archive);
       // archive.extractArchiveToDisk is async in archive 3.x. Must await to
       // avoid returning before contents/context files are written.
       await extractArchiveToDisk(archive, targetPath);
     } finally {
+      archive?.clearSync();
       input.close();
     }
     return _resolveExtractedCourseRoot(targetPath);
+  }
+
+  Future<String> extractBundleScaffoldFromFile({
+    required File bundleFile,
+    required String courseName,
+  }) async {
+    if (!bundleFile.existsSync()) {
+      throw StateError('Bundle file not found: ${bundleFile.path}');
+    }
+    final root = await _ensureDownloadRoot();
+    final safeName = _sanitizeName(courseName);
+    final targetPath = p.join(
+      root.path,
+      '${safeName}_${DateTime.now().millisecondsSinceEpoch}',
+    );
+    final targetDir = Directory(targetPath);
+    targetDir.createSync(recursive: true);
+    final indexed = _indexBundleArchive(bundleFile.path);
+    final contentsBytes = indexed.entryByName[indexed.selectedContentsName];
+    if (contentsBytes == null) {
+      throw StateError('Bundle is missing contents.txt or context.txt.');
+    }
+    await File(p.join(targetPath, 'contents.txt')).writeAsBytes(
+      contentsBytes,
+      flush: true,
+    );
+    if (indexed.selectedContextName.isNotEmpty) {
+      final contextBytes = indexed.entryByName[indexed.selectedContextName];
+      if (contextBytes != null) {
+        await File(p.join(targetPath, 'context.txt')).writeAsBytes(
+          contextBytes,
+          flush: true,
+        );
+      }
+    }
+    return targetPath;
   }
 
   Future<Map<String, dynamic>?> readPromptMetadataFromBundleFile(
@@ -115,28 +160,13 @@ class CourseBundleService {
     if (!bundleFile.existsSync()) {
       throw StateError('Bundle file not found: ${bundleFile.path}');
     }
-    final input = InputFileStream(bundleFile.path);
-    try {
-      final archive = ZipDecoder().decodeBuffer(input);
-      for (final file in archive) {
-        if (!file.isFile) {
-          continue;
-        }
-        final normalizedName = p.normalize(file.name).replaceAll('\\', '/');
-        if (!isSupportedPromptMetadataEntryPath(normalizedName)) {
-          continue;
-        }
-        final content = utf8.decode(file.content as List<int>);
-        final decoded = jsonDecode(content);
-        if (decoded is Map<String, dynamic>) {
-          return decoded;
-        }
-        throw StateError('Prompt metadata is invalid.');
-      }
-      return null;
-    } finally {
-      input.close();
+    final bundlePath = bundleFile.path;
+    if (bundleFile.lengthSync() < _backgroundBundleThresholdBytes) {
+      return _readPromptMetadataFromPath(bundlePath);
     }
+    return Isolate.run<Map<String, dynamic>?>(() {
+      return CourseBundleService()._readPromptMetadataFromPath(bundlePath);
+    });
   }
 
   Future<String> extractBundleFromBytes({
@@ -163,10 +193,116 @@ class CourseBundleService {
     if (!bundleFile.existsSync()) {
       throw StateError('Bundle file not found: ${bundleFile.path}');
     }
+    final bundlePath = bundleFile.path;
+    if (bundleFile.lengthSync() < _backgroundBundleThresholdBytes) {
+      _validateBundleForImportPath(bundlePath);
+      return;
+    }
+    await Isolate.run<void>(() {
+      CourseBundleService()._validateBundleForImportPath(bundlePath);
+    });
+  }
 
-    final input = InputFileStream(bundleFile.path);
+  Future<String> computeBundleSemanticHash(File bundleFile) async {
+    return computeBundleSemanticHashFromBundle(bundleFile);
+  }
+
+  Future<String> computeBundleByteHash(File bundleFile) async {
+    if (!bundleFile.existsSync()) {
+      throw StateError('Bundle file not found: ${bundleFile.path}');
+    }
+    final bytes = await bundleFile.readAsBytes();
+    return sha256.convert(bytes).toString();
+  }
+
+  Future<String> computeBundleSemanticHashFromBundle(
+    File bundleFile, {
+    Map<String, dynamic>? promptMetadataOverride,
+  }) async {
+    if (!bundleFile.existsSync()) {
+      throw StateError('Bundle file not found: ${bundleFile.path}');
+    }
+    final bundlePath = bundleFile.path;
+    final normalizedOverride = promptMetadataOverride == null
+        ? null
+        : Map<String, dynamic>.from(promptMetadataOverride);
+    if (bundleFile.lengthSync() < _backgroundBundleThresholdBytes) {
+      return _computeBundleSemanticHashFromPath(
+        bundlePath,
+        promptMetadataOverride: normalizedOverride,
+      );
+    }
+    return Isolate.run<String>(() {
+      return CourseBundleService()._computeBundleSemanticHashFromPath(
+        bundlePath,
+        promptMetadataOverride: normalizedOverride,
+      );
+    });
+  }
+
+  Future<String?> readTextEntryFromBundleFile({
+    required File bundleFile,
+    required List<String> candidateRelativePaths,
+  }) async {
+    if (!bundleFile.existsSync()) {
+      throw StateError('Bundle file not found: ${bundleFile.path}');
+    }
+    final normalizedCandidates = candidateRelativePaths
+        .map(_normalizeArchivePath)
+        .where((value) => value.isNotEmpty)
+        .toList(growable: false);
+    if (normalizedCandidates.isEmpty) {
+      return null;
+    }
+    final indexed = _indexBundleArchive(bundleFile.path);
+    final candidateNames = <String>{
+      ...normalizedCandidates,
+      if (indexed.selectedRoot.isNotEmpty)
+        ...normalizedCandidates.map(
+            (value) => _normalizeArchivePath('${indexed.selectedRoot}/$value')),
+    };
+    for (final name in candidateNames) {
+      final entryBytes = indexed.entryByName[name];
+      if (entryBytes == null) {
+        continue;
+      }
+      return utf8.decode(entryBytes);
+    }
+    return null;
+  }
+
+  Map<String, dynamic>? _readPromptMetadataFromPath(String bundlePath) {
+    final input = InputFileStream(bundlePath);
+    Archive? archive;
     try {
-      final archive = ZipDecoder().decodeBuffer(input);
+      archive = ZipDecoder().decodeBuffer(input);
+      for (final file in archive) {
+        if (!file.isFile) {
+          continue;
+        }
+        final normalizedName = p.normalize(file.name).replaceAll('\\', '/');
+        if (!isSupportedPromptMetadataEntryPath(normalizedName)) {
+          continue;
+        }
+        final content = utf8.decode(file.content as List<int>);
+        final decoded = jsonDecode(content);
+        if (decoded is Map<String, dynamic>) {
+          return decoded;
+        }
+        throw StateError('Prompt metadata is invalid.');
+      }
+      return null;
+    } finally {
+      archive?.clearSync();
+      input.close();
+    }
+  }
+
+  void _validateBundleForImportPath(String bundlePath) {
+    final input = InputFileStream(bundlePath);
+    Archive? archive;
+    try {
+      archive = ZipDecoder().decodeBuffer(input);
       _validateArchivePaths(archive);
 
       final fileEntries = archive.files.where((entry) {
@@ -269,25 +405,21 @@ class CourseBundleService {
         );
       }
     } finally {
+      archive?.clearSync();
       input.close();
     }
   }
 
-  Future<String> computeBundleSemanticHash(File bundleFile) async {
-    return computeBundleSemanticHashFromBundle(bundleFile);
-  }
-
-  Future<String> computeBundleSemanticHashFromBundle(
-    File bundleFile, {
+  String _computeBundleSemanticHashFromPath(
+    String bundlePath, {
     Map<String, dynamic>? promptMetadataOverride,
-  }) async {
-    if (!bundleFile.existsSync()) {
-      throw StateError('Bundle file not found: ${bundleFile.path}');
-    }
-    final input = InputFileStream(bundleFile.path);
+  }) {
+    final input = InputFileStream(bundlePath);
+    Archive? archive;
     try {
-      final archive = ZipDecoder().decodeBuffer(input);
+      archive = ZipDecoder().decodeBuffer(input);
       final files = <_BundleSemanticFile>[];
+      var sawPromptMetadata = false;
       for (final entry in archive.files) {
         if (!entry.isFile) {
           continue;
@@ -302,20 +434,34 @@ class CourseBundleService {
         if (_hasAppleDoubleSegment(name)) {
           continue;
         }
+        var semanticName = name;
         var data = _entryBytes(entry);
         if (isSupportedPromptMetadataEntryPath(name)) {
+          sawPromptMetadata = true;
+          semanticName = promptMetadataEntryPath;
           if (promptMetadataOverride != null) {
             continue;
           }
           data = _normalizePromptMetadataBytes(data);
         }
-        files.add(_BundleSemanticFile(name: name, data: data));
+        files.add(_BundleSemanticFile(name: semanticName, data: data));
       }
       if (promptMetadataOverride != null) {
         files.add(
           _BundleSemanticFile(
             name: promptMetadataEntryPath,
-            data: normalizePromptMetadataJson(promptMetadataOverride),
+            data: _normalizePromptMetadataJsonForSemanticHash(
+              promptMetadataOverride,
+            ),
+          ),
+        );
+      } else if (!sawPromptMetadata) {
+        files.add(
+          _BundleSemanticFile(
+            name: promptMetadataEntryPath,
+            data: _normalizePromptMetadataJsonForSemanticHash(
+              _emptyPromptMetadataDocument(),
+            ),
           ),
         );
       }
@@ -336,24 +482,22 @@ class CourseBundleService {
       }
       return digest.toString();
     } finally {
+      archive?.clearSync();
       input.close();
     }
   }
 
-  Future<File> cloneBundleWithPromptMetadata({
-    required File sourceBundle,
+  void _cloneBundleWithPromptMetadataToPath({
+    required String sourcePath,
+    required String targetPath,
     Map<String, dynamic>? promptMetadata,
-    String? label,
-  }) async {
-    if (!sourceBundle.existsSync()) {
-      throw StateError('Bundle file not found: ${sourceBundle.path}');
-    }
-    final targetPath = await createTempBundlePath(label: label);
-    final targetFile = File(targetPath);
-    final input = InputFileStream(sourceBundle.path);
+  }) {
+    final input = InputFileStream(sourcePath);
+    Archive? sourceArchive;
+    Archive? archive;
     try {
-      final sourceArchive = ZipDecoder().decodeBuffer(input);
-      final archive = Archive();
+      sourceArchive = ZipDecoder().decodeBuffer(input);
+      archive = Archive();
       for (final entry in sourceArchive.files) {
         if (!entry.isFile) {
           continue;
@@ -396,12 +540,46 @@ class CourseBundleService {
       if (bytes == null) {
         throw StateError('Failed to encode cached course bundle.');
       }
-      await targetFile.writeAsBytes(bytes, flush: true);
-      await validateBundleForImport(targetFile);
-      return targetFile;
+      File(targetPath).writeAsBytesSync(bytes, flush: true);
     } finally {
+      archive?.clearSync();
+      sourceArchive?.clearSync();
       input.close();
     }
+  }
+
+  Future<File> cloneBundleWithPromptMetadata({
+    required File sourceBundle,
+    Map<String, dynamic>? promptMetadata,
+    String? label,
+  }) async {
+    if (!sourceBundle.existsSync()) {
+      throw StateError('Bundle file not found: ${sourceBundle.path}');
+    }
+    final targetPath = await createTempBundlePath(label: label);
+    final targetFile = File(targetPath);
+    final sourcePath = sourceBundle.path;
+    final normalizedPromptMetadata = promptMetadata == null
+        ? null
+        : Map<String, dynamic>.from(promptMetadata);
+    if (sourceBundle.lengthSync() < _backgroundBundleThresholdBytes) {
+      _cloneBundleWithPromptMetadataToPath(
+        sourcePath: sourcePath,
+        targetPath: targetPath,
+        promptMetadata: normalizedPromptMetadata,
+      );
+      await validateBundleForImport(targetFile);
+      return targetFile;
+    }
+    await Isolate.run<void>(() {
+      CourseBundleService()._cloneBundleWithPromptMetadataToPath(
+        sourcePath: sourcePath,
+        targetPath: targetPath,
+        promptMetadata: normalizedPromptMetadata,
+      );
+    });
+    await validateBundleForImport(targetFile);
+    return targetFile;
   }
 
   Future<CourseKpDiffSummary> compareCourseFolderWithBundle({
@@ -430,12 +608,82 @@ class CourseBundleService {
   }
 
   Future<Directory> _ensureDownloadRoot() async {
-    final docs = await getApplicationDocumentsDirectory();
-    final root = Directory(p.join(docs.path, 'downloaded_courses'));
+    final support = await getApplicationSupportDirectory();
+    final root = Directory(p.join(support.path, 'downloaded_courses'));
     if (!root.existsSync()) {
       root.createSync(recursive: true);
     }
     return root;
+  }
+
+  _IndexedBundleArchive _indexBundleArchive(String bundlePath) {
+    final input = InputFileStream(bundlePath);
+    Archive? archive;
+    try {
+      archive = ZipDecoder().decodeBuffer(input);
+      _validateArchivePaths(archive);
+      final entryByName = <String, List<int>>{};
+      for (final entry in archive.files) {
+        if (!entry.isFile) {
+          continue;
+        }
+        final name = _normalizeArchivePath(entry.name);
+        if (name.isEmpty) {
+          continue;
+        }
+        if (name.startsWith('__MACOSX/')) {
+          continue;
+        }
+        if (_hasAppleDoubleSegment(name)) {
+          continue;
+        }
+        entryByName[name] = _entryBytes(entry);
+      }
+      if (entryByName.isEmpty) {
+        throw StateError('Bundle is empty or contains only metadata files.');
+      }
+      final roots = _candidateRoots(
+        entryByName.keys
+            .where((name) => !isSupportedPromptMetadataEntryPath(name))
+            .toSet(),
+      );
+      if (roots.isEmpty) {
+        throw StateError('Bundle is missing contents.txt or context.txt.');
+      }
+      var selectedRoot = '';
+      var selectedContentsName = '';
+      var selectedContextName = '';
+      for (final root in roots) {
+        final contentsName =
+            root.isEmpty ? 'contents.txt' : '$root/contents.txt';
+        final contextName = root.isEmpty ? 'context.txt' : '$root/context.txt';
+        if (entryByName.containsKey(contentsName)) {
+          selectedRoot = root;
+          selectedContentsName = contentsName;
+          selectedContextName =
+              entryByName.containsKey(contextName) ? contextName : '';
+          break;
+        }
+        if (entryByName.containsKey(contextName)) {
+          selectedRoot = root;
+          selectedContentsName = contextName;
+          selectedContextName = contextName;
+          break;
+        }
+      }
+      if (selectedContentsName.isEmpty) {
+        throw StateError('Bundle is missing contents.txt or context.txt.');
+      }
+      return _IndexedBundleArchive(
+        entryByName: entryByName,
+        selectedRoot: selectedRoot,
+        selectedContentsName: selectedContentsName,
+        selectedContextName: selectedContextName,
+      );
+    } finally {
+      archive?.clearSync();
+      input.close();
+    }
   }
 
   void _validateArchivePaths(Archive archive) {
@@ -595,13 +843,16 @@ class CourseBundleService {
           File(p.join(folderPath, node.id, 'lecture.txt'));
       if (lectureFile.existsSync()) {
         addEntry(lectureFile);
-        continue;
-      }
-      if (legacyLectureFile.existsSync()) {
+      } else if (legacyLectureFile.existsSync()) {
         addEntry(legacyLectureFile);
-        continue;
+      } else {
+        throw StateError('Missing file: ${lectureFile.path}');
       }
-      throw StateError('Missing file: ${lectureFile.path}');
+      _addQuestionEntriesForNode(
+        folderPath: folderPath,
+        nodeId: node.id,
+        addEntry: addEntry,
+      );
     }
 
     final promptsDir = Directory(p.join(folderPath, 'prompts'));
@@ -625,17 +876,280 @@ class CourseBundleService {
     return entries;
   }
 
+  void _addQuestionEntriesForNode({
+    required String folderPath,
+    required String nodeId,
+    required void Function(File file) addEntry,
+  }) {
+    for (final level in _questionLevels) {
+      final flatQuestionFile = File(p.join(folderPath, '${nodeId}_$level.txt'));
+      if (flatQuestionFile.existsSync()) {
+        addEntry(flatQuestionFile);
+      }
+      final legacyQuestionFile = File(
+        p.join(folderPath, nodeId, level, 'questions.txt'),
+      );
+      if (legacyQuestionFile.existsSync()) {
+        addEntry(legacyQuestionFile);
+      }
+    }
+  }
+
   List<int> _normalizePromptMetadataBytes(List<int> rawData) {
     final decoded = jsonDecode(utf8.decode(rawData));
-    final cleaned = _removeGeneratedFields(decoded);
+    final cleaned =
+        _normalizePromptMetadataValue(_removeGeneratedFields(decoded));
     final canonical = _canonicalJsonEncode(cleaned);
     return utf8.encode(canonical);
   }
 
   List<int> normalizePromptMetadataJson(Map<String, dynamic> value) {
-    final cleaned = _removeGeneratedFields(value);
+    final cleaned =
+        _normalizePromptMetadataBundleValue(_removeGeneratedFields(value));
     final canonical = _canonicalJsonEncode(cleaned);
     return utf8.encode(canonical);
+  }
+
+  List<int> _normalizePromptMetadataJsonForSemanticHash(
+    Map<String, dynamic> value,
+  ) {
+    final cleaned =
+        _normalizePromptMetadataValue(_removeGeneratedFields(value));
+    final canonical = _canonicalJsonEncode(cleaned);
+    return utf8.encode(canonical);
+  }
+
+  Map<String, dynamic> _emptyPromptMetadataDocument() {
+    return <String, dynamic>{
+      'schema': kCurrentPromptBundleSchema,
+      'prompt_templates': const <Map<String, dynamic>>[],
+      'student_prompt_profiles': const <Map<String, dynamic>>[],
+      'student_pass_configs': const <Map<String, dynamic>>[],
+    };
+  }
+
+  Object? _normalizePromptMetadataBundleValue(Object? value) {
+    if (value is List) {
+      return value.map(_normalizePromptMetadataBundleValue).toList();
+    }
+    if (value is! Map) {
+      return _normalizePromptMetadataScalar(value);
+    }
+    final normalized = <String, Object?>{};
+    for (final entry in value.entries) {
+      normalized[entry.key.toString()] =
+          _normalizePromptMetadataBundleValue(entry.value);
+    }
+    final schema = normalized['schema'];
+    if (schema is String && isSupportedPromptBundleSchema(schema)) {
+      normalized['schema'] = kCurrentPromptBundleSchema;
+    }
+    return normalized;
+  }
+
+  Object? _normalizePromptMetadataValue(Object? value) {
+    if (value is List) {
+      return value.map(_normalizePromptMetadataValue).toList();
+    }
+    if (value is! Map) {
+      return _normalizePromptMetadataScalar(value);
+    }
+    final normalized = <String, Object?>{};
+    for (final entry in value.entries) {
+      normalized[entry.key.toString()] =
+          _normalizePromptMetadataValue(entry.value);
+    }
+    final schema = normalized['schema'];
+    if (schema is String && isSupportedPromptBundleSchema(schema)) {
+      return _normalizePromptMetadataDocument(normalized);
+    }
+    return normalized;
+  }
+
+  Map<String, Object?> _normalizePromptMetadataDocument(
+    Map<String, Object?> value,
+  ) {
+    return <String, Object?>{
+      'schema': kCurrentPromptBundleSchema,
+      'prompt_templates': _sortCanonicalMaps(
+        _normalizePromptTemplateList(value['prompt_templates']),
+      ),
+      'student_prompt_profiles': _sortCanonicalMaps(
+        _normalizePromptProfileList(value['student_prompt_profiles']),
+      ),
+      'student_pass_configs': _sortCanonicalMaps(
+        _normalizePassConfigList(value['student_pass_configs']),
+      ),
+    };
+  }
+
+  List<Map<String, Object?>> _normalizePromptTemplateList(Object? raw) {
+    if (raw is! List) {
+      return const <Map<String, Object?>>[];
+    }
+    final items = <Map<String, Object?>>[];
+    for (final entry in raw) {
+      if (entry is! Map) {
+        continue;
+      }
+      final normalized = <String, Object?>{};
+      final promptName = _normalizeNonEmptyString(entry['prompt_name']);
+      final scope = _normalizePromptMetadataScope(entry['scope']);
+      final content = entry['content'];
+      final studentRemoteUserId = _normalizePromptMetadataStudentRemoteUserId(
+        entry['student_remote_user_id'],
+        scope: scope,
+      );
+      if (promptName.isEmpty || scope.isEmpty || content is! String) {
+        continue;
+      }
+      normalized['prompt_name'] = promptName;
+      normalized['scope'] = scope;
+      normalized['content'] = content;
+      if (studentRemoteUserId != null) {
+        normalized['student_remote_user_id'] = studentRemoteUserId;
+      }
+      items.add(normalized);
+    }
+    return items;
+  }
+
+  List<Map<String, Object?>> _normalizePromptProfileList(Object? raw) {
+    if (raw is! List) {
+      return const <Map<String, Object?>>[];
+    }
+    final items = <Map<String, Object?>>[];
+    for (final entry in raw) {
+      if (entry is! Map) {
+        continue;
+      }
+      final scope = _normalizePromptMetadataScope(entry['scope']);
+      if (scope.isEmpty) {
+        continue;
+      }
+      final normalized = <String, Object?>{
+        'scope': scope,
+      };
+      final studentRemoteUserId = _normalizePromptMetadataStudentRemoteUserId(
+        entry['student_remote_user_id'],
+        scope: scope,
+      );
+      if (studentRemoteUserId != null) {
+        normalized['student_remote_user_id'] = studentRemoteUserId;
+      }
+      _copySemanticField(normalized, 'grade_level', entry['grade_level']);
+      _copySemanticField(normalized, 'reading_level', entry['reading_level']);
+      _copySemanticField(
+        normalized,
+        'preferred_language',
+        entry['preferred_language'],
+      );
+      _copySemanticField(normalized, 'interests', entry['interests']);
+      _copySemanticField(normalized, 'preferred_tone', entry['preferred_tone']);
+      _copySemanticField(normalized, 'preferred_pace', entry['preferred_pace']);
+      _copySemanticField(
+        normalized,
+        'preferred_format',
+        entry['preferred_format'],
+      );
+      _copySemanticField(normalized, 'support_notes', entry['support_notes']);
+      items.add(normalized);
+    }
+    return items;
+  }
+
+  List<Map<String, Object?>> _normalizePassConfigList(Object? raw) {
+    if (raw is! List) {
+      return const <Map<String, Object?>>[];
+    }
+    final items = <Map<String, Object?>>[];
+    for (final entry in raw) {
+      if (entry is! Map) {
+        continue;
+      }
+      final studentRemoteUserId = _normalizePromptMetadataStudentRemoteUserId(
+        entry['student_remote_user_id'],
+        scope: 'student_course',
+      );
+      if (studentRemoteUserId == null) {
+        continue;
+      }
+      final normalized = <String, Object?>{
+        'student_remote_user_id': studentRemoteUserId,
+      };
+      _copySemanticField(normalized, 'easy_weight', entry['easy_weight']);
+      _copySemanticField(normalized, 'medium_weight', entry['medium_weight']);
+      _copySemanticField(normalized, 'hard_weight', entry['hard_weight']);
+      _copySemanticField(
+        normalized,
+        'pass_threshold',
+        entry['pass_threshold'],
+      );
+      items.add(normalized);
+    }
+    return items;
+  }
+
+  List<Map<String, Object?>> _sortCanonicalMaps(
+      List<Map<String, Object?>> raw) {
+    final items = List<Map<String, Object?>>.from(raw);
+    items.sort(
+      (left, right) =>
+          _canonicalJsonEncode(left).compareTo(_canonicalJsonEncode(right)),
+    );
+    return items;
+  }
+
+  void _copySemanticField(
+    Map<String, Object?> target,
+    String key,
+    Object? value,
+  ) {
+    final normalized = _normalizePromptMetadataScalar(value);
+    if (normalized == null) {
+      return;
+    }
+    target[key] = normalized;
+  }
+
+  Object? _normalizePromptMetadataScalar(Object? value) {
+    if (value is num) {
+      final asDouble = value.toDouble();
+      if (asDouble.isFinite && asDouble == asDouble.roundToDouble()) {
+        return asDouble.toInt();
+      }
+      return asDouble;
+    }
+    return value;
+  }
+
+  String _normalizeNonEmptyString(Object? value) {
+    return value is String ? value.trim() : '';
+  }
+
+  String _normalizePromptMetadataScope(Object? value) {
+    final normalized = _normalizeNonEmptyString(value);
+    if (normalized == 'student') {
+      return 'student_course';
+    }
+    return normalized;
+  }
+
+  int? _normalizePromptMetadataStudentRemoteUserId(
+    Object? value, {
+    required String scope,
+  }) {
+    if (scope != 'student_course' && scope != 'student_global') {
+      return null;
+    }
+    final raw = _normalizePromptMetadataScalar(value);
+    if (raw is int && raw > 0) {
+      return raw;
+    }
+    if (raw is double && raw.isFinite && raw > 0) {
+      return raw.toInt();
+    }
+    return null;
   }
 
   Object? _removeGeneratedFields(Object? value) {
@@ -731,11 +1245,16 @@ class CourseBundleService {
         throw StateError('Missing file: $lecturePath');
       }
       final lectureText = await lectureSource.readAsString(encoding: utf8);
+      final questionTexts = await _readQuestionTextsFromFolder(
+        folderPath: normalizedPath,
+        nodeId: node.id,
+      );
       final line = lineById[node.id] ??
           (node.rawLine.isNotEmpty ? node.rawLine : '${node.id} ${node.title}');
       fingerprints[node.id] = _kpFingerprint(
         line: line,
         lectureText: lectureText,
+        questionTexts: questionTexts,
       );
     }
     return _CourseKpSnapshot(kpFingerprints: fingerprints);
@@ -747,8 +1266,9 @@ class CourseBundleService {
     }
 
     final input = InputFileStream(bundleFile.path);
+    Archive? archive;
     try {
-      final archive = ZipDecoder().decodeBuffer(input);
+      archive = ZipDecoder().decodeBuffer(input);
       _validateArchivePaths(archive);
       final entryByName = <String, ArchiveFile>{};
       for (final entry in archive.files) {
@@ -837,6 +1357,11 @@ class CourseBundleService {
           );
         }
         final lectureText = utf8.decode(_entryBytes(lectureEntry));
+        final questionTexts = _readQuestionTextsFromBundle(
+          entryByName: entryByName,
+          selectedRoot: selectedRoot,
+          nodeId: node.id,
+        );
         final line = lineById[node.id] ??
             (node.rawLine.isNotEmpty
                 ? node.rawLine
@@ -844,11 +1369,13 @@ class CourseBundleService {
         fingerprints[node.id] = _kpFingerprint(
           line: line,
           lectureText: lectureText,
+          questionTexts: questionTexts,
         );
       }
 
       return _CourseKpSnapshot(kpFingerprints: fingerprints);
     } finally {
+      archive?.clearSync();
       input.close();
     }
   }
@@ -881,15 +1408,69 @@ class CourseBundleService {
   String _kpFingerprint({
     required String line,
     required String lectureText,
+    required List<String> questionTexts,
   }) {
     final normalizedLine = _normalizeTextForHash(line);
     final normalizedLecture = _normalizeTextForHash(lectureText);
-    final payload = '$normalizedLine\u0000$normalizedLecture';
+    final normalizedQuestions =
+        questionTexts.map(_normalizeTextForHash).join('\u0000');
+    final payload =
+        '$normalizedLine\u0000$normalizedLecture\u0000$normalizedQuestions';
     return sha256.convert(utf8.encode(payload)).toString();
   }
 
   String _normalizeTextForHash(String input) {
     return input.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+  }
+
+  Future<List<String>> _readQuestionTextsFromFolder({
+    required String folderPath,
+    required String nodeId,
+  }) async {
+    final texts = <String>[];
+    for (final relativePath in _questionRelativePaths(nodeId)) {
+      final file = File(p.joinAll(<String>[
+        folderPath,
+        ...relativePath.split('/'),
+      ]));
+      if (!file.existsSync()) {
+        continue;
+      }
+      final normalizedRelativePath = _normalizeArchivePath(relativePath);
+      final text = await file.readAsString(encoding: utf8);
+      texts.add('$normalizedRelativePath\u0000$text');
+    }
+    return texts;
+  }
+
+  List<String> _readQuestionTextsFromBundle({
+    required Map<String, ArchiveFile> entryByName,
+    required String selectedRoot,
+    required String nodeId,
+  }) {
+    final texts = <String>[];
+    for (final relativePath in _questionRelativePaths(nodeId)) {
+      final normalizedRelativePath = _normalizeArchivePath(relativePath);
+      final entryName = selectedRoot.isEmpty
+          ? normalizedRelativePath
+          : _normalizeArchivePath('$selectedRoot/$normalizedRelativePath');
+      final entry = entryByName[entryName];
+      if (entry == null) {
+        continue;
+      }
+      final text = utf8.decode(_entryBytes(entry));
+      texts.add('$normalizedRelativePath\u0000$text');
+    }
+    return texts;
+  }
+
+  List<String> _questionRelativePaths(String nodeId) {
+    return <String>[
+      for (final level in _questionLevels) ...<String>[
+        '${nodeId}_$level.txt',
+        '$nodeId/$level/questions.txt',
+      ],
+    ];
   }
 }
 
@@ -911,6 +1492,20 @@ class _BundleFolderEntry {
 
   final File file;
   final String archivePath;
+}
+
+class _IndexedBundleArchive {
+  _IndexedBundleArchive({
+    required this.entryByName,
+    required this.selectedRoot,
+    required this.selectedContentsName,
+    required this.selectedContextName,
+  });
+
+  final Map<String, List<int>> entryByName;
+  final String selectedRoot;
+  final String selectedContentsName;
+  final String selectedContextName;
 }
 
 class _CourseKpSnapshot {

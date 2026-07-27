@@ -1,11 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../db/app_database.dart';
+import 'background_json_service.dart';
+import 'sync_semantic_hash.dart';
 
 class SessionUploadCacheMessage {
   SessionUploadCacheMessage({
@@ -223,11 +224,15 @@ class SessionUploadCacheService {
   SessionUploadCacheService({
     required AppDatabase db,
     Future<Directory> Function()? cacheRootProvider,
+    BackgroundJsonService? backgroundJsonService,
   })  : _db = db,
-        _cacheRootProvider = cacheRootProvider;
+        _cacheRootProvider = cacheRootProvider,
+        _backgroundJsonService =
+            backgroundJsonService ?? const BackgroundJsonService();
 
   final AppDatabase _db;
   final Future<Directory> Function()? _cacheRootProvider;
+  final BackgroundJsonService _backgroundJsonService;
   static final RegExp _secondLevelChapterPattern = RegExp(r'^(\d+\.\d+)');
 
   Future<void> captureSession(int sessionId) async {
@@ -303,7 +308,9 @@ class SessionUploadCacheService {
     if (!file.existsSync()) {
       return null;
     }
-    final decoded = jsonDecode(await file.readAsString(encoding: utf8));
+    final decoded = await _backgroundJsonService.decode(
+      await file.readAsString(encoding: utf8),
+    );
     if (decoded is! Map<String, dynamic>) {
       throw StateError(
           'Session upload cache is invalid for session $sessionId.');
@@ -319,7 +326,9 @@ class SessionUploadCacheService {
     final file = await _resolveSessionFile(sessionId);
     SessionUploadCacheSnapshot? existingSnapshot;
     if (file.existsSync()) {
-      final decoded = jsonDecode(await file.readAsString(encoding: utf8));
+      final decoded = await _backgroundJsonService.decode(
+        await file.readAsString(encoding: utf8),
+      );
       if (decoded is! Map<String, dynamic>) {
         throw StateError(
           'Session upload cache is invalid for session $sessionId.',
@@ -343,7 +352,9 @@ class SessionUploadCacheService {
     if (!file.existsSync()) {
       return null;
     }
-    final decoded = jsonDecode(await file.readAsString(encoding: utf8));
+    final decoded = await _backgroundJsonService.decode(
+      await file.readAsString(encoding: utf8),
+    );
     if (decoded is! Map<String, dynamic>) {
       throw StateError(
         'Session upload chapter cache is invalid for courseVersionId='
@@ -364,7 +375,9 @@ class SessionUploadCacheService {
       if (entity is! File || !entity.path.endsWith('.json')) {
         continue;
       }
-      final decoded = jsonDecode(await entity.readAsString(encoding: utf8));
+      final decoded = await _backgroundJsonService.decode(
+        await entity.readAsString(encoding: utf8),
+      );
       if (decoded is! Map<String, dynamic>) {
         throw StateError(
           'Session upload chapter cache file is invalid: ${entity.path}',
@@ -374,6 +387,43 @@ class SessionUploadCacheService {
       final normalized = await _normalizeChapterSnapshot(snapshot);
       if (normalized != null) {
         chapters.add(normalized);
+      }
+    }
+    chapters.sort((left, right) {
+      final courseCompare =
+          left.courseVersionId.compareTo(right.courseVersionId);
+      if (courseCompare != 0) {
+        return courseCompare;
+      }
+      return left.chapterKey.compareTo(right.chapterKey);
+    });
+    return chapters;
+  }
+
+  Future<List<SessionUploadChapterSnapshot>> listChaptersForKeys(
+    Iterable<String> courseChapterKeys,
+  ) async {
+    final chapters = <SessionUploadChapterSnapshot>[];
+    final requested = courseChapterKeys.toSet();
+    for (final rawKey in requested) {
+      final separatorIndex = rawKey.indexOf(':');
+      if (separatorIndex <= 0 || separatorIndex >= rawKey.length - 1) {
+        continue;
+      }
+      final courseVersionId = int.tryParse(rawKey.substring(0, separatorIndex));
+      if (courseVersionId == null || courseVersionId <= 0) {
+        continue;
+      }
+      final chapterKey = rawKey.substring(separatorIndex + 1).trim();
+      if (chapterKey.isEmpty) {
+        continue;
+      }
+      final snapshot = await readChapter(
+        courseVersionId: courseVersionId,
+        chapterKey: chapterKey,
+      );
+      if (snapshot != null) {
+        chapters.add(snapshot);
       }
     }
     chapters.sort((left, right) {
@@ -566,44 +616,37 @@ class SessionUploadCacheService {
   }
 
   String _hashSessionSnapshot(SessionUploadCacheSnapshot snapshot) {
-    final canonical = jsonEncode(
-      <String, Object?>{
-        'sync_id': snapshot.syncId,
-        'sync_updated_at': snapshot.syncUpdatedAt.toUtc().toIso8601String(),
-        'course_version_id': snapshot.courseVersionId,
-        'course_subject': snapshot.courseSubject,
-        'kp_key': snapshot.kpKey,
-        'kp_title': snapshot.kpTitle,
-        'session_title': snapshot.sessionTitle,
-        'started_at': snapshot.startedAt.toUtc().toIso8601String(),
-        'ended_at': snapshot.endedAt?.toUtc().toIso8601String(),
-        'summary_text': snapshot.summaryText,
-        'control_state_json': snapshot.controlStateJson,
-        'control_state_updated_at':
-            snapshot.controlStateUpdatedAt?.toUtc().toIso8601String(),
-        'evidence_state_json': snapshot.evidenceStateJson,
-        'evidence_state_updated_at':
-            snapshot.evidenceStateUpdatedAt?.toUtc().toIso8601String(),
-        'messages': snapshot.messages
-            .map((message) => message.toJson())
-            .toList(growable: false),
-      },
+    return hashSessionSemanticContent(
+      kpKey: snapshot.kpKey,
+      sessionTitle: snapshot.sessionTitle,
+      summaryText: snapshot.summaryText,
+      controlStateJson: snapshot.controlStateJson,
+      evidenceStateJson: snapshot.evidenceStateJson,
+      messages: snapshot.messages
+          .map(
+            (message) => SessionSemanticMessageInput(
+              role: message.role,
+              content: message.content,
+              rawContent: message.rawContent,
+              parsedJson: message.parsedJson,
+              action: message.action,
+            ),
+          )
+          .toList(growable: false),
     );
-    return sha256.convert(utf8.encode(canonical)).toString();
   }
 
   String _hashChapterMembers(List<SessionUploadChapterMember> members) {
-    final fingerprints = members
-        .map(
-          (member) => [
-            member.syncId,
-            member.syncUpdatedAt.toUtc().toIso8601String(),
-            member.payloadHash,
-          ].join('|'),
-        )
-        .toList(growable: false)
-      ..sort();
-    return sha256.convert(utf8.encode(fingerprints.join('\n'))).toString();
+    return hashSessionChapterSemanticContent(
+      members
+          .map(
+            (member) => SessionChapterSemanticMemberInput(
+              syncId: member.syncId,
+              contentHash: member.payloadHash,
+            ),
+          )
+          .toList(growable: false),
+    );
   }
 
   String _extractSecondLevelChapter(String kpKey) {

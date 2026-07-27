@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -12,8 +13,14 @@ import '../llm/llm_reasoning_support.dart';
 import '../security/hash_utils.dart';
 import '../security/pin_hasher.dart';
 import '../services/app_services.dart';
+import '../services/app_version_service.dart';
+import '../services/audio_model_selection.dart';
 import '../services/marketplace_api_service.dart';
 import '../services/model_list_service.dart';
+import '../services/openai_codex_oauth_service.dart';
+import '../services/student_server_copy_service.dart';
+import '../services/sync_progress.dart';
+import '../services/text_model_selection.dart';
 import '../state/auth_controller.dart';
 import '../state/settings_controller.dart';
 import 'app_close_button.dart';
@@ -23,6 +30,7 @@ import 'pages/llm_logs_page.dart';
 import 'pages/tts_logs_page.dart';
 import 'widgets/language_selector.dart';
 import 'widgets/restart_widget.dart';
+import 'widgets/searchable_model_picker.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -55,7 +63,17 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _modelsLoaded = false;
   bool _deviceNameLoaded = false;
   bool _apiTesting = false;
+  bool _oauthLoginInProgress = false;
   String? _apiTestError;
+  OpenAiCodexOAuthCredentials? _openAiCodexOAuthCredentials;
+  String? _openAiCodexOAuthLoadedForProvider;
+  bool _serverCopyInProgress = false;
+  String? _serverCopyMessage;
+  String? _serverCopyDetail;
+  double? _serverCopyProgressValue;
+  bool _serverCopyMessageIsError = false;
+  late final Future<AppVersionInfo> _appVersionFuture =
+      AppVersionService.load();
   MarketplaceApiService? _accountApi;
   AccountProfileSummary? _accountProfile;
   bool _accountProfileLoading = false;
@@ -135,7 +153,11 @@ class _SettingsPageState extends State<SettingsPage> {
     _maybeLoadDeviceName(services);
 
     final provider = _resolveProvider(providers, settings);
-    _maybeLoadApiKey(services, provider.baseUrl);
+    if (provider.usesOpenAiCodexOAuth) {
+      _maybeLoadOpenAiCodexOAuth(services, provider);
+    } else {
+      _maybeLoadApiKey(services, provider.baseUrl);
+    }
 
     return DefaultTabController(
       length: 2,
@@ -201,6 +223,72 @@ class _SettingsPageState extends State<SettingsPage> {
         _apiKeyController.text = key ?? '';
       });
     });
+  }
+
+  void _maybeLoadOpenAiCodexOAuth(
+    AppServices services,
+    LlmProvider provider,
+  ) {
+    if (_openAiCodexOAuthLoadedForProvider == provider.id) {
+      return;
+    }
+    _openAiCodexOAuthLoadedForProvider = provider.id;
+    Future.microtask(() async {
+      final oauth = OpenAiCodexOAuthService(services.secureStorage);
+      final credentials = await oauth.readCredentials();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _apiKeyController.clear();
+        _openAiCodexOAuthCredentials = credentials;
+        _apiTesting = credentials != null;
+      });
+      if (credentials == null) {
+        return;
+      }
+      try {
+        final validCredentials = await oauth.resolveValidCredentials();
+        await _cacheOpenAiCodexModels(
+          services: services,
+          provider: provider,
+          credentials: validCredentials,
+        );
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _openAiCodexOAuthCredentials = validCredentials;
+          _apiTestError = null;
+        });
+      } catch (error) {
+        if (!mounted) {
+          return;
+        }
+        setState(() => _apiTestError = '$error');
+      } finally {
+        if (mounted) {
+          setState(() => _apiTesting = false);
+        }
+      }
+    });
+  }
+
+  String? _activeApiKeyHash() {
+    final apiKey = _apiKeyController.text.trim();
+    if (apiKey.isEmpty) {
+      return null;
+    }
+    return sha256Hex(apiKey);
+  }
+
+  String? _activeCredentialHash(LlmProvider provider) {
+    if (provider.usesOpenAiCodexOAuth) {
+      return OpenAiCodexOAuthService.credentialHash(
+        _openAiCodexOAuthCredentials,
+      );
+    }
+    return _activeApiKeyHash();
   }
 
   void _maybeLoadDeviceName(AppServices services) {
@@ -429,7 +517,14 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 12),
         ElevatedButton(
           onPressed: () async {
-            final model = _resolveTextModel(provider, settings);
+            final textOptions = TextModelSelection.buildOptions(
+              modelsLoaded: _modelsLoaded,
+              loadedModels: _textModelOptions,
+              defaultModels: provider.models,
+              savedModels: const <String>[],
+              settingsModel: settings.model,
+            );
+            final model = _resolveTextModel(provider, settings, textOptions);
             if (model.trim().isEmpty) {
               _showMessage(context, l10n.modelMissingMessage);
               return;
@@ -449,8 +544,18 @@ class _SettingsPageState extends State<SettingsPage> {
               baseUrl: provider.baseUrl,
               model: model,
               reasoningEffort: _reasoningEffortSelection,
-              ttsModel: _resolveTtsModel(settings),
-              sttModel: _resolveSttModel(settings),
+              ttsModel: _resolveTtsModel(
+                provider: provider,
+                settings: settings,
+                options: _modelsLoaded ? _ttsModelOptions : const [],
+                modelsLoaded: _modelsLoaded,
+              ),
+              sttModel: _resolveSttModel(
+                provider: provider,
+                settings: settings,
+                options: _modelsLoaded ? _sttModelOptions : const [],
+                modelsLoaded: _modelsLoaded,
+              ),
               timeoutSeconds:
                   int.tryParse(_timeoutController.text.trim()) ?? 60,
               maxTokens: int.tryParse(_maxTokensController.text.trim()) ?? 8000,
@@ -613,11 +718,63 @@ class _SettingsPageState extends State<SettingsPage> {
           },
           child: Text(l10n.restoreDbButton),
         ),
+        if (currentUser?.role == 'student') ...[
+          const SizedBox(height: 12),
+          Text(
+            'If this device shows duplicate courses or sessions after an '
+            'upgrade, replace the local course/session/progress cache with '
+            'a fresh server copy.',
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: _serverCopyInProgress
+                ? null
+                : () => _takeServerCopy(
+                      context: context,
+                      services: services,
+                      currentUser: currentUser!,
+                    ),
+            icon: const Icon(Icons.cloud_download_outlined),
+            label: Text(
+              _serverCopyInProgress
+                  ? 'Taking Server Copy...'
+                  : 'Reset Local Cache From Server',
+            ),
+          ),
+          if (_serverCopyMessage != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _serverCopyMessage!,
+              style: TextStyle(
+                color: _serverCopyMessageIsError ? Colors.redAccent : null,
+              ),
+            ),
+            if (_serverCopyDetail != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  _serverCopyDetail!,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            if (_serverCopyInProgress)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: LinearProgressIndicator(value: _serverCopyProgressValue),
+              ),
+          ],
+        ],
         const Divider(height: 32),
         Text(
           l10n.appSectionTitle,
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
+        const SizedBox(height: 8),
+        _buildAppVersionInfo(
+          l10n: l10n,
+          future: _appVersionFuture,
+        ),
+        const SizedBox(height: 12),
         ElevatedButton(
           onPressed: _handleQuit,
           child: Text(l10n.quitButton),
@@ -639,428 +796,860 @@ class _SettingsPageState extends State<SettingsPage> {
       stream: services.db.watchApiConfigs(),
       builder: (context, snapshot) {
         final configs = snapshot.data ?? [];
-        final textOptions = _buildTextModelOptions(
-          provider: provider,
-          settings: settings,
-          configs: configs,
-        );
-        final reasoningOptions =
-            LlmReasoningSupport.effortOptionsForProvider(provider);
-        final ttsOptions = _buildAudioModelOptions(
-          configs: configs,
-          baseUrl: provider.baseUrl,
-          fromLoaded: _modelsLoaded ? _ttsModelOptions : const [],
-          fallback: (settings.ttsModel ?? '').trim(),
-          selector: (config) => (config.ttsModel ?? '').trim(),
-        );
-        final sttOptions = _buildAudioModelOptions(
-          configs: configs,
-          baseUrl: provider.baseUrl,
-          fromLoaded: _modelsLoaded ? _sttModelOptions : const [],
-          fallback: (settings.sttModel ?? '').trim(),
-          selector: (config) => (config.sttModel ?? '').trim(),
-        );
+        return StreamBuilder<List<ApiModelCache>>(
+          stream: services.db.watchApiModelCaches(),
+          builder: (context, modelCacheSnapshot) {
+            final modelCaches = modelCacheSnapshot.data ?? [];
+            final cachedModelLists = AppDatabase.cachedModelListsFor(
+              modelCaches,
+              baseUrl: provider.baseUrl,
+              apiKeyHash: _activeCredentialHash(provider),
+            );
+            final modelsLoaded = cachedModelLists != null;
+            final textOptions = _buildTextModelOptions(
+              provider: provider,
+              settings: settings,
+              configs: configs,
+              cachedModelLists: cachedModelLists,
+            );
+            final reasoningOptions =
+                LlmReasoningSupport.effortOptionsForProvider(provider);
+            final savedSettingsMatchProvider =
+                _normalizeBaseUrl(settings.baseUrl) ==
+                    _normalizeBaseUrl(provider.baseUrl);
+            final savedTtsFallback = savedSettingsMatchProvider
+                ? (settings.ttsModel ?? '').trim()
+                : '';
+            final savedSttFallback = savedSettingsMatchProvider
+                ? (settings.sttModel ?? '').trim()
+                : '';
+            final ttsOptions = _buildAudioModelOptions(
+              providerSupported: provider.supportsTts,
+              modelsLoaded: modelsLoaded,
+              configs: configs,
+              baseUrl: provider.baseUrl,
+              fromLoaded: cachedModelLists?.ttsModels ?? const <String>[],
+              fallback: savedTtsFallback,
+              selector: (config) => (config.ttsModel ?? '').trim(),
+            );
+            final sttOptions = _buildAudioModelOptions(
+              providerSupported: provider.supportsStt,
+              modelsLoaded: modelsLoaded,
+              configs: configs,
+              baseUrl: provider.baseUrl,
+              fromLoaded: cachedModelLists?.sttModels ?? const <String>[],
+              fallback: savedSttFallback,
+              selector: (config) => (config.sttModel ?? '').trim(),
+            );
 
-        final textValue = _coerceSelection(
-          current: _textModelSelection,
-          options: textOptions,
-          fallback: settings.model.trim(),
-          onUpdate: (value) => setState(() => _textModelSelection = value),
-        );
-        final ttsValue = _coerceSelection(
-          current: _ttsModelSelection,
-          options: ttsOptions,
-          fallback: (settings.ttsModel ?? '').trim(),
-          onUpdate: (value) => setState(() => _ttsModelSelection = value),
-          allowEmpty: _ttsModelOverride,
-        );
-        final sttValue = _coerceSelection(
-          current: _sttModelSelection,
-          options: sttOptions,
-          fallback: (settings.sttModel ?? '').trim(),
-          onUpdate: (value) => setState(() => _sttModelSelection = value),
-          allowEmpty: _sttModelOverride,
-        );
+            final textValue = _coerceSelection(
+              current: _textModelSelection,
+              options: textOptions,
+              fallback: settings.model.trim(),
+              onUpdate: (value) => setState(() => _textModelSelection = value),
+            );
+            final ttsValue = _coerceSelection(
+              current: _ttsModelSelection,
+              options: ttsOptions,
+              fallback: (settings.ttsModel ?? '').trim(),
+              onUpdate: (value) => setState(() => _ttsModelSelection = value),
+              allowEmpty: _ttsModelOverride,
+            );
+            final sttValue = _coerceSelection(
+              current: _sttModelSelection,
+              options: sttOptions,
+              fallback: (settings.sttModel ?? '').trim(),
+              onUpdate: (value) => setState(() => _sttModelSelection = value),
+              allowEmpty: _sttModelOverride,
+            );
 
-        return ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            Text(
-              l10n.apisTab,
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            DropdownButtonFormField<String>(
-              key: ValueKey(_providerId ?? providers.first.id),
-              initialValue: _providerId ?? providers.first.id,
-              decoration: InputDecoration(labelText: l10n.providerLabel),
-              items: providers
-                  .map(
-                    (provider) => DropdownMenuItem(
-                      value: provider.id,
-                      child: Text(provider.label),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (value) {
-                if (value == null) {
-                  return;
-                }
-                final next =
-                    LlmProviders.findById(providers, value) ?? providers.first;
-                setState(() {
-                  _providerId = next.id;
-                  _modelsLoaded = false;
-                  _apiTestError = null;
-                  _textModelOptions = const [];
-                  _ttsModelOptions = const [];
-                  _sttModelOptions = const [];
-                  _textModelSelection = next.models.isNotEmpty
-                      ? next.models.first
-                      : _textModelSelection;
-                });
-                _maybeLoadApiKey(services, next.baseUrl);
-              },
-            ),
-            const SizedBox(height: 8),
-            InputDecorator(
-              decoration: InputDecoration(labelText: l10n.baseUrlLabel),
-              child: SelectableText(provider.baseUrl),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _apiKeyController,
-              obscureText: true,
-              decoration: InputDecoration(labelText: l10n.apiKeyLabel),
-            ),
-            const SizedBox(height: 8),
-            Row(
+            return ListView(
+              padding: const EdgeInsets.all(16),
               children: [
-                ElevatedButton(
-                  onPressed: _apiTesting
-                      ? null
-                      : () => _testApiKey(
-                            context: context,
-                            l10n: l10n,
-                            provider: provider,
-                            baseUrl: provider.baseUrl,
-                          ),
-                  child: _apiTesting
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : Text(l10n.testApiKeyButton),
+                Text(
+                  l10n.apisTab,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
-                const SizedBox(width: 12),
-                TextButton(
-                  onPressed: () async {
-                    final baseUrl = provider.baseUrl;
-                    await services.secureStorage
-                        .deleteApiKeyForBaseUrl(baseUrl);
-                    if (context.mounted) {
-                      _apiKeyController.clear();
-                      _showMessage(context, l10n.apiKeyClearedMessage);
+                DropdownButtonFormField<String>(
+                  key: ValueKey(_providerId ?? providers.first.id),
+                  initialValue: _providerId ?? providers.first.id,
+                  decoration: InputDecoration(labelText: l10n.providerLabel),
+                  items: providers
+                      .map(
+                        (provider) => DropdownMenuItem(
+                          value: provider.id,
+                          child: Text(provider.label),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    if (value == null) {
+                      return;
+                    }
+                    final next = LlmProviders.findById(providers, value) ??
+                        providers.first;
+                    setState(() {
+                      _providerId = next.id;
+                      _modelsLoaded = false;
+                      _apiTestError = null;
+                      _textModelOptions = const [];
+                      _ttsModelOptions = const [];
+                      _sttModelOptions = const [];
+                      _textModelSelection = next.models.isNotEmpty
+                          ? next.models.first
+                          : _textModelSelection;
+                      _ttsModelSelection = '';
+                      _sttModelSelection = '';
+                      _ttsModelOverride = false;
+                      _sttModelOverride = false;
+                    });
+                    if (next.usesOpenAiCodexOAuth) {
+                      _openAiCodexOAuthLoadedForProvider = null;
+                      _maybeLoadOpenAiCodexOAuth(services, next);
+                    } else {
+                      _maybeLoadApiKey(services, next.baseUrl);
                     }
                   },
-                  child: Text(l10n.clearKeyButton),
                 ),
-              ],
-            ),
-            if ((_apiTestError ?? '').isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  l10n.apiKeyTestFailed(_apiTestError!),
-                  style: const TextStyle(color: Colors.redAccent),
+                const SizedBox(height: 8),
+                InputDecorator(
+                  decoration: InputDecoration(labelText: l10n.baseUrlLabel),
+                  child: SelectableText(provider.baseUrl),
                 ),
-              ),
-            const SizedBox(height: 12),
-            _buildModelPicker(
-              label: l10n.textModelLabel,
-              options: textOptions,
-              value: textValue,
-              emptyMessage: l10n.modelsNotLoadedMessage,
-              onChanged: (value) {
-                setState(() => _textModelSelection = value);
-              },
-            ),
-            const SizedBox(height: 8),
-            _buildModelPicker(
-              label: 'Thinking effort',
-              options: reasoningOptions,
-              value: _reasoningEffortSelection,
-              emptyMessage: 'Thinking is not supported by this provider.',
-              onChanged: (value) {
-                setState(() {
-                  _reasoningEffortSelection = ReasoningEffort.normalize(value);
-                });
-              },
-            ),
-            const SizedBox(height: 8),
-            _buildModelPicker(
-              label: l10n.ttsModelSelectLabel,
-              options: ttsOptions,
-              value: ttsValue,
-              emptyMessage: l10n.noTtsModelsMessage,
-              allowEmpty: true,
-              onChanged: (value) {
-                setState(() {
-                  _ttsModelSelection = value;
-                  _ttsModelOverride = true;
-                });
-              },
-            ),
-            const SizedBox(height: 8),
-            _buildModelPicker(
-              label: l10n.sttModelSelectLabel,
-              options: sttOptions,
-              value: sttValue,
-              emptyMessage: l10n.noSttModelsMessage,
-              allowEmpty: true,
-              onChanged: (value) {
-                setState(() {
-                  _sttModelSelection = value;
-                  _sttModelOverride = true;
-                });
-              },
-            ),
-            const SizedBox(height: 12),
-            ElevatedButton(
-              onPressed: () async {
-                final apiKey = _apiKeyController.text.trim();
-                final model = _resolveTextModel(provider, settings);
-                if (apiKey.isEmpty) {
-                  _showMessage(context, l10n.apiKeyMissingMessage);
-                  return;
-                }
-                if (model.trim().isEmpty) {
-                  _showMessage(context, l10n.modelMissingMessage);
-                  return;
-                }
-                final audioPath = _ttsAudioPathController.text.trim();
-                final resolvedAudioPath = audioPath.isEmpty
-                    ? (settings.ttsAudioPath ?? '').trim()
-                    : audioPath;
-                final logDir = _logDirectoryController.text.trim();
-                final resolvedLogDir = logDir.isEmpty
-                    ? (settings.logDirectory ?? '').trim()
-                    : logDir;
-                await settingsController.update(
-                  providerId: provider.id,
-                  baseUrl: provider.baseUrl,
-                  model: model,
-                  reasoningEffort: _reasoningEffortSelection,
-                  ttsModel: _resolveTtsModel(settings),
-                  sttModel: _resolveSttModel(settings),
-                  timeoutSeconds:
-                      int.tryParse(_timeoutController.text.trim()) ?? 60,
-                  maxTokens:
-                      int.tryParse(_maxTokensController.text.trim()) ?? 8000,
-                  ttsInitialDelayMs: _parseSecondsMs(
-                    _ttsDelayController,
-                    settings.ttsInitialDelayMs,
+                const SizedBox(height: 8),
+                if (provider.usesOpenAiCodexOAuth)
+                  _buildOpenAiCodexOAuthControls(
+                    context: context,
+                    provider: provider,
+                    services: services,
+                  )
+                else ...[
+                  TextField(
+                    controller: _apiKeyController,
+                    obscureText: true,
+                    onChanged: (_) => setState(() {}),
+                    decoration: InputDecoration(labelText: l10n.apiKeyLabel),
                   ),
-                  ttsTextLeadMs: _parseSecondsMs(
-                    _ttsTextLeadController,
-                    settings.ttsTextLeadMs,
-                  ),
-                  ttsAudioPath: resolvedAudioPath,
-                  logDirectory: resolvedLogDir,
-                  llmMode: _mode,
-                  sttAutoSend: _sttAutoSend,
-                  enterToSend: Platform.isAndroid ? false : _enterToSend,
-                );
-                await services.secureStorage
-                    .writeApiKeyForBaseUrl(provider.baseUrl, apiKey);
-                final hash = sha256Hex(apiKey);
-                await services.db.insertApiConfig(
-                  baseUrl: provider.baseUrl,
-                  model: model,
-                  reasoningEffort: _reasoningEffortSelection,
-                  ttsModel: _resolveTtsModel(settings),
-                  sttModel: _resolveSttModel(settings),
-                  apiKeyHash: hash,
-                );
-                if (context.mounted) {
-                  _showMessage(context, l10n.configSavedMessage);
-                }
-              },
-              child: Text(l10n.saveApiConfigButton),
-            ),
-            const Divider(height: 24),
-            Text(
-              l10n.savedApiConfigsTitle,
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            if (configs.isEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(l10n.noSavedConfigs),
-              )
-            else
-              Column(
-                children: configs.map((config) {
-                  final shortHash = config.apiKeyHash.length > 8
-                      ? config.apiKeyHash.substring(0, 8)
-                      : config.apiKeyHash;
-                  final provider =
-                      LlmProviders.findByBaseUrl(providers, config.baseUrl);
-                  final providerLabel = provider?.label ?? config.baseUrl;
-                  final ttsModel = (config.ttsModel ?? '').trim();
-                  final sttModel = (config.sttModel ?? '').trim();
-                  final reasoningEffort =
-                      ReasoningEffort.normalize(config.reasoningEffort);
-                  final subtitleLines = <String>[
-                    '${l10n.baseUrlLabel}: ${config.baseUrl}',
-                    '${l10n.keyHashLabel(shortHash)}',
-                    '${l10n.textModelLabel}: ${config.model}',
-                    'Thinking effort: $reasoningEffort',
-                  ];
-                  if (ttsModel.isNotEmpty) {
-                    subtitleLines.add('${l10n.ttsModelSelectLabel}: $ttsModel');
-                  }
-                  if (sttModel.isNotEmpty) {
-                    subtitleLines.add('${l10n.sttModelSelectLabel}: $sttModel');
-                  }
-                  return ListTile(
-                    title: Text(providerLabel),
-                    subtitle: Text(subtitleLines.join('\n')),
-                    trailing: Wrap(
-                      spacing: 8,
-                      children: [
-                        TextButton(
-                          onPressed: () async {
-                            final provider = LlmProviders.findByBaseUrl(
-                                  providers,
-                                  config.baseUrl,
-                                ) ??
-                                providers.first;
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      ElevatedButton(
+                        onPressed: _apiTesting
+                            ? null
+                            : () => _testApiKey(
+                                  context: context,
+                                  l10n: l10n,
+                                  provider: provider,
+                                  baseUrl: provider.baseUrl,
+                                  services: services,
+                                ),
+                        child: _apiTesting
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : Text(l10n.testApiKeyButton),
+                      ),
+                      const SizedBox(width: 12),
+                      TextButton(
+                        onPressed: () async {
+                          final baseUrl = provider.baseUrl;
+                          await services.secureStorage
+                              .deleteApiKeyForBaseUrl(baseUrl);
+                          if (context.mounted) {
                             setState(() {
-                              _providerId = provider.id;
-                              _textModelSelection = config.model;
-                              _reasoningEffortSelection = reasoningEffort;
-                              _ttsModelSelection = ttsModel;
-                              _sttModelSelection = sttModel;
-                              _ttsModelOverride = true;
-                              _sttModelOverride = true;
-                              _modelsLoaded = false;
-                              _apiTestError = null;
-                            });
-                            final key = await services.secureStorage
-                                .readApiKeyForBaseUrl(config.baseUrl);
-                            if (key == null || key.trim().isEmpty) {
                               _apiKeyController.clear();
-                              if (context.mounted) {
-                                _showMessage(
-                                  context,
-                                  l10n.apiKeyMissingForConfig,
-                                );
-                              }
-                            } else {
-                              _apiKeyController.text = key;
-                            }
-                            if (context.mounted) {
-                              setState(() {});
-                            }
-                          },
-                          child: Text(l10n.loadButton),
-                        ),
-                        IconButton(
-                          tooltip: l10n.deleteButton,
-                          icon: const Icon(Icons.delete),
-                          onPressed: () async {
-                            await services.db.deleteApiConfigById(config.id);
-                            if (context.mounted) {
-                              _showMessage(context, l10n.configDeletedMessage);
-                            }
-                          },
-                        ),
-                      ],
+                            });
+                            _showMessage(context, l10n.apiKeyClearedMessage);
+                          }
+                        },
+                        child: Text(l10n.clearKeyButton),
+                      ),
+                    ],
+                  ),
+                ],
+                if ((_apiTestError ?? '').isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      provider.usesOpenAiCodexOAuth
+                          ? _apiTestError!
+                          : l10n.apiKeyTestFailed(_apiTestError!),
+                      style: const TextStyle(color: Colors.redAccent),
                     ),
-                  );
-                }).toList(),
-              ),
-          ],
+                  ),
+                const SizedBox(height: 12),
+                _buildModelPicker(
+                  label: l10n.textModelLabel,
+                  options: textOptions,
+                  value: textValue,
+                  emptyMessage: l10n.modelsNotLoadedMessage,
+                  onChanged: (value) {
+                    setState(() => _textModelSelection = value);
+                  },
+                ),
+                const SizedBox(height: 8),
+                _buildModelPicker(
+                  label: 'Thinking effort',
+                  options: reasoningOptions,
+                  value: _reasoningEffortSelection,
+                  emptyMessage: 'Thinking is not supported by this provider.',
+                  onChanged: (value) {
+                    setState(() {
+                      _reasoningEffortSelection =
+                          ReasoningEffort.normalize(value);
+                    });
+                  },
+                ),
+                const SizedBox(height: 8),
+                _buildModelPicker(
+                  label: l10n.ttsModelSelectLabel,
+                  options: ttsOptions,
+                  value: ttsValue,
+                  emptyMessage: l10n.noTtsModelsMessage,
+                  allowEmpty: true,
+                  onChanged: (value) {
+                    setState(() {
+                      _ttsModelSelection = value;
+                      _ttsModelOverride = true;
+                    });
+                  },
+                ),
+                const SizedBox(height: 8),
+                _buildModelPicker(
+                  label: l10n.sttModelSelectLabel,
+                  options: sttOptions,
+                  value: sttValue,
+                  emptyMessage: l10n.noSttModelsMessage,
+                  allowEmpty: true,
+                  onChanged: (value) {
+                    setState(() {
+                      _sttModelSelection = value;
+                      _sttModelOverride = true;
+                    });
+                  },
+                ),
+                const SizedBox(height: 12),
+                ElevatedButton(
+                  onPressed: () async {
+                    final apiKey = _apiKeyController.text.trim();
+                    final credentialHash = _activeCredentialHash(provider);
+                    final model = _resolveTextModel(
+                      provider,
+                      settings,
+                      textOptions,
+                    );
+                    if (!provider.usesOpenAiCodexOAuth && apiKey.isEmpty) {
+                      _showMessage(context, l10n.apiKeyMissingMessage);
+                      return;
+                    }
+                    if (provider.usesOpenAiCodexOAuth &&
+                        (credentialHash ?? '').isEmpty) {
+                      _showMessage(context, 'Sign in with ChatGPT first.');
+                      return;
+                    }
+                    if (model.trim().isEmpty) {
+                      _showMessage(context, l10n.modelMissingMessage);
+                      return;
+                    }
+                    final audioPath = _ttsAudioPathController.text.trim();
+                    final resolvedAudioPath = audioPath.isEmpty
+                        ? (settings.ttsAudioPath ?? '').trim()
+                        : audioPath;
+                    final logDir = _logDirectoryController.text.trim();
+                    final resolvedLogDir = logDir.isEmpty
+                        ? (settings.logDirectory ?? '').trim()
+                        : logDir;
+                    await settingsController.update(
+                      providerId: provider.id,
+                      baseUrl: provider.baseUrl,
+                      model: model,
+                      reasoningEffort: _reasoningEffortSelection,
+                      ttsModel: _resolveTtsModel(
+                        provider: provider,
+                        settings: settings,
+                        options: ttsOptions,
+                        modelsLoaded: modelsLoaded,
+                      ),
+                      sttModel: _resolveSttModel(
+                        provider: provider,
+                        settings: settings,
+                        options: sttOptions,
+                        modelsLoaded: modelsLoaded,
+                      ),
+                      timeoutSeconds:
+                          int.tryParse(_timeoutController.text.trim()) ?? 60,
+                      maxTokens:
+                          int.tryParse(_maxTokensController.text.trim()) ??
+                              8000,
+                      ttsInitialDelayMs: _parseSecondsMs(
+                        _ttsDelayController,
+                        settings.ttsInitialDelayMs,
+                      ),
+                      ttsTextLeadMs: _parseSecondsMs(
+                        _ttsTextLeadController,
+                        settings.ttsTextLeadMs,
+                      ),
+                      ttsAudioPath: resolvedAudioPath,
+                      logDirectory: resolvedLogDir,
+                      llmMode: _mode,
+                      sttAutoSend: _sttAutoSend,
+                      enterToSend: Platform.isAndroid ? false : _enterToSend,
+                    );
+                    if (!provider.usesOpenAiCodexOAuth) {
+                      await services.secureStorage
+                          .writeApiKeyForBaseUrl(provider.baseUrl, apiKey);
+                    }
+                    final inserted = await services.db.insertApiConfig(
+                      baseUrl: provider.baseUrl,
+                      model: model,
+                      reasoningEffort: _reasoningEffortSelection,
+                      ttsModel: _resolveTtsModel(
+                        provider: provider,
+                        settings: settings,
+                        options: ttsOptions,
+                        modelsLoaded: modelsLoaded,
+                      ),
+                      sttModel: _resolveSttModel(
+                        provider: provider,
+                        settings: settings,
+                        options: sttOptions,
+                        modelsLoaded: modelsLoaded,
+                      ),
+                      apiKeyHash: credentialHash!,
+                    );
+                    if (context.mounted) {
+                      _showMessage(
+                        context,
+                        inserted
+                            ? l10n.configSavedMessage
+                            : l10n.configAlreadySavedMessage,
+                      );
+                    }
+                  },
+                  child: Text(l10n.saveApiConfigButton),
+                ),
+                const Divider(height: 24),
+                Text(
+                  l10n.savedApiConfigsTitle,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                if (configs.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(l10n.noSavedConfigs),
+                  )
+                else
+                  Column(
+                    children: configs.map((config) {
+                      final shortHash = config.apiKeyHash.length > 8
+                          ? config.apiKeyHash.substring(0, 8)
+                          : config.apiKeyHash;
+                      final provider =
+                          LlmProviders.findByBaseUrl(providers, config.baseUrl);
+                      final providerLabel = provider?.label ?? config.baseUrl;
+                      final ttsModel = (config.ttsModel ?? '').trim();
+                      final sttModel = (config.sttModel ?? '').trim();
+                      final reasoningEffort =
+                          ReasoningEffort.normalize(config.reasoningEffort);
+                      final subtitleLines = <String>[
+                        '${l10n.baseUrlLabel}: ${config.baseUrl}',
+                        '${l10n.keyHashLabel(shortHash)}',
+                        '${l10n.textModelLabel}: ${config.model}',
+                        'Thinking effort: $reasoningEffort',
+                      ];
+                      if (ttsModel.isNotEmpty) {
+                        subtitleLines
+                            .add('${l10n.ttsModelSelectLabel}: $ttsModel');
+                      }
+                      if (sttModel.isNotEmpty) {
+                        subtitleLines
+                            .add('${l10n.sttModelSelectLabel}: $sttModel');
+                      }
+                      return ListTile(
+                        title: Text(providerLabel),
+                        subtitle: Text(subtitleLines.join('\n')),
+                        trailing: Wrap(
+                          spacing: 8,
+                          children: [
+                            TextButton(
+                              onPressed: () async {
+                                final provider = LlmProviders.findByBaseUrl(
+                                      providers,
+                                      config.baseUrl,
+                                    ) ??
+                                    providers.first;
+                                setState(() {
+                                  _providerId = provider.id;
+                                  _textModelSelection = config.model;
+                                  _reasoningEffortSelection = reasoningEffort;
+                                  _ttsModelSelection =
+                                      provider.supportsTts ? ttsModel : '';
+                                  _sttModelSelection =
+                                      provider.supportsStt ? sttModel : '';
+                                  _ttsModelOverride = provider.supportsTts;
+                                  _sttModelOverride = provider.supportsStt;
+                                  _modelsLoaded = false;
+                                  _apiTestError = null;
+                                });
+                                if (provider.usesOpenAiCodexOAuth) {
+                                  final credentials =
+                                      await OpenAiCodexOAuthService(
+                                    services.secureStorage,
+                                  ).readCredentials();
+                                  _openAiCodexOAuthCredentials = credentials;
+                                  _openAiCodexOAuthLoadedForProvider =
+                                      provider.id;
+                                  if (credentials == null && context.mounted) {
+                                    _showMessage(
+                                      context,
+                                      'Sign in with ChatGPT first.',
+                                    );
+                                  }
+                                } else {
+                                  final key = await services.secureStorage
+                                      .readApiKeyForBaseUrl(config.baseUrl);
+                                  if (key == null || key.trim().isEmpty) {
+                                    _apiKeyController.clear();
+                                    if (context.mounted) {
+                                      _showMessage(
+                                        context,
+                                        l10n.apiKeyMissingForConfig,
+                                      );
+                                    }
+                                  } else {
+                                    _apiKeyController.text = key;
+                                  }
+                                }
+                                if (context.mounted) {
+                                  setState(() {});
+                                }
+                              },
+                              child: Text(l10n.loadButton),
+                            ),
+                            IconButton(
+                              tooltip: l10n.deleteButton,
+                              icon: const Icon(Icons.delete),
+                              onPressed: () async {
+                                await services.db
+                                    .deleteApiConfigById(config.id);
+                                if (context.mounted) {
+                                  _showMessage(
+                                      context, l10n.configDeletedMessage);
+                                }
+                              },
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  ),
+              ],
+            );
+          },
         );
       },
     );
+  }
+
+  Widget _buildOpenAiCodexOAuthControls({
+    required BuildContext context,
+    required LlmProvider provider,
+    required AppServices services,
+  }) {
+    final credentials = _openAiCodexOAuthCredentials;
+    final signedInLabel = credentials == null
+        ? 'Not signed in'
+        : 'Signed in: ${(credentials.email ?? credentials.accountId).trim()}';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InputDecorator(
+          decoration: const InputDecoration(labelText: 'Auth'),
+          child: Text(signedInLabel),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 12,
+          runSpacing: 8,
+          children: [
+            ElevatedButton(
+              onPressed: _oauthLoginInProgress
+                  ? null
+                  : () => _loginOpenAiCodexOAuth(
+                        context: context,
+                        provider: provider,
+                        services: services,
+                      ),
+              child: _oauthLoginInProgress
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Login with ChatGPT'),
+            ),
+            OutlinedButton(
+              onPressed: _apiTesting || credentials == null
+                  ? null
+                  : () => _refreshOpenAiCodexOAuthModels(
+                        context: context,
+                        provider: provider,
+                        services: services,
+                      ),
+              child: _apiTesting
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Refresh models'),
+            ),
+            TextButton(
+              onPressed: credentials == null
+                  ? null
+                  : () async {
+                      await OpenAiCodexOAuthService(
+                        services.secureStorage,
+                      ).deleteCredentials();
+                      if (!context.mounted) {
+                        return;
+                      }
+                      setState(() {
+                        _openAiCodexOAuthCredentials = null;
+                        _modelsLoaded = false;
+                        _textModelOptions = const [];
+                        _ttsModelOptions = const [];
+                        _sttModelOptions = const [];
+                      });
+                      _showMessage(context, 'ChatGPT OAuth login cleared.');
+                    },
+              child: const Text('Logout'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Future<void> _loginOpenAiCodexOAuth({
+    required BuildContext context,
+    required LlmProvider provider,
+    required AppServices services,
+  }) async {
+    setState(() {
+      _oauthLoginInProgress = true;
+      _apiTestError = null;
+    });
+    final oauth = OpenAiCodexOAuthService(services.secureStorage);
+    OpenAiCodexOAuthLoginAttempt? attempt;
+    try {
+      attempt = await oauth.createLoginAttempt();
+      await oauth.openInBrowser(attempt.authUrl);
+      if (!context.mounted) {
+        return;
+      }
+      final input = await _showOpenAiCodexOAuthDialog(
+        context: context,
+        attempt: attempt,
+      );
+      if (input == null || input.trim().isEmpty) {
+        return;
+      }
+      final credentials = await oauth.exchangeAuthorizationInput(
+        input: input,
+        verifier: attempt.verifier,
+        expectedState: attempt.state,
+      );
+      await oauth.writeCredentials(credentials);
+      await _cacheOpenAiCodexModels(
+        services: services,
+        provider: provider,
+        credentials: credentials,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _openAiCodexOAuthCredentials = credentials;
+        _openAiCodexOAuthLoadedForProvider = provider.id;
+        _apiTestError = null;
+      });
+      _showMessage(context, 'ChatGPT OAuth login saved.');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _apiTestError = '$error';
+      });
+    } finally {
+      await attempt?.close();
+      if (mounted) {
+        setState(() => _oauthLoginInProgress = false);
+      }
+    }
+  }
+
+  Future<void> _refreshOpenAiCodexOAuthModels({
+    required BuildContext context,
+    required LlmProvider provider,
+    required AppServices services,
+  }) async {
+    setState(() {
+      _apiTesting = true;
+      _apiTestError = null;
+    });
+    try {
+      final oauth = OpenAiCodexOAuthService(services.secureStorage);
+      final credentials = await oauth.resolveValidCredentials();
+      await _cacheOpenAiCodexModels(
+        services: services,
+        provider: provider,
+        credentials: credentials,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _openAiCodexOAuthCredentials = credentials;
+        _openAiCodexOAuthLoadedForProvider = provider.id;
+        _apiTestError = null;
+      });
+      _showMessage(context, 'OAuth models refreshed.');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _apiTestError = '$error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _apiTesting = false);
+      }
+    }
+  }
+
+  Future<String?> _showOpenAiCodexOAuthDialog({
+    required BuildContext context,
+    required OpenAiCodexOAuthLoginAttempt attempt,
+  }) async {
+    final controller = TextEditingController();
+    BuildContext? dialogContext;
+    String? callbackCode;
+    void popWithCallbackCodeIfReady() {
+      final activeContext = dialogContext;
+      final code = callbackCode?.trim() ?? '';
+      if (code.isEmpty || activeContext == null) {
+        return;
+      }
+      if (!activeContext.mounted || !Navigator.of(activeContext).canPop()) {
+        return;
+      }
+      Navigator.of(activeContext).pop(code);
+    }
+
+    try {
+      unawaited(
+        attempt.waitForCode().then((code) {
+          callbackCode = code;
+          if (dialogContext != null) {
+            popWithCallbackCodeIfReady();
+          }
+        }).catchError((_) {}),
+      );
+      return showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) {
+          dialogContext = context;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            popWithCallbackCodeIfReady();
+          });
+          return AlertDialog(
+            title: const Text('ChatGPT OAuth'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Complete login in the browser. If it does not return '
+                  'automatically, paste the final redirect URL or code below.',
+                ),
+                const SizedBox(height: 8),
+                SelectableText(attempt.authUrl),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: controller,
+                  decoration: const InputDecoration(
+                    labelText: 'Redirect URL or authorization code',
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(controller.text),
+                child: const Text('Complete'),
+              ),
+            ],
+          );
+        },
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<void> _cacheOpenAiCodexModels({
+    required AppServices services,
+    required LlmProvider provider,
+    required OpenAiCodexOAuthCredentials credentials,
+  }) async {
+    final hash = OpenAiCodexOAuthService.credentialHash(credentials);
+    if (hash == null || hash.isEmpty) {
+      throw StateError('ChatGPT OAuth identity is missing.');
+    }
+    final versionInfo = await _appVersionFuture;
+    final modelIds = await OpenAiCodexOAuthService(services.secureStorage)
+        .fetchAvailableModelIds(
+      credentials: credentials,
+      clientVersion: versionInfo.appVersion,
+    );
+    if (modelIds.isEmpty) {
+      throw StateError('OpenAI OAuth returned no available models.');
+    }
+    final lists = ApiModelLists(
+      textModels: modelIds,
+      ttsModels: const <String>[],
+      sttModels: const <String>[],
+    );
+    await services.db.upsertApiModelCache(
+      baseUrl: provider.baseUrl,
+      apiKeyHash: hash,
+      textModels: lists.textModels,
+      ttsModels: lists.ttsModels,
+      sttModels: lists.sttModels,
+    );
+    if (!mounted) {
+      return;
+    }
+    final textSelection = TextModelSelection.resolveModel(
+      availableOptions: lists.textModels,
+      selection: _textModelSelection,
+    );
+    setState(() {
+      _modelsLoaded = true;
+      _textModelOptions = lists.textModels;
+      _ttsModelOptions = lists.ttsModels;
+      _sttModelOptions = lists.sttModels;
+      _textModelSelection = textSelection;
+    });
   }
 
   List<String> _buildTextModelOptions({
     required LlmProvider provider,
     required AppSetting settings,
     required List<ApiConfig> configs,
+    required CachedApiModelLists? cachedModelLists,
   }) {
-    final options = <String>{
-      if (_modelsLoaded) ..._textModelOptions,
-      ...provider.models.map((model) => model.trim()).where(
-            (model) => model.isNotEmpty,
-          ),
-      ...configs
+    return TextModelSelection.buildOptions(
+      modelsLoaded: cachedModelLists != null,
+      loadedModels: cachedModelLists?.textModels ?? const <String>[],
+      defaultModels: provider.models,
+      savedModels: configs
           .where(
             (config) =>
                 _normalizeBaseUrl(config.baseUrl) ==
                 _normalizeBaseUrl(provider.baseUrl),
           )
-          .map((config) => config.model.trim())
-          .where((model) => model.isNotEmpty),
-      if (settings.model.trim().isNotEmpty) settings.model.trim(),
-    }.toList()
-      ..sort();
-    return options;
+          .map((config) => config.model),
+      settingsModel: settings.model,
+    );
   }
 
   List<String> _buildAudioModelOptions({
+    required bool providerSupported,
+    required bool modelsLoaded,
     required List<ApiConfig> configs,
     required String baseUrl,
     required List<String> fromLoaded,
     required String fallback,
     required String Function(ApiConfig) selector,
   }) {
-    final options = <String>{
-      ...fromLoaded.where((model) => model.trim().isNotEmpty),
-      ...configs
+    return AudioModelSelection.buildOptions(
+      providerSupported: providerSupported,
+      modelsLoaded: modelsLoaded,
+      loadedModels: fromLoaded,
+      savedModels: configs
           .where(
             (config) =>
                 _normalizeBaseUrl(config.baseUrl) == _normalizeBaseUrl(baseUrl),
           )
-          .map(selector)
-          .where((model) => model.trim().isNotEmpty),
-      if (fallback.trim().isNotEmpty) fallback.trim(),
-    }.toList()
-      ..sort();
-    return options;
+          .map(selector),
+      fallback: fallback,
+    );
   }
 
-  String _resolveTextModel(LlmProvider provider, AppSetting settings) {
-    return (_textModelSelection ?? '').trim().isNotEmpty
-        ? _textModelSelection!.trim()
-        : (settings.model.trim().isNotEmpty
-            ? settings.model.trim()
-            : (provider.models.isNotEmpty ? provider.models.first : ''));
+  String _resolveTextModel(
+    LlmProvider provider,
+    AppSetting settings,
+    List<String> options,
+  ) {
+    return TextModelSelection.resolveModel(
+      availableOptions: options,
+      selection: _textModelSelection,
+      fallback: settings.model.trim().isNotEmpty
+          ? settings.model.trim()
+          : (provider.models.isNotEmpty ? provider.models.first : ''),
+    );
   }
 
-  String _resolveTtsModel(AppSetting settings) {
-    final selection = (_ttsModelSelection ?? '').trim();
-    if (_ttsModelOverride) {
-      return selection;
-    }
-    if (selection.isNotEmpty) {
-      return selection;
-    }
-    return (settings.ttsModel ?? '').trim();
+  String _resolveTtsModel({
+    required LlmProvider provider,
+    required AppSetting settings,
+    required List<String> options,
+    required bool modelsLoaded,
+  }) {
+    final fallback = _normalizeBaseUrl(settings.baseUrl) ==
+            _normalizeBaseUrl(provider.baseUrl)
+        ? (settings.ttsModel ?? '').trim()
+        : '';
+    return AudioModelSelection.resolveModel(
+      providerSupported: provider.supportsTts,
+      modelsLoaded: modelsLoaded,
+      availableOptions: options,
+      selection: _ttsModelSelection,
+      selectionOverride: _ttsModelOverride,
+      fallback: fallback,
+    );
   }
 
-  String _resolveSttModel(AppSetting settings) {
-    final selection = (_sttModelSelection ?? '').trim();
-    if (_sttModelOverride) {
-      return selection;
-    }
-    if (selection.isNotEmpty) {
-      return selection;
-    }
-    return (settings.sttModel ?? '').trim();
+  String _resolveSttModel({
+    required LlmProvider provider,
+    required AppSetting settings,
+    required List<String> options,
+    required bool modelsLoaded,
+  }) {
+    final fallback = _normalizeBaseUrl(settings.baseUrl) ==
+            _normalizeBaseUrl(provider.baseUrl)
+        ? (settings.sttModel ?? '').trim()
+        : '';
+    return AudioModelSelection.resolveModel(
+      providerSupported: provider.supportsStt,
+      modelsLoaded: modelsLoaded,
+      availableOptions: options,
+      selection: _sttModelSelection,
+      selectionOverride: _sttModelOverride,
+      fallback: fallback,
+    );
   }
 
   String _coerceSelection({
@@ -1109,23 +1698,14 @@ class _SettingsPageState extends State<SettingsPage> {
     final selection = options.contains(trimmed)
         ? trimmed
         : (allowEmpty && trimmed.isEmpty ? '' : options.first);
-    return DropdownButtonFormField<String>(
-      key: ValueKey('$label-$selection'),
-      initialValue: selection,
-      decoration: InputDecoration(labelText: label),
-      items: [
-        if (allowEmpty)
-          DropdownMenuItem(
-            value: '',
-            child: Text(emptyLabel),
-          ),
-        ...options.map(
-          (model) => DropdownMenuItem(
-            value: model,
-            child: Text(model),
-          ),
-        ),
-      ],
+    return SearchableModelPicker(
+      key: ValueKey('$label-$selection-${options.length}'),
+      label: label,
+      options: options,
+      value: selection,
+      emptyMessage: emptyMessage,
+      allowEmpty: allowEmpty,
+      emptyLabel: emptyLabel,
       onChanged: onChanged,
     );
   }
@@ -1135,6 +1715,7 @@ class _SettingsPageState extends State<SettingsPage> {
     required AppLocalizations l10n,
     required LlmProvider provider,
     required String baseUrl,
+    required AppServices services,
   }) async {
     final apiKey = _apiKeyController.text.trim();
     if (apiKey.isEmpty) {
@@ -1166,8 +1747,21 @@ class _SettingsPageState extends State<SettingsPage> {
     }
     final lists = ModelListService.splitModels(
       models: result.models,
+      provider: provider,
+    );
+    await services.db.upsertApiModelCache(
       baseUrl: baseUrl,
-      providerId: provider.id,
+      apiKeyHash: sha256Hex(apiKey),
+      textModels: lists.textModels,
+      ttsModels: lists.ttsModels,
+      sttModels: lists.sttModels,
+    );
+    if (!mounted) {
+      return;
+    }
+    final textSelection = TextModelSelection.resolveModel(
+      availableOptions: lists.textModels,
+      selection: _textModelSelection,
     );
     setState(() {
       _apiTesting = false;
@@ -1176,6 +1770,7 @@ class _SettingsPageState extends State<SettingsPage> {
       _textModelOptions = lists.textModels;
       _ttsModelOptions = lists.ttsModels;
       _sttModelOptions = lists.sttModels;
+      _textModelSelection = textSelection;
     });
   }
 
@@ -1209,6 +1804,107 @@ class _SettingsPageState extends State<SettingsPage> {
     return result ?? false;
   }
 
+  Future<bool> _confirmTakeServerCopy(BuildContext context) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Take server copy'),
+        content: const Text(
+          'This will clear this device\'s local course/session/progress '
+          'cache and replace it with a forced server copy. Unsynced local '
+          'session/progress data on this device will be discarded. Continue?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Take server copy'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
+
+  Future<void> _takeServerCopy({
+    required BuildContext context,
+    required AppServices services,
+    required User currentUser,
+  }) async {
+    if (_serverCopyInProgress) {
+      return;
+    }
+    final confirmed = await _confirmTakeServerCopy(context);
+    if (!confirmed || !mounted) {
+      return;
+    }
+    final serverCopyService = StudentServerCopyService.fromAppServices(
+      services,
+    );
+    setState(() {
+      _serverCopyInProgress = true;
+      _serverCopyMessage = 'Taking server copy: syncing enrollments...';
+      _serverCopyDetail = null;
+      _serverCopyProgressValue = null;
+      _serverCopyMessageIsError = false;
+    });
+    try {
+      await serverCopyService.takeServerCopy(
+        currentUser: currentUser,
+        onProgress: _applyServerCopyProgress,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _serverCopyMessage =
+            'Server copy completed. Local course/session/progress cache now '
+            'matches server data.';
+        _serverCopyDetail = null;
+        _serverCopyProgressValue = null;
+        _serverCopyMessageIsError = false;
+      });
+      _showMessage(
+        context,
+        'Server copy completed. Local course/session/progress cache now '
+        'matches server data.',
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _serverCopyMessage = 'Take server copy failed: $error';
+        _serverCopyDetail = null;
+        _serverCopyProgressValue = null;
+        _serverCopyMessageIsError = true;
+      });
+      _showMessage(context, 'Take server copy failed: $error');
+    } finally {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _serverCopyInProgress = false;
+      });
+    }
+  }
+
+  void _applyServerCopyProgress(SyncProgress progress) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _serverCopyMessage = progress.message;
+      _serverCopyDetail = progress.detail;
+      _serverCopyProgressValue = progress.value;
+      _serverCopyMessageIsError = false;
+    });
+  }
+
   void _showMessage(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
@@ -1228,6 +1924,46 @@ class _SettingsPageState extends State<SettingsPage> {
       return 0;
     }
     return seconds * 1000;
+  }
+
+  Widget _buildAppVersionInfo({
+    required AppLocalizations l10n,
+    required Future<AppVersionInfo> future,
+  }) {
+    return FutureBuilder<AppVersionInfo>(
+      future: future,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: LinearProgressIndicator(),
+          );
+        }
+        if (snapshot.hasError) {
+          return Text(
+            l10n.appVersionLoadFailed('${snapshot.error}'),
+            style: const TextStyle(color: Colors.redAccent),
+          );
+        }
+        final versionInfo = snapshot.data;
+        if (versionInfo == null) {
+          return Text(
+            l10n.appVersionLoadFailed('Version payload missing.'),
+            style: const TextStyle(color: Colors.redAccent),
+          );
+        }
+        return Column(
+          children: [
+            InputDecorator(
+              decoration: InputDecoration(
+                labelText: l10n.appVersionLabel,
+              ),
+              child: SelectableText(versionInfo.appVersion),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   String _maskRecoveryEmail(String email, String emptyLabel) {

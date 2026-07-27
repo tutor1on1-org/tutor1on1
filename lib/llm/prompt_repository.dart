@@ -17,35 +17,78 @@ class PromptRepository {
   final Map<String, String> _systemPromptCache = {};
   final Map<String, Map<String, dynamic>> _schemaCache = {};
   final Map<String, String> _textbookCache = {};
-  static const Set<String> _bundledOnlyPromptNames = <String>{
-    'learn',
-    'review',
-  };
   static const Map<String, String> _emergencyPromptFallbacks = <String, String>{
     'learn': '''
 You are a one-on-one teacher. Task: LEARN.
 
-Teach the knowledge point through explanation only. No formal practice question.
-Return JSON with:
-- text
-- difficulty
-- mistakes
-- next_action
+Use conversation_history to decide what the student needs now.
+Explain the current knowledge point, answer the student's latest need, or briefly correct/explain if the student seems confused.
 
-Return a valid response following the LEARN output schema.
+Inputs:
+- kp_title: {{kp_title}}
+- kp_description: {{kp_description}}
+- lesson_content: {{lesson_content}}
+- conversation_history: {{conversation_history}}
+- student_context: {{student_context}}
+- error_book_summary: {{error_book_summary}}
+
+Output only the student-visible text.
+
+Rules:
+- Keep it concise and plain. Usually less than 200 words unless necessary.
+- Use lesson_content if available; otherwise use kp_description.
+- Do not repeat what was already clearly understood.
+- If the student made a mistake, explain the issue briefly, then continue with a simpler explanation or one concrete example.
+- Only ask a clarification question if the student's need cannot be understood from conversation_history.
 ''',
-    'review': '''
-You are a one-on-one teacher. Task: REVIEW.
+    'review_init': '''
+You are a one-on-one teacher.
 
-Keep one active review question at a time.
-Return JSON with:
-- text
-- difficulty
-- mistakes
-- next_action
-- finished
+Task: Start one review question.
 
-Return a valid response following the REVIEW output schema.
+Inputs:
+- kp_title: {{kp_title}}
+- kp_description: {{kp_description}}
+- conversation_history: {{conversation_history}}
+- presented_questions: {{presented_questions}}
+- student_context: {{student_context}}
+- error_book_summary: {{error_book_summary}}
+
+Output only the student-visible question text.
+
+Rules:
+- Ask exactly one question.
+- Prefer a suitable unused question from presented_questions.
+- If presented_questions is empty, exhausted, or unsuitable, create a similar question from this knowledge point.
+- Do not include the answer, hint, explanation, JSON, or a difficulty label.
+- Keep it concise and plain.
+''',
+    'review_cont': '''
+You are a one-on-one teacher.
+
+Task: Continue the current review question. Judge the student's latest answer and decide difficulty adjustment.
+
+Inputs:
+- kp_title: {{kp_title}}
+- kp_description: {{kp_description}}
+- conversation_history: {{conversation_history}}
+- active_review_question_json: {{active_review_question_json}}
+- student_context: {{student_context}}
+- error_book_summary: {{error_book_summary}}
+
+Return JSON only:
+{"text": string, "mistakes": [string], "finished": boolean, "difficulty_adjustment": "easier|same|harder"}
+
+Rules:
+- text is the student-visible feedback or next step.
+- Do not start a new question. Stay on the active review question.
+- If the answer is correct and complete, set finished to true.
+- If the answer is wrong or incomplete, set finished to false, give one brief correction or hint, then ask for the missing step.
+- Briefly describe mistakes if any, append to error_book_summary. Avoid duplicates.
+- difficulty_adjustment is for the next review question, not the current one.
+- Use "easier" when the student struggles.
+- Use "harder" if you believe the student needs harder ones so he is not too bored.
+- Use "same" otherwise.
 ''',
   };
 
@@ -55,9 +98,20 @@ Return a valid response following the REVIEW output schema.
     String? courseKey,
     int? studentId,
   }) async {
-    if (_usesBundledOnlyPrompt(name)) {
-      return _loadBundledSystemPrompt(name);
-    }
+    return loadResolvedScopedPrompt(
+      name,
+      teacherId: teacherId,
+      courseKey: courseKey,
+      studentId: studentId,
+    );
+  }
+
+  Future<String> loadResolvedScopedPrompt(
+    String name, {
+    required int? teacherId,
+    String? courseKey,
+    int? studentId,
+  }) async {
     final normalizedCourseKey = _normalizeCourseKey(courseKey);
     final cacheKey = [
       teacherId?.toString() ?? 'default',
@@ -69,83 +123,29 @@ Return a valid response following the REVIEW output schema.
       return _promptCache[cacheKey]!;
     }
 
-    final systemPrompt = await loadResolvedSystemPrompt(
-      name,
-      teacherId: teacherId,
-    );
-    final courseAppend = await _loadAppendPrompt(
-      name,
-      teacherId: teacherId,
-      courseKey: normalizedCourseKey,
-    );
-    final studentAppend = studentId == null
-        ? ''
-        : await _loadAppendPrompt(
-            name,
-            teacherId: teacherId,
-            courseKey: normalizedCourseKey,
-            studentId: studentId,
-          );
-    final combined = _combinePrompts([
-      systemPrompt,
-      courseAppend,
-      studentAppend,
-    ]);
-    _promptCache[cacheKey] = combined;
-    return combined;
-  }
-
-  Future<String> loadAppendPrompt(
-    String name, {
-    required int teacherId,
-    String? courseKey,
-    int? studentId,
-  }) async {
-    if (_usesBundledOnlyPrompt(name)) {
-      return '';
-    }
-    final normalizedCourseKey = _normalizeCourseKey(courseKey);
-    return _loadAppendPrompt(
-      name,
-      teacherId: teacherId,
-      courseKey: normalizedCourseKey,
-      studentId: studentId,
-    );
-  }
-
-  Future<String> buildPromptPreview({
-    required String name,
-    required int teacherId,
-    String? courseKey,
-    int? studentId,
-    String? courseAppendOverride,
-    String? studentAppendOverride,
-    bool includeSystem = true,
-  }) async {
-    if (_usesBundledOnlyPrompt(name)) {
-      return includeSystem ? _loadBundledSystemPrompt(name) : '';
-    }
-    final normalizedCourseKey = _normalizeCourseKey(courseKey);
-    final systemPrompt = includeSystem
-        ? await loadResolvedSystemPrompt(name, teacherId: teacherId)
-        : '';
-    final courseAppend = courseAppendOverride ??
-        await _loadAppendPrompt(
+    final db = _db;
+    if (db != null && teacherId != null) {
+      final scopes = _promptOverrideLookupScopes(
+        courseKey: normalizedCourseKey,
+        studentId: studentId,
+      );
+      for (final scope in scopes) {
+        final override = await _loadPromptOverride(
           name,
           teacherId: teacherId,
-          courseKey: normalizedCourseKey,
+          courseKey: scope.courseKey,
+          studentId: scope.studentId,
         );
-    String studentAppend = '';
-    if (studentId != null) {
-      studentAppend = studentAppendOverride ??
-          await _loadAppendPrompt(
-            name,
-            teacherId: teacherId,
-            courseKey: normalizedCourseKey,
-            studentId: studentId,
-          );
+        if (override != null) {
+          _promptCache[cacheKey] = override;
+          return override;
+        }
+      }
     }
-    return _combinePrompts([systemPrompt, courseAppend, studentAppend]);
+
+    final bundled = await _loadBundledSystemPrompt(name);
+    _promptCache[cacheKey] = bundled;
+    return bundled;
   }
 
   Future<void> ensureAssignmentPrompts({
@@ -153,12 +153,12 @@ Return a valid response following the REVIEW output schema.
     required int studentId,
     required int courseVersionId,
   }) async {
-    // Append prompts default to empty; no need to pre-seed per-assignment rows.
+    // Prompt scopes inherit from their nearest active parent override.
     return;
   }
 
   Future<void> backfillAssignmentPrompts() async {
-    // Append prompts default to empty; no backfill required.
+    // Prompt scopes inherit from their nearest active parent override.
     return;
   }
 
@@ -170,9 +170,6 @@ Return a valid response following the REVIEW output schema.
     String name, {
     required int? teacherId,
   }) async {
-    if (_usesBundledOnlyPrompt(name)) {
-      return _loadBundledSystemPrompt(name);
-    }
     final override = await _loadSystemPromptOverride(
       name,
       teacherId: teacherId,
@@ -240,6 +237,29 @@ Return a valid response following the REVIEW output schema.
     return override?.content;
   }
 
+  List<_PromptOverrideScope> _promptOverrideLookupScopes({
+    required String? courseKey,
+    required int? studentId,
+  }) {
+    final scopes = <_PromptOverrideScope>[];
+    void add(String? scopeCourseKey, int? scopeStudentId) {
+      final scope = _PromptOverrideScope(scopeCourseKey, scopeStudentId);
+      if (!scopes.contains(scope)) {
+        scopes.add(scope);
+      }
+    }
+
+    add(courseKey, studentId);
+    if (studentId != null) {
+      add(null, studentId);
+    }
+    if (courseKey != null) {
+      add(courseKey, null);
+    }
+    add(null, null);
+    return scopes;
+  }
+
   String? _normalizeCourseKey(String? value) {
     final trimmed = value?.trim();
     if (trimmed == null || trimmed.isEmpty) {
@@ -248,38 +268,23 @@ Return a valid response following the REVIEW output schema.
     return p.normalize(trimmed);
   }
 
-  Future<String> _loadAppendPrompt(
+  Future<String?> _loadPromptOverride(
     String name, {
     required int? teacherId,
     required String? courseKey,
     int? studentId,
   }) async {
-    if (_usesBundledOnlyPrompt(name)) {
-      return '';
-    }
     final db = _db;
-    if (db == null || teacherId == null || courseKey == null) {
+    if (db == null || teacherId == null) {
       return '';
     }
-    final append = await db.getActivePromptTemplate(
+    final override = await db.getActivePromptTemplate(
       teacherId: teacherId,
       promptName: name,
       courseKey: courseKey,
       studentId: studentId,
     );
-    return (append?.content ?? '').trim();
-  }
-
-  String _combinePrompts(List<String?> parts) {
-    final cleaned = parts
-        .whereType<String>()
-        .map((part) => part.trim())
-        .where((part) => part.isNotEmpty)
-        .toList();
-    if (cleaned.isEmpty) {
-      return '';
-    }
-    return cleaned.join('\n\n');
+    return override?.content.trim();
   }
 
   Future<Map<String, dynamic>> loadSchema(String name) async {
@@ -301,8 +306,21 @@ Return a valid response following the REVIEW output schema.
     _textbookCache[filename] = content;
     return content;
   }
+}
 
-  bool _usesBundledOnlyPrompt(String name) {
-    return _bundledOnlyPromptNames.contains(name.trim());
+class _PromptOverrideScope {
+  const _PromptOverrideScope(this.courseKey, this.studentId);
+
+  final String? courseKey;
+  final int? studentId;
+
+  @override
+  bool operator ==(Object other) {
+    return other is _PromptOverrideScope &&
+        other.courseKey == courseKey &&
+        other.studentId == studentId;
   }
+
+  @override
+  int get hashCode => Object.hash(courseKey, studentId);
 }

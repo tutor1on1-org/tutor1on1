@@ -47,11 +47,11 @@ void main() {
 
   test('prompt resolution uses simple learn/review names', () {
     expect(
-      resolveTutorPromptName(action: 'review', wantsContinue: true),
+      resolveTutorPromptName(action: 'review'),
       equals('review'),
     );
     expect(
-      resolveTutorPromptName(action: 'learn', wantsContinue: true),
+      resolveTutorPromptName(action: 'learn'),
       equals('learn'),
     );
   });

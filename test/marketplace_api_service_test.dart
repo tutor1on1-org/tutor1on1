@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -121,6 +123,185 @@ void main() {
     expect(await storage.readAuthRefreshToken(), equals('refresh-2'));
   });
 
+  test('public requests retry transient DNS failure with a fresh client',
+      () async {
+    var factoryCalls = 0;
+    final api = MarketplaceApiService(
+      secureStorage: _TokenSecureStorageService(accessToken: 'token'),
+      baseUrl: 'https://example.com',
+      clientFactory: () {
+        factoryCalls++;
+        if (factoryCalls == 1) {
+          return MockClient((request) async {
+            throw http.ClientException(
+              "SocketException: Failed host lookup: 'example.com'",
+              request.url,
+            );
+          });
+        }
+        return MockClient((request) async {
+          expect(request.url.path, equals('/api/subject-labels'));
+          return http.Response('[]', 200);
+        });
+      },
+    );
+
+    final labels = await api.listSubjectLabels();
+
+    expect(labels, isEmpty);
+    expect(factoryCalls, equals(2));
+  });
+
+  test('updateCourseSubjectLabels does not refresh full course list', () async {
+    final api = MarketplaceApiService(
+      secureStorage: _TokenSecureStorageService(accessToken: 'token'),
+      baseUrl: 'https://example.com',
+      client: MockClient((request) async {
+        expect(request.headers['Authorization'], equals('Bearer token'));
+        expect(
+          request.url.path,
+          equals('/api/teacher/courses/42/subject-labels'),
+        );
+        expect(
+          jsonDecode(request.body),
+          equals(<String, dynamic>{
+            'subject_label_ids': <int>[1, 2],
+          }),
+        );
+        return http.Response(
+          '''
+{
+  "course_id": 42,
+  "status": "updated",
+  "subject_labels": [
+    {"subject_label_id": 1, "slug": "math", "name": "Math", "is_active": true},
+    {"subject_label_id": 2, "slug": "science", "name": "Science", "is_active": true}
+  ]
+}
+''',
+          200,
+        );
+      }),
+    );
+
+    final updated = await api.updateCourseSubjectLabels(
+      courseId: 42,
+      subjectLabelIds: const <int>[1, 2],
+    );
+
+    expect(updated.courseId, equals(42));
+    expect(updated.status, equals('updated'));
+    expect(
+      updated.subjectLabels.map((label) => label.subjectLabelId),
+      equals(<int>[1, 2]),
+    );
+  });
+
+  test('updateCourseMetadata posts description without refreshing list',
+      () async {
+    final api = MarketplaceApiService(
+      secureStorage: _TokenSecureStorageService(accessToken: 'token'),
+      baseUrl: 'https://example.com',
+      client: MockClient((request) async {
+        expect(request.headers['Authorization'], equals('Bearer token'));
+        expect(
+          request.url.path,
+          equals('/api/teacher/courses/42/metadata'),
+        );
+        expect(
+          jsonDecode(request.body),
+          equals(<String, dynamic>{
+            'description': 'New description',
+          }),
+        );
+        return http.Response(
+          '''
+{
+  "course_id": 42,
+  "description": "New description",
+  "status": "updated"
+}
+''',
+          200,
+        );
+      }),
+    );
+
+    final updated = await api.updateCourseMetadata(
+      courseId: 42,
+      description: '  New description  ',
+    );
+
+    expect(updated.courseId, equals(42));
+    expect(updated.description, equals('New description'));
+    expect(updated.status, equals('updated'));
+  });
+
+  test('token refresh retries transient DNS failure with a fresh client',
+      () async {
+    final storage = _TokenSecureStorageService(
+      accessToken: 'expired-token',
+      refreshToken: 'refresh-1',
+    );
+    var factoryCalls = 0;
+    var firstEnrollmentCalls = 0;
+    var refreshCalls = 0;
+    var secondEnrollmentCalls = 0;
+    final api = MarketplaceApiService(
+      secureStorage: storage,
+      baseUrl: 'https://example.com',
+      clientFactory: () {
+        factoryCalls++;
+        if (factoryCalls == 1) {
+          return MockClient((request) async {
+            if (request.url.path == '/api/enrollments') {
+              firstEnrollmentCalls++;
+              return http.Response('{"message":"unauthorized"}', 401);
+            }
+            if (request.url.path == '/api/auth/refresh') {
+              throw http.ClientException(
+                "SocketException: Failed host lookup: 'example.com'",
+                request.url,
+              );
+            }
+            fail('Unexpected request: ${request.url.path}');
+          });
+        }
+        return MockClient((request) async {
+          if (request.url.path == '/api/auth/refresh') {
+            refreshCalls++;
+            final body = jsonDecode(request.body) as Map<String, dynamic>;
+            expect(body['refresh_token'], equals('refresh-1'));
+            return http.Response(
+              '{"access_token":"fresh-token","refresh_token":"refresh-2"}',
+              200,
+              headers: <String, String>{'content-type': 'application/json'},
+            );
+          }
+          if (request.url.path == '/api/enrollments') {
+            secondEnrollmentCalls++;
+            expect(
+              request.headers['Authorization'],
+              equals('Bearer fresh-token'),
+            );
+            return http.Response('[]', 200);
+          }
+          fail('Unexpected request: ${request.url.path}');
+        });
+      },
+    );
+
+    final enrollments = await api.listEnrollments();
+
+    expect(enrollments, isEmpty);
+    expect(factoryCalls, equals(2));
+    expect(firstEnrollmentCalls, equals(1));
+    expect(refreshCalls, equals(1));
+    expect(secondEnrollmentCalls, equals(1));
+    expect(await storage.readAuthAccessToken(), equals('fresh-token'));
+    expect(await storage.readAuthRefreshToken(), equals('refresh-2'));
+  });
+
   test('listAccountDevices decodes current-device flags', () async {
     final api = MarketplaceApiService(
       secureStorage: _TokenSecureStorageService(accessToken: 'token'),
@@ -240,5 +421,24 @@ void main() {
     final result = await api.deleteAccountDevice('device-a');
 
     expect(result.deletedCurrentDevice, isTrue);
+  });
+
+  test('deleteAdminUser posts to admin user delete endpoint', () async {
+    final api = MarketplaceApiService(
+      secureStorage: _TokenSecureStorageService(accessToken: 'token'),
+      baseUrl: 'https://example.com',
+      client: MockClient((request) async {
+        expect(request.method, equals('POST'));
+        expect(request.url.path, equals('/api/admin/users/42/delete'));
+        expect(request.headers['Authorization'], equals('Bearer token'));
+        return http.Response(
+          '{"status":"deleted","user_id":42}',
+          200,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    await api.deleteAdminUser(42);
   });
 }

@@ -80,4 +80,71 @@ void main() {
     final sessions = await db.getSessionsForStudent(canonicalId);
     expect(sessions, hasLength(1));
   });
+
+  test('upsertAuthenticatedUser preserves existing student teacher binding',
+      () async {
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(() async => db.close());
+
+    final teacherId = await db.createUser(
+      username: 'dennis',
+      pinHash: PinHasher.hash('teacher_pin'),
+      role: 'teacher',
+      remoteUserId: 9001,
+    );
+    final studentId = await db.createUser(
+      username: 'albert',
+      pinHash: PinHasher.hash('old_pin'),
+      role: 'student',
+      teacherId: teacherId,
+      remoteUserId: 3001,
+    );
+
+    final authenticated = await db.upsertAuthenticatedUser(
+      username: 'albert',
+      pinHash: PinHasher.hash('new_pin'),
+      role: 'student',
+      remoteUserId: 3001,
+    );
+
+    expect(authenticated.id, studentId);
+    expect(authenticated.teacherId, teacherId);
+  });
+
+  test('importPromptTemplate reuses identical history row', () async {
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(() async => db.close());
+
+    final teacherId = await db.createUser(
+      username: 'dennis',
+      pinHash: PinHasher.hash('teacher_pin'),
+      role: 'teacher',
+      remoteUserId: 9001,
+    );
+    final createdAt = DateTime.parse('2026-04-07T12:51:23Z');
+    const content = 'review prompt body';
+
+    final firstId = await db.importPromptTemplate(
+      teacherId: teacherId,
+      promptName: 'review',
+      content: content,
+      createdAt: createdAt,
+    );
+    final secondId = await db.importPromptTemplate(
+      teacherId: teacherId,
+      promptName: 'review',
+      content: content,
+      createdAt: createdAt,
+    );
+
+    expect(secondId, firstId);
+    final rows = await db.watchPromptTemplates(
+      teacherId: teacherId,
+      promptName: 'review',
+      courseKey: null,
+      studentId: null,
+    ).first;
+    expect(rows, hasLength(1));
+    expect(rows.single.isActive, isTrue);
+  });
 }

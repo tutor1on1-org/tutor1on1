@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReviewContinueOutput",
+  "type": "object",
+  "required": [
+    "text",
+    "mistakes",
+    "finished",
+    "difficulty_adjustment"
+  ],
+  "properties": {
+    "text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "mistakes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "finished": {
+      "type": "boolean"
+    },
+    "difficulty_adjustment": {
+      "type": "string",
+      "enum": ["easier", "same", "harder"]
+    }
+  },
+  "additionalProperties": false
+}

@@ -10,6 +10,7 @@ import '../../services/app_services.dart';
 import '../../services/course_bundle_service.dart';
 import '../../services/marketplace_api_service.dart';
 import '../../services/prompt_bundle_compat.dart';
+import '../../services/prompt_template_validator.dart';
 import '../../services/remote_teacher_identity_service.dart';
 import '../../state/auth_controller.dart';
 import '../app_close_button.dart';
@@ -49,6 +50,7 @@ class _MarketplacePageState extends State<MarketplacePage> {
   final Set<int> _downloadingCourseIds = {};
   final RemoteTeacherIdentityService _remoteTeacherIdentity =
       const RemoteTeacherIdentityService();
+  final PromptTemplateValidator _promptValidator = PromptTemplateValidator();
 
   @override
   void initState() {
@@ -876,6 +878,22 @@ class _MarketplacePageState extends State<MarketplacePage> {
           versionId: bundleVersionId,
         );
       }
+      final downloadedBundleHash = enrollment.latestBundleHash.trim().isNotEmpty
+          ? enrollment.latestBundleHash.trim()
+          : await bundleService.computeBundleSemanticHash(bundleFile);
+      await services.enrollmentSyncService.recordStudentMarketplaceDownload(
+        currentUser: user,
+        remoteCourseId: course.courseId,
+        bundleVersionId: bundleVersionId,
+        bundleHash: downloadedBundleHash,
+      );
+      try {
+        await services.sessionSyncService.syncIfReady(currentUser: user);
+      } catch (error) {
+        throw StateError(
+          'Course downloaded, but student session/progress sync failed: $error',
+        );
+      }
       if (!mounted) {
         return;
       }
@@ -981,6 +999,12 @@ class _MarketplacePageState extends State<MarketplacePage> {
       await db.clearActivePromptTemplates(
         teacherId: teacherId,
         promptName: promptName,
+        courseKey: null,
+        studentId: user.id,
+      );
+      await db.clearActivePromptTemplates(
+        teacherId: teacherId,
+        promptName: promptName,
         courseKey: courseKey,
         studentId: null,
       );
@@ -996,6 +1020,11 @@ class _MarketplacePageState extends State<MarketplacePage> {
       teacherId: teacherId,
       courseKey: null,
       studentId: null,
+    );
+    await db.deleteStudentPromptProfile(
+      teacherId: teacherId,
+      courseKey: null,
+      studentId: user.id,
     );
     await db.deleteStudentPromptProfile(
       teacherId: teacherId,
@@ -1027,16 +1056,45 @@ class _MarketplacePageState extends State<MarketplacePage> {
         if (!_promptNames.contains(promptName)) {
           continue;
         }
+        final validation = _promptValidator.validate(
+          promptName: promptName,
+          content: content,
+          allowMissingRequired: false,
+        );
+        if (!validation.isValid) {
+          throw StateError(
+            'Downloaded prompt metadata is invalid for "$promptName" scope '
+            '"$scope". missing=${validation.missingVariables.join(',')} '
+            'unknown=${validation.unknownVariables.join(',')} '
+            'invalid=${validation.invalidVariables.join(',')}',
+          );
+        }
 
         String? scopeCourseKey;
         int? scopeStudentId;
         if (scope == 'teacher') {
           scopeCourseKey = null;
           scopeStudentId = null;
+        } else if (scope == 'student_global') {
+          final targetRemoteUserId =
+              (item['student_remote_user_id'] as num?)?.toInt();
+          final targetUsername =
+              (item['student_username'] as String?)?.trim() ?? '';
+          final remoteMatched = remoteUserId != null &&
+              targetRemoteUserId != null &&
+              targetRemoteUserId > 0 &&
+              remoteUserId == targetRemoteUserId;
+          final usernameMatched = targetUsername.isNotEmpty &&
+              targetUsername.toLowerCase() == user.username.toLowerCase();
+          if (!remoteMatched && !usernameMatched) {
+            continue;
+          }
+          scopeCourseKey = null;
+          scopeStudentId = user.id;
         } else if (scope == 'course') {
           scopeCourseKey = courseKey;
           scopeStudentId = null;
-        } else if (scope == 'student') {
+        } else if (scope == 'student_course' || scope == 'student') {
           final targetRemoteUserId =
               (item['student_remote_user_id'] as num?)?.toInt();
           final targetUsername =
@@ -1079,10 +1137,26 @@ class _MarketplacePageState extends State<MarketplacePage> {
         if (scope == 'teacher') {
           scopeCourseKey = null;
           scopeStudentId = null;
+        } else if (scope == 'student_global') {
+          final targetRemoteUserId =
+              (item['student_remote_user_id'] as num?)?.toInt();
+          final targetUsername =
+              (item['student_username'] as String?)?.trim() ?? '';
+          final remoteMatched = remoteUserId != null &&
+              targetRemoteUserId != null &&
+              targetRemoteUserId > 0 &&
+              remoteUserId == targetRemoteUserId;
+          final usernameMatched = targetUsername.isNotEmpty &&
+              targetUsername.toLowerCase() == user.username.toLowerCase();
+          if (!remoteMatched && !usernameMatched) {
+            continue;
+          }
+          scopeCourseKey = null;
+          scopeStudentId = user.id;
         } else if (scope == 'course') {
           scopeCourseKey = courseKey;
           scopeStudentId = null;
-        } else if (scope == 'student') {
+        } else if (scope == 'student_course' || scope == 'student') {
           final targetRemoteUserId =
               (item['student_remote_user_id'] as num?)?.toInt();
           final targetUsername =
@@ -1236,6 +1310,9 @@ class _MarketplacePageState extends State<MarketplacePage> {
     if (template.courseKey == null && template.studentId == null) {
       return true;
     }
+    if (template.courseKey == null && template.studentId == studentId) {
+      return true;
+    }
     if (normalizedKey == courseKey && template.studentId == null) {
       return true;
     }
@@ -1252,6 +1329,9 @@ class _MarketplacePageState extends State<MarketplacePage> {
   }) {
     final normalizedKey = (profile.courseKey ?? '').trim();
     if (profile.courseKey == null && profile.studentId == null) {
+      return true;
+    }
+    if (profile.courseKey == null && profile.studentId == studentId) {
       return true;
     }
     if (normalizedKey == courseKey && profile.studentId == null) {

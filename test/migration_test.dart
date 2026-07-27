@@ -148,6 +148,7 @@ void main() {
         await db.customSelect('PRAGMA table_info(progress_entries)').get();
     final progressColumns = progressInfo.map((row) => row.data['name']).toSet();
     expect(progressColumns.contains('question_level'), isTrue);
+    expect(progressColumns.contains('mastery_level'), isTrue);
     expect(progressColumns.contains('summary_text'), isTrue);
     expect(progressColumns.contains('summary_raw_response'), isTrue);
     expect(progressColumns.contains('summary_valid'), isTrue);
@@ -187,6 +188,199 @@ void main() {
         )
         .get();
     expect(promptTable.isNotEmpty, isTrue);
+
+    final mistakeTable = await db
+        .customSelect(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='mistake_entries'",
+        )
+        .get();
+    expect(mistakeTable.isNotEmpty, isTrue);
+
+    await db.close();
+  });
+
+  test('migration to v31 drops legacy prompt template overrides', () async {
+    final tempDir = await Directory.systemTemp.createTemp('tutor1on1');
+    final dbFile = File(p.join(tempDir.path, 'test.db'));
+
+    final rawDb = sqlite3.sqlite3.open(dbFile.path);
+    rawDb.execute('''
+      CREATE TABLE prompt_templates (
+        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        teacher_id INTEGER NOT NULL,
+        course_key TEXT NULL,
+        student_id INTEGER NULL,
+        prompt_name TEXT NOT NULL,
+        content TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 0 CHECK (is_active IN (0, 1)),
+        created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s', CURRENT_TIMESTAMP) AS INTEGER))
+      );
+    ''');
+    rawDb.execute('''
+      INSERT INTO prompt_templates (
+        teacher_id,
+        course_key,
+        student_id,
+        prompt_name,
+        content,
+        is_active
+      ) VALUES (1, 'course_math', 2, 'learn', 'legacy scoped prompt', 1);
+    ''');
+    rawDb.execute('PRAGMA user_version = 30;');
+    rawDb.dispose();
+
+    final db = AppDatabase.forTesting(NativeDatabase(dbFile));
+    final rows = await db.customSelect('SELECT * FROM prompt_templates').get();
+
+    expect(rows, isEmpty);
+
+    await db.close();
+  });
+
+  test('migration to v32 deduplicates api configs with null audio models',
+      () async {
+    final tempDir = await Directory.systemTemp.createTemp('tutor1on1');
+    final dbFile = File(p.join(tempDir.path, 'test.db'));
+
+    final rawDb = sqlite3.sqlite3.open(dbFile.path);
+    rawDb.execute('''
+      CREATE TABLE api_configs (
+        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        base_url TEXT NOT NULL,
+        model TEXT NOT NULL,
+        reasoning_effort TEXT NOT NULL DEFAULT 'medium',
+        tts_model TEXT NULL,
+        stt_model TEXT NULL,
+        api_key_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+    ''');
+    rawDb.execute('''
+      INSERT INTO api_configs (
+        base_url,
+        model,
+        reasoning_effort,
+        tts_model,
+        stt_model,
+        api_key_hash,
+        created_at
+      ) VALUES
+      (
+        'https://API.openai.com/v1',
+        'gpt-test',
+        'HIGH',
+        NULL,
+        NULL,
+        'hash_1',
+        '2026-04-27T00:00:00.000'
+      ),
+      (
+        'https://api.openai.com/v1',
+        'gpt-test',
+        'high',
+        NULL,
+        NULL,
+        'hash_1',
+        '2026-04-27T00:01:00.000'
+      );
+    ''');
+    rawDb.execute('PRAGMA user_version = 31;');
+    rawDb.dispose();
+
+    final db = AppDatabase.forTesting(NativeDatabase(dbFile));
+    await db.customSelect('SELECT 1').get();
+
+    final rows =
+        await db.customSelect('SELECT id FROM api_configs ORDER BY id').get();
+    final indexes =
+        await db.customSelect('PRAGMA index_list(api_configs)').get();
+    final duplicate = await db.insertApiConfig(
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-test',
+      reasoningEffort: 'high',
+      ttsModel: '',
+      sttModel: '',
+      apiKeyHash: 'hash_1',
+    );
+
+    expect(rows, hasLength(1));
+    expect(
+      indexes.map((row) => row.data['name']),
+      contains('uq_api_configs_normalized'),
+    );
+    expect(duplicate, isFalse);
+
+    await db.close();
+  });
+
+  test('migration to v33 creates api model cache table', () async {
+    final tempDir = await Directory.systemTemp.createTemp('tutor1on1');
+    final dbFile = File(p.join(tempDir.path, 'test.db'));
+
+    final rawDb = sqlite3.sqlite3.open(dbFile.path);
+    rawDb.execute('PRAGMA user_version = 32;');
+    rawDb.dispose();
+
+    final db = AppDatabase.forTesting(NativeDatabase(dbFile));
+    final rows = await db
+        .customSelect(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'api_model_caches'",
+        )
+        .get();
+
+    expect(rows, hasLength(1));
+
+    await db.close();
+  });
+
+  test('migration to v34 creates durable mistake table and mastery column',
+      () async {
+    final tempDir = await Directory.systemTemp.createTemp('tutor1on1');
+    final dbFile = File(p.join(tempDir.path, 'test.db'));
+
+    final rawDb = sqlite3.sqlite3.open(dbFile.path);
+    rawDb.execute('''
+      CREATE TABLE progress_entries (
+        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        student_id INTEGER NOT NULL,
+        course_version_id INTEGER NOT NULL,
+        kp_key TEXT NOT NULL,
+        lit INTEGER NOT NULL DEFAULT 0 CHECK (lit IN (0, 1)),
+        lit_percent INTEGER NOT NULL DEFAULT 0,
+        question_level TEXT NULL,
+        easy_passed_count INTEGER NOT NULL DEFAULT 0,
+        medium_passed_count INTEGER NOT NULL DEFAULT 0,
+        hard_passed_count INTEGER NOT NULL DEFAULT 0,
+        summary_text TEXT NULL,
+        summary_raw_response TEXT NULL,
+        summary_valid INTEGER NULL CHECK (summary_valid IN (0, 1)),
+        updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s', CURRENT_TIMESTAMP) AS INTEGER)),
+        UNIQUE(student_id, course_version_id, kp_key)
+      );
+    ''');
+    rawDb.execute('PRAGMA user_version = 33;');
+    rawDb.dispose();
+
+    final db = AppDatabase.forTesting(NativeDatabase(dbFile));
+    await db.customSelect('SELECT 1').get();
+
+    final progressInfo =
+        await db.customSelect('PRAGMA table_info(progress_entries)').get();
+    final progressColumns = progressInfo.map((row) => row.data['name']).toSet();
+    final mistakeTable = await db
+        .customSelect(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='mistake_entries'",
+        )
+        .get();
+    final indexes =
+        await db.customSelect('PRAGMA index_list(mistake_entries)').get();
+
+    expect(progressColumns.contains('mastery_level'), isTrue);
+    expect(mistakeTable, hasLength(1));
+    expect(
+      indexes.map((row) => row.data['name']),
+      contains('idx_mistake_entries_student_course_status'),
+    );
 
     await db.close();
   });

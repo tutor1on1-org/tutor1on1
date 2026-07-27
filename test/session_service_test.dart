@@ -1,15 +1,18 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:archive/archive.dart';
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 
 import 'package:tutor1on1/db/app_database.dart';
 import 'package:tutor1on1/llm/llm_models.dart';
 import 'package:tutor1on1/llm/llm_service.dart';
 import 'package:tutor1on1/llm/prompt_repository.dart';
 import 'package:tutor1on1/models/tutor_contract.dart';
+import 'package:tutor1on1/services/course_artifact_service.dart';
 import 'package:tutor1on1/services/llm_log_repository.dart' as llm_logs;
 import 'package:tutor1on1/services/session_service.dart';
 import 'package:tutor1on1/services/settings_repository.dart';
@@ -135,7 +138,6 @@ student={{student_input}}
 lesson={{lesson_content}}
 recent={{recent_chat}}
 active={{active_review_question_json}}
-difficulty={{target_difficulty}}
 questions={{presented_questions}}
 errors={{error_book_summary}}
 ''';
@@ -274,7 +276,13 @@ Future<_TutorFixture> _createTutorFixture({
     'Integers can be positive, negative, or zero.',
   );
   await File('${courseRoot.path}\\1.1_easy.txt').writeAsString(
-    'Question bank',
+    'Easy Question bank',
+  );
+  await File('${courseRoot.path}\\1.1_medium.txt').writeAsString(
+    'Medium Question bank',
+  );
+  await File('${courseRoot.path}\\1.1_hard.txt').writeAsString(
+    'Hard Question bank',
   );
   await db.into(db.courseNodes).insert(
         CourseNodesCompanion.insert(
@@ -321,6 +329,41 @@ LlmCallResult _llmOk({
     model: model,
     baseUrl: baseUrl,
   );
+}
+
+void _queueReviewQuestion(
+  _FakeLlmService llmService, {
+  required String callHash,
+  String difficulty = 'easy',
+  String text = 'Review question?',
+}) {
+  final responseText = text.replaceAll('{{difficulty}}', difficulty);
+  llmService.queueCall(
+    Future<LlmCallResult>.value(
+      _llmOk(
+        responseText: responseText,
+        callHash: callHash,
+      ),
+    ),
+  );
+}
+
+Future<void> _runReviewAction({
+  required SessionService service,
+  required _TutorFixture fixture,
+  int? sessionId,
+  String studentInput = '',
+  String? helpBias,
+}) async {
+  final handle = await service.startTutorAction(
+    sessionId: sessionId ?? fixture.sessionId,
+    mode: 'review',
+    studentInput: studentInput,
+    courseVersion: fixture.courseVersion,
+    node: fixture.node,
+    helpBias: helpBias,
+  );
+  await handle.future;
 }
 
 Future<TutorControlState> _sessionControl(AppDatabase db, int sessionId) async {
@@ -380,18 +423,163 @@ void main() {
     await db.close();
   });
 
-  test('learn turn persists visible text and recommended next action',
+  test(
+      'learn turn falls back to cached bundle when scaffold misses lecture files',
+      () async {
+    final artifactRoot =
+        await Directory.systemTemp.createTemp('session_bundle_artifacts_');
+    final sourceRoot = await Directory.systemTemp.createTemp(
+      'session_bundle_source_',
+    );
+    final scaffoldRoot = await Directory.systemTemp.createTemp(
+      'session_bundle_scaffold_',
+    );
+    final courseArtifactService = CourseArtifactService(
+      artifactsRootProvider: () async => artifactRoot,
+    );
+    File? bundleFile;
+    final bundleBackedService = SessionService(
+      db,
+      llmService,
+      promptRepository,
+      settingsRepository,
+      llmLogRepository,
+      courseArtifactService: courseArtifactService,
+    );
+    try {
+      final teacherId = await db.createUser(
+        username: 'teacher_bundle_session',
+        pinHash: 'hash',
+        role: 'teacher',
+        remoteUserId: 2001,
+      );
+      final studentId = await db.createUser(
+        username: 'student_bundle_session',
+        pinHash: 'hash',
+        role: 'student',
+        teacherId: teacherId,
+        remoteUserId: 2002,
+      );
+
+      await File(p.join(sourceRoot.path, 'contents.txt')).writeAsString('''
+1 Unit
+1.1 Integers
+''');
+      await File(p.join(sourceRoot.path, '1_lecture.txt'))
+          .writeAsString('Root lecture');
+      await File(p.join(sourceRoot.path, '1.1_lecture.txt')).writeAsString(
+        'Integers can be positive, negative, or zero.',
+      );
+      await File(p.join(sourceRoot.path, '1.1_easy.txt'))
+          .writeAsString('Question bank');
+      await File(p.join(scaffoldRoot.path, 'contents.txt')).writeAsString('''
+1 Unit
+1.1 Integers
+''');
+
+      final archive = Archive();
+      final contentsBytes = utf8.encode('''
+1 Unit
+1.1 Integers
+''');
+      final rootLectureBytes = utf8.encode('Root lecture');
+      final lectureBytes = utf8.encode(
+        'Integers can be positive, negative, or zero.',
+      );
+      final questionBytes = utf8.encode('Question bank');
+      archive.addFile(
+        ArchiveFile('contents.txt', contentsBytes.length, contentsBytes),
+      );
+      archive.addFile(
+        ArchiveFile('1_lecture.txt', rootLectureBytes.length, rootLectureBytes),
+      );
+      archive.addFile(
+        ArchiveFile('1.1_lecture.txt', lectureBytes.length, lectureBytes),
+      );
+      archive.addFile(
+        ArchiveFile('1.1_easy.txt', questionBytes.length, questionBytes),
+      );
+      bundleFile = File(p.join(sourceRoot.path, 'bundle.zip'));
+      final encoded = ZipEncoder().encode(archive);
+      expect(encoded, isNotNull);
+      await bundleFile.writeAsBytes(encoded!, flush: true);
+      final courseVersionId = await db.createCourseVersion(
+        teacherId: teacherId,
+        subject: 'Bundle Course',
+        granularity: 1,
+        textbookText: '''
+1 Unit
+1.1 Integers
+''',
+        sourcePath: scaffoldRoot.path,
+      );
+      await courseArtifactService.storeImportedContentBundle(
+        courseVersionId: courseVersionId,
+        folderPath: scaffoldRoot.path,
+        bundleFile: bundleFile,
+        buildChapterArtifacts: false,
+      );
+      await db.into(db.courseNodes).insert(
+            CourseNodesCompanion.insert(
+              courseVersionId: courseVersionId,
+              kpKey: '1.1',
+              title: 'Integers',
+              description: '1.1 Integers',
+              orderIndex: 0,
+            ),
+          );
+      await db.assignStudent(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+      );
+      final sessionId = await bundleBackedService.startSession(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+        kpKey: '1.1',
+      );
+      final courseVersion = await db.getCourseVersionById(courseVersionId);
+      final node = await db.getCourseNodeByKey(courseVersionId, '1.1');
+      expect(courseVersion, isNotNull);
+      expect(node, isNotNull);
+
+      llmService.queueCall(
+        Future<LlmCallResult>.value(
+          _llmOk(
+            responseText: 'Bundle-backed response.',
+          ),
+        ),
+      );
+
+      final handle = await bundleBackedService.startTutorAction(
+        sessionId: sessionId,
+        mode: 'learn',
+        studentInput: 'Teach me simply.',
+        courseVersion: courseVersion!,
+        node: node!,
+      );
+      await handle.future;
+
+      expect(
+        llmService.callInvocations.single.renderedPrompt,
+        contains('Integers can be positive, negative, or zero.'),
+      );
+    } finally {
+      if (bundleFile != null && bundleFile.existsSync()) {
+        await bundleFile.delete();
+      }
+      await artifactRoot.delete(recursive: true);
+      await sourceRoot.delete(recursive: true);
+      await scaffoldRoot.delete(recursive: true);
+    }
+  });
+
+  test('learn turn persists plain visible text without structured schema',
       () async {
     final fixture = await _createTutorFixture(db: db, service: service);
     llmService.queueCall(
       Future<LlmCallResult>.value(
         _llmOk(
-          responseText: jsonEncode(<String, Object?>{
-            'text': 'Start by thinking of zero as the middle point.',
-            'difficulty': 'easy',
-            'mistakes': <String>[],
-            'next_action': 'review',
-          }),
+          responseText: 'Start by thinking of zero as the middle point.',
         ),
       ),
     );
@@ -410,13 +598,14 @@ void main() {
     final message = await _latestAssistantMessage(db, fixture.sessionId);
 
     expect(llmService.callInvocations.single.promptName, equals('learn'));
+    expect(llmService.callInvocations.single.schemaMap, isNull);
     expect(
       llmService.callInvocations.single.renderedPrompt,
       contains('Teach me simply.'),
     );
     expect(message.content,
         equals('Start by thinking of zero as the middle point.'));
-    expect(control.recommendedAction, equals(TutorFinishedAction.review));
+    expect(control.recommendedAction, isNull);
     expect(control.activeReviewQuestion, isNull);
     expect(control.turnFinished, isTrue);
     expect(evidence.reviewCorrectTotal, equals(0));
@@ -429,12 +618,7 @@ void main() {
     llmService.queueCall(
       Future<LlmCallResult>.value(
         _llmOk(
-          responseText: jsonEncode(<String, Object?>{
-            'text': '<think>hidden chain of thought</think>Visible answer.',
-            'difficulty': 'easy',
-            'mistakes': <String>[],
-            'next_action': 'review',
-          }),
+          responseText: '<think>hidden chain of thought</think>Visible answer.',
         ),
       ),
     );
@@ -462,13 +646,7 @@ void main() {
     llmService.queueCall(
       Future<LlmCallResult>.value(
         _llmOk(
-          responseText: jsonEncode(<String, Object?>{
-            'text': 'Which number is greater: -3 or 2?',
-            'difficulty': 'easy',
-            'mistakes': <String>[],
-            'next_action': 'review',
-            'finished': false,
-          }),
+          responseText: 'Which number is greater: -3 or 2?',
         ),
       ),
     );
@@ -479,9 +657,18 @@ void main() {
       studentInput: '',
       courseVersion: fixture.courseVersion,
       node: fixture.node,
+      helpBias: 'EASIER',
     );
     await handle.future;
 
+    expect(
+      llmService.callInvocations.single.renderedPrompt,
+      contains('Question bank'),
+    );
+    expect(
+      llmService.callInvocations.single.renderedPrompt,
+      isNot(contains('[source_material]')),
+    );
     final control = await _sessionControl(db, fixture.sessionId);
     final evidence = await _sessionEvidence(db, fixture.sessionId);
 
@@ -494,20 +681,71 @@ void main() {
     expect(control.justPassedKpEvent, isNull);
   });
 
+  test('review init clamps to the only available question difficulty',
+      () async {
+    final fixture = await _createTutorFixture(db: db, service: service);
+    final sourcePath = fixture.courseVersion.sourcePath!;
+    await File(p.join(sourcePath, '1.1_easy.txt')).delete();
+    await File(p.join(sourcePath, '1.1_medium.txt')).delete();
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: 'Hard-only review question?',
+          callHash: 'hard_only_prompt',
+        ),
+      ),
+    );
+
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      helpBias: 'EASIER',
+    );
+
+    final control = await _sessionControl(db, fixture.sessionId);
+    final progress = await db.getProgress(
+      studentId: fixture.studentId,
+      courseVersionId: fixture.courseVersion.id,
+      kpKey: fixture.node.kpKey,
+    );
+    final renderedPrompt = llmService.callInvocations.single.renderedPrompt;
+
+    expect(renderedPrompt, contains('Hard Question bank'));
+    expect(renderedPrompt, isNot(contains('Easy Question bank')));
+    expect(control.currentReviewDifficulty, equals('hard'));
+    expect(control.activeReviewQuestion?['difficulty'], equals('hard'));
+    expect(progress?.questionLevel, equals('hard'));
+  });
+
   test('finished review increments local counters and flips lit after two wins',
       () async {
     final fixture = await _createTutorFixture(db: db, service: service);
     llmService.queueCall(
       Future<LlmCallResult>.value(
         _llmOk(
+          responseText: 'Which number is greater: -3 or 2?',
+          callHash: 'review_prompt_1',
+        ),
+      ),
+    );
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
           responseText: jsonEncode(<String, Object?>{
             'text': 'Correct. 2 is greater than -3.',
-            'difficulty': 'medium',
             'mistakes': <String>[],
-            'next_action': 'review',
             'finished': true,
+            'difficulty_adjustment': 'harder',
           }),
-          callHash: 'review_1',
+          callHash: 'review_answer_1',
+        ),
+      ),
+    );
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: 'Put these in ascending order: 1, -4, 2, -3.',
+          callHash: 'review_prompt_2',
         ),
       ),
     );
@@ -516,36 +754,53 @@ void main() {
         _llmOk(
           responseText: jsonEncode(<String, Object?>{
             'text': 'Correct. The order is -4, -3, 1, 2.',
-            'difficulty': 'hard',
             'mistakes': <String>['ordering_integers'],
-            'next_action': 'review',
             'finished': true,
+            'difficulty_adjustment': 'same',
           }),
-          callHash: 'review_2',
+          callHash: 'review_answer_2',
         ),
       ),
     );
 
-    final first = await service.startTutorAction(
+    final firstPrompt = await service.startTutorAction(
+      sessionId: fixture.sessionId,
+      mode: 'review',
+      studentInput: '',
+      courseVersion: fixture.courseVersion,
+      node: fixture.node,
+    );
+    await firstPrompt.future;
+
+    final firstAnswer = await service.startTutorAction(
       sessionId: fixture.sessionId,
       mode: 'review',
       studentInput: '2',
       courseVersion: fixture.courseVersion,
       node: fixture.node,
     );
-    await first.future;
+    await firstAnswer.future;
 
     var session = await db.getSession(fixture.sessionId);
     expect(session?.summaryLit, isFalse);
 
-    final second = await service.startTutorAction(
+    final secondPrompt = await service.startTutorAction(
+      sessionId: fixture.sessionId,
+      mode: 'review',
+      studentInput: '',
+      courseVersion: fixture.courseVersion,
+      node: fixture.node,
+    );
+    await secondPrompt.future;
+
+    final secondAnswer = await service.startTutorAction(
       sessionId: fixture.sessionId,
       mode: 'review',
       studentInput: '-4, -3, 1, 2',
       courseVersion: fixture.courseVersion,
       node: fixture.node,
     );
-    await second.future;
+    await secondAnswer.future;
 
     final evidence = await _sessionEvidence(db, fixture.sessionId);
     final control = await _sessionControl(db, fixture.sessionId);
@@ -563,8 +818,242 @@ void main() {
     expect(session?.summaryLit, isTrue);
   });
 
-  test('invalid structured learn payload retries and persists the valid retry',
+  test('mistake occurrences bump once per question, again on a new question',
       () async {
+    final fixture = await _createTutorFixture(db: db, service: service);
+    _queueReviewQuestion(
+      llmService,
+      callHash: 'mb_gate_init_1',
+      text: 'First question?',
+    );
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': 'Not yet. Check the sign.',
+            'mistakes': <String>['sign error'],
+            'finished': false,
+            'difficulty_adjustment': 'same',
+          }),
+          callHash: 'mb_gate_unfinished',
+        ),
+      ),
+    );
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': 'Correct.',
+            'mistakes': <String>['sign error'],
+            'finished': true,
+            'difficulty_adjustment': 'same',
+          }),
+          callHash: 'mb_gate_finished',
+        ),
+      ),
+    );
+    _queueReviewQuestion(
+      llmService,
+      callHash: 'mb_gate_init_2',
+      text: 'Second question?',
+    );
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': 'Correct, but watch the sign.',
+            'mistakes': <String>['sign error'],
+            'finished': true,
+            'difficulty_adjustment': 'same',
+          }),
+          callHash: 'mb_gate_finished_2',
+        ),
+      ),
+    );
+
+    await _runReviewAction(service: service, fixture: fixture);
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      studentInput: 'wrong answer',
+    );
+
+    // The wrong-answer (finished=false) turn carries the evidence.
+    var entries = await db.select(db.mistakeEntries).get();
+    expect(entries, hasLength(1));
+    expect(entries.single.mistakeTagKey, equals('sign error'));
+    expect(entries.single.occurrences, equals(1));
+
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      studentInput: 'right answer',
+    );
+
+    // Same question re-listing the tag must not bump occurrences.
+    entries = await db.select(db.mistakeEntries).get();
+    expect(entries, hasLength(1));
+    expect(entries.single.occurrences, equals(1));
+
+    await _runReviewAction(service: service, fixture: fixture);
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      studentInput: 'right answer with same mistake',
+    );
+
+    // A different question re-flagging the tag is a real recurrence.
+    entries = await db.select(db.mistakeEntries).get();
+    expect(entries, hasLength(1));
+    expect(entries.single.occurrences, equals(2));
+  });
+
+  test('pending mistake focus tag does not leak into another session',
+      () async {
+    final fixture = await _createTutorFixture(db: db, service: service);
+    service.setPendingMistakeFocusTag(
+      sessionId: fixture.sessionId + 999,
+      tag: 'Sign Error',
+    );
+    _queueReviewQuestion(llmService, callHash: 'mb_isolation_init');
+
+    await _runReviewAction(service: service, fixture: fixture);
+
+    final initPrompt = llmService.callInvocations.single.renderedPrompt;
+    expect(initPrompt, isNot(contains('Mistake focus:')));
+  });
+
+  test('graded review turn marks session artifacts stale for sync', () async {
+    final fixture = await _createTutorFixture(db: db, service: service);
+    final refreshes = <SyncRelevantChange>[];
+    db.setSyncRelevantChangeCallback((change) async {
+      if (change.refreshSessionArtifacts) {
+        refreshes.add(change);
+      }
+    });
+    _queueReviewQuestion(llmService, callHash: 'mb_sync_init');
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': 'Not yet.',
+            'mistakes': <String>[],
+            'finished': false,
+            'difficulty_adjustment': 'same',
+          }),
+          callHash: 'mb_sync_unfinished',
+        ),
+      ),
+    );
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': 'Correct.',
+            'mistakes': <String>[],
+            'finished': true,
+            'difficulty_adjustment': 'same',
+          }),
+          callHash: 'mb_sync_finished',
+        ),
+      ),
+    );
+
+    await _runReviewAction(service: service, fixture: fixture);
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      studentInput: 'almost',
+    );
+    expect(refreshes, isEmpty);
+
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      studentInput: 'done',
+    );
+
+    expect(refreshes, hasLength(1));
+    expect(refreshes.single.localUserIds, contains(fixture.studentId));
+  });
+
+  test('wrong-answer turn that records a mistake marks artifacts stale',
+      () async {
+    final fixture = await _createTutorFixture(db: db, service: service);
+    final refreshes = <SyncRelevantChange>[];
+    db.setSyncRelevantChangeCallback((change) async {
+      if (change.refreshSessionArtifacts) {
+        refreshes.add(change);
+      }
+    });
+    _queueReviewQuestion(llmService, callHash: 'mb_b1_init');
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': 'Not quite — watch the sign.',
+            'mistakes': <String>['sign error'],
+            'finished': false,
+            'difficulty_adjustment': 'same',
+          }),
+          callHash: 'mb_b1_unfinished',
+        ),
+      ),
+    );
+
+    await _runReviewAction(service: service, fixture: fixture);
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      studentInput: 'wrong',
+    );
+
+    // finished==false, but a mistake was persisted, so the rebuild notify fires.
+    expect(refreshes, hasLength(1));
+    final entries = await db.select(db.mistakeEntries).get();
+    expect(entries.single.mistakeTagKey, 'sign error');
+  });
+
+  test('pending mistake focus tag seeds only the next review init', () async {
+    final fixture = await _createTutorFixture(db: db, service: service);
+    service.setPendingMistakeFocusTag(
+      sessionId: fixture.sessionId,
+      tag: 'Sign Error',
+    );
+    _queueReviewQuestion(llmService, callHash: 'mb_focus_init_1');
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': 'Correct.',
+            'mistakes': <String>[],
+            'finished': true,
+            'difficulty_adjustment': 'same',
+          }),
+          callHash: 'mb_focus_finished',
+        ),
+      ),
+    );
+    _queueReviewQuestion(llmService, callHash: 'mb_focus_init_2');
+
+    await _runReviewAction(service: service, fixture: fixture);
+
+    final firstInitPrompt = llmService.callInvocations.first.renderedPrompt;
+    expect(firstInitPrompt, contains('Mistake focus:'));
+    expect(firstInitPrompt, contains('- Sign Error'));
+
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      studentInput: 'done',
+    );
+    await _runReviewAction(service: service, fixture: fixture);
+
+    final secondInitPrompt = llmService.callInvocations.last.renderedPrompt;
+    expect(secondInitPrompt, isNot(contains('Mistake focus:')));
+  });
+
+  test('learn payload does not require structured retry', () async {
     final fixture = await _createTutorFixture(db: db, service: service);
     llmService.queueCall(
       Future<LlmCallResult>.value(
@@ -575,19 +1064,6 @@ void main() {
             'mistakes': <String>[],
           }),
           callHash: 'invalid_learn',
-        ),
-      ),
-    );
-    llmService.queueCall(
-      Future<LlmCallResult>.value(
-        _llmOk(
-          responseText: jsonEncode(<String, Object?>{
-            'text': 'Recovered after retry.',
-            'difficulty': 'easy',
-            'mistakes': <String>[],
-            'next_action': 'review',
-          }),
-          callHash: 'valid_learn',
         ),
       ),
     );
@@ -603,16 +1079,13 @@ void main() {
 
     final message = await _latestAssistantMessage(db, fixture.sessionId);
 
-    expect(llmService.callInvocations.length, equals(2));
-    expect(message.content, equals('Recovered after retry.'));
+    expect(llmService.callInvocations.length, equals(1));
+    expect(message.content, equals('This payload is missing next_action.'));
     expect(
       llmLogRepository.entries.any(
-        (entry) =>
-            entry.promptName == 'learn' &&
-            entry.status == 'retry' &&
-            (entry.retryReason ?? '').contains('missing keys'),
+        (entry) => entry.promptName == 'learn' && entry.status == 'retry',
       ),
-      isTrue,
+      isFalse,
     );
     expect(
       llmLogRepository.entries.any(
@@ -635,29 +1108,35 @@ void main() {
       hardWeight: 1,
       passThreshold: 1,
     );
+    _queueReviewQuestion(
+      llmService,
+      callHash: 'custom_pass_rule_prompt',
+      difficulty: 'easy',
+    );
     llmService.queueCall(
       Future<LlmCallResult>.value(
         _llmOk(
           responseText: jsonEncode(<String, Object?>{
             'text': 'Correct.',
-            'difficulty': 'easy',
             'mistakes': <String>[],
-            'next_action': 'review',
             'finished': true,
+            'difficulty_adjustment': 'same',
           }),
           callHash: 'custom_pass_rule',
         ),
       ),
     );
 
-    final handle = await service.startTutorAction(
-      sessionId: fixture.sessionId,
-      mode: 'review',
-      studentInput: '2',
-      courseVersion: fixture.courseVersion,
-      node: fixture.node,
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      helpBias: 'EASIER',
     );
-    await handle.future;
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      studentInput: '2',
+    );
 
     final session = await db.getSession(fixture.sessionId);
     final control = await _sessionControl(db, fixture.sessionId);
@@ -676,60 +1155,106 @@ void main() {
     expect(progress?.litPercent, equals(100));
   });
 
-  test('just-passed event uses post-update global progress counts', () async {
+  test('finished review without active question does not increment progress',
+      () async {
     final fixture = await _createTutorFixture(db: db, service: service);
     llmService.queueCall(
       Future<LlmCallResult>.value(
         _llmOk(
           responseText: jsonEncode(<String, Object?>{
-            'text': 'Correct medium review.',
-            'difficulty': 'medium',
+            'text': 'Correct, but no active review question was pending.',
             'mistakes': <String>[],
-            'next_action': 'review',
             'finished': true,
+            'difficulty_adjustment': 'same',
+          }),
+          callHash: 'orphan_finished_review',
+        ),
+      ),
+    );
+
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      studentInput: '2',
+    );
+
+    final evidence = await _sessionEvidence(db, fixture.sessionId);
+    final control = await _sessionControl(db, fixture.sessionId);
+    final progress = await db.getProgress(
+      studentId: fixture.studentId,
+      courseVersionId: fixture.courseVersion.id,
+      kpKey: fixture.node.kpKey,
+    );
+
+    expect(evidence.reviewCorrectTotal, equals(0));
+    expect(evidence.reviewAttemptTotal, equals(0));
+    expect(control.justPassedKpEvent, isNull);
+    expect(progress?.easyPassedCount ?? 0, equals(0));
+  });
+
+  test('just-passed event uses post-update global progress counts', () async {
+    final fixture = await _createTutorFixture(db: db, service: service);
+    _queueReviewQuestion(
+      llmService,
+      callHash: 'global_counts_seed_prompt',
+      difficulty: 'medium',
+    );
+    llmService.queueCall(
+      Future<LlmCallResult>.value(
+        _llmOk(
+          responseText: jsonEncode(<String, Object?>{
+            'text': 'Correct medium review.',
+            'mistakes': <String>[],
+            'finished': true,
+            'difficulty_adjustment': 'harder',
           }),
           callHash: 'global_counts_seed',
         ),
       ),
     );
 
-    final first = await service.startTutorAction(
-      sessionId: fixture.sessionId,
-      mode: 'review',
+    await _runReviewAction(service: service, fixture: fixture);
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
       studentInput: 'medium answer',
-      courseVersion: fixture.courseVersion,
-      node: fixture.node,
     );
-    await first.future;
 
     final secondSessionId = await service.startSession(
       studentId: fixture.studentId,
       courseVersionId: fixture.courseVersion.id,
       kpKey: fixture.node.kpKey,
     );
+    _queueReviewQuestion(
+      llmService,
+      callHash: 'global_counts_pass_prompt',
+      difficulty: 'hard',
+    );
     llmService.queueCall(
       Future<LlmCallResult>.value(
         _llmOk(
           responseText: jsonEncode(<String, Object?>{
             'text': 'Correct hard review.',
-            'difficulty': 'hard',
             'mistakes': <String>[],
-            'next_action': 'review',
             'finished': true,
+            'difficulty_adjustment': 'same',
           }),
           callHash: 'global_counts_pass',
         ),
       ),
     );
 
-    final second = await service.startTutorAction(
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
       sessionId: secondSessionId,
-      mode: 'review',
-      studentInput: 'hard answer',
-      courseVersion: fixture.courseVersion,
-      node: fixture.node,
     );
-    await second.future;
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      sessionId: secondSessionId,
+      studentInput: 'hard answer',
+    );
 
     final control = await _sessionControl(db, secondSessionId);
     final progress = await db.getProgress(
@@ -758,29 +1283,35 @@ void main() {
       hardWeight: 1,
       passThreshold: 1,
     );
+    _queueReviewQuestion(
+      llmService,
+      callHash: 'first_pass_prompt',
+      difficulty: 'easy',
+    );
     llmService.queueCall(
       Future<LlmCallResult>.value(
         _llmOk(
           responseText: jsonEncode(<String, Object?>{
             'text': 'Correct.',
-            'difficulty': 'easy',
             'mistakes': <String>[],
-            'next_action': 'review',
             'finished': true,
+            'difficulty_adjustment': 'same',
           }),
           callHash: 'first_pass',
         ),
       ),
     );
 
-    final first = await service.startTutorAction(
-      sessionId: fixture.sessionId,
-      mode: 'review',
-      studentInput: '2',
-      courseVersion: fixture.courseVersion,
-      node: fixture.node,
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      helpBias: 'EASIER',
     );
-    await first.future;
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      studentInput: '2',
+    );
 
     final secondSessionId = await service.startSession(
       studentId: fixture.studentId,
@@ -790,13 +1321,7 @@ void main() {
     llmService.queueCall(
       Future<LlmCallResult>.value(
         _llmOk(
-          responseText: jsonEncode(<String, Object?>{
-            'text': 'Keep working on the same question.',
-            'difficulty': 'easy',
-            'mistakes': <String>[],
-            'next_action': 'review',
-            'finished': false,
-          }),
+          responseText: 'Keep working on the same question.',
           callHash: 'already_passed_unfinished',
         ),
       ),
@@ -830,58 +1355,71 @@ void main() {
       hardWeight: 1,
       passThreshold: 1,
     );
+    _queueReviewQuestion(
+      llmService,
+      callHash: 'already_passed_seed_prompt',
+      difficulty: 'easy',
+    );
     llmService.queueCall(
       Future<LlmCallResult>.value(
         _llmOk(
           responseText: jsonEncode(<String, Object?>{
             'text': 'Correct.',
-            'difficulty': 'easy',
             'mistakes': <String>[],
-            'next_action': 'review',
             'finished': true,
+            'difficulty_adjustment': 'same',
           }),
           callHash: 'already_passed_seed',
         ),
       ),
     );
 
-    final first = await service.startTutorAction(
-      sessionId: fixture.sessionId,
-      mode: 'review',
-      studentInput: '2',
-      courseVersion: fixture.courseVersion,
-      node: fixture.node,
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      helpBias: 'EASIER',
     );
-    await first.future;
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      studentInput: '2',
+    );
 
     final secondSessionId = await service.startSession(
       studentId: fixture.studentId,
       courseVersionId: fixture.courseVersion.id,
       kpKey: fixture.node.kpKey,
     );
+    _queueReviewQuestion(
+      llmService,
+      callHash: 'already_passed_repeat_prompt',
+      difficulty: 'easy',
+    );
     llmService.queueCall(
       Future<LlmCallResult>.value(
         _llmOk(
           responseText: jsonEncode(<String, Object?>{
             'text': 'Correct again.',
-            'difficulty': 'easy',
             'mistakes': <String>[],
-            'next_action': 'review',
             'finished': true,
+            'difficulty_adjustment': 'same',
           }),
           callHash: 'already_passed_repeat',
         ),
       ),
     );
 
-    final second = await service.startTutorAction(
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
       sessionId: secondSessionId,
-      mode: 'review',
-      studentInput: '3',
-      courseVersion: fixture.courseVersion,
-      node: fixture.node,
     );
-    await second.future;
+    await _runReviewAction(
+      service: service,
+      fixture: fixture,
+      sessionId: secondSessionId,
+      studentInput: '3',
+    );
 
     final control = await _sessionControl(db, secondSessionId);
     final progress = await db.getProgress(

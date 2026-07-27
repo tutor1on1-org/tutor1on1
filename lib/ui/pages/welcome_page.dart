@@ -3,6 +3,8 @@ import 'package:tutor1on1/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
 import '../../services/app_services.dart';
+import '../../services/app_version_service.dart';
+import '../../services/home_sync_coordinator.dart';
 import '../../services/marketplace_api_service.dart';
 import '../../state/auth_controller.dart';
 import '../../state/settings_controller.dart';
@@ -31,8 +33,11 @@ class _WelcomePageState extends State<WelcomePage> {
   final _studentPassword = TextEditingController();
   final _studentRecoveryEmail = TextEditingController();
   bool _teacherContactPublished = false;
+  bool _loginInProgress = false;
   List<SubjectLabelSummary> _subjectLabels = const <SubjectLabelSummary>[];
   final Set<int> _selectedTeacherSubjectLabelIds = <int>{};
+  late final Future<AppVersionInfo> _appVersionFuture =
+      AppVersionService.load();
 
   @override
   void initState() {
@@ -139,6 +144,7 @@ class _WelcomePageState extends State<WelcomePage> {
           textInputAction: TextInputAction.next,
           autofillHints: const [AutofillHints.username],
           autocorrect: false,
+          enabled: !_loginInProgress,
         ),
         TextField(
           key: const Key('login_password'),
@@ -146,22 +152,46 @@ class _WelcomePageState extends State<WelcomePage> {
           decoration: InputDecoration(labelText: l10n.pinLabel),
           obscureText: true,
           textInputAction: TextInputAction.go,
-          onSubmitted: (_) => _handleLogin(context),
+          enabled: !_loginInProgress,
+          onSubmitted: (_) {
+            if (_loginInProgress) {
+              return;
+            }
+            _handleLogin(context);
+          },
         ),
         const SizedBox(height: 16),
         ElevatedButton(
           key: const Key('login_button'),
-          onPressed: () => _handleLogin(context),
-          child: Text(l10n.loginButton),
+          onPressed: _loginInProgress ? null : () => _handleLogin(context),
+          child: _loginInProgress
+              ? Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(l10n.loadingLabel),
+                  ],
+                )
+              : Text(l10n.loginButton),
         ),
         Align(
           alignment: Alignment.centerRight,
           child: TextButton(
             key: const Key('forgot_password_button'),
-            onPressed: () => _openRequestRecoveryDialog(context),
+            onPressed: _loginInProgress
+                ? null
+                : () => _openRequestRecoveryDialog(context),
             child: Text(l10n.forgotPasswordButton),
           ),
         ),
+        const SizedBox(height: 12),
+        _buildAppVersionInfo(context),
       ],
     );
   }
@@ -274,6 +304,8 @@ class _WelcomePageState extends State<WelcomePage> {
           onPressed: () => _handleRegisterTeacher(context),
           child: Text(l10n.registerTeacherButton),
         ),
+        const SizedBox(height: 12),
+        _buildAppVersionInfo(context),
       ],
     );
   }
@@ -322,6 +354,8 @@ class _WelcomePageState extends State<WelcomePage> {
           onPressed: () => _handleRegisterStudent(context),
           child: Text(l10n.registerStudentButton),
         ),
+        const SizedBox(height: 12),
+        _buildAppVersionInfo(context),
       ],
     );
   }
@@ -349,6 +383,43 @@ class _WelcomePageState extends State<WelcomePage> {
           _showMessage(context, l10n.languageSavedMessage);
         },
       ),
+    );
+  }
+
+  Widget _buildAppVersionInfo(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final style = Theme.of(context).textTheme.bodySmall;
+    return FutureBuilder<AppVersionInfo>(
+      future: _appVersionFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return Text(l10n.loadingLabel, style: style);
+        }
+        if (snapshot.hasError) {
+          return Text(
+            l10n.appVersionLoadFailed('${snapshot.error}'),
+            style: style?.copyWith(color: Colors.redAccent) ??
+                const TextStyle(color: Colors.redAccent),
+          );
+        }
+        final versionInfo = snapshot.data;
+        if (versionInfo == null) {
+          return Text(
+            l10n.appVersionLoadFailed('Version payload missing.'),
+            style: style?.copyWith(color: Colors.redAccent) ??
+                const TextStyle(color: Colors.redAccent),
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${l10n.appVersionLabel}: ${versionInfo.appVersion}',
+              style: style,
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -380,6 +451,9 @@ class _WelcomePageState extends State<WelcomePage> {
   }
 
   Future<void> _handleLogin(BuildContext context) async {
+    if (_loginInProgress) {
+      return;
+    }
     final l10n = AppLocalizations.of(context)!;
     final username = _loginUsername.text;
     final password = _loginPassword.text;
@@ -387,30 +461,45 @@ class _WelcomePageState extends State<WelcomePage> {
         !_ensurePassword(context, password)) {
       return;
     }
+    setState(() => _loginInProgress = true);
     final auth = context.read<AuthController>();
-    final ok = await auth.login(username, password);
-    if (!ok && mounted) {
-      _showMessage(context, auth.lastError ?? l10n.invalidLogin);
-      return;
-    }
-    if (!mounted) {
-      return;
-    }
-    final user = auth.currentUser;
-    if (user == null) {
-      return;
-    }
-    final services = context.read<AppServices>();
     try {
-      await services.sessionSyncService.prepareForAutoSync(
-        currentUser: user,
-        password: password,
-      );
-    } catch (error) {
+      final ok = await auth.login(username, password);
+      if (!ok) {
+        if (mounted) {
+          _showMessage(context, auth.lastError ?? l10n.invalidLogin);
+        }
+        return;
+      }
       if (!mounted) {
         return;
       }
-      _showMessage(context, l10n.sessionSyncFailed('$error'));
+      final user = auth.currentUser;
+      if (user == null) {
+        return;
+      }
+      final services = context.read<AppServices>();
+      try {
+        await services.sessionSyncService.prepareForAutoSync(
+          currentUser: user,
+          password: password,
+        );
+      } catch (error) {
+        if (!mounted) {
+          return;
+        }
+        _showMessage(
+          context,
+          describeSyncFailure(
+            stage: 'Sync setup',
+            error: error,
+          ).userMessage,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loginInProgress = false);
+      }
     }
   }
 
@@ -458,7 +547,13 @@ class _WelcomePageState extends State<WelcomePage> {
       if (!mounted) {
         return;
       }
-      _showMessage(context, l10n.sessionSyncFailed('$error'));
+      _showMessage(
+        context,
+        describeSyncFailure(
+          stage: 'Sync setup',
+          error: error,
+        ).userMessage,
+      );
     }
   }
 
@@ -495,7 +590,13 @@ class _WelcomePageState extends State<WelcomePage> {
       if (!mounted) {
         return;
       }
-      _showMessage(context, l10n.sessionSyncFailed('$error'));
+      _showMessage(
+        context,
+        describeSyncFailure(
+          stage: 'Sync setup',
+          error: error,
+        ).userMessage,
+      );
     }
   }
 

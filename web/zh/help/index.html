@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta content="width=device-width, initial-scale=1.0" name="viewport">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Tutor1on1 帮助页面：个性化教学、错题复习、API config、课程发布、学生报名、会话与同步。">
+  <meta content="#f7f9fb" name="theme-color">
+  <title>Tutor1on1 帮助</title>
+  <link rel="apple-touch-icon" href="../../icons/Icon-192.png">
+  <link rel="icon" type="image/png" href="../../favicon.png">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="stylesheet" href="../../styles.css">
+  <script src="/site.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="/zh/">
+        <span class="brand-mark">T1</span>
+        <span class="brand-text"><strong>Tutor1on1</strong><span>帮助</span></span>
+      </a>
+      <nav class="topnav" aria-label="导航和语言">
+        <table class="topnav-table" role="presentation"><tr>
+          <td><a class="nav-link nav-action" href="/zh/">首页</a></td>
+          <td><a class="nav-link nav-action" href="/zh/install/">安装</a></td>
+          <td><select class="lang-select nav-action" aria-label="导航和语言" data-language-switcher><option value="zh">简体中文</option></select></td>
+        </tr></table>
+      </nav>
+    </header>
+
+    <main class="page">
+      <section class="hero hero-compact">
+        <p class="eyebrow">快速开始</p>
+        <h1>按角色使用 Tutor1on1。</h1>
+        <p class="lead">老师发布并管理课程；学生申请报名、下载已批准内容，并获得符合个人进度的指导、练习和错题复习。</p>
+        <div class="actions">
+          <a class="button button-primary" href="/zh/install/">先安装</a>
+          <a class="button button-ghost" href="#teacher">老师流程</a>
+          <a class="button button-ghost" href="#student">学生流程</a>
+          <a class="button button-ghost" href="#course-folder">课程 folder</a>
+          <a class="button button-ghost" href="#config">API config</a>
+          <a class="button button-ghost" href="#oauth">ChatGPT OAuth</a>
+        </div>
+      </section>
+
+      <section class="role-strip section-block">
+        <article class="role-card teacher" id="teacher">
+          <p class="eyebrow">老师流程</p>
+          <h2>发布并个性化管理课程。</h2>
+          <ol class="help-list"><li>以老师身份登录，或注册老师账号。</li><li>创建或加载本地课程版本。</li><li>将已校验的 bundle 上传到 marketplace。</li><li>审批学生报名请求。</li><li>在老师主页查看每个学生的进度、常见错误和同步过来的会话。</li></ol>
+        </article>
+        <article class="role-card student" id="student">
+          <p class="eyebrow">学生流程</p>
+          <h2>报名并按自己的节奏学习。</h2>
+          <ol class="help-list"><li>以学生身份登录，或注册学生账号。</li><li>打开 marketplace，申请报名课程。</li><li>等待老师批准。</li><li>下载已批准的课程 bundle。</li><li>打开课程，开始跟随个人进度的 Learn 或 Review 会话。</li></ol>
+        </article>
+      </section>
+
+      <section class="content-block" id="course-folder">
+        <p class="eyebrow">用 AI 制作课程</p>
+        <h2>把 PDF、PPT 或教学讲义转换成 Tutor1on1 课程 folder。</h2>
+        <p class="muted">已有教学资料时，建议先用外部 AI agent 重新整理成课程 folder；Tutor1on1 负责校验、加载、上传，并支持后续对单个 KP 做 AI edit。</p>
+        <ol class="help-list"><li>把 PDF、PPT、Word、讲义、题目和答案说明放进一个 source folder。扫描版先 OCR，公式和图表要人工检查。</li><li>先让 Codex 只生成 <code>contents.txt</code> 大纲。老师确认 KP 顺序、title 和粒度之后，再让它写文件。</li><li>让 Codex 生成输出课程 folder。<code>contents.txt</code> 里的每个 id 都必须有对应的 <code>&lt;id&gt;_lecture.txt</code>。题库可选，文件名为 <code>&lt;id&gt;_easy.txt</code>、<code>&lt;id&gt;_medium.txt</code>、<code>&lt;id&gt;_hard.txt</code>。</li><li>老师端加载输出 folder。如果 app 报 missing file 或 id 错误，把错误贴回 Codex，让它修复 folder。</li><li>课程加载成功后，对单个 KP 右键 <strong>AI edit content</strong>，继续微调 lesson 或题库。</li></ol>
+        <pre class="code-block"><code>special_relativity_course/
+  contents.txt
+  context.txt
+  1_lecture.txt
+  1.1_lecture.txt
+  1.1_easy.txt
+  1.1_medium.txt
+  1.1_hard.txt</code></pre>
+        <h3>Codex 网页版</h3>
+        <ol class="help-list"><li>新建任务：<strong>Generate Tutor1on1 course folder from teaching materials</strong>。</li><li>上传 PDF/PPT/Word 文件。</li><li>先提示 Codex：<code>Read the uploaded materials and propose a Tutor1on1 contents.txt outline. Use dotted ids like 1, 1.1, 1.2. Do not generate files yet. Wait for my approval.</code></li><li>确认大纲后再提示：<code>Create a complete Tutor1on1 course folder with contents.txt, one &lt;id&gt;_lecture.txt for every id, and optional easy/medium/hard question files. Run a self-check and list missing files.</code></li><li>下载生成的 folder 或 zip，解压后在 Tutor1on1 里加载这个 folder。</li></ol>
+        <h3>Codex 电脑 GUI / 本地版</h3>
+        <ol class="help-list"><li>创建 <code>source_materials/</code> 放原始文档，再创建一个空输出 folder，例如 <code>special_relativity_course/</code>。</li><li>在 Codex 里打开这两个 folder 的上一级 workspace。</li><li>提示 Codex：<code>Use source_materials/ as input. Create a complete Tutor1on1 course folder in special_relativity_course/. Do not modify source_materials/. First generate contents.txt, then generate all lecture and question files. After writing files, check that every contents.txt id has &lt;id&gt;_lecture.txt.</code></li><li>让 Codex 直接写文件，不要只在聊天里贴文本。最后让它输出 self-check report，然后在 Tutor1on1 里加载输出 folder。</li></ol>
+        <h3>在 Tutor1on1 里 AI edit course</h3>
+        <ol class="help-list"><li>课程 folder 加载成功后，老师打开 course skill tree。</li><li>在目标 KP node 或下方 title 上右键，选择 <strong>AI edit content</strong>。</li><li>选择 <strong>Content</strong> 生成 lesson 内容；选择 <strong>Question</strong> 生成当前 KP 的题库文本。</li><li>和 AI 对话，直到最新回复适合入库。每次请求都尽量围绕当前 KP。</li><li>点击 AI 回复上的 <strong>Edit</strong> 打开 diff 窗口。左侧是当前内容，右侧是 AI 建议内容，右侧可以手动改。</li><li>选择 <strong>Add</strong> 追加，或 <strong>Replace</strong> 覆盖。如果是 question，还要选择 <strong>easy</strong>、<strong>medium</strong> 或 <strong>hard</strong>。</li><li>保存后修改进入本地课程。需要让 marketplace 学生拿到新内容时，再重新上传 course bundle。</li></ol>
+      </section>
+
+      <section class="content-block">
+        <h2>个性化学习闭环</h2>
+        <div class="steps"><article class="step"><span class="step-number">1</span><div><h3>学习</h3><p>Tutor 会结合课程内容和学生当前进度，讲解下一步知识点。</p></div></article><article class="step"><span class="step-number">2</span><div><h3>练习</h3><p>练习会根据学生回答调整，必要时给提示、更简单的例子和正反馈。</p></div></article><article class="step"><span class="step-number">3</span><div><h3>复习错题</h3><p>有意义的错误会进入错题集，让后续复习真正针对薄弱点。</p></div></article></div>
+      </section>
+
+      <section class="content-block" id="config">
+        <h2>API config 里面的内容</h2>
+        <ul class="help-list"><li><strong>提供方</strong>选择模型服务，例如 OpenAI 或 SiliconFlow。</li><li><strong>Base URL</strong> 是 Tutor1on1 请求模型服务的地址，应用会按当前提供方显示。</li><li><strong>API Key</strong> 保存在本机，用于 tutor、TTS、STT 等需要模型服务的功能。</li><li><strong>测试 API key</strong> 会请求 <code>{baseUrl}/models</code>，验证 key，并加载可用的文本、TTS、STT 模型列表。它不会下载模型，也不会自动选择新模型。</li><li><strong>文本模型</strong> 用于对话式 tutor。<strong>Thinking effort</strong> 只在提供方支持 reasoning 控制时显示。</li><li><strong>TTS 模型</strong> 控制语音输出；<strong>STT 模型</strong> 控制语音转文字。如果不用语音，可以留空。</li><li><strong>已保存的 API 配置</strong> 保存 provider URL、选择的模型、thinking effort 和 key hash，方便复用已验证配置。</li></ul>
+      </section>
+
+      <section class="content-block" id="oauth">
+        <h2>不用 API key，改用 ChatGPT OAuth</h2>
+        <ol class="help-list"><li>打开设置里的 API Settings，把 <strong>Provider</strong> 选成 <strong>OpenAI Codex (ChatGPT OAuth)</strong>。</li><li>点击 <strong>Login with ChatGPT</strong>，在浏览器完成登录。如果应用没有自动返回，把最后的 redirect URL 或 authorization code 粘贴到弹窗里。</li><li>点击 <strong>Refresh models</strong>，选择文本模型，例如 <code>gpt-5.5</code>，然后保存 API 配置。</li><li>开始或重新打开 tutor 会话，在模型选择器里选择已保存的 Codex OAuth 模型。</li></ol>
+        <p class="muted">这个选项使用 ChatGPT/Codex OAuth quota 来跑 tutor 文本对话。需要语音时，TTS 和 STT 仍然使用 API-key provider。</p>
+      </section>
+
+      <section class="grid grid-three section-block"><article class="card"><span class="kicker">Marketplace</span><h2>课程发现</h2><p>老师发布课程展示；学生浏览课程、申请报名，并在批准后下载。</p></article><article class="card"><span class="kicker">Sessions</span><h2>个人反馈</h2><p>Learn 用于新内容，Review 用于回忆练习。反馈会根据学生回答调整，并保持进步可见。</p></article><article class="card"><span class="kicker">Sync</span><h2>连续学习</h2><p>老师和学生主页会同步已连接账号的报名、会话、进度和错题信号。</p></article></section>
+
+      <section class="content-block">
+        <h2>常见问题</h2>
+        <ul class="help-list"><li>如果登录或课程加载失败，先确认应用能连到 <code>api.tutor1on1.org</code>。</li><li>如果学生无法进入课程，先确认报名已批准，并且 bundle 已下载。</li><li>如果模型列表看起来过期，对当前 provider 和 key 重新运行“测试 API key”。</li><li>如果多设备进度不同步，等待同步完成，或手动刷新一次。</li></ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Tutor1on1 帮助</p>
+      <p><a class="footer-link" href="/zh/">首页</a></p>
+      <p><a class="footer-link" href="/zh/legal/">法律</a></p>
+      <p><a class="footer-link" href="/zh/legal/privacy/">隐私</a></p>
+      <p><a class="footer-link" href="/zh/legal/license/">许可</a></p>
+      <p>老师发布课程，学生报名学习，个性化会话。</p>
+    </footer>
+  </div>
+</body>
+</html>

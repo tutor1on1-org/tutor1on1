@@ -36,3 +36,8 @@
 -keepattributes *Annotation*
 -keepattributes Signature
 -keepattributes InnerClasses
+
+# Flutter plugin registration can be reached through generated/reflection paths.
+# Keep MethodChannel plugins so R8 does not strip them from release APKs.
+-keep class io.flutter.plugins.GeneratedPluginRegistrant { *; }
+-keep class * implements io.flutter.embedding.engine.plugins.FlutterPlugin { *; }

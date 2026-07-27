@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:drift/drift.dart';
@@ -5,11 +6,15 @@ import 'package:path/path.dart' as p;
 
 import '../db/app_database.dart' hide SyncItemState;
 import '../llm/prompt_repository.dart';
+import '../security/hash_utils.dart';
+import 'artifact_sync_api_service.dart';
 import 'course_artifact_service.dart';
 import 'course_bundle_service.dart';
 import 'course_service.dart';
 import 'marketplace_api_service.dart';
 import 'prompt_bundle_compat.dart';
+import 'prompt_bundle_metadata_builder.dart';
+import 'prompt_template_validator.dart';
 import 'remote_student_identity_service.dart';
 import 'remote_teacher_identity_service.dart';
 import 'secure_storage_service.dart';
@@ -22,11 +27,14 @@ class EnrollmentSyncService {
     required CourseService courseService,
     required MarketplaceApiService marketplaceApi,
     required PromptRepository promptRepository,
+    ArtifactSyncApiService? artifactApi,
     CourseArtifactService? courseArtifactService,
   })  : _db = db,
         _secureStorage = secureStorage,
         _courseService = courseService,
         _api = marketplaceApi,
+        _artifactApi =
+            artifactApi ?? ArtifactSyncApiService(secureStorage: secureStorage),
         _promptRepository = promptRepository,
         _courseArtifactService = courseArtifactService;
 
@@ -34,24 +42,568 @@ class EnrollmentSyncService {
   final SecureStorageService _secureStorage;
   final CourseService _courseService;
   final MarketplaceApiService _api;
+  final ArtifactSyncApiService _artifactApi;
   final PromptRepository _promptRepository;
   final CourseArtifactService? _courseArtifactService;
+  final PromptTemplateValidator _promptValidator = PromptTemplateValidator();
   final RemoteTeacherIdentityService _remoteTeacherIdentity =
       const RemoteTeacherIdentityService();
   final RemoteStudentIdentityService _remoteStudentIdentity =
       const RemoteStudentIdentityService();
   bool _syncing = false;
+  int _localState2RefreshSuppressionDepth = 0;
   static final RegExp _versionSuffixPattern = RegExp(r'_(\d{10,})$');
+  static const String _artifactClassCourseBundle = 'course_bundle';
+  static const String _artifactState2Version = 'artifact_state2_v1';
   static const Duration _syncMinInterval = Duration(seconds: 60);
-  static const String _syncDomainDeletionEvents = 'enrollment_sync_deletions';
   static const String _syncDomainStudentEnrollments = 'enrollment_sync_student';
   static const String _syncDomainStudentCourseBundles =
       'enrollment_sync_student_bundle';
   static const String _syncDomainTeacherCourses = 'enrollment_sync_teacher';
   static const String _syncDomainTeacherCourseUpload =
       'enrollment_sync_teacher_upload';
-  static const String _syncScopeEnrollments = 'enrollments';
-  static const String _syncScopeTeacherCourses = 'teacher_courses';
+  static const String _syncMetadataKindLocalState1 = 'local_state1';
+  static const String _syncMetadataKindTeacherPromptTimestamps =
+      'teacher_prompt_timestamps';
+  static const String _syncMetadataDomainTeacherPromptTimestamps =
+      'enrollment_sync_teacher_prompt_timestamps';
+
+  bool get _localState2RefreshSuppressed =>
+      _localState2RefreshSuppressionDepth > 0;
+
+  Future<T> _runWithLocalState2RefreshSuppressed<T>(
+    Future<T> Function() action,
+  ) async {
+    _localState2RefreshSuppressionDepth++;
+    try {
+      return await action();
+    } finally {
+      _localState2RefreshSuppressionDepth--;
+    }
+  }
+
+  Future<void> refreshStoredLocalState2ForLocalUsers({
+    required Set<int> localUserIds,
+  }) async {
+    final seen = <int>{};
+    for (final localUserId in localUserIds) {
+      if (localUserId <= 0 || !seen.add(localUserId)) {
+        continue;
+      }
+      final user = await _db.getUserById(localUserId);
+      if (user == null) {
+        continue;
+      }
+      await refreshStoredLocalState2(currentUser: user);
+    }
+  }
+
+  Future<void> handleLocalSyncRelevantChange(
+    SyncRelevantChange change,
+  ) async {
+    if (_localState2RefreshSuppressed ||
+        change.isEmpty ||
+        !change.refreshEnrollmentState) {
+      return;
+    }
+    await refreshStoredLocalState2ForLocalUsers(
+      localUserIds: change.localUserIds,
+    );
+  }
+
+  Future<void> _syncIfState2Mismatch({
+    required int remoteUserId,
+    required String domain,
+    required Future<String> Function() readRemoteState2,
+    required Future<void> Function() onMismatch,
+    Future<void> Function()? onMatch,
+  }) async {
+    final remoteState2 = await readRemoteState2();
+    final localState2 = (await _secureStorage.readLocalSyncState2(
+          remoteUserId: remoteUserId,
+          domain: domain,
+        ))
+            ?.trim() ??
+        '';
+    if (remoteState2 == localState2) {
+      if (onMatch != null) {
+        await onMatch();
+      }
+      return;
+    }
+    await onMismatch();
+  }
+
+  Future<void> refreshStoredLocalState2({required User currentUser}) async {
+    final remoteUserId = currentUser.remoteUserId;
+    if (remoteUserId == null || remoteUserId <= 0) {
+      return;
+    }
+    if (currentUser.role == 'teacher') {
+      await _repairTeacherStudentOwnership(teacherId: currentUser.id);
+    }
+    late final String domain;
+    late final Map<String, String> state1FingerprintsByScope;
+    if (currentUser.role == 'teacher') {
+      domain = _syncDomainTeacherCourses;
+      state1FingerprintsByScope = await _buildTeacherCourseState1Fingerprints(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+      );
+    } else {
+      domain = _syncDomainStudentEnrollments;
+      state1FingerprintsByScope =
+          await _buildStudentEnrollmentState1Fingerprints(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+      );
+    }
+    await _writeLocalState1Fingerprints(
+      remoteUserId: remoteUserId,
+      domain: domain,
+      fingerprintsByScope: state1FingerprintsByScope,
+    );
+    final localState2 = await _buildCanonicalLocalState2(
+      currentUser: currentUser,
+      remoteUserId: remoteUserId,
+    );
+    await _secureStorage.writeLocalSyncState2(
+      remoteUserId: remoteUserId,
+      domain: domain,
+      state2: localState2,
+    );
+  }
+
+  Future<void> repairTeacherEnrollmentScaffoldsFromServer({
+    required User currentUser,
+  }) async {
+    if (currentUser.role != 'teacher') {
+      return;
+    }
+    await _reconcileTeacherEnrollmentScaffolds(
+      currentUser: currentUser,
+      teacherEnrollments: await _api.listTeacherEnrollments(),
+    );
+  }
+
+  Future<String> readCanonicalRemoteState2() {
+    return _artifactApi.getState2();
+  }
+
+  Future<ArtifactState1Result> readCanonicalRemoteState1() {
+    return _artifactApi.getState1();
+  }
+
+  Future<Map<String, String>> buildCanonicalVisibleArtifactHashes({
+    required User currentUser,
+  }) async {
+    final remoteUserId = currentUser.remoteUserId;
+    if (remoteUserId == null || remoteUserId <= 0) {
+      return const <String, String>{};
+    }
+    if (currentUser.role == 'teacher') {
+      return _buildTeacherVisibleArtifactHashes(remoteUserId: remoteUserId);
+    }
+    return _buildStudentVisibleArtifactHashes(
+      currentUser: currentUser,
+      remoteUserId: remoteUserId,
+    );
+  }
+
+  Future<SyncRunStats> syncFromCanonicalState1({
+    required User currentUser,
+    required List<ArtifactState1Item> visibleItems,
+  }) async {
+    final stats = SyncRunStats();
+    if (_syncing) {
+      return stats;
+    }
+    final remoteUserId = currentUser.remoteUserId;
+    if (remoteUserId == null || remoteUserId <= 0) {
+      return stats;
+    }
+    final summary = _SyncTransferSummary();
+    _syncing = true;
+    try {
+      await _runWithLocalState2RefreshSuppressed(() async {
+        final bundleItems = visibleItems
+            .where((item) => item.artifactClass == _artifactClassCourseBundle)
+            .toList(growable: false)
+          ..sort((left, right) => left.artifactId.compareTo(right.artifactId));
+        if (currentUser.role == 'teacher') {
+          await _syncTeacherCoursesFromCanonicalState1(
+            currentUser: currentUser,
+            remoteUserId: remoteUserId,
+            bundleItems: bundleItems,
+            summary: summary,
+          );
+        } else {
+          await _syncStudentEnrollmentsFromCanonicalState1(
+            currentUser: currentUser,
+            remoteUserId: remoteUserId,
+            bundleItems: bundleItems,
+            summary: summary,
+          );
+        }
+      });
+      return summary.toStats();
+    } finally {
+      _syncing = false;
+    }
+  }
+
+  Future<void> _writeLocalState1Fingerprints({
+    required int remoteUserId,
+    required String domain,
+    required Map<String, String> fingerprintsByScope,
+  }) async {
+    final staleEntries = await (_db.select(_db.syncMetadataEntries)
+          ..where(
+            (tbl) =>
+                tbl.remoteUserId.equals(remoteUserId) &
+                tbl.kind.equals(_syncMetadataKindLocalState1) &
+                tbl.domain.equals(domain),
+          ))
+        .get();
+    final activeScopes = fingerprintsByScope.keys.toSet();
+    await _db.transaction(() async {
+      for (final stale in staleEntries) {
+        if (activeScopes.contains(stale.scopeKey)) {
+          continue;
+        }
+        await (_db.delete(_db.syncMetadataEntries)
+              ..where(
+                (tbl) =>
+                    tbl.remoteUserId.equals(remoteUserId) &
+                    tbl.kind.equals(_syncMetadataKindLocalState1) &
+                    tbl.domain.equals(domain) &
+                    tbl.scopeKey.equals(stale.scopeKey),
+              ))
+            .go();
+      }
+      for (final entry in fingerprintsByScope.entries) {
+        await _db.into(_db.syncMetadataEntries).insertOnConflictUpdate(
+              SyncMetadataEntriesCompanion.insert(
+                remoteUserId: remoteUserId,
+                kind: _syncMetadataKindLocalState1,
+                domain: domain,
+                scopeKey: entry.key,
+                value: entry.value,
+                updatedAt: Value(DateTime.now().toUtc()),
+              ),
+            );
+      }
+    });
+  }
+
+  Future<Map<String, String>> _readStoredLocalState1Fingerprints({
+    required int remoteUserId,
+    required String domain,
+  }) async {
+    final rows = await (_db.select(_db.syncMetadataEntries)
+          ..where(
+            (tbl) =>
+                tbl.remoteUserId.equals(remoteUserId) &
+                tbl.kind.equals(_syncMetadataKindLocalState1) &
+                tbl.domain.equals(domain),
+          ))
+        .get();
+    final fingerprintsByScope = <String, String>{};
+    for (final row in rows) {
+      final scopeKey = row.scopeKey.trim();
+      final value = row.value.trim();
+      if (scopeKey.isEmpty || value.isEmpty) {
+        continue;
+      }
+      fingerprintsByScope[scopeKey] = value;
+    }
+    return fingerprintsByScope;
+  }
+
+  Map<String, String> _buildRemoteTeacherCoursePayloadFingerprints(
+    List<TeacherCourseSummary> remoteCourses,
+  ) {
+    final fingerprintsByScope = <String, String>{};
+    for (final remoteCourse in remoteCourses) {
+      if (remoteCourse.courseId <= 0) {
+        continue;
+      }
+      fingerprintsByScope[_localState1ScopeKeyForRemoteCourse(
+        remoteCourse.courseId,
+      )] = _buildTeacherCourseItemFingerprint(
+        remoteCourseId: remoteCourse.courseId,
+        localCourseVersionId: null,
+        bundleHash: remoteCourse.latestBundleHash,
+      );
+    }
+    return fingerprintsByScope;
+  }
+
+  Map<String, String> _buildRemoteStudentEnrollmentPayloadFingerprints(
+    List<EnrollmentSummary> enrollments,
+  ) {
+    final fingerprintsByScope = <String, String>{};
+    for (final enrollment in enrollments) {
+      if (enrollment.courseId <= 0) {
+        continue;
+      }
+      fingerprintsByScope[_localState1ScopeKeyForRemoteCourse(
+        enrollment.courseId,
+      )] = _buildStudentEnrollmentItemFingerprint(
+        remoteCourseId: enrollment.courseId,
+        teacherRemoteUserId: enrollment.teacherId,
+        bundleHash: enrollment.latestBundleHash,
+      );
+    }
+    return fingerprintsByScope;
+  }
+
+  Map<String, String> _buildRemoteTeacherCourseArtifactFingerprints(
+    List<ArtifactState1Item> items,
+  ) {
+    final fingerprintsByScope = <String, String>{};
+    for (final item in items) {
+      if (item.artifactClass != _artifactClassCourseBundle ||
+          item.courseId <= 0) {
+        continue;
+      }
+      fingerprintsByScope[_localState1ScopeKeyForRemoteCourse(
+        item.courseId,
+      )] = _buildTeacherCourseItemFingerprint(
+        remoteCourseId: item.courseId,
+        localCourseVersionId: null,
+        bundleHash: item.sha256,
+      );
+    }
+    return fingerprintsByScope;
+  }
+
+  Map<String, String> _buildRemoteStudentEnrollmentArtifactFingerprints(
+    List<ArtifactState1Item> items,
+  ) {
+    final fingerprintsByScope = <String, String>{};
+    for (final item in items) {
+      if (item.artifactClass != _artifactClassCourseBundle ||
+          item.courseId <= 0) {
+        continue;
+      }
+      fingerprintsByScope[_localState1ScopeKeyForRemoteCourse(
+        item.courseId,
+      )] = _buildStudentEnrollmentItemFingerprint(
+        remoteCourseId: item.courseId,
+        teacherRemoteUserId: item.teacherUserId,
+        bundleHash: item.sha256,
+      );
+    }
+    return fingerprintsByScope;
+  }
+
+  List<TeacherCourseSummary> _resolveTeacherCoursesFromArtifacts({
+    required List<ArtifactState1Item> artifactItems,
+    required List<TeacherCourseSummary> remoteCourses,
+  }) {
+    final remoteCoursesById = <int, TeacherCourseSummary>{
+      for (final remoteCourse in remoteCourses)
+        if (remoteCourse.courseId > 0) remoteCourse.courseId: remoteCourse,
+    };
+    final resolved = <TeacherCourseSummary>[];
+    final seenCourseIds = <int>{};
+    for (final item in artifactItems) {
+      if (item.artifactClass != _artifactClassCourseBundle ||
+          item.courseId <= 0 ||
+          item.bundleVersionId <= 0 ||
+          !seenCourseIds.add(item.courseId)) {
+        continue;
+      }
+      final remoteCourse = remoteCoursesById[item.courseId];
+      if (remoteCourse == null) {
+        throw StateError(
+          'Course bundle artifact ${item.artifactId} is missing teacher '
+          'course metadata for course ${item.courseId}.',
+        );
+      }
+      resolved.add(
+        TeacherCourseSummary(
+          courseId: remoteCourse.courseId,
+          subject: remoteCourse.subject,
+          grade: remoteCourse.grade,
+          description: remoteCourse.description,
+          visibility: remoteCourse.visibility,
+          approvalStatus: remoteCourse.approvalStatus,
+          publishedAt: remoteCourse.publishedAt,
+          latestBundleVersionId: item.bundleVersionId,
+          latestBundleHash: item.sha256,
+          status: remoteCourse.status,
+          subjectLabels: remoteCourse.subjectLabels,
+        ),
+      );
+    }
+    return resolved;
+  }
+
+  List<EnrollmentSummary> _resolveEnrollmentsFromArtifacts({
+    required List<ArtifactState1Item> artifactItems,
+    required List<EnrollmentSummary> enrollments,
+  }) {
+    final enrollmentsByCourseId = <int, EnrollmentSummary>{
+      for (final enrollment in enrollments)
+        if (enrollment.courseId > 0) enrollment.courseId: enrollment,
+    };
+    final resolved = <EnrollmentSummary>[];
+    final seenCourseIds = <int>{};
+    for (final item in artifactItems) {
+      if (item.artifactClass != _artifactClassCourseBundle ||
+          item.courseId <= 0 ||
+          item.bundleVersionId <= 0 ||
+          !seenCourseIds.add(item.courseId)) {
+        continue;
+      }
+      final enrollment = enrollmentsByCourseId[item.courseId];
+      if (enrollment == null) {
+        throw StateError(
+          'Course bundle artifact ${item.artifactId} is missing student '
+          'enrollment metadata for course ${item.courseId}.',
+        );
+      }
+      final teacherRemoteUserId =
+          item.teacherUserId > 0 ? item.teacherUserId : enrollment.teacherId;
+      if (enrollment.teacherId > 0 &&
+          item.teacherUserId > 0 &&
+          enrollment.teacherId != item.teacherUserId) {
+        throw StateError(
+          'Course bundle artifact ${item.artifactId} teacher id mismatch. '
+          'artifact=${item.teacherUserId} enrollment=${enrollment.teacherId}',
+        );
+      }
+      resolved.add(
+        EnrollmentSummary(
+          enrollmentId: enrollment.enrollmentId,
+          courseId: enrollment.courseId,
+          teacherId: teacherRemoteUserId,
+          status: enrollment.status,
+          assignedAt: enrollment.assignedAt,
+          courseSubject: enrollment.courseSubject,
+          teacherName: enrollment.teacherName,
+          latestBundleVersionId: item.bundleVersionId,
+          latestBundleHash: item.sha256,
+        ),
+      );
+    }
+    return resolved;
+  }
+
+  List<T> _filterChangedState1Items<T>({
+    required List<T> remoteItems,
+    required Map<String, String> localFingerprintsByScope,
+    required String? Function(T item) scopeKeyOf,
+    required String Function(T item) fingerprintOf,
+  }) {
+    final changed = <T>[];
+    for (final item in remoteItems) {
+      final scopeKey = scopeKeyOf(item)?.trim() ?? '';
+      if (scopeKey.isEmpty) {
+        continue;
+      }
+      final remoteFingerprint = fingerprintOf(item).trim();
+      final localFingerprint = localFingerprintsByScope[scopeKey]?.trim() ?? '';
+      if (remoteFingerprint != localFingerprint) {
+        changed.add(item);
+      }
+    }
+    return changed;
+  }
+
+  Set<int> _extractRemovedRemoteCourseIds({
+    required Map<String, String> localFingerprintsByScope,
+    required Map<String, String> remoteFingerprintsByScope,
+  }) {
+    final removedRemoteCourseIds = <int>{};
+    for (final scopeKey in localFingerprintsByScope.keys) {
+      if (remoteFingerprintsByScope.containsKey(scopeKey)) {
+        continue;
+      }
+      if (!scopeKey.startsWith('remote-course:')) {
+        continue;
+      }
+      final remoteCourseId =
+          int.tryParse(scopeKey.substring('remote-course:'.length));
+      if (remoteCourseId != null && remoteCourseId > 0) {
+        removedRemoteCourseIds.add(remoteCourseId);
+      }
+    }
+    return removedRemoteCourseIds;
+  }
+
+  bool _hasLocalOnlyTeacherCourseDiff(
+    Map<String, String> localFingerprintsByScope,
+  ) {
+    for (final entry in localFingerprintsByScope.entries) {
+      if (!entry.key.startsWith('local-course:')) {
+        continue;
+      }
+      if (entry.value.trim().isEmpty) {
+        continue;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  String _localState1ScopeKeyForRemoteCourse(int remoteCourseId) {
+    return 'remote-course:$remoteCourseId';
+  }
+
+  String _localState1ScopeKeyForLocalCourse(int courseVersionId) {
+    return 'local-course:$courseVersionId';
+  }
+
+  Future<void> recordTeacherMarketplaceUpload({
+    required User currentUser,
+    required int remoteCourseId,
+    required int bundleVersionId,
+    required String bundleHash,
+  }) async {
+    final remoteUserId = currentUser.remoteUserId;
+    if (currentUser.role != 'teacher' ||
+        remoteUserId == null ||
+        remoteUserId <= 0 ||
+        remoteCourseId <= 0) {
+      return;
+    }
+    final now = DateTime.now().toUtc();
+    await _writeCourseSyncState(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainTeacherCourseUpload,
+      remoteCourseId: remoteCourseId,
+      bundleVersionId: bundleVersionId,
+      contentHash: bundleHash,
+      lastChangedAt: now,
+      lastSyncedAt: now,
+    );
+    await refreshStoredLocalState2(currentUser: currentUser);
+  }
+
+  Future<void> recordStudentMarketplaceDownload({
+    required User currentUser,
+    required int remoteCourseId,
+    required int bundleVersionId,
+    required String bundleHash,
+  }) async {
+    final remoteUserId = currentUser.remoteUserId;
+    if (currentUser.role != 'student' ||
+        remoteUserId == null ||
+        remoteUserId <= 0 ||
+        remoteCourseId <= 0) {
+      return;
+    }
+    await _writeStudentCourseSyncState(
+      remoteUserId: remoteUserId,
+      remoteCourseId: remoteCourseId,
+      bundleVersionId: bundleVersionId,
+      bundleHash: bundleHash,
+    );
+    await refreshStoredLocalState2(currentUser: currentUser);
+  }
 
   Future<SyncRunStats> forcePullFromServer({required User currentUser}) async {
     final stats = SyncRunStats();
@@ -66,59 +618,84 @@ class EnrollmentSyncService {
     final summary = _SyncTransferSummary();
     _syncing = true;
     try {
-      await _resetForcePullState(
-        remoteUserId: remoteUserId,
-        role: currentUser.role,
-      );
-      if (currentUser.role == 'student') {
-        await _autoApproveLegacyCoursesWithoutTeacher(currentUser.id);
-      }
-      await _runCategoryIfDue(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainDeletionEvents,
-        nowUtc: nowUtc,
-        force: true,
-        action: () => _applyDeletionEvents(currentUser, remoteUserId),
-      );
-      if (currentUser.role == 'teacher') {
-        await _runCategoryIfDue(
+      await _runWithLocalState2RefreshSuppressed(() async {
+        await _resetForcePullState(
           remoteUserId: remoteUserId,
-          domain: _syncDomainTeacherCourses,
-          nowUtc: nowUtc,
-          force: true,
-          action: () => _syncTeacherCourses(
-            currentUser: currentUser,
-            remoteUserId: remoteUserId,
-            summary: summary,
-          ),
+          role: currentUser.role,
         );
-      } else {
-        await _runCategoryIfDue(
-          remoteUserId: remoteUserId,
-          domain: _syncDomainStudentEnrollments,
-          nowUtc: nowUtc,
-          force: true,
-          action: () async {
-            final enrollmentsResult = await _api.listEnrollmentsDelta(
-              ifNoneMatch: null,
-            );
-            await _writeSyncListEtag(
-              remoteUserId: remoteUserId,
-              domain: _syncDomainStudentEnrollments,
-              scopeKey: _syncScopeEnrollments,
-              etag: enrollmentsResult.etag,
-            );
-            if (!enrollmentsResult.notModified) {
+        if (currentUser.role == 'student') {
+          final changed =
+              await _autoApproveLegacyCoursesWithoutTeacher(currentUser.id);
+          if (changed) {
+            await refreshStoredLocalState2(currentUser: currentUser);
+          }
+        }
+        if (currentUser.role == 'teacher') {
+          await _runCategoryIfDue(
+            remoteUserId: remoteUserId,
+            domain: _syncDomainTeacherCourses,
+            nowUtc: nowUtc,
+            force: true,
+            action: () async {
+              final remoteCourses = await _api.listTeacherCourses();
+              final localFingerprintsByScope =
+                  await _readStoredLocalState1Fingerprints(
+                remoteUserId: remoteUserId,
+                domain: _syncDomainTeacherCourses,
+              );
+              final removedRemoteCourseIds = _extractRemovedRemoteCourseIds(
+                localFingerprintsByScope: localFingerprintsByScope,
+                remoteFingerprintsByScope:
+                    _buildRemoteTeacherCoursePayloadFingerprints(
+                  remoteCourses,
+                ),
+              );
+              await _syncTeacherCourses(
+                currentUser: currentUser,
+                remoteUserId: remoteUserId,
+                remoteCourses: remoteCourses,
+                teacherEnrollments: await _api.listTeacherEnrollments(),
+                changedRemoteCourses: remoteCourses,
+                removedRemoteCourseIds: removedRemoteCourseIds,
+                allowAutoUpload: false,
+                summary: summary,
+                prefetchRemoteBundles: true,
+              );
+            },
+          );
+        } else {
+          await _runCategoryIfDue(
+            remoteUserId: remoteUserId,
+            domain: _syncDomainStudentEnrollments,
+            nowUtc: nowUtc,
+            force: true,
+            action: () async {
+              final remoteEnrollments = await _api.listEnrollments();
+              final localFingerprintsByScope =
+                  await _readStoredLocalState1Fingerprints(
+                remoteUserId: remoteUserId,
+                domain: _syncDomainStudentEnrollments,
+              );
+              final removedRemoteCourseIds = _extractRemovedRemoteCourseIds(
+                localFingerprintsByScope: localFingerprintsByScope,
+                remoteFingerprintsByScope:
+                    _buildRemoteStudentEnrollmentPayloadFingerprints(
+                  remoteEnrollments,
+                ),
+              );
               await _syncStudentEnrollments(
                 currentUser: currentUser,
                 remoteUserId: remoteUserId,
-                enrollments: enrollmentsResult.items,
+                enrollments: remoteEnrollments,
+                allRemoteEnrollments: remoteEnrollments,
+                removedRemoteCourseIds: removedRemoteCourseIds,
                 summary: summary,
+                prefetchRemoteBundles: true,
               );
-            }
-          },
-        );
-      }
+            },
+          );
+        }
+      });
       return summary.toStats();
     } finally {
       _syncing = false;
@@ -138,64 +715,241 @@ class EnrollmentSyncService {
     final summary = _SyncTransferSummary();
     _syncing = true;
     try {
-      if (currentUser.role == 'student') {
-        await _autoApproveLegacyCoursesWithoutTeacher(currentUser.id);
-      }
-      await _runCategoryIfDue(
-        remoteUserId: remoteUserId,
-        domain: _syncDomainDeletionEvents,
-        nowUtc: nowUtc,
-        force: false,
-        action: () => _applyDeletionEvents(currentUser, remoteUserId),
-      );
-      if (currentUser.role == 'teacher') {
-        await _runCategoryIfDue(
-          remoteUserId: remoteUserId,
-          domain: _syncDomainTeacherCourses,
-          nowUtc: nowUtc,
-          force: false,
-          action: () => _syncTeacherCourses(
-            currentUser: currentUser,
+      await _runWithLocalState2RefreshSuppressed(() async {
+        if (currentUser.role == 'student') {
+          final changed =
+              await _autoApproveLegacyCoursesWithoutTeacher(currentUser.id);
+          if (changed) {
+            await refreshStoredLocalState2(currentUser: currentUser);
+          }
+        }
+        if (currentUser.role == 'teacher') {
+          await _runCategoryIfDue(
             remoteUserId: remoteUserId,
-            summary: summary,
-          ),
-        );
-      } else {
-        await _runCategoryIfDue(
-          remoteUserId: remoteUserId,
-          domain: _syncDomainStudentEnrollments,
-          nowUtc: nowUtc,
-          force: false,
-          action: () async {
-            final ifNoneMatch = await _secureStorage.readSyncListEtag(
+            domain: _syncDomainTeacherCourses,
+            nowUtc: nowUtc,
+            force: false,
+            action: () => _syncIfState2Mismatch(
+              remoteUserId: remoteUserId,
+              domain: _syncDomainTeacherCourses,
+              readRemoteState2: () => _artifactApi.getState2(
+                artifactClass: _artifactClassCourseBundle,
+              ),
+              onMatch: () async {
+                await repairTeacherEnrollmentScaffoldsFromServer(
+                  currentUser: currentUser,
+                );
+                await refreshStoredLocalState2(
+                  currentUser: currentUser,
+                );
+              },
+              onMismatch: () async {
+                final remoteState1 = await _artifactApi.getState1(
+                  artifactClass: _artifactClassCourseBundle,
+                );
+                final localFingerprintsByScope =
+                    await _readStoredLocalState1Fingerprints(
+                  remoteUserId: remoteUserId,
+                  domain: _syncDomainTeacherCourses,
+                );
+                final remoteFingerprintsByScope =
+                    _buildRemoteTeacherCourseArtifactFingerprints(
+                  remoteState1.items,
+                );
+                final changedRemoteCourses = _filterChangedState1Items(
+                  remoteItems: remoteState1.items,
+                  localFingerprintsByScope: localFingerprintsByScope,
+                  scopeKeyOf: (item) => item.courseId > 0
+                      ? _localState1ScopeKeyForRemoteCourse(item.courseId)
+                      : null,
+                  fingerprintOf: (item) => _buildTeacherCourseItemFingerprint(
+                    remoteCourseId: item.courseId,
+                    localCourseVersionId: null,
+                    bundleHash: item.sha256,
+                  ),
+                );
+                final removedRemoteCourseIds = _extractRemovedRemoteCourseIds(
+                  localFingerprintsByScope: localFingerprintsByScope,
+                  remoteFingerprintsByScope: remoteFingerprintsByScope,
+                );
+                if (changedRemoteCourses.isEmpty &&
+                    removedRemoteCourseIds.isEmpty &&
+                    !_hasLocalOnlyTeacherCourseDiff(
+                      localFingerprintsByScope,
+                    )) {
+                  throw StateError(
+                    'Stored teacher sync state drifted from canonical local '
+                    'state1. Sync-time repair is not allowed.',
+                  );
+                }
+                final remoteCourses = _resolveTeacherCoursesFromArtifacts(
+                  artifactItems: remoteState1.items,
+                  remoteCourses: await _api.listTeacherCourses(),
+                );
+                await _syncTeacherCourses(
+                  currentUser: currentUser,
+                  remoteUserId: remoteUserId,
+                  remoteCourses: remoteCourses,
+                  teacherEnrollments: await _api.listTeacherEnrollments(),
+                  changedRemoteCourses: _resolveTeacherCoursesFromArtifacts(
+                    artifactItems: changedRemoteCourses,
+                    remoteCourses: remoteCourses,
+                  ),
+                  removedRemoteCourseIds: removedRemoteCourseIds,
+                  allowAutoUpload: false,
+                  summary: summary,
+                );
+              },
+            ),
+          );
+        } else {
+          await _runCategoryIfDue(
+            remoteUserId: remoteUserId,
+            domain: _syncDomainStudentEnrollments,
+            nowUtc: nowUtc,
+            force: false,
+            action: () => _syncIfState2Mismatch(
               remoteUserId: remoteUserId,
               domain: _syncDomainStudentEnrollments,
-              scopeKey: _syncScopeEnrollments,
-            );
-            final enrollmentsResult = await _api.listEnrollmentsDelta(
-              ifNoneMatch: ifNoneMatch,
-            );
-            await _writeSyncListEtag(
-              remoteUserId: remoteUserId,
-              domain: _syncDomainStudentEnrollments,
-              scopeKey: _syncScopeEnrollments,
-              etag: enrollmentsResult.etag,
-            );
-            if (!enrollmentsResult.notModified) {
-              await _syncStudentEnrollments(
-                currentUser: currentUser,
-                remoteUserId: remoteUserId,
-                enrollments: enrollmentsResult.items,
-                summary: summary,
-              );
-            }
-          },
-        );
-      }
+              readRemoteState2: () => _artifactApi.getState2(
+                artifactClass: _artifactClassCourseBundle,
+              ),
+              onMismatch: () async {
+                final remoteState1 = await _artifactApi.getState1(
+                  artifactClass: _artifactClassCourseBundle,
+                );
+                final localFingerprintsByScope =
+                    await _readStoredLocalState1Fingerprints(
+                  remoteUserId: remoteUserId,
+                  domain: _syncDomainStudentEnrollments,
+                );
+                final remoteFingerprintsByScope =
+                    _buildRemoteStudentEnrollmentArtifactFingerprints(
+                  remoteState1.items,
+                );
+                final changedEnrollments = _filterChangedState1Items(
+                  remoteItems: remoteState1.items,
+                  localFingerprintsByScope: localFingerprintsByScope,
+                  scopeKeyOf: (item) => item.courseId > 0
+                      ? _localState1ScopeKeyForRemoteCourse(
+                          item.courseId,
+                        )
+                      : null,
+                  fingerprintOf: (item) =>
+                      _buildStudentEnrollmentItemFingerprint(
+                    remoteCourseId: item.courseId,
+                    teacherRemoteUserId: item.teacherUserId,
+                    bundleHash: item.sha256,
+                  ),
+                );
+                final removedRemoteCourseIds = _extractRemovedRemoteCourseIds(
+                  localFingerprintsByScope: localFingerprintsByScope,
+                  remoteFingerprintsByScope: remoteFingerprintsByScope,
+                );
+                if (changedEnrollments.isEmpty &&
+                    removedRemoteCourseIds.isEmpty) {
+                  throw StateError(
+                    'Stored student enrollment sync state drifted from '
+                    'canonical local state1. Sync-time repair is not allowed.',
+                  );
+                }
+                final allRemoteEnrollments = _resolveEnrollmentsFromArtifacts(
+                  artifactItems: remoteState1.items,
+                  enrollments: await _api.listEnrollments(),
+                );
+                await _syncStudentEnrollments(
+                  currentUser: currentUser,
+                  remoteUserId: remoteUserId,
+                  enrollments: _resolveEnrollmentsFromArtifacts(
+                    artifactItems: changedEnrollments,
+                    enrollments: allRemoteEnrollments,
+                  ),
+                  allRemoteEnrollments: allRemoteEnrollments,
+                  removedRemoteCourseIds: removedRemoteCourseIds,
+                  summary: summary,
+                );
+              },
+            ),
+          );
+        }
+      });
       return summary.toStats();
     } finally {
       _syncing = false;
     }
+  }
+
+  Future<CourseVersion> pullLatestTeacherCourse({
+    required User currentUser,
+    required CourseVersion course,
+  }) async {
+    if (currentUser.role != 'teacher') {
+      throw StateError('Only teachers can pull latest server course bundles.');
+    }
+    final remoteUserId = currentUser.remoteUserId;
+    if (remoteUserId == null || remoteUserId <= 0) {
+      throw StateError('Teacher remote user id is missing.');
+    }
+
+    return _runWithLocalState2RefreshSuppressed(() async {
+      final teacherCourses = await _api.listTeacherCourses();
+      final normalizedCourseName = _normalizeCourseName(course.subject);
+      var remoteCourseId = await _db.getRemoteCourseId(course.id);
+      TeacherCourseSummary? remoteCourse;
+      if (remoteCourseId != null && remoteCourseId > 0) {
+        for (final candidate in teacherCourses) {
+          if (candidate.courseId == remoteCourseId) {
+            remoteCourse = candidate;
+            break;
+          }
+        }
+      }
+      if (remoteCourse == null) {
+        for (final candidate in teacherCourses) {
+          if (_normalizeCourseName(candidate.subject) == normalizedCourseName) {
+            remoteCourse = candidate;
+            remoteCourseId = candidate.courseId;
+            break;
+          }
+        }
+      }
+      if (remoteCourse == null ||
+          remoteCourseId == null ||
+          remoteCourseId <= 0) {
+        throw StateError(
+          'No remote server course found for "${course.subject}".',
+        );
+      }
+      await _db.upsertCourseRemoteLink(
+        courseVersionId: course.id,
+        remoteCourseId: remoteCourseId,
+      );
+
+      final latestBundleVersionId = remoteCourse.latestBundleVersionId ?? 0;
+      if (latestBundleVersionId <= 0) {
+        throw StateError(
+          'Remote server course "${remoteCourse.subject}" has no bundle to pull.',
+        );
+      }
+      final remoteBundle = await _resolveRemoteBundleInfo(
+        remoteCourseId: remoteCourseId,
+        courseSubject: remoteCourse.subject,
+        latestBundleVersionId: latestBundleVersionId,
+        latestBundleHash: remoteCourse.latestBundleHash,
+      );
+      final pulledCourse = await _downloadAndImportTeacherCourse(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+        remoteCourseId: remoteCourseId,
+        courseSubject: remoteCourse.subject,
+        bundleHash: remoteBundle.hash,
+        bundleVersionId: remoteBundle.bundleVersionId,
+        existingCourseVersionId: course.id,
+        summary: _SyncTransferSummary(),
+      );
+      await refreshStoredLocalState2(currentUser: currentUser);
+      return pulledCourse;
+    });
   }
 
   Future<void> _runCategoryIfDue({
@@ -227,12 +981,6 @@ class EnrollmentSyncService {
     required int remoteUserId,
     required String role,
   }) async {
-    await _secureStorage.clearSyncDomainState(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainDeletionEvents,
-      clearItemStates: false,
-      clearListEtags: false,
-    );
     if (role == 'teacher') {
       await _secureStorage.clearSyncDomainState(
         remoteUserId: remoteUserId,
@@ -248,7 +996,8 @@ class EnrollmentSyncService {
     );
   }
 
-  Future<void> _autoApproveLegacyCoursesWithoutTeacher(int studentId) async {
+  Future<bool> _autoApproveLegacyCoursesWithoutTeacher(int studentId) async {
+    var changed = false;
     final assignedCourses = await _db.getAssignedCoursesForStudent(studentId);
     for (final course in assignedCourses) {
       final teacher = await _db.getUserById(course.teacherId);
@@ -265,61 +1014,26 @@ class EnrollmentSyncService {
         removeAssignment: true,
       );
       await _cleanupCourseIfOrphaned(course.id);
+      changed = true;
     }
-  }
-
-  Future<void> _applyDeletionEvents(User currentUser, int remoteUserId) async {
-    final sinceId = await _secureStorage.readEnrollmentDeletionCursor(
-      remoteUserId,
-    );
-    final events = await _api.listEnrollmentDeletionEvents(sinceId: sinceId);
-    if (events.isEmpty) {
-      return;
-    }
-    var maxEventId = sinceId ?? 0;
-    for (final event in events) {
-      if (event.eventId > maxEventId) {
-        maxEventId = event.eventId;
-      }
-      if (currentUser.role == 'student') {
-        if (event.studentId != remoteUserId) {
-          continue;
-        }
-        await _removeRemoteCourseFromStudent(
-          localStudentId: currentUser.id,
-          remoteCourseId: event.courseId,
-        );
-        continue;
-      }
-      if (currentUser.role == 'teacher' &&
-          event.teacherUserId == remoteUserId) {
-        final localStudent = await _db.findUserByRemoteId(event.studentId);
-        if (localStudent == null) {
-          continue;
-        }
-        final courseVersionId =
-            await _db.getCourseVersionIdForRemoteCourse(event.courseId);
-        if (courseVersionId == null) {
-          continue;
-        }
-        await _db.deleteStudentCourseData(
-          studentId: localStudent.id,
-          courseVersionId: courseVersionId,
-          removeAssignment: true,
-        );
-      }
-    }
-    await _secureStorage.writeEnrollmentDeletionCursor(
-        remoteUserId, maxEventId);
+    return changed;
   }
 
   Future<void> _syncStudentEnrollments({
     required User currentUser,
     required int remoteUserId,
     required List<EnrollmentSummary> enrollments,
+    required List<EnrollmentSummary> allRemoteEnrollments,
+    required Set<int> removedRemoteCourseIds,
     required _SyncTransferSummary summary,
+    bool prefetchRemoteBundles = false,
   }) async {
-    final activeRemoteCourseIds = <int>{};
+    final syncTargets = <({
+      EnrollmentSummary enrollment,
+      int localTeacherId,
+      int bundleVersionId,
+      String bundleHash,
+    })>[];
     for (final enrollment in enrollments) {
       if (enrollment.courseId <= 0) {
         continue;
@@ -330,7 +1044,6 @@ class EnrollmentSyncService {
         remoteTeacherId: enrollment.teacherId,
         usernameHint: enrollment.teacherName,
       );
-      activeRemoteCourseIds.add(enrollment.courseId);
       final latestBundleVersionId = enrollment.latestBundleVersionId;
       if (latestBundleVersionId == null || latestBundleVersionId <= 0) {
         final existingCourseVersionId =
@@ -343,60 +1056,88 @@ class EnrollmentSyncService {
         }
         continue;
       }
-      var existingCourseVersionId =
-          await _db.getCourseVersionIdForRemoteCourse(enrollment.courseId);
-      if (existingCourseVersionId != null) {
-        await _ensureCourseTeacher(
-          courseVersionId: existingCourseVersionId,
-          expectedTeacherId: localTeacherId,
-        );
-      }
       final remoteBundle = await _resolveRemoteBundleInfo(
         remoteCourseId: enrollment.courseId,
         courseSubject: enrollment.courseSubject,
         latestBundleVersionId: latestBundleVersionId,
         latestBundleHash: enrollment.latestBundleHash,
       );
+      syncTargets.add((
+        enrollment: enrollment,
+        localTeacherId: localTeacherId,
+        bundleVersionId: remoteBundle.bundleVersionId,
+        bundleHash: remoteBundle.hash,
+      ));
+    }
+    final prefetchedBundles = prefetchRemoteBundles
+        ? await _downloadCourseBundleArtifacts(
+            requests: syncTargets.map(
+              (target) => (
+                remoteCourseId: target.enrollment.courseId,
+                courseSubject: target.enrollment.courseSubject,
+                expectedSha256: target.bundleHash,
+              ),
+            ),
+          )
+        : const <int, DownloadedArtifact>{};
+
+    for (final target in syncTargets) {
+      final enrollment = target.enrollment;
+      var existingCourseVersionId =
+          await _db.getCourseVersionIdForRemoteCourse(enrollment.courseId);
+      if (existingCourseVersionId != null) {
+        await _ensureCourseTeacher(
+          courseVersionId: existingCourseVersionId,
+          expectedTeacherId: target.localTeacherId,
+        );
+      }
       final syncResult = await _syncRemoteCourseFromServer(
         remoteUserId: remoteUserId,
         remoteCourseId: enrollment.courseId,
         courseSubject: enrollment.courseSubject,
-        latestBundleVersionId: remoteBundle.bundleVersionId,
-        latestBundleHash: remoteBundle.hash,
+        latestBundleVersionId: target.bundleVersionId,
+        latestBundleHash: target.bundleHash,
         syncStateDomain: _syncDomainStudentCourseBundles,
-        readLocalHash: (_, __) => _readStudentCourseSyncHash(
-          remoteUserId: remoteUserId,
-          remoteCourseId: enrollment.courseId,
+        readLocalHash: (localCourse, __, syncState) =>
+            _readStudentCourseSyncHash(
+          localCourse: localCourse,
+          syncState: syncState,
         ),
-        onHashesMatch: (_, __) async {},
-        shouldTrustLinkedCourse: (_, installedVersion, syncState) =>
+        onHashesMatch: (_, __, ___, ____) async {},
+        shouldTrustLinkedCourse: (localCourse, installedVersion, syncState) =>
             _hasTrustedStudentBundleIdentity(
+          localCourse: localCourse,
           installedVersion: installedVersion,
           syncState: syncState,
         ),
         importRemoteCourse: (resolvedCourseVersionId) =>
             _downloadAndImportCourse(
+          currentUser: currentUser,
           enrollment: enrollment,
-          bundleVersionId: remoteBundle.bundleVersionId,
+          bundleVersionId: target.bundleVersionId,
           existingCourseVersionId: resolvedCourseVersionId,
-          localTeacherId: localTeacherId,
-          bundleHash: remoteBundle.hash,
+          localTeacherId: target.localTeacherId,
+          bundleHash: target.bundleHash,
           summary: summary,
+          prefetchedArtifact: prefetchedBundles[enrollment.courseId],
         ),
-        onHashesDiffer: (localCourse, __, ___) => _downloadAndImportCourse(
+        onHashesDiffer: (localCourse, __, ___, ____) =>
+            _downloadAndImportCourse(
+          currentUser: currentUser,
           enrollment: enrollment,
-          bundleVersionId: remoteBundle.bundleVersionId,
+          bundleVersionId: target.bundleVersionId,
           existingCourseVersionId: localCourse.id,
-          localTeacherId: localTeacherId,
-          bundleHash: remoteBundle.hash,
+          localTeacherId: target.localTeacherId,
+          bundleHash: target.bundleHash,
           summary: summary,
+          prefetchedArtifact: prefetchedBundles[enrollment.courseId],
         ),
       );
       final syncedCourse = syncResult.course;
       existingCourseVersionId = syncedCourse.id;
       await _ensureCourseTeacher(
         courseVersionId: existingCourseVersionId,
-        expectedTeacherId: localTeacherId,
+        expectedTeacherId: target.localTeacherId,
       );
       await _db.upsertCourseRemoteLink(
         courseVersionId: existingCourseVersionId,
@@ -423,45 +1164,131 @@ class EnrollmentSyncService {
       await _writeStudentCourseSyncState(
         remoteUserId: remoteUserId,
         remoteCourseId: enrollment.courseId,
-        bundleVersionId: remoteBundle.bundleVersionId,
-        bundleHash: remoteBundle.hash,
+        bundleVersionId: target.bundleVersionId,
+        bundleHash: target.bundleHash,
       );
     }
 
-    final assignedLinks =
-        await _db.getAssignedRemoteCoursesForStudent(currentUser.id);
-    for (final link in assignedLinks) {
-      if (activeRemoteCourseIds.contains(link.remoteCourseId)) {
-        continue;
-      }
+    for (final remoteCourseId in removedRemoteCourseIds) {
       await _removeRemoteCourseFromStudent(
         localStudentId: currentUser.id,
-        remoteCourseId: link.remoteCourseId,
+        remoteCourseId: remoteCourseId,
       );
     }
     await _repairStudentStaleDuplicateCourses(
       currentUser: currentUser,
-      enrollments: enrollments,
+      enrollments: allRemoteEnrollments,
     );
+    await refreshStoredLocalState2(currentUser: currentUser);
+  }
+
+  Future<File> _downloadCourseBundleArtifactToFile({
+    required int remoteCourseId,
+    required String courseSubject,
+    required String expectedSha256,
+    DownloadedArtifact? prefetchedArtifact,
+  }) async {
+    final bundleService = CourseBundleService();
+    final artifactId = 'course_bundle:$remoteCourseId';
+    final downloaded =
+        prefetchedArtifact ?? await _artifactApi.downloadArtifact(artifactId);
+    final echoedArtifactId = downloaded.artifactId.trim();
+    if (echoedArtifactId.isNotEmpty && echoedArtifactId != artifactId) {
+      throw StateError(
+        'Downloaded course artifact id mismatch. expected=$artifactId '
+        'actual=${downloaded.artifactId}',
+      );
+    }
+    final expectedHash = expectedSha256.trim();
+    final targetPath = await bundleService.createTempBundlePath(
+      label: courseSubject,
+    );
+    final bundleFile = File(targetPath);
+    await bundleFile.parent.create(recursive: true);
+    await bundleFile.writeAsBytes(downloaded.bytes, flush: true);
+    final computedHash = await bundleService.computeBundleByteHash(bundleFile);
+    if (expectedHash.isNotEmpty && computedHash != expectedHash) {
+      await _deleteTemporaryBundleFile(bundleFile);
+      throw StateError(
+        'Downloaded course artifact sha256 mismatch for $artifactId. '
+        'expected=$expectedHash actual=$computedHash',
+      );
+    }
+    final echoedHash = downloaded.sha256.trim();
+    if (echoedHash.isNotEmpty && echoedHash != computedHash) {
+      await _deleteTemporaryBundleFile(bundleFile);
+      throw StateError(
+        'Downloaded course artifact file sha256 mismatch for $artifactId. '
+        'header=$echoedHash computed=$computedHash',
+      );
+    }
+    return bundleFile;
+  }
+
+  Future<Map<int, DownloadedArtifact>> _downloadCourseBundleArtifacts({
+    required Iterable<
+            ({
+              int remoteCourseId,
+              String courseSubject,
+              String expectedSha256,
+            })>
+        requests,
+  }) async {
+    final normalizedRequests = requests
+        .where((request) => request.remoteCourseId > 0)
+        .toList(growable: false);
+    if (normalizedRequests.isEmpty) {
+      return const <int, DownloadedArtifact>{};
+    }
+    final artifactIds = normalizedRequests
+        .map((request) => 'course_bundle:${request.remoteCourseId}')
+        .toList(growable: false);
+    final downloadedItems = artifactIds.length > 1
+        ? await _artifactApi.downloadArtifactBatch(artifactIds)
+        : <DownloadedArtifact>[
+            await _artifactApi.downloadArtifact(artifactIds.single),
+          ];
+    final downloadsById = <String, DownloadedArtifact>{};
+    for (var index = 0; index < downloadedItems.length; index++) {
+      final downloaded = downloadedItems[index];
+      final artifactId = downloaded.artifactId.trim().isNotEmpty
+          ? downloaded.artifactId.trim()
+          : (index < artifactIds.length ? artifactIds[index] : '');
+      if (artifactId.isEmpty) {
+        continue;
+      }
+      downloadsById[artifactId] = downloaded;
+    }
+    final downloadsByCourseId = <int, DownloadedArtifact>{};
+    for (final request in normalizedRequests) {
+      final artifactId = 'course_bundle:${request.remoteCourseId}';
+      final downloaded = downloadsById[artifactId];
+      if (downloaded == null) {
+        throw StateError('Downloaded course batch is missing $artifactId.');
+      }
+      downloadsByCourseId[request.remoteCourseId] = downloaded;
+    }
+    return downloadsByCourseId;
   }
 
   Future<CourseVersion> _downloadAndImportCourse({
+    required User currentUser,
     required EnrollmentSummary enrollment,
     required int bundleVersionId,
     required int? existingCourseVersionId,
     required int localTeacherId,
     required String bundleHash,
     required _SyncTransferSummary summary,
+    DownloadedArtifact? prefetchedArtifact,
   }) async {
     final bundleService = CourseBundleService();
     File? bundleFile;
     try {
-      final targetPath = await bundleService.createTempBundlePath(
-        label: enrollment.courseSubject,
-      );
-      bundleFile = await _api.downloadBundleToFile(
-        bundleVersionId: bundleVersionId,
-        targetPath: targetPath,
+      bundleFile = await _downloadCourseBundleArtifactToFile(
+        remoteCourseId: enrollment.courseId,
+        courseSubject: enrollment.courseSubject,
+        expectedSha256: bundleHash,
+        prefetchedArtifact: prefetchedArtifact,
       );
       summary.downloaded.add(
         SyncTransferLogItem(
@@ -476,12 +1303,17 @@ class EnrollmentSyncService {
         ),
       );
       await bundleService.validateBundleForImport(bundleFile);
-      final folderPath = await bundleService.extractBundleFromFile(
+      final promptMetadata =
+          await bundleService.readPromptMetadataFromBundleFile(bundleFile);
+      final folderPath = await bundleService.extractBundleScaffoldFromFile(
         bundleFile: bundleFile,
         courseName: enrollment.courseSubject,
       );
-      final preview = await _courseService.previewCourseLoad(
-        folderPath: folderPath,
+      final contents = await File(p.join(folderPath, 'contents.txt'))
+          .readAsString(encoding: utf8);
+      final preview = await _courseService.previewCourseLoadFromContents(
+        sourcePath: folderPath,
+        contents: contents,
         courseVersionId: existingCourseVersionId,
         courseNameOverride: enrollment.courseSubject,
       );
@@ -495,15 +1327,33 @@ class EnrollmentSyncService {
         teacherId: localTeacherId,
         preview: preview,
         mode: mode,
+        rebuildCourseArtifacts: _courseArtifactService == null,
       );
       if (!result.success || result.course == null) {
         throw StateError(result.message);
       }
+      if (promptMetadata != null) {
+        await _applyPromptMetadataForStudent(
+          currentUser: currentUser,
+          metadata: promptMetadata,
+          course: result.course!,
+        );
+      }
+      if (_courseArtifactService != null) {
+        final artifactFolderPath =
+            (result.course!.sourcePath ?? '').trim().isNotEmpty
+                ? result.course!.sourcePath!.trim()
+                : folderPath;
+        await _courseArtifactService.storeImportedContentBundle(
+          courseVersionId: result.course!.id,
+          folderPath: artifactFolderPath,
+          bundleFile: bundleFile,
+          buildChapterArtifacts: false,
+        );
+      }
       return result.course!;
     } finally {
-      if (bundleFile != null && bundleFile.existsSync()) {
-        await bundleFile.delete();
-      }
+      await _deleteTemporaryBundleFile(bundleFile);
     }
   }
 
@@ -535,87 +1385,479 @@ class EnrollmentSyncService {
   Future<void> _syncTeacherCourses({
     required User currentUser,
     required int remoteUserId,
+    required List<TeacherCourseSummary> remoteCourses,
+    required List<TeacherEnrollmentSummary> teacherEnrollments,
+    required List<TeacherCourseSummary> changedRemoteCourses,
+    required Set<int> removedRemoteCourseIds,
+    required bool allowAutoUpload,
     required _SyncTransferSummary summary,
+    bool prefetchRemoteBundles = false,
   }) async {
     final firstSync = await _secureStorage.readSyncRunAt(
           remoteUserId: remoteUserId,
           domain: _syncDomainTeacherCourses,
         ) ==
         null;
-    var remoteCourses = await _loadTeacherCourses(
-      remoteUserId: remoteUserId,
-      preferDelta: true,
+    await _detachRemovedTeacherCourses(
+      teacherId: currentUser.id,
+      removedRemoteCourseIds: removedRemoteCourseIds,
     );
     await _reconcileTeacherCourseMetadata(
       currentUser: currentUser,
       remoteCourses: remoteCourses,
     );
+    await _reconcileTeacherEnrollmentScaffolds(
+      currentUser: currentUser,
+      teacherEnrollments: teacherEnrollments,
+    );
     await _pullTeacherCoursesFromServer(
       currentUser: currentUser,
       remoteUserId: remoteUserId,
-      remoteCourses: remoteCourses,
+      remoteCourses: changedRemoteCourses,
       initializeOnly: firstSync,
       summary: summary,
-    );
-    await _repairTeacherCoursesMissingLocalMaterialization(
-      currentUser: currentUser,
-      remoteUserId: remoteUserId,
-      remoteCourses: remoteCourses,
-      summary: summary,
+      prefetchRemoteBundles: prefetchRemoteBundles,
     );
     if (firstSync) {
       await _cleanupTeacherLocalDuplicates(currentUser.id);
+      await refreshStoredLocalState2(currentUser: currentUser);
       return;
     }
-    await _uploadLocalTeacherCourses(
-      currentUser: currentUser,
-      remoteUserId: remoteUserId,
-      remoteCourses: remoteCourses,
-      summary: summary,
-    );
-    remoteCourses = await _loadTeacherCourses(
-      remoteUserId: remoteUserId,
-      preferDelta: false,
-    );
-    await _reconcileTeacherCourseMetadata(
-      currentUser: currentUser,
-      remoteCourses: remoteCourses,
-    );
-    await _pullTeacherCoursesFromServer(
-      currentUser: currentUser,
-      remoteUserId: remoteUserId,
-      remoteCourses: remoteCourses,
-      initializeOnly: false,
-      summary: summary,
-    );
+    if (allowAutoUpload) {
+      await _uploadLocalTeacherCourses(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+        remoteCourses: remoteCourses,
+        summary: summary,
+      );
+      final refreshedRemoteState1 = await _artifactApi.getState1(
+        artifactClass: _artifactClassCourseBundle,
+      );
+      final previousRemoteFingerprintsByScope =
+          _buildRemoteTeacherCoursePayloadFingerprints(remoteCourses);
+      final refreshedChangedRemoteCourses = _filterChangedState1Items(
+        remoteItems: refreshedRemoteState1.items,
+        localFingerprintsByScope: previousRemoteFingerprintsByScope,
+        scopeKeyOf: (item) => item.courseId > 0
+            ? _localState1ScopeKeyForRemoteCourse(item.courseId)
+            : null,
+        fingerprintOf: (item) => _buildTeacherCourseItemFingerprint(
+          remoteCourseId: item.courseId,
+          localCourseVersionId: null,
+          bundleHash: item.sha256,
+        ),
+      );
+      final refreshedRemoteCourses = _resolveTeacherCoursesFromArtifacts(
+        artifactItems: refreshedRemoteState1.items,
+        remoteCourses: await _api.listTeacherCourses(),
+      );
+      await _reconcileTeacherCourseMetadata(
+        currentUser: currentUser,
+        remoteCourses: refreshedRemoteCourses,
+      );
+      await _reconcileTeacherEnrollmentScaffolds(
+        currentUser: currentUser,
+        teacherEnrollments: await _api.listTeacherEnrollments(),
+      );
+      await _pullTeacherCoursesFromServer(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+        remoteCourses: _resolveTeacherCoursesFromArtifacts(
+          artifactItems: refreshedChangedRemoteCourses,
+          remoteCourses: refreshedRemoteCourses,
+        ),
+        initializeOnly: false,
+        summary: summary,
+        prefetchRemoteBundles: prefetchRemoteBundles,
+      );
+    } else {
+      // Automatic sync intentionally avoids publishing local teacher edits.
+      // Manual upload actions are the supported path for course bundle updates.
+    }
     await _cleanupTeacherLocalDuplicates(currentUser.id);
+    await refreshStoredLocalState2(currentUser: currentUser);
   }
 
-  Future<List<TeacherCourseSummary>> _loadTeacherCourses({
-    required int remoteUserId,
-    required bool preferDelta,
+  Future<void> _reconcileTeacherEnrollmentScaffolds({
+    required User currentUser,
+    required List<TeacherEnrollmentSummary> teacherEnrollments,
   }) async {
-    if (!preferDelta) {
-      return _api.listTeacherCourses();
+    if (currentUser.role != 'teacher') {
+      return;
     }
-    final ifNoneMatch = await _secureStorage.readSyncListEtag(
+    for (final enrollment in teacherEnrollments) {
+      if (enrollment.status.trim() != 'active') {
+        continue;
+      }
+      if (enrollment.courseId <= 0 || enrollment.studentRemoteUserId <= 0) {
+        throw StateError(
+          'Teacher enrollment bootstrap returned an invalid enrollment.',
+        );
+      }
+      final courseVersionId =
+          await _db.getCourseVersionIdForRemoteCourse(enrollment.courseId);
+      if (courseVersionId == null || courseVersionId <= 0) {
+        throw StateError(
+          'Remote teacher enrollment course ${enrollment.courseId} is not '
+          'installed locally.',
+        );
+      }
+      final studentId =
+          await _remoteStudentIdentity.resolveOrCreateLocalStudentId(
+        db: _db,
+        remoteStudentId: enrollment.studentRemoteUserId,
+        usernameHint: enrollment.studentUsername,
+        teacherId: currentUser.id,
+      );
+      await _db.assignStudent(
+        studentId: studentId,
+        courseVersionId: courseVersionId,
+        notifySyncUsers: false,
+      );
+    }
+  }
+
+  Future<void> _syncTeacherCoursesFromCanonicalState1({
+    required User currentUser,
+    required int remoteUserId,
+    required List<ArtifactState1Item> bundleItems,
+    required _SyncTransferSummary summary,
+  }) async {
+    final localFingerprintsByScope = await _readStoredLocalState1Fingerprints(
       remoteUserId: remoteUserId,
       domain: _syncDomainTeacherCourses,
-      scopeKey: _syncScopeTeacherCourses,
     );
-    final result = await _api.listTeacherCoursesDelta(
-      ifNoneMatch: ifNoneMatch,
+    final remoteFingerprintsByScope =
+        _buildRemoteTeacherCourseArtifactFingerprints(bundleItems);
+    final changedRemoteCourses = _filterChangedState1Items(
+      remoteItems: bundleItems,
+      localFingerprintsByScope: localFingerprintsByScope,
+      scopeKeyOf: (item) => item.courseId > 0
+          ? _localState1ScopeKeyForRemoteCourse(item.courseId)
+          : null,
+      fingerprintOf: (item) => _buildTeacherCourseItemFingerprint(
+        remoteCourseId: item.courseId,
+        localCourseVersionId: null,
+        bundleHash: item.sha256,
+      ),
     );
-    await _writeSyncListEtag(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainTeacherCourses,
-      scopeKey: _syncScopeTeacherCourses,
-      etag: result.etag,
+    final removedRemoteCourseIds = _extractRemovedRemoteCourseIds(
+      localFingerprintsByScope: localFingerprintsByScope,
+      remoteFingerprintsByScope: remoteFingerprintsByScope,
     );
-    if (result.notModified) {
-      return _api.listTeacherCourses();
+    final remoteCourses = bundleItems.isEmpty
+        ? const <TeacherCourseSummary>[]
+        : _resolveTeacherCoursesFromArtifacts(
+            artifactItems: bundleItems,
+            remoteCourses: await _api.listTeacherCourses(),
+          );
+    final teacherEnrollments = await _api.listTeacherEnrollments();
+    if (changedRemoteCourses.isEmpty && removedRemoteCourseIds.isEmpty) {
+      await _reconcileTeacherEnrollmentScaffolds(
+        currentUser: currentUser,
+        teacherEnrollments: teacherEnrollments,
+      );
+      await refreshStoredLocalState2(currentUser: currentUser);
+      return;
     }
-    return result.items;
+    await _syncTeacherCourses(
+      currentUser: currentUser,
+      remoteUserId: remoteUserId,
+      remoteCourses: remoteCourses,
+      teacherEnrollments: teacherEnrollments,
+      changedRemoteCourses: _resolveTeacherCoursesFromArtifacts(
+        artifactItems: changedRemoteCourses,
+        remoteCourses: remoteCourses,
+      ),
+      removedRemoteCourseIds: removedRemoteCourseIds,
+      allowAutoUpload: false,
+      summary: summary,
+    );
+  }
+
+  Future<void> _syncStudentEnrollmentsFromCanonicalState1({
+    required User currentUser,
+    required int remoteUserId,
+    required List<ArtifactState1Item> bundleItems,
+    required _SyncTransferSummary summary,
+  }) async {
+    final localFingerprintsByScope = await _readStoredLocalState1Fingerprints(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainStudentEnrollments,
+    );
+    final remoteFingerprintsByScope =
+        _buildRemoteStudentEnrollmentArtifactFingerprints(bundleItems);
+    final changedEnrollments = _filterChangedState1Items(
+      remoteItems: bundleItems,
+      localFingerprintsByScope: localFingerprintsByScope,
+      scopeKeyOf: (item) => item.courseId > 0
+          ? _localState1ScopeKeyForRemoteCourse(item.courseId)
+          : null,
+      fingerprintOf: (item) => _buildStudentEnrollmentItemFingerprint(
+        remoteCourseId: item.courseId,
+        teacherRemoteUserId: item.teacherUserId,
+        bundleHash: item.sha256,
+      ),
+    );
+    final removedRemoteCourseIds = _extractRemovedRemoteCourseIds(
+      localFingerprintsByScope: localFingerprintsByScope,
+      remoteFingerprintsByScope: remoteFingerprintsByScope,
+    );
+    if (changedEnrollments.isEmpty && removedRemoteCourseIds.isEmpty) {
+      return;
+    }
+    final allRemoteEnrollments = bundleItems.isEmpty
+        ? const <EnrollmentSummary>[]
+        : _resolveEnrollmentsFromArtifacts(
+            artifactItems: bundleItems,
+            enrollments: await _api.listEnrollments(),
+          );
+    await _syncStudentEnrollments(
+      currentUser: currentUser,
+      remoteUserId: remoteUserId,
+      enrollments: _resolveEnrollmentsFromArtifacts(
+        artifactItems: changedEnrollments,
+        enrollments: allRemoteEnrollments,
+      ),
+      allRemoteEnrollments: allRemoteEnrollments,
+      removedRemoteCourseIds: removedRemoteCourseIds,
+      summary: summary,
+    );
+  }
+
+  Future<Map<String, String>> _buildStudentEnrollmentState1Fingerprints({
+    required User currentUser,
+    required int remoteUserId,
+  }) async {
+    final assignedRemoteCourses =
+        await _db.getAssignedRemoteCoursesForStudent(currentUser.id);
+    final fingerprintsByScope = <String, String>{};
+    for (final info in assignedRemoteCourses) {
+      final course = await _db.getCourseVersionById(info.courseVersionId);
+      if (course == null) {
+        continue;
+      }
+      final teacher = await _db.getUserById(course.teacherId);
+      final syncState = await _secureStorage.readSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainStudentCourseBundles,
+        scopeKey: _teacherCourseScopeKey(info.remoteCourseId),
+      );
+      fingerprintsByScope[_localState1ScopeKeyForRemoteCourse(
+        info.remoteCourseId,
+      )] = _buildStudentEnrollmentItemFingerprint(
+        remoteCourseId: info.remoteCourseId,
+        teacherRemoteUserId: teacher?.remoteUserId ?? 0,
+        bundleHash: syncState?.contentHash ?? '',
+      );
+    }
+    return fingerprintsByScope;
+  }
+
+  Future<Map<String, String>> _buildTeacherCourseState1Fingerprints({
+    required User currentUser,
+    required int remoteUserId,
+  }) async {
+    final localCourses = await _db.getCourseVersionsForTeacher(currentUser.id);
+    final fingerprintsByScope = <String, String>{};
+    for (final course in localCourses) {
+      final remoteCourseId = await _db.getRemoteCourseId(course.id);
+      final localHash = await _resolveTeacherCourseLocalState1Hash(
+        teacher: currentUser,
+        remoteUserId: remoteUserId,
+        course: course,
+        remoteCourseId: remoteCourseId,
+      );
+      final scopeKey = remoteCourseId != null && remoteCourseId > 0
+          ? _localState1ScopeKeyForRemoteCourse(remoteCourseId)
+          : _localState1ScopeKeyForLocalCourse(course.id);
+      fingerprintsByScope[scopeKey] = _buildTeacherCourseItemFingerprint(
+        remoteCourseId: remoteCourseId,
+        localCourseVersionId:
+            remoteCourseId != null && remoteCourseId > 0 ? null : course.id,
+        bundleHash: localHash,
+      );
+    }
+    return fingerprintsByScope;
+  }
+
+  Future<String> _resolveTeacherCourseLocalState1Hash({
+    required User teacher,
+    required int remoteUserId,
+    required CourseVersion course,
+    required int? remoteCourseId,
+  }) async {
+    final hasArtifacts = await _hasCachedCourseArtifacts(course.id);
+    if (!hasArtifacts) {
+      return '';
+    }
+    if (remoteCourseId != null && remoteCourseId > 0) {
+      final syncState = await _secureStorage.readSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainTeacherCourseUpload,
+        scopeKey: _teacherCourseScopeKey(remoteCourseId),
+      );
+      return (await _readTeacherCourseSyncHash(
+            teacher: teacher,
+            remoteUserId: remoteUserId,
+            syncStateDomain: _syncDomainTeacherCourseUpload,
+            course: course,
+            remoteCourseId: remoteCourseId,
+            syncState: syncState,
+          ))
+              ?.trim() ??
+          '';
+    }
+    if (!await _canComputeTeacherCourseSyncHash(course)) {
+      return '';
+    }
+    return (await _computeTeacherCourseSyncHash(
+      teacher: teacher,
+      course: course,
+      remoteCourseId: 0,
+    ))
+        .trim();
+  }
+
+  String _buildStudentEnrollmentItemFingerprint({
+    required int remoteCourseId,
+    required int teacherRemoteUserId,
+    required String bundleHash,
+  }) {
+    return [
+      'student_course',
+      '$remoteCourseId',
+      '$teacherRemoteUserId',
+      bundleHash.trim(),
+    ].join('|');
+  }
+
+  String _buildTeacherCourseItemFingerprint({
+    required int? remoteCourseId,
+    required int? localCourseVersionId,
+    required String bundleHash,
+  }) {
+    final scopeIdentity = remoteCourseId != null && remoteCourseId > 0
+        ? 'remote:$remoteCourseId'
+        : 'local:${localCourseVersionId ?? 0}';
+    return [
+      'teacher_course',
+      scopeIdentity,
+      bundleHash.trim(),
+    ].join('|');
+  }
+
+  Future<String> _buildCanonicalLocalState2({
+    required User currentUser,
+    required int remoteUserId,
+  }) async {
+    if (currentUser.role == 'teacher') {
+      return _buildTeacherLocalState2(
+        currentUser: currentUser,
+        remoteUserId: remoteUserId,
+      );
+    }
+    return _buildStudentEnrollmentLocalState2(
+      currentUser: currentUser,
+      remoteUserId: remoteUserId,
+    );
+  }
+
+  Future<String> _buildStudentEnrollmentLocalState2({
+    required User currentUser,
+    required int remoteUserId,
+  }) async {
+    final artifactHashesById = await _buildStudentVisibleArtifactHashes(
+      currentUser: currentUser,
+      remoteUserId: remoteUserId,
+    );
+    return _buildState2FromArtifactHashes(artifactHashesById);
+  }
+
+  Future<String> _buildTeacherLocalState2({
+    required User currentUser,
+    required int remoteUserId,
+  }) async {
+    final artifactHashesById = await _buildTeacherVisibleArtifactHashes(
+      remoteUserId: remoteUserId,
+    );
+    return _buildState2FromArtifactHashes(artifactHashesById);
+  }
+
+  Future<Map<String, String>> _buildStudentVisibleArtifactHashes({
+    required User currentUser,
+    required int remoteUserId,
+  }) async {
+    final artifactHashesById = <String, String>{};
+    final assignedRemoteCourses =
+        await _db.getAssignedRemoteCoursesForStudent(currentUser.id);
+    for (final info in assignedRemoteCourses) {
+      if (info.remoteCourseId <= 0) {
+        continue;
+      }
+      final syncState = await _secureStorage.readSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainStudentCourseBundles,
+        scopeKey: _teacherCourseScopeKey(info.remoteCourseId),
+      );
+      final bundleHash = syncState?.contentHash.trim() ?? '';
+      if (bundleHash.isEmpty) {
+        continue;
+      }
+      artifactHashesById['$_artifactClassCourseBundle:${info.remoteCourseId}'] =
+          bundleHash;
+    }
+    return artifactHashesById;
+  }
+
+  Future<Map<String, String>> _buildTeacherVisibleArtifactHashes({
+    required int remoteUserId,
+  }) async {
+    final artifactHashesById = <String, String>{};
+    final remoteCourseLinks = await (_db.select(_db.courseRemoteLinks)).get();
+    for (final link in remoteCourseLinks) {
+      if (link.remoteCourseId <= 0) {
+        continue;
+      }
+      final syncState = await _secureStorage.readSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainTeacherCourseUpload,
+        scopeKey: _teacherCourseScopeKey(link.remoteCourseId),
+      );
+      final bundleHash = syncState?.contentHash.trim() ?? '';
+      if (bundleHash.isEmpty) {
+        continue;
+      }
+      artifactHashesById['$_artifactClassCourseBundle:${link.remoteCourseId}'] =
+          bundleHash;
+    }
+    return artifactHashesById;
+  }
+
+  String _buildState2FromArtifactHashes(
+      Map<String, String> artifactHashesById) {
+    final canonical = artifactHashesById.entries
+        .where(
+          (entry) =>
+              entry.key.trim().isNotEmpty && entry.value.trim().isNotEmpty,
+        )
+        .toList(growable: false)
+      ..sort((left, right) {
+        final artifactCompare = left.key.compareTo(right.key);
+        if (artifactCompare != 0) {
+          return artifactCompare;
+        }
+        return left.value.compareTo(right.value);
+      });
+    final builder = StringBuffer();
+    for (final entry in canonical) {
+      builder
+        ..write(entry.key.trim())
+        ..write('|')
+        ..write(entry.value.trim())
+        ..write('\n');
+    }
+    return '$_artifactState2Version:${sha256Hex(builder.toString())}';
   }
 
   Future<void> _reconcileTeacherCourseMetadata({
@@ -681,7 +1923,13 @@ class EnrollmentSyncService {
     required List<TeacherCourseSummary> remoteCourses,
     required bool initializeOnly,
     required _SyncTransferSummary summary,
+    bool prefetchRemoteBundles = false,
   }) async {
+    final syncTargets = <({
+      TeacherCourseSummary remoteCourse,
+      int bundleVersionId,
+      String bundleHash,
+    })>[];
     for (final remoteCourse in remoteCourses) {
       final latestBundleVersionId = remoteCourse.latestBundleVersionId ?? 0;
       if (latestBundleVersionId <= 0) {
@@ -693,24 +1941,49 @@ class EnrollmentSyncService {
         latestBundleVersionId: latestBundleVersionId,
         latestBundleHash: remoteCourse.latestBundleHash,
       );
+      syncTargets.add((
+        remoteCourse: remoteCourse,
+        bundleVersionId: remoteBundle.bundleVersionId,
+        bundleHash: remoteBundle.hash,
+      ));
+    }
+    final prefetchedBundles = prefetchRemoteBundles
+        ? await _downloadCourseBundleArtifacts(
+            requests: syncTargets.map(
+              (target) => (
+                remoteCourseId: target.remoteCourse.courseId,
+                courseSubject: target.remoteCourse.subject,
+                expectedSha256: target.bundleHash,
+              ),
+            ),
+          )
+        : const <int, DownloadedArtifact>{};
+
+    for (final target in syncTargets) {
+      final remoteCourse = target.remoteCourse;
       await _syncRemoteCourseFromServer(
         remoteUserId: remoteUserId,
         remoteCourseId: remoteCourse.courseId,
         courseSubject: remoteCourse.subject,
-        latestBundleVersionId: remoteBundle.bundleVersionId,
-        latestBundleHash: remoteBundle.hash,
+        latestBundleVersionId: target.bundleVersionId,
+        latestBundleHash: target.bundleHash,
         syncStateDomain: _syncDomainTeacherCourseUpload,
-        readLocalHash: (localCourse, _) => _computeTeacherCourseSyncHash(
+        readLocalHash: (localCourse, _, syncState) =>
+            _readTeacherCourseSyncHash(
           teacher: currentUser,
+          remoteUserId: remoteUserId,
+          syncStateDomain: _syncDomainTeacherCourseUpload,
           course: localCourse,
           remoteCourseId: remoteCourse.courseId,
+          syncState: syncState,
         ),
-        onHashesMatch: (localCourse, __) => _initializeTeacherCourseSyncState(
-          currentUser: currentUser,
+        onHashesMatch: (_, localHash, __, syncState) =>
+            _markTeacherCourseSyncStateSynced(
           remoteUserId: remoteUserId,
           remoteCourseId: remoteCourse.courseId,
-          localCourse: localCourse,
-          bundleVersionId: remoteBundle.bundleVersionId,
+          bundleVersionId: target.bundleVersionId,
+          bundleHash: localHash,
+          syncState: syncState,
         ),
         importRemoteCourse: (resolvedCourseVersionId) =>
             _downloadAndImportTeacherCourse(
@@ -718,41 +1991,54 @@ class EnrollmentSyncService {
           remoteUserId: remoteUserId,
           remoteCourseId: remoteCourse.courseId,
           courseSubject: remoteCourse.subject,
-          bundleVersionId: remoteBundle.bundleVersionId,
+          bundleHash: target.bundleHash,
+          bundleVersionId: target.bundleVersionId,
           existingCourseVersionId: resolvedCourseVersionId,
           summary: summary,
+          prefetchedArtifact: prefetchedBundles[remoteCourse.courseId],
         ),
-        onHashesDiffer: (localCourse, localHash, installedVersion) async {
+        onHashesDiffer:
+            (localCourse, localHash, installedVersion, syncState) async {
           if (initializeOnly || installedVersion == null) {
             return _downloadAndImportTeacherCourse(
               currentUser: currentUser,
               remoteUserId: remoteUserId,
               remoteCourseId: remoteCourse.courseId,
               courseSubject: remoteCourse.subject,
-              bundleVersionId: remoteBundle.bundleVersionId,
+              bundleHash: target.bundleHash,
+              bundleVersionId: target.bundleVersionId,
               existingCourseVersionId: localCourse.id,
               summary: summary,
+              prefetchedArtifact: prefetchedBundles[remoteCourse.courseId],
             );
           }
-          final syncState = await _secureStorage.readSyncItemState(
-            remoteUserId: remoteUserId,
-            domain: _syncDomainTeacherCourseUpload,
-            scopeKey: _teacherCourseScopeKey(remoteCourse.courseId),
+          final hasUnsyncedLocalChanges = _hasUnsyncedLocalCourseChanges(
+            syncState: syncState,
+            localHash: localHash,
           );
-          if (syncState != null && syncState.contentHash != localHash) {
+          final serverHasNewerBundle =
+              target.bundleVersionId > installedVersion;
+          if (serverHasNewerBundle && hasUnsyncedLocalChanges) {
             throw StateError(
-              'Teacher course sync conflict for "${remoteCourse.subject}". '
-              'Pull latest server course before uploading local changes.',
+              'Teacher bundle sync conflict for "${remoteCourse.subject}". '
+              'Server has a newer course bundle, which may include prompt '
+              'or profile changes. Pull latest server bundle before '
+              'uploading local changes.',
             );
+          }
+          if (hasUnsyncedLocalChanges) {
+            return localCourse;
           }
           return _downloadAndImportTeacherCourse(
             currentUser: currentUser,
             remoteUserId: remoteUserId,
             remoteCourseId: remoteCourse.courseId,
             courseSubject: remoteCourse.subject,
-            bundleVersionId: remoteBundle.bundleVersionId,
+            bundleHash: target.bundleHash,
+            bundleVersionId: target.bundleVersionId,
             existingCourseVersionId: localCourse.id,
             summary: summary,
+            prefetchedArtifact: prefetchedBundles[remoteCourse.courseId],
           );
         },
       );
@@ -800,7 +2086,7 @@ class EnrollmentSyncService {
     required int remoteUserId,
     required int remoteCourseId,
     required String syncStateDomain,
-    bool Function(
+    Future<bool> Function(
       CourseVersion localCourse,
       int? installedVersion,
       SyncItemState? syncState,
@@ -825,40 +2111,30 @@ class EnrollmentSyncService {
       return _ResolvedCourseSyncState(
         courseVersionId: courseVersionId,
         installedVersion: installedVersion,
+        syncState: syncState,
         localCourse: null,
-        canBuildLocalBundle: false,
         replacedCourseVersionId: null,
       );
     }
     if (shouldTrustLinkedCourse != null &&
-        !shouldTrustLinkedCourse(localCourse, installedVersion, syncState)) {
+        !await shouldTrustLinkedCourse(
+          localCourse,
+          installedVersion,
+          syncState,
+        )) {
       return _ResolvedCourseSyncState(
         courseVersionId: null,
         installedVersion: installedVersion,
+        syncState: syncState,
         localCourse: null,
-        canBuildLocalBundle: false,
         replacedCourseVersionId: localCourse.id,
       );
-    }
-    if (_courseArtifactService == null) {
-      throw StateError(
-        'Course artifact service is required for course sync.',
-      );
-    }
-    var hasCachedArtifacts = await _hasCachedCourseArtifacts(localCourse.id);
-    if (!hasCachedArtifacts) {
-      final localSourcePath = (localCourse.sourcePath ?? '').trim();
-      if (localSourcePath.isNotEmpty &&
-          Directory(localSourcePath).existsSync()) {
-        await _ensureCourseArtifacts(localCourse);
-        hasCachedArtifacts = await _hasCachedCourseArtifacts(localCourse.id);
-      }
     }
     return _ResolvedCourseSyncState(
       courseVersionId: courseVersionId,
       installedVersion: installedVersion,
+      syncState: syncState,
       localCourse: localCourse,
-      canBuildLocalBundle: hasCachedArtifacts,
       replacedCourseVersionId: null,
     );
   }
@@ -873,10 +2149,13 @@ class EnrollmentSyncService {
     required Future<String?> Function(
       CourseVersion localCourse,
       int? installedVersion,
+      SyncItemState? syncState,
     ) readLocalHash,
     required Future<void> Function(
       CourseVersion localCourse,
       String localHash,
+      int? installedVersion,
+      SyncItemState? syncState,
     ) onHashesMatch,
     required Future<CourseVersion> Function(int? existingCourseVersionId)
         importRemoteCourse,
@@ -884,8 +2163,9 @@ class EnrollmentSyncService {
       CourseVersion localCourse,
       String localHash,
       int? installedVersion,
+      SyncItemState? syncState,
     ) onHashesDiffer,
-    bool Function(
+    Future<bool> Function(
       CourseVersion localCourse,
       int? installedVersion,
       SyncItemState? syncState,
@@ -901,7 +2181,8 @@ class EnrollmentSyncService {
     if (remoteHash.isEmpty) {
       if (localState.localCourse != null &&
           localState.installedVersion != null &&
-          latestBundleVersionId <= localState.installedVersion!) {
+          latestBundleVersionId <= localState.installedVersion! &&
+          _hasLocalCourseMaterialization(localState.localCourse!)) {
         return _RemoteCourseSyncResult(
           course: localState.localCourse!,
           replacedCourseVersionId: localState.replacedCourseVersionId,
@@ -912,14 +2193,17 @@ class EnrollmentSyncService {
         replacedCourseVersionId: localState.replacedCourseVersionId,
       );
     }
-    if (localState.localCourse == null || !localState.canBuildLocalBundle) {
+    if (localState.localCourse == null) {
       return _RemoteCourseSyncResult(
         course: await importRemoteCourse(localState.courseVersionId),
         replacedCourseVersionId: localState.replacedCourseVersionId,
       );
     }
     final localHash = (await readLocalHash(
-                localState.localCourse!, localState.installedVersion))
+          localState.localCourse!,
+          localState.installedVersion,
+          localState.syncState,
+        ))
             ?.trim() ??
         '';
     if (localHash.isEmpty) {
@@ -928,8 +2212,18 @@ class EnrollmentSyncService {
         replacedCourseVersionId: localState.replacedCourseVersionId,
       );
     }
+    final resolvedSyncState = await _secureStorage.readSyncItemState(
+      remoteUserId: remoteUserId,
+      domain: syncStateDomain,
+      scopeKey: _teacherCourseScopeKey(remoteCourseId),
+    );
     if (localHash == remoteHash) {
-      await onHashesMatch(localState.localCourse!, localHash);
+      await onHashesMatch(
+        localState.localCourse!,
+        localHash,
+        localState.installedVersion,
+        resolvedSyncState,
+      );
       return _RemoteCourseSyncResult(
         course: localState.localCourse!,
         replacedCourseVersionId: localState.replacedCourseVersionId,
@@ -940,36 +2234,52 @@ class EnrollmentSyncService {
         localState.localCourse!,
         localHash,
         localState.installedVersion,
+        resolvedSyncState,
       ),
       replacedCourseVersionId: localState.replacedCourseVersionId,
     );
   }
 
-  bool _hasTrustedStudentBundleIdentity({
+  bool _hasLocalCourseMaterialization(CourseVersion course) {
+    final sourcePath = (course.sourcePath ?? '').trim();
+    if (sourcePath.isEmpty) {
+      return false;
+    }
+    return Directory(sourcePath).existsSync();
+  }
+
+  Future<bool> _hasTrustedStudentBundleIdentity({
+    required CourseVersion localCourse,
     required int? installedVersion,
     required SyncItemState? syncState,
-  }) {
+  }) async {
     if (installedVersion != null && installedVersion > 0) {
       return true;
     }
     final contentHash = syncState?.contentHash.trim() ?? '';
-    return contentHash.isNotEmpty;
+    if (contentHash.isNotEmpty) {
+      return true;
+    }
+    final artifactService = _courseArtifactService;
+    if (artifactService == null) {
+      return false;
+    }
+    return artifactService.hasStoredContentBundle(localCourse.id);
   }
 
   Future<String?> _readStudentCourseSyncHash({
-    required int remoteUserId,
-    required int remoteCourseId,
+    required CourseVersion localCourse,
+    required SyncItemState? syncState,
   }) async {
-    final syncState = await _secureStorage.readSyncItemState(
-      remoteUserId: remoteUserId,
-      domain: _syncDomainStudentCourseBundles,
-      scopeKey: _teacherCourseScopeKey(remoteCourseId),
-    );
     final normalized = syncState?.contentHash.trim() ?? '';
-    if (normalized.isEmpty) {
+    if (normalized.isNotEmpty) {
+      return normalized;
+    }
+    final artifactService = _courseArtifactService;
+    if (artifactService == null) {
       return null;
     }
-    return normalized;
+    return artifactService.computeStoredContentBundleByteHash(localCourse.id);
   }
 
   Future<void> _writeStudentCourseSyncState({
@@ -979,34 +2289,50 @@ class EnrollmentSyncService {
     required String bundleHash,
   }) async {
     final now = DateTime.now().toUtc();
-    await _secureStorage.writeInstalledCourseBundleVersion(
-      remoteUserId: remoteUserId,
-      remoteCourseId: remoteCourseId,
-      versionId: bundleVersionId,
-    );
-    await _secureStorage.writeSyncItemState(
+    await _writeCourseSyncState(
       remoteUserId: remoteUserId,
       domain: _syncDomainStudentCourseBundles,
-      scopeKey: _teacherCourseScopeKey(remoteCourseId),
+      remoteCourseId: remoteCourseId,
+      bundleVersionId: bundleVersionId,
       contentHash: bundleHash.trim(),
       lastChangedAt: now,
       lastSyncedAt: now,
     );
   }
 
-  Future<void> _initializeTeacherCourseSyncState({
-    required User currentUser,
+  Future<void> _markTeacherCourseSyncStateSynced({
     required int remoteUserId,
     required int remoteCourseId,
-    required CourseVersion localCourse,
     required int bundleVersionId,
+    required String bundleHash,
+    required SyncItemState? syncState,
   }) async {
-    final localHash = await _computeTeacherCourseSyncHash(
-      teacher: currentUser,
-      course: localCourse,
-      remoteCourseId: remoteCourseId,
-    );
     final now = DateTime.now().toUtc();
+    final normalizedHash = bundleHash.trim();
+    final lastChangedAt =
+        syncState != null && syncState.contentHash.trim() == normalizedHash
+            ? syncState.lastChangedAt.toUtc()
+            : now;
+    await _writeCourseSyncState(
+      remoteUserId: remoteUserId,
+      domain: _syncDomainTeacherCourseUpload,
+      remoteCourseId: remoteCourseId,
+      bundleVersionId: bundleVersionId,
+      contentHash: normalizedHash,
+      lastChangedAt: lastChangedAt,
+      lastSyncedAt: now,
+    );
+  }
+
+  Future<void> _writeCourseSyncState({
+    required int remoteUserId,
+    required String domain,
+    required int remoteCourseId,
+    required int bundleVersionId,
+    required String contentHash,
+    required DateTime lastChangedAt,
+    required DateTime lastSyncedAt,
+  }) async {
     await _secureStorage.writeInstalledCourseBundleVersion(
       remoteUserId: remoteUserId,
       remoteCourseId: remoteCourseId,
@@ -1014,12 +2340,192 @@ class EnrollmentSyncService {
     );
     await _secureStorage.writeSyncItemState(
       remoteUserId: remoteUserId,
-      domain: _syncDomainTeacherCourseUpload,
+      domain: domain,
       scopeKey: _teacherCourseScopeKey(remoteCourseId),
-      contentHash: localHash,
-      lastChangedAt: now,
-      lastSyncedAt: now,
+      contentHash: contentHash.trim(),
+      lastChangedAt: lastChangedAt,
+      lastSyncedAt: lastSyncedAt,
     );
+  }
+
+  bool _hasUnsyncedLocalCourseChanges({
+    required SyncItemState? syncState,
+    required String localHash,
+  }) {
+    final normalizedHash = localHash.trim();
+    if (normalizedHash.isEmpty) {
+      return false;
+    }
+    if (syncState == null) {
+      return true;
+    }
+    if (syncState.contentHash.trim() != normalizedHash) {
+      return true;
+    }
+    return syncState.lastChangedAt
+        .toUtc()
+        .isAfter(syncState.lastSyncedAt.toUtc());
+  }
+
+  Future<String?> _readTeacherCourseSyncHash({
+    required User teacher,
+    required int remoteUserId,
+    required String syncStateDomain,
+    required CourseVersion course,
+    required int remoteCourseId,
+    required SyncItemState? syncState,
+  }) async {
+    final storedHash = syncState?.contentHash.trim() ?? '';
+    final latestInputAt = await _readTeacherCourseSyncInputUpdatedAt(
+      teacher: teacher,
+      course: course,
+    );
+    final canComputeHash = await _canComputeTeacherCourseSyncHash(course);
+    final lastChangedAt = syncState?.lastChangedAt.toUtc();
+    if (storedHash.isNotEmpty &&
+        canComputeHash &&
+        lastChangedAt != null &&
+        (latestInputAt == null || !latestInputAt.isAfter(lastChangedAt))) {
+      return storedHash;
+    }
+    if (!canComputeHash) {
+      return null;
+    }
+    final preparedBundle = await _prepareTeacherCourseBundle(
+      teacher: teacher,
+      course: course,
+      remoteCourseId: remoteCourseId,
+    );
+    final normalizedHash = preparedBundle.hash.trim();
+    if (normalizedHash.isEmpty) {
+      return null;
+    }
+    if (syncState != null && storedHash == normalizedHash) {
+      return normalizedHash;
+    }
+    final nextChangedAt = latestInputAt ?? DateTime.now().toUtc();
+    final lastSyncedAt = syncState?.lastSyncedAt.toUtc() ??
+        DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+    await _secureStorage.writeSyncItemState(
+      remoteUserId: remoteUserId,
+      domain: syncStateDomain,
+      scopeKey: _teacherCourseScopeKey(remoteCourseId),
+      contentHash: normalizedHash,
+      lastChangedAt: nextChangedAt,
+      lastSyncedAt: lastSyncedAt,
+    );
+    return normalizedHash;
+  }
+
+  Future<bool> _canComputeTeacherCourseSyncHash(CourseVersion course) async {
+    _requireCourseArtifactService();
+    return await _hasCachedCourseArtifacts(course.id);
+  }
+
+  Future<DateTime?> _readTeacherCourseSyncInputUpdatedAt({
+    required User teacher,
+    required CourseVersion course,
+  }) async {
+    var latest = _maxUtc(
+      course.createdAt.toUtc(),
+      course.updatedAt?.toUtc(),
+    );
+    final artifactService = _courseArtifactService;
+    if (artifactService != null) {
+      final manifest = await artifactService.readCourseArtifacts(course.id);
+      latest = _maxUtc(latest, manifest?.builtAt.toUtc());
+    }
+
+    final courseKey = (course.sourcePath ?? '').trim();
+    final assignments = await _db.getAssignmentsForCourse(course.id);
+    final assignedStudentIds =
+        assignments.map((assignment) => assignment.studentId).toSet();
+    for (final assignment in assignments) {
+      latest = _maxUtc(latest, assignment.assignedAt.toUtc());
+    }
+
+    final promptTemplates = await (_db.select(_db.promptTemplates)
+          ..where((tbl) {
+            final studentGlobalScope = assignedStudentIds.isEmpty
+                ? const Constant(false)
+                : tbl.courseKey.isNull() &
+                    tbl.studentId.isIn(assignedStudentIds);
+            final courseScope = courseKey.isEmpty
+                ? const Constant(false)
+                : tbl.courseKey.equals(courseKey) & tbl.studentId.isNull();
+            final studentCourseScope =
+                courseKey.isEmpty || assignedStudentIds.isEmpty
+                    ? const Constant(false)
+                    : tbl.courseKey.equals(courseKey) &
+                        tbl.studentId.isIn(assignedStudentIds);
+            return tbl.teacherId.equals(teacher.id) &
+                tbl.isActive.equals(true) &
+                ((tbl.courseKey.isNull() & tbl.studentId.isNull()) |
+                    studentGlobalScope |
+                    courseScope |
+                    studentCourseScope);
+          }))
+        .get();
+    for (final template in promptTemplates) {
+      latest = _maxUtc(latest, template.createdAt.toUtc());
+    }
+
+    final profiles = await (_db.select(_db.studentPromptProfiles)
+          ..where((tbl) {
+            final studentGlobalScope = assignedStudentIds.isEmpty
+                ? const Constant(false)
+                : tbl.courseKey.isNull() &
+                    tbl.studentId.isIn(assignedStudentIds);
+            final courseScope = courseKey.isEmpty
+                ? const Constant(false)
+                : tbl.courseKey.equals(courseKey) & tbl.studentId.isNull();
+            final studentCourseScope =
+                courseKey.isEmpty || assignedStudentIds.isEmpty
+                    ? const Constant(false)
+                    : tbl.courseKey.equals(courseKey) &
+                        tbl.studentId.isIn(assignedStudentIds);
+            return tbl.teacherId.equals(teacher.id) &
+                ((tbl.courseKey.isNull() & tbl.studentId.isNull()) |
+                    studentGlobalScope |
+                    courseScope |
+                    studentCourseScope);
+          }))
+        .get();
+    for (final profile in profiles) {
+      latest = _maxUtc(
+        latest,
+        (profile.updatedAt ?? profile.createdAt).toUtc(),
+      );
+    }
+
+    final passConfigs = assignedStudentIds.isEmpty
+        ? const <StudentPassConfig>[]
+        : await (_db.select(_db.studentPassConfigs)
+              ..where((tbl) =>
+                  tbl.courseVersionId.equals(course.id) &
+                  tbl.studentId.isIn(assignedStudentIds)))
+            .get();
+    for (final config in passConfigs) {
+      latest = _maxUtc(
+        latest,
+        (config.updatedAt ?? config.createdAt).toUtc(),
+      );
+    }
+    return latest;
+  }
+
+  DateTime? _maxUtc(DateTime? left, DateTime? right) {
+    if (left == null) {
+      return right?.toUtc();
+    }
+    if (right == null) {
+      return left.toUtc();
+    }
+    final normalizedLeft = left.toUtc();
+    final normalizedRight = right.toUtc();
+    return normalizedRight.isAfter(normalizedLeft)
+        ? normalizedRight
+        : normalizedLeft;
   }
 
   Future<void> _uploadLocalTeacherCourses({
@@ -1034,16 +2540,12 @@ class EnrollmentSyncService {
     };
     final localCourses = await _db.getCourseVersionsForTeacher(currentUser.id);
     for (final course in localCourses) {
-      final sourcePath = (course.sourcePath ?? '').trim();
-      final hasArtifacts = _courseArtifactService != null &&
-          await _hasCachedCourseArtifacts(course.id);
-      final hasSourceFolder =
-          sourcePath.isNotEmpty && Directory(sourcePath).existsSync();
-      if (!hasArtifacts && !hasSourceFolder) {
-        continue;
-      }
-      if (_courseArtifactService != null && !hasArtifacts) {
-        await _ensureCourseArtifacts(course);
+      final hasArtifacts = await _hasCachedCourseArtifacts(course.id);
+      if (!hasArtifacts) {
+        throw StateError(
+          'Cached course artifacts are missing for "${course.subject}". '
+          'Teacher sync cannot rebuild bundles on the hot path.',
+        );
       }
       final target = await _resolveTeacherUploadTarget(
         courseVersionId: course.id,
@@ -1059,125 +2561,107 @@ class EnrollmentSyncService {
         remoteUserId: remoteUserId,
         remoteCourseId: remoteCourseId,
       );
+      final initialSyncState = await _secureStorage.readSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainTeacherCourseUpload,
+        scopeKey: scopeKey,
+      );
+      final localHash = await _readTeacherCourseSyncHash(
+        teacher: currentUser,
+        remoteUserId: remoteUserId,
+        syncStateDomain: _syncDomainTeacherCourseUpload,
+        course: course,
+        remoteCourseId: remoteCourseId,
+        syncState: initialSyncState,
+      );
+      final syncState = await _secureStorage.readSyncItemState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainTeacherCourseUpload,
+        scopeKey: scopeKey,
+      );
+      final hasUnsyncedLocalChanges = _hasUnsyncedLocalCourseChanges(
+        syncState: syncState,
+        localHash: localHash ?? '',
+      );
+      if (!hasUnsyncedLocalChanges &&
+          installedVersion != null &&
+          installedVersion == remoteLatestVersion) {
+        continue;
+      }
+      if (remoteLatestVersion > 0 &&
+          installedVersion != null &&
+          remoteLatestVersion > installedVersion) {
+        if (hasUnsyncedLocalChanges) {
+          throw StateError(
+            'Teacher bundle sync conflict for "${course.subject}". '
+            'Server has a newer course bundle, which may include prompt '
+            'or profile changes. Pull latest server bundle before '
+            'uploading local changes.',
+          );
+        }
+        continue;
+      }
       final preparedBundle = await _prepareTeacherCourseBundle(
         teacher: currentUser,
         course: course,
         remoteCourseId: remoteCourseId,
       );
-      try {
-        final syncState = await _secureStorage.readSyncItemState(
-          remoteUserId: remoteUserId,
-          domain: _syncDomainTeacherCourseUpload,
-          scopeKey: scopeKey,
-        );
-        final localChanged =
-            syncState == null || syncState.contentHash != preparedBundle.hash;
-        if (!localChanged &&
-            installedVersion != null &&
-            installedVersion == remoteLatestVersion) {
-          continue;
-        }
-        if (remoteLatestVersion > 0 &&
-            installedVersion != null &&
-            remoteLatestVersion > installedVersion) {
-          throw StateError(
-            'Teacher course sync conflict for "${course.subject}". '
-            'Pull latest server course before uploading local changes.',
-          );
-        }
-        final uploadResponse = await _api.uploadBundle(
-          bundleId: target.bundleId,
-          courseName: course.subject,
-          bundleFile: preparedBundle.bundleFile,
-        );
-        final uploadedVersionId =
-            (uploadResponse['bundle_version_id'] as num?)?.toInt() ??
-                remoteLatestVersion;
-        summary.uploaded.add(
-          SyncTransferLogItem(
-            direction: 'upload',
-            fileName: p.basename(preparedBundle.bundleFile.path),
-            sizeBytes: preparedBundle.bundleFile.lengthSync(),
-            courseSubject: course.subject,
-            remoteCourseId: remoteCourseId,
-            bundleId: target.bundleId,
-            bundleVersionId: uploadedVersionId,
-            hash: preparedBundle.hash,
-            source: 'teacher_course_sync',
-          ),
-        );
-        final now = DateTime.now().toUtc();
-        await _secureStorage.writeInstalledCourseBundleVersion(
-          remoteUserId: remoteUserId,
+      final uploadResponse = await _artifactApi.uploadArtifact(
+        artifactId: 'course_bundle:$remoteCourseId',
+        sha256: preparedBundle.hash,
+        bytes: await preparedBundle.bundleFile.readAsBytes(),
+        baseSha256: remoteCourse?.latestBundleHash.trim() ?? '',
+        overwriteServer: false,
+      );
+      final uploadedVersionId = uploadResponse.bundleVersionId > 0
+          ? uploadResponse.bundleVersionId
+          : remoteLatestVersion;
+      summary.uploaded.add(
+        SyncTransferLogItem(
+          direction: 'upload',
+          fileName: p.basename(preparedBundle.bundleFile.path),
+          sizeBytes: preparedBundle.bundleFile.lengthSync(),
+          courseSubject: course.subject,
           remoteCourseId: remoteCourseId,
-          versionId: uploadedVersionId,
-        );
-        await _secureStorage.writeSyncItemState(
-          remoteUserId: remoteUserId,
-          domain: _syncDomainTeacherCourseUpload,
-          scopeKey: scopeKey,
-          contentHash: preparedBundle.hash,
-          lastChangedAt: now,
-          lastSyncedAt: now,
-        );
-      } finally {
-        if (preparedBundle.bundleFile.existsSync()) {
-          await preparedBundle.bundleFile.delete();
-        }
-      }
+          bundleId: target.bundleId,
+          bundleVersionId: uploadedVersionId,
+          hash: preparedBundle.hash,
+          source: 'teacher_course_sync',
+        ),
+      );
+      final now = DateTime.now().toUtc();
+      final lastChangedAt = syncState != null &&
+              syncState.contentHash.trim() == preparedBundle.hash
+          ? syncState.lastChangedAt.toUtc()
+          : now;
+      await _writeCourseSyncState(
+        remoteUserId: remoteUserId,
+        domain: _syncDomainTeacherCourseUpload,
+        remoteCourseId: remoteCourseId,
+        bundleVersionId: uploadedVersionId,
+        contentHash: preparedBundle.hash,
+        lastChangedAt: lastChangedAt,
+        lastSyncedAt: now,
+      );
     }
   }
 
-  Future<void> _repairTeacherCoursesMissingLocalMaterialization({
-    required User currentUser,
-    required int remoteUserId,
-    required List<TeacherCourseSummary> remoteCourses,
-    required _SyncTransferSummary summary,
+  Future<void> _detachRemovedTeacherCourses({
+    required int teacherId,
+    required Set<int> removedRemoteCourseIds,
   }) async {
-    final remoteCoursesById = <int, TeacherCourseSummary>{
-      for (final remoteCourse in remoteCourses)
-        remoteCourse.courseId: remoteCourse,
-    };
-    final localCourses = await _db.getCourseVersionsForTeacher(currentUser.id);
+    if (removedRemoteCourseIds.isEmpty) {
+      return;
+    }
+    final localCourses = await _db.getCourseVersionsForTeacher(teacherId);
     for (final course in localCourses) {
-      final hasArtifacts = _courseArtifactService != null &&
-          await _hasCachedCourseArtifacts(course.id);
-      if (hasArtifacts) {
-        continue;
-      }
-      final sourcePath = (course.sourcePath ?? '').trim();
-      final hasSourceFolder =
-          sourcePath.isNotEmpty && Directory(sourcePath).existsSync();
-      if (hasSourceFolder) {
-        continue;
-      }
       final remoteCourseId = await _db.getRemoteCourseId(course.id);
-      if (remoteCourseId == null || remoteCourseId <= 0) {
+      if (remoteCourseId == null ||
+          remoteCourseId <= 0 ||
+          !removedRemoteCourseIds.contains(remoteCourseId)) {
         continue;
       }
-      final remoteCourse = remoteCoursesById[remoteCourseId];
-      if (remoteCourse == null) {
-        continue;
-      }
-      final latestBundleVersionId = remoteCourse.latestBundleVersionId ?? 0;
-      if (latestBundleVersionId <= 0) {
-        continue;
-      }
-      final remoteBundle = await _resolveRemoteBundleInfo(
-        remoteCourseId: remoteCourseId,
-        courseSubject: remoteCourse.subject,
-        latestBundleVersionId: latestBundleVersionId,
-        latestBundleHash: remoteCourse.latestBundleHash,
-      );
-      await _downloadAndImportTeacherCourse(
-        currentUser: currentUser,
-        remoteUserId: remoteUserId,
-        remoteCourseId: remoteCourseId,
-        courseSubject: remoteCourse.subject,
-        bundleVersionId: remoteBundle.bundleVersionId,
-        existingCourseVersionId: course.id,
-        summary: summary,
-      );
+      await _db.deleteCourseRemoteLink(course.id);
     }
   }
 
@@ -1255,41 +2739,19 @@ class EnrollmentSyncService {
     required CourseVersion course,
     required int remoteCourseId,
   }) async {
-    if (_courseArtifactService != null) {
-      await _ensureCourseArtifacts(course);
-      final promptMetadata = await _buildPromptBundleMetadata(
-        teacher: teacher,
-        course: course,
-        remoteCourseId: remoteCourseId,
-      );
-      final prepared = await _courseArtifactService.prepareUploadBundle(
-        courseVersionId: course.id,
-        promptMetadata: promptMetadata,
-        bundleLabel: course.subject,
-      );
-      return _PreparedTeacherCourseBundle(
-        bundleFile: prepared.bundleFile,
-        hash: prepared.hash,
-      );
-    }
-    final sourcePath = (course.sourcePath ?? '').trim();
-    if (sourcePath.isEmpty) {
-      throw StateError('Course source path missing for "${course.subject}".');
-    }
-    final bundleService = CourseBundleService();
     final promptMetadata = await _buildPromptBundleMetadata(
       teacher: teacher,
       course: course,
       remoteCourseId: remoteCourseId,
     );
-    final bundleFile = await bundleService.createBundleFromFolder(
-      sourcePath,
+    final prepared = await _requireCourseArtifactService().prepareUploadBundle(
+      courseVersionId: course.id,
       promptMetadata: promptMetadata,
+      bundleLabel: course.subject,
     );
-    final hash = await bundleService.computeBundleSemanticHash(bundleFile);
     return _PreparedTeacherCourseBundle(
-      bundleFile: bundleFile,
-      hash: hash,
+      bundleFile: prepared.bundleFile,
+      hash: prepared.hash,
     );
   }
 
@@ -1298,30 +2760,12 @@ class EnrollmentSyncService {
     required CourseVersion course,
     required int remoteCourseId,
   }) async {
-    if (_courseArtifactService != null) {
-      await _ensureCourseArtifacts(course);
-      final promptMetadata = await _buildPromptBundleMetadata(
-        teacher: teacher,
-        course: course,
-        remoteCourseId: remoteCourseId,
-      );
-      return _courseArtifactService.computeUploadHash(
-        courseVersionId: course.id,
-        promptMetadata: promptMetadata,
-      );
-    }
     final preparedBundle = await _prepareTeacherCourseBundle(
       teacher: teacher,
       course: course,
       remoteCourseId: remoteCourseId,
     );
-    try {
-      return preparedBundle.hash;
-    } finally {
-      if (preparedBundle.bundleFile.existsSync()) {
-        await preparedBundle.bundleFile.delete();
-      }
-    }
+    return preparedBundle.hash;
   }
 
   Future<CourseVersion> _downloadAndImportTeacherCourse({
@@ -1329,29 +2773,34 @@ class EnrollmentSyncService {
     required int remoteUserId,
     required int remoteCourseId,
     required String courseSubject,
+    required String bundleHash,
     required int bundleVersionId,
     required int? existingCourseVersionId,
     required _SyncTransferSummary summary,
+    DownloadedArtifact? prefetchedArtifact,
   }) async {
     final bundleService = CourseBundleService();
     File? bundleFile;
     try {
-      final targetPath = await bundleService.createTempBundlePath(
-        label: courseSubject,
-      );
-      bundleFile = await _api.downloadBundleToFile(
-        bundleVersionId: bundleVersionId,
-        targetPath: targetPath,
+      final normalizedBundleHash = bundleHash.trim();
+      bundleFile = await _downloadCourseBundleArtifactToFile(
+        remoteCourseId: remoteCourseId,
+        courseSubject: courseSubject,
+        expectedSha256: bundleHash,
+        prefetchedArtifact: prefetchedArtifact,
       );
       await bundleService.validateBundleForImport(bundleFile);
       final promptMetadata =
           await bundleService.readPromptMetadataFromBundleFile(bundleFile);
-      final folderPath = await bundleService.extractBundleFromFile(
+      final folderPath = await bundleService.extractBundleScaffoldFromFile(
         bundleFile: bundleFile,
         courseName: courseSubject,
       );
-      final preview = await _courseService.previewCourseLoad(
-        folderPath: folderPath,
+      final contents = await File(p.join(folderPath, 'contents.txt'))
+          .readAsString(encoding: utf8);
+      final preview = await _courseService.previewCourseLoadFromContents(
+        sourcePath: folderPath,
+        contents: contents,
         courseVersionId: existingCourseVersionId,
         courseNameOverride: courseSubject,
       );
@@ -1365,6 +2814,7 @@ class EnrollmentSyncService {
         teacherId: currentUser.id,
         preview: preview,
         mode: mode,
+        rebuildCourseArtifacts: _courseArtifactService == null,
       );
       if (!result.success || result.course == null) {
         throw StateError(result.message);
@@ -1376,12 +2826,23 @@ class EnrollmentSyncService {
       if (promptMetadata != null) {
         await _applyPromptMetadataForTeacher(
           currentUser: currentUser,
+          remoteCourseId: remoteCourseId,
           metadata: promptMetadata,
           course: result.course!,
         );
       }
-      final remoteHash =
-          await bundleService.computeBundleSemanticHash(bundleFile);
+      if (_courseArtifactService != null) {
+        final artifactFolderPath =
+            (result.course!.sourcePath ?? '').trim().isNotEmpty
+                ? result.course!.sourcePath!.trim()
+                : folderPath;
+        await _courseArtifactService.storeImportedContentBundle(
+          courseVersionId: result.course!.id,
+          folderPath: artifactFolderPath,
+          bundleFile: bundleFile,
+          buildChapterArtifacts: false,
+        );
+      }
       summary.downloaded.add(
         SyncTransferLogItem(
           direction: 'download',
@@ -1390,34 +2851,55 @@ class EnrollmentSyncService {
           courseSubject: courseSubject,
           remoteCourseId: remoteCourseId,
           bundleVersionId: bundleVersionId,
-          hash: remoteHash,
+          hash: bundleHash,
           source: 'teacher_course_sync',
         ),
       );
       final now = DateTime.now().toUtc();
-      await _secureStorage.writeInstalledCourseBundleVersion(
-        remoteUserId: remoteUserId,
-        remoteCourseId: remoteCourseId,
-        versionId: bundleVersionId,
-      );
-      await _secureStorage.writeSyncItemState(
+      await _writeCourseSyncState(
         remoteUserId: remoteUserId,
         domain: _syncDomainTeacherCourseUpload,
-        scopeKey: _teacherCourseScopeKey(remoteCourseId),
-        contentHash: remoteHash,
+        remoteCourseId: remoteCourseId,
+        bundleVersionId: bundleVersionId,
+        contentHash: normalizedBundleHash.isNotEmpty
+            ? normalizedBundleHash
+            : await bundleService.computeBundleByteHash(bundleFile),
         lastChangedAt: now,
         lastSyncedAt: now,
       );
       return result.course!;
     } finally {
-      if (bundleFile != null && bundleFile.existsSync()) {
-        await bundleFile.delete();
-      }
+      await _deleteTemporaryBundleFile(bundleFile);
     }
   }
 
+  Future<void> _deleteTemporaryBundleFile(File? bundleFile) async {
+    if (bundleFile == null || !bundleFile.existsSync()) {
+      return;
+    }
+    try {
+      await bundleFile.delete();
+    } on FileSystemException catch (error) {
+      stderr.writeln(
+        'Warning: failed to delete temporary enrollment bundle '
+        '${bundleFile.path}: $error',
+      );
+    }
+  }
+
+  CourseArtifactService _requireCourseArtifactService() {
+    final artifactService = _courseArtifactService;
+    if (artifactService == null) {
+      throw StateError(
+        'Teacher sync requires cached course artifacts and cannot rebuild '
+        'bundles on the hot path.',
+      );
+    }
+    return artifactService;
+  }
+
   Future<bool> _hasCachedCourseArtifacts(int courseVersionId) async {
-    final manifest = await _courseArtifactService!.readCourseArtifacts(
+    final manifest = await _requireCourseArtifactService().readCourseArtifacts(
       courseVersionId,
     );
     if (manifest == null) {
@@ -1426,220 +2908,152 @@ class EnrollmentSyncService {
     return File(manifest.contentBundlePath).existsSync();
   }
 
-  Future<void> _ensureCourseArtifacts(CourseVersion course) async {
-    if (_courseArtifactService == null) {
-      return;
-    }
-    if (await _hasCachedCourseArtifacts(course.id)) {
-      return;
-    }
-    final sourcePath = (course.sourcePath ?? '').trim();
-    if (sourcePath.isEmpty || !Directory(sourcePath).existsSync()) {
-      throw StateError(
-        'Cached course artifacts are missing for "${course.subject}", and '
-        'the source folder is unavailable.',
-      );
-    }
-    await _courseArtifactService.rebuildCourseArtifacts(
-      courseVersionId: course.id,
-      folderPath: sourcePath,
-    );
-  }
-
   Future<Map<String, dynamic>> _buildPromptBundleMetadata({
     required User teacher,
     required CourseVersion course,
     required int remoteCourseId,
   }) async {
-    final courseKey = (course.sourcePath ?? '').trim();
-    if (courseKey.isEmpty) {
-      return <String, dynamic>{
-        'schema': kCurrentPromptBundleSchema,
-        'remote_course_id': remoteCourseId,
-        'teacher_username': teacher.username,
-        'prompt_templates': const <Map<String, dynamic>>[],
-        'student_prompt_profiles': const <Map<String, dynamic>>[],
-        'student_pass_configs': const <Map<String, dynamic>>[],
-      };
-    }
-
-    final scopeTemplates = <PromptTemplate>[];
-    final courseTemplates = await (_db.select(_db.promptTemplates)
-          ..where((tbl) =>
-              tbl.teacherId.equals(teacher.id) &
-              tbl.isActive.equals(true) &
-              tbl.courseKey.equals(courseKey))
-          ..orderBy([
-            (tbl) =>
-                OrderingTerm(expression: tbl.createdAt, mode: OrderingMode.desc)
-          ]))
-        .get();
-    scopeTemplates.addAll(courseTemplates);
-
-    final dedupedByScope = <String, PromptTemplate>{};
-    for (final template in scopeTemplates) {
-      final key = [
-        template.promptName,
-        template.courseKey ?? '',
-        template.studentId?.toString() ?? '',
-      ].join('::');
-      dedupedByScope.putIfAbsent(key, () => template);
-    }
-
-    final studentCache = <int, User?>{};
-    final promptTemplatesPayload = <Map<String, dynamic>>[];
-    for (final template in dedupedByScope.values) {
-      final studentId = template.studentId;
-      User? student;
-      if (studentId != null) {
-        student = studentCache[studentId];
-        student ??= await _db.getUserById(studentId);
-        studentCache[studentId] = student;
-      }
-
-      var scope = 'teacher';
-      if (template.courseKey != null && template.studentId == null) {
-        scope = 'course';
-      } else if (template.courseKey != null && template.studentId != null) {
-        scope = 'student';
-      }
-
-      promptTemplatesPayload.add({
-        'prompt_name': template.promptName,
-        'scope': scope,
-        'content': template.content,
-        'student_remote_user_id': student?.remoteUserId,
-        'student_username': student?.username,
-        'created_at': template.createdAt.toUtc().toIso8601String(),
-      });
-    }
-
-    final profilesPayload = <Map<String, dynamic>>[];
-    final courseProfile = await _db.getStudentPromptProfile(
-      teacherId: teacher.id,
-      courseKey: courseKey,
-      studentId: null,
+    final rawTimestampMetadata =
+        teacher.remoteUserId != null && teacher.remoteUserId! > 0
+            ? await _readTeacherPromptTimestampMetadata(
+                remoteUserId: teacher.remoteUserId!,
+                remoteCourseId: remoteCourseId,
+              )
+            : const <String, Map<String, String>>{};
+    return PromptBundleMetadataBuilder(db: _db).build(
+      teacher: teacher,
+      course: course,
+      remoteCourseId: remoteCourseId,
+      timestampMetadata: rawTimestampMetadata,
     );
-    if (courseProfile != null) {
-      profilesPayload.add(
-        _profileToJson(courseProfile, scope: 'course'),
-      );
-    }
-
-    final studentProfileRows = await (_db.select(_db.studentPromptProfiles)
-          ..where((tbl) =>
-              tbl.teacherId.equals(teacher.id) &
-              tbl.courseKey.equals(courseKey) &
-              tbl.studentId.isNotNull())
-          ..orderBy([
-            (tbl) => OrderingTerm(
-                  expression: tbl.updatedAt,
-                  mode: OrderingMode.desc,
-                ),
-            (tbl) => OrderingTerm(
-                  expression: tbl.createdAt,
-                  mode: OrderingMode.desc,
-                ),
-          ]))
-        .get();
-
-    final studentIds = <int>{};
-    for (final row in studentProfileRows) {
-      final studentId = row.studentId;
-      if (studentId != null) {
-        studentIds.add(studentId);
-      }
-    }
-
-    for (final studentId in studentIds) {
-      final profile = await _db.getStudentPromptProfile(
-        teacherId: teacher.id,
-        courseKey: courseKey,
-        studentId: studentId,
-      );
-      if (profile == null) {
-        continue;
-      }
-      var student = studentCache[studentId];
-      student ??= await _db.getUserById(studentId);
-      studentCache[studentId] = student;
-      profilesPayload.add(
-        _profileToJson(
-          profile,
-          scope: 'student',
-          studentRemoteUserId: student?.remoteUserId,
-          studentUsername: student?.username,
-        ),
-      );
-    }
-
-    final passConfigsPayload = <Map<String, dynamic>>[];
-    final passConfigRows = await (_db.select(_db.studentPassConfigs)
-          ..where(
-            (tbl) => tbl.courseVersionId.equals(course.id),
-          )
-          ..orderBy([
-            (tbl) => OrderingTerm(
-                  expression: tbl.updatedAt,
-                  mode: OrderingMode.desc,
-                ),
-            (tbl) => OrderingTerm(
-                  expression: tbl.createdAt,
-                  mode: OrderingMode.desc,
-                ),
-          ]))
-        .get();
-    for (final config in passConfigRows) {
-      var student = studentCache[config.studentId];
-      student ??= await _db.getUserById(config.studentId);
-      studentCache[config.studentId] = student;
-      passConfigsPayload.add({
-        'student_remote_user_id': student?.remoteUserId,
-        'student_username': student?.username,
-        'easy_weight': config.easyWeight,
-        'medium_weight': config.mediumWeight,
-        'hard_weight': config.hardWeight,
-        'pass_threshold': config.passThreshold,
-        'updated_at':
-            (config.updatedAt ?? config.createdAt).toUtc().toIso8601String(),
-      });
-    }
-
-    return {
-      'schema': kCurrentPromptBundleSchema,
-      'remote_course_id': remoteCourseId,
-      'teacher_username': teacher.username,
-      'prompt_templates': promptTemplatesPayload,
-      'student_prompt_profiles': profilesPayload,
-      'student_pass_configs': passConfigsPayload,
-    };
   }
 
-  Map<String, dynamic> _profileToJson(
-    StudentPromptProfile profile, {
-    required String scope,
-    int? studentRemoteUserId,
-    String? studentUsername,
+  void _validatePromptTemplateMetadata({
+    required Object? promptTemplates,
+    required String source,
   }) {
-    return {
-      'scope': scope,
-      'student_remote_user_id': studentRemoteUserId,
-      'student_username': studentUsername,
-      'grade_level': profile.gradeLevel,
-      'reading_level': profile.readingLevel,
-      'preferred_language': profile.preferredLanguage,
-      'interests': profile.interests,
-      'preferred_tone': profile.preferredTone,
-      'preferred_pace': profile.preferredPace,
-      'preferred_format': profile.preferredFormat,
-      'support_notes': profile.supportNotes,
-      'updated_at':
-          (profile.updatedAt ?? profile.createdAt).toUtc().toIso8601String(),
-    };
+    if (promptTemplates == null) {
+      return;
+    }
+    if (promptTemplates is! List) {
+      throw StateError(
+        'Invalid $source prompt metadata: prompt_templates must be a list.',
+      );
+    }
+    for (final item in promptTemplates) {
+      if (item is! Map<String, dynamic>) {
+        throw StateError(
+          'Invalid $source prompt metadata: prompt_templates entry is not an object.',
+        );
+      }
+      final promptName = (item['prompt_name'] as String?)?.trim() ?? '';
+      final content = (item['content'] as String?)?.trim() ?? '';
+      final scope = (item['scope'] as String?)?.trim() ?? '';
+      if (promptName.isEmpty || content.isEmpty || scope.isEmpty) {
+        throw StateError(
+          'Invalid $source prompt metadata: prompt entry is missing prompt_name, scope, or content.',
+        );
+      }
+      _requireValidPromptTemplate(
+        promptName: promptName,
+        content: content,
+        scope: scope,
+        source: source,
+      );
+    }
+  }
+
+  void _requireValidPromptTemplate({
+    required String promptName,
+    required String content,
+    required String scope,
+    required String source,
+  }) {
+    final validation = _promptValidator.validate(
+      promptName: promptName,
+      content: content,
+      allowMissingRequired: false,
+    );
+    if (validation.isValid) {
+      return;
+    }
+    throw StateError(
+      'Invalid $source prompt metadata for "$promptName" scope '
+      '"$scope". missing=${validation.missingVariables.join(',')} '
+      'unknown=${validation.unknownVariables.join(',')} '
+      'invalid=${validation.invalidVariables.join(',')}',
+    );
+  }
+
+  Future<Map<String, Map<String, String>>> _readTeacherPromptTimestampMetadata({
+    required int remoteUserId,
+    required int remoteCourseId,
+  }) async {
+    final row = await (_db.select(_db.syncMetadataEntries)
+          ..where((tbl) =>
+              tbl.remoteUserId.equals(remoteUserId) &
+              tbl.kind.equals(_syncMetadataKindTeacherPromptTimestamps) &
+              tbl.domain.equals(_syncMetadataDomainTeacherPromptTimestamps) &
+              tbl.scopeKey.equals(_teacherCourseScopeKey(remoteCourseId))))
+        .getSingleOrNull();
+    if (row == null) {
+      return const <String, Map<String, String>>{};
+    }
+    final normalizedValue = row.value.trim();
+    if (normalizedValue.isEmpty) {
+      return const <String, Map<String, String>>{};
+    }
+    try {
+      final decoded = jsonDecode(normalizedValue);
+      if (decoded is! Map<String, dynamic>) {
+        return const <String, Map<String, String>>{};
+      }
+      final result = <String, Map<String, String>>{};
+      for (final entry in decoded.entries) {
+        final item = entry.value;
+        if (item is! Map<String, dynamic>) {
+          continue;
+        }
+        final createdAt = (item['created_at'] as String?)?.trim() ?? '';
+        final updatedAt = (item['updated_at'] as String?)?.trim() ?? '';
+        final values = <String, String>{};
+        if (createdAt.isNotEmpty) {
+          values['created_at'] = createdAt;
+        }
+        if (updatedAt.isNotEmpty) {
+          values['updated_at'] = updatedAt;
+        }
+        if (values.isNotEmpty) {
+          result[entry.key] = values;
+        }
+      }
+      return result;
+    } catch (_) {
+      return const <String, Map<String, String>>{};
+    }
+  }
+
+  Future<void> _writeTeacherPromptTimestampMetadata({
+    required int remoteUserId,
+    required int remoteCourseId,
+    required Map<String, Map<String, String>> values,
+  }) async {
+    final encoded = jsonEncode(values);
+    await _db.into(_db.syncMetadataEntries).insertOnConflictUpdate(
+          SyncMetadataEntriesCompanion.insert(
+            remoteUserId: remoteUserId,
+            kind: _syncMetadataKindTeacherPromptTimestamps,
+            domain: _syncMetadataDomainTeacherPromptTimestamps,
+            scopeKey: _teacherCourseScopeKey(remoteCourseId),
+            value: encoded,
+            updatedAt: Value(DateTime.now().toUtc()),
+          ),
+        );
   }
 
   Future<void> _applyPromptMetadataForTeacher({
     required User currentUser,
+    required int remoteCourseId,
     required Map<String, dynamic> metadata,
     required CourseVersion course,
   }) async {
@@ -1651,22 +3065,41 @@ class EnrollmentSyncService {
     if (courseKey == null || courseKey.isEmpty) {
       return;
     }
+    final assignments = await _db.getAssignmentsForCourse(course.id);
+    final assignedStudentIds =
+        assignments.map((assignment) => assignment.studentId).toSet();
+    final referencedStudentIds = <int>{};
+    final importedTimestampStrings = <String, Map<String, String>>{};
+    final promptTemplates = metadata['prompt_templates'];
+    _validatePromptTemplateMetadata(
+      promptTemplates: promptTemplates,
+      source: 'download',
+    );
 
     await _db.transaction(() async {
       await (_db.update(_db.promptTemplates)
             ..where((tbl) =>
                 tbl.teacherId.equals(currentUser.id) &
-                tbl.courseKey.equals(courseKey)))
+                (tbl.courseKey.equals(courseKey) |
+                    (tbl.courseKey.isNull() &
+                        (tbl.studentId.isNull() |
+                            (assignedStudentIds.isEmpty
+                                ? const Constant(false)
+                                : tbl.studentId.isIn(assignedStudentIds)))))))
           .write(PromptTemplatesCompanion(isActive: Value(false)));
       await (_db.delete(_db.studentPromptProfiles)
             ..where((tbl) =>
                 tbl.teacherId.equals(currentUser.id) &
-                tbl.courseKey.equals(courseKey)))
+                ((tbl.courseKey.equals(courseKey)) |
+                    (tbl.courseKey.isNull() &
+                        (tbl.studentId.isNull() |
+                            (assignedStudentIds.isEmpty
+                                ? const Constant(false)
+                                : tbl.studentId.isIn(assignedStudentIds)))))))
           .go();
       await _db.deleteStudentPassConfigsForCourse(course.id);
     });
 
-    final promptTemplates = metadata['prompt_templates'];
     if (promptTemplates is List) {
       for (final item in promptTemplates) {
         if (item is! Map<String, dynamic>) {
@@ -1681,11 +3114,31 @@ class EnrollmentSyncService {
 
         String? scopeCourseKey;
         int? scopeStudentId;
-        if (scope == 'course') {
+        int? targetRemoteUserId;
+        if (scope == 'teacher') {
+          scopeCourseKey = null;
+          scopeStudentId = null;
+        } else if (scope == 'student_global') {
+          targetRemoteUserId =
+              (item['student_remote_user_id'] as num?)?.toInt() ?? 0;
+          if (targetRemoteUserId <= 0) {
+            continue;
+          }
+          final targetUsername =
+              (item['student_username'] as String?)?.trim() ?? '';
+          scopeCourseKey = null;
+          scopeStudentId =
+              await _remoteStudentIdentity.resolveOrCreateLocalStudentId(
+            db: _db,
+            remoteStudentId: targetRemoteUserId,
+            usernameHint: targetUsername,
+            teacherId: currentUser.id,
+          );
+        } else if (scope == 'course') {
           scopeCourseKey = courseKey;
           scopeStudentId = null;
-        } else if (scope == 'student') {
-          final targetRemoteUserId =
+        } else if (scope == 'student_course' || scope == 'student') {
+          targetRemoteUserId =
               (item['student_remote_user_id'] as num?)?.toInt() ?? 0;
           if (targetRemoteUserId <= 0) {
             continue;
@@ -1704,10 +3157,26 @@ class EnrollmentSyncService {
           continue;
         }
 
-        await _db.insertPromptTemplate(
+        if (scopeStudentId != null) {
+          referencedStudentIds.add(scopeStudentId);
+        }
+        final createdAtRaw = (item['created_at'] as String?)?.trim() ?? '';
+        if (createdAtRaw.isNotEmpty) {
+          importedTimestampStrings[
+              PromptBundleTimestampMetadata.promptTemplateKey(
+            promptName: promptName,
+            scope: scope,
+            studentRemoteUserId: targetRemoteUserId,
+          )] = <String, String>{'created_at': createdAtRaw};
+        }
+        await _db.importPromptTemplate(
           teacherId: currentUser.id,
           promptName: promptName,
           content: content,
+          createdAt: PromptBundleTimestampMetadata.parseTimestamp(
+                item['created_at'],
+              ) ??
+              DateTime.now(),
           courseKey: scopeCourseKey,
           studentId: scopeStudentId,
         );
@@ -1723,12 +3192,32 @@ class EnrollmentSyncService {
         final scope = (item['scope'] as String?)?.trim() ?? '';
         String? scopeCourseKey;
         int? scopeStudentId;
+        int? targetRemoteUserId;
 
-        if (scope == 'course') {
+        if (scope == 'teacher') {
+          scopeCourseKey = null;
+          scopeStudentId = null;
+        } else if (scope == 'student_global') {
+          targetRemoteUserId =
+              (item['student_remote_user_id'] as num?)?.toInt() ?? 0;
+          if (targetRemoteUserId <= 0) {
+            continue;
+          }
+          final targetUsername =
+              (item['student_username'] as String?)?.trim() ?? '';
+          scopeCourseKey = null;
+          scopeStudentId =
+              await _remoteStudentIdentity.resolveOrCreateLocalStudentId(
+            db: _db,
+            remoteStudentId: targetRemoteUserId,
+            usernameHint: targetUsername,
+            teacherId: currentUser.id,
+          );
+        } else if (scope == 'course') {
           scopeCourseKey = courseKey;
           scopeStudentId = null;
-        } else if (scope == 'student') {
-          final targetRemoteUserId =
+        } else if (scope == 'student_course' || scope == 'student') {
+          targetRemoteUserId =
               (item['student_remote_user_id'] as num?)?.toInt() ?? 0;
           if (targetRemoteUserId <= 0) {
             continue;
@@ -1747,7 +3236,25 @@ class EnrollmentSyncService {
           continue;
         }
 
-        await _db.upsertStudentPromptProfile(
+        if (scopeStudentId != null) {
+          referencedStudentIds.add(scopeStudentId);
+        }
+        final profileTimestamps = <String, String>{};
+        final createdAtRaw = (item['created_at'] as String?)?.trim() ?? '';
+        final updatedAtRaw = (item['updated_at'] as String?)?.trim() ?? '';
+        if (createdAtRaw.isNotEmpty) {
+          profileTimestamps['created_at'] = createdAtRaw;
+        }
+        if (updatedAtRaw.isNotEmpty) {
+          profileTimestamps['updated_at'] = updatedAtRaw;
+        }
+        if (profileTimestamps.isNotEmpty) {
+          importedTimestampStrings[PromptBundleTimestampMetadata.profileKey(
+            scope: scope,
+            studentRemoteUserId: targetRemoteUserId,
+          )] = profileTimestamps;
+        }
+        await _db.importStudentPromptProfile(
           teacherId: currentUser.id,
           courseKey: scopeCourseKey,
           studentId: scopeStudentId,
@@ -1759,6 +3266,10 @@ class EnrollmentSyncService {
           preferredPace: item['preferred_pace'] as String?,
           preferredFormat: item['preferred_format'] as String?,
           supportNotes: item['support_notes'] as String?,
+          createdAt:
+              PromptBundleTimestampMetadata.parseTimestamp(item['created_at']),
+          updatedAt:
+              PromptBundleTimestampMetadata.parseTimestamp(item['updated_at']),
         );
       }
     }
@@ -1783,7 +3294,22 @@ class EnrollmentSyncService {
           usernameHint: targetUsername,
           teacherId: currentUser.id,
         );
-        await _db.upsertStudentPassConfig(
+        referencedStudentIds.add(targetStudentId);
+        final passTimestamps = <String, String>{};
+        final createdAtRaw = (item['created_at'] as String?)?.trim() ?? '';
+        final updatedAtRaw = (item['updated_at'] as String?)?.trim() ?? '';
+        if (createdAtRaw.isNotEmpty) {
+          passTimestamps['created_at'] = createdAtRaw;
+        }
+        if (updatedAtRaw.isNotEmpty) {
+          passTimestamps['updated_at'] = updatedAtRaw;
+        }
+        if (passTimestamps.isNotEmpty) {
+          importedTimestampStrings[PromptBundleTimestampMetadata.passConfigKey(
+            studentRemoteUserId: targetRemoteUserId,
+          )] = passTimestamps;
+        }
+        await _db.importStudentPassConfig(
           courseVersionId: course.id,
           studentId: targetStudentId,
           easyWeight: ((item['easy_weight'] as num?)?.toDouble()) ??
@@ -1794,6 +3320,286 @@ class EnrollmentSyncService {
               ResolvedStudentPassRule.defaultHardWeight,
           passThreshold: ((item['pass_threshold'] as num?)?.toDouble()) ??
               ResolvedStudentPassRule.defaultPassThreshold,
+          createdAt:
+              PromptBundleTimestampMetadata.parseTimestamp(item['created_at']),
+          updatedAt:
+              PromptBundleTimestampMetadata.parseTimestamp(item['updated_at']),
+        );
+      }
+    }
+
+    for (final studentId in referencedStudentIds) {
+      await _db.assignStudent(
+        studentId: studentId,
+        courseVersionId: course.id,
+      );
+    }
+    if (currentUser.remoteUserId != null && currentUser.remoteUserId! > 0) {
+      await _writeTeacherPromptTimestampMetadata(
+        remoteUserId: currentUser.remoteUserId!,
+        remoteCourseId: remoteCourseId,
+        values: importedTimestampStrings,
+      );
+    }
+
+    _promptRepository.invalidatePromptCache();
+  }
+
+  Future<void> _applyPromptMetadataForStudent({
+    required User currentUser,
+    required Map<String, dynamic> metadata,
+    required CourseVersion course,
+  }) async {
+    final schema = (metadata['schema'] as String?)?.trim() ?? '';
+    if (!isSupportedPromptBundleSchema(schema)) {
+      return;
+    }
+    final courseKey = course.sourcePath?.trim();
+    if (courseKey == null || courseKey.isEmpty) {
+      return;
+    }
+    final promptTemplates = metadata['prompt_templates'];
+    _validatePromptTemplateMetadata(
+      promptTemplates: promptTemplates,
+      source: 'download',
+    );
+
+    await _db.transaction(() async {
+      for (final promptName in const <String>[
+        'learn',
+        'review_init',
+        'review_cont',
+      ]) {
+        await _db.clearActivePromptTemplates(
+          teacherId: course.teacherId,
+          promptName: promptName,
+          courseKey: null,
+          studentId: null,
+        );
+        await _db.clearActivePromptTemplates(
+          teacherId: course.teacherId,
+          promptName: promptName,
+          courseKey: null,
+          studentId: currentUser.id,
+        );
+        await _db.clearActivePromptTemplates(
+          teacherId: course.teacherId,
+          promptName: promptName,
+          courseKey: courseKey,
+          studentId: null,
+        );
+        await _db.clearActivePromptTemplates(
+          teacherId: course.teacherId,
+          promptName: promptName,
+          courseKey: courseKey,
+          studentId: currentUser.id,
+        );
+      }
+      await _db.deleteStudentPromptProfile(
+        teacherId: course.teacherId,
+        courseKey: null,
+        studentId: null,
+      );
+      await _db.deleteStudentPromptProfile(
+        teacherId: course.teacherId,
+        courseKey: null,
+        studentId: currentUser.id,
+      );
+      await _db.deleteStudentPromptProfile(
+        teacherId: course.teacherId,
+        courseKey: courseKey,
+        studentId: null,
+      );
+      await _db.deleteStudentPromptProfile(
+        teacherId: course.teacherId,
+        courseKey: courseKey,
+        studentId: currentUser.id,
+      );
+      await _db.deleteStudentPassConfig(
+        courseVersionId: course.id,
+        studentId: currentUser.id,
+      );
+    });
+
+    if (promptTemplates is List) {
+      for (final item in promptTemplates) {
+        if (item is! Map<String, dynamic>) {
+          continue;
+        }
+        final promptName = (item['prompt_name'] as String?)?.trim() ?? '';
+        final content = (item['content'] as String?)?.trim() ?? '';
+        final scope = (item['scope'] as String?)?.trim() ?? '';
+        if (promptName.isEmpty || content.isEmpty) {
+          continue;
+        }
+
+        String? scopeCourseKey;
+        int? scopeStudentId;
+        if (scope == 'teacher') {
+          scopeCourseKey = null;
+          scopeStudentId = null;
+        } else if (scope == 'student_global') {
+          final targetRemoteUserId =
+              (item['student_remote_user_id'] as num?)?.toInt();
+          final targetUsername =
+              (item['student_username'] as String?)?.trim() ?? '';
+          final remoteMatched = currentUser.remoteUserId != null &&
+              targetRemoteUserId != null &&
+              targetRemoteUserId > 0 &&
+              currentUser.remoteUserId == targetRemoteUserId;
+          final usernameMatched = targetUsername.isNotEmpty &&
+              targetUsername.toLowerCase() ==
+                  currentUser.username.toLowerCase();
+          if (!remoteMatched && !usernameMatched) {
+            continue;
+          }
+          scopeCourseKey = null;
+          scopeStudentId = currentUser.id;
+        } else if (scope == 'course') {
+          scopeCourseKey = courseKey;
+          scopeStudentId = null;
+        } else if (scope == 'student_course' || scope == 'student') {
+          final targetRemoteUserId =
+              (item['student_remote_user_id'] as num?)?.toInt();
+          final targetUsername =
+              (item['student_username'] as String?)?.trim() ?? '';
+          final remoteMatched = currentUser.remoteUserId != null &&
+              targetRemoteUserId != null &&
+              targetRemoteUserId > 0 &&
+              currentUser.remoteUserId == targetRemoteUserId;
+          final usernameMatched = targetUsername.isNotEmpty &&
+              targetUsername.toLowerCase() ==
+                  currentUser.username.toLowerCase();
+          if (!remoteMatched && !usernameMatched) {
+            continue;
+          }
+          scopeCourseKey = courseKey;
+          scopeStudentId = currentUser.id;
+        } else {
+          continue;
+        }
+
+        await _db.importPromptTemplate(
+          teacherId: course.teacherId,
+          promptName: promptName,
+          content: content,
+          createdAt: PromptBundleTimestampMetadata.parseTimestamp(
+                item['created_at'],
+              ) ??
+              DateTime.now(),
+          courseKey: scopeCourseKey,
+          studentId: scopeStudentId,
+        );
+      }
+    }
+
+    final profiles = metadata['student_prompt_profiles'];
+    if (profiles is List) {
+      for (final item in profiles) {
+        if (item is! Map<String, dynamic>) {
+          continue;
+        }
+        final scope = (item['scope'] as String?)?.trim() ?? '';
+        String? scopeCourseKey;
+        int? scopeStudentId;
+        if (scope == 'teacher') {
+          scopeCourseKey = null;
+          scopeStudentId = null;
+        } else if (scope == 'student_global') {
+          final targetRemoteUserId =
+              (item['student_remote_user_id'] as num?)?.toInt();
+          final targetUsername =
+              (item['student_username'] as String?)?.trim() ?? '';
+          final remoteMatched = currentUser.remoteUserId != null &&
+              targetRemoteUserId != null &&
+              targetRemoteUserId > 0 &&
+              currentUser.remoteUserId == targetRemoteUserId;
+          final usernameMatched = targetUsername.isNotEmpty &&
+              targetUsername.toLowerCase() ==
+                  currentUser.username.toLowerCase();
+          if (!remoteMatched && !usernameMatched) {
+            continue;
+          }
+          scopeCourseKey = null;
+          scopeStudentId = currentUser.id;
+        } else if (scope == 'course') {
+          scopeCourseKey = courseKey;
+          scopeStudentId = null;
+        } else if (scope == 'student_course' || scope == 'student') {
+          final targetRemoteUserId =
+              (item['student_remote_user_id'] as num?)?.toInt();
+          final targetUsername =
+              (item['student_username'] as String?)?.trim() ?? '';
+          final remoteMatched = currentUser.remoteUserId != null &&
+              targetRemoteUserId != null &&
+              targetRemoteUserId > 0 &&
+              currentUser.remoteUserId == targetRemoteUserId;
+          final usernameMatched = targetUsername.isNotEmpty &&
+              targetUsername.toLowerCase() ==
+                  currentUser.username.toLowerCase();
+          if (!remoteMatched && !usernameMatched) {
+            continue;
+          }
+          scopeCourseKey = courseKey;
+          scopeStudentId = currentUser.id;
+        } else {
+          continue;
+        }
+
+        await _db.importStudentPromptProfile(
+          teacherId: course.teacherId,
+          courseKey: scopeCourseKey,
+          studentId: scopeStudentId,
+          gradeLevel: item['grade_level'] as String?,
+          readingLevel: item['reading_level'] as String?,
+          preferredLanguage: item['preferred_language'] as String?,
+          interests: item['interests'] as String?,
+          preferredTone: item['preferred_tone'] as String?,
+          preferredPace: item['preferred_pace'] as String?,
+          preferredFormat: item['preferred_format'] as String?,
+          supportNotes: item['support_notes'] as String?,
+          createdAt:
+              PromptBundleTimestampMetadata.parseTimestamp(item['created_at']),
+          updatedAt:
+              PromptBundleTimestampMetadata.parseTimestamp(item['updated_at']),
+        );
+      }
+    }
+
+    final passConfigs = metadata['student_pass_configs'];
+    if (passConfigs is List) {
+      for (final item in passConfigs) {
+        if (item is! Map<String, dynamic>) {
+          continue;
+        }
+        final targetRemoteUserId =
+            (item['student_remote_user_id'] as num?)?.toInt();
+        final targetUsername =
+            (item['student_username'] as String?)?.trim() ?? '';
+        final remoteMatched = currentUser.remoteUserId != null &&
+            targetRemoteUserId != null &&
+            targetRemoteUserId > 0 &&
+            currentUser.remoteUserId == targetRemoteUserId;
+        final usernameMatched = targetUsername.isNotEmpty &&
+            targetUsername.toLowerCase() == currentUser.username.toLowerCase();
+        if (!remoteMatched && !usernameMatched) {
+          continue;
+        }
+        await _db.importStudentPassConfig(
+          courseVersionId: course.id,
+          studentId: currentUser.id,
+          easyWeight: ((item['easy_weight'] as num?)?.toDouble()) ??
+              ResolvedStudentPassRule.defaultEasyWeight,
+          mediumWeight: ((item['medium_weight'] as num?)?.toDouble()) ??
+              ResolvedStudentPassRule.defaultMediumWeight,
+          hardWeight: ((item['hard_weight'] as num?)?.toDouble()) ??
+              ResolvedStudentPassRule.defaultHardWeight,
+          passThreshold: ((item['pass_threshold'] as num?)?.toDouble()) ??
+              ResolvedStudentPassRule.defaultPassThreshold,
+          createdAt:
+              PromptBundleTimestampMetadata.parseTimestamp(item['created_at']),
+          updatedAt:
+              PromptBundleTimestampMetadata.parseTimestamp(item['updated_at']),
         );
       }
     }
@@ -1803,24 +3609,6 @@ class EnrollmentSyncService {
 
   String _teacherCourseScopeKey(int remoteCourseId) {
     return 'course:$remoteCourseId';
-  }
-
-  Future<void> _writeSyncListEtag({
-    required int remoteUserId,
-    required String domain,
-    required String scopeKey,
-    required String? etag,
-  }) async {
-    final normalized = (etag ?? '').trim();
-    if (normalized.isEmpty) {
-      return;
-    }
-    await _secureStorage.writeSyncListEtag(
-      remoteUserId: remoteUserId,
-      domain: domain,
-      scopeKey: scopeKey,
-      etag: normalized,
-    );
   }
 
   CourseVersion? _findLocalCourseCandidate({
@@ -1858,7 +3646,8 @@ class EnrollmentSyncService {
     return candidates.first;
   }
 
-  Future<void> _cleanupTeacherLocalDuplicates(int teacherId) async {
+  Future<bool> _cleanupTeacherLocalDuplicates(int teacherId) async {
+    var changed = false;
     final localCourses = await _db.getCourseVersionsForTeacher(teacherId);
     final localRemoteIdByCourseVersion = <int, int?>{};
     for (final course in localCourses) {
@@ -1904,7 +3693,9 @@ class EnrollmentSyncService {
         );
       }
       await _cleanupCourseIfOrphaned(course.id);
+      changed = true;
     }
+    return changed;
   }
 
   Future<void> _repairStudentStaleDuplicateCourses({
@@ -1983,6 +3774,33 @@ class EnrollmentSyncService {
       id: courseVersionId,
       teacherId: expectedTeacherId,
     );
+  }
+
+  Future<void> _repairTeacherStudentOwnership({
+    required int teacherId,
+  }) async {
+    final courses = await _db.getCourseVersionsForTeacher(teacherId);
+    final seenStudentIds = <int>{};
+    for (final course in courses) {
+      final assignments = await _db.getAssignmentsForCourse(course.id);
+      for (final assignment in assignments) {
+        final studentId = assignment.studentId;
+        if (!seenStudentIds.add(studentId)) {
+          continue;
+        }
+        final student = await _db.getUserById(studentId);
+        if (student == null || student.role != 'student') {
+          continue;
+        }
+        if (student.teacherId == teacherId) {
+          continue;
+        }
+        await _db.updateStudentTeacherId(
+          studentId: studentId,
+          teacherId: teacherId,
+        );
+      }
+    }
   }
 
   Future<void> _claimTeacherCourseOwnership({
@@ -2071,15 +3889,15 @@ class _ResolvedCourseSyncState {
   const _ResolvedCourseSyncState({
     required this.courseVersionId,
     required this.installedVersion,
+    required this.syncState,
     required this.localCourse,
-    required this.canBuildLocalBundle,
     required this.replacedCourseVersionId,
   });
 
   final int? courseVersionId;
   final int? installedVersion;
+  final SyncItemState? syncState;
   final CourseVersion? localCourse;
-  final bool canBuildLocalBundle;
   final int? replacedCourseVersionId;
 }
 

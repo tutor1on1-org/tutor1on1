@@ -37,10 +37,7 @@ TextEditingValue normalizeDraftForSttRecording(TextEditingValue value) {
   );
 }
 
-String resolveTutorPromptName({
-  required String action,
-  required bool wantsContinue,
-}) {
+String resolveTutorPromptName({required String action}) {
   final normalized = action.trim().toLowerCase();
   if (normalized == 'learn' || normalized == 'review') {
     return normalized;

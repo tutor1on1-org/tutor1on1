@@ -31,22 +31,17 @@ class SecureStorageService {
   static const _apiKeyKey = 'openai_api_key';
   static const _apiKeyPrefix = 'openai_api_key:';
   static const _apiKeyBasePrefix = 'api_key_base:';
+  static const _oauthCredentialsPrefix = 'oauth_credentials:';
   static const _authAccessTokenKey = 'auth_access_token';
   static const _authRefreshTokenKey = 'auth_refresh_token';
   static const _authDeviceKey = 'auth_device_key';
   static const _authDeviceNameKey = 'auth_device_name';
   static const _remoteStudyModePinHashKey = 'remote_study_mode_pin_hash';
-  static const _userPrivateKeyPrefix = 'user_private_key:';
-  static const _userPublicKeyPrefix = 'user_public_key:';
-  static const _sessionSyncCursorPrefix = 'session_sync_cursor:';
-  static const _progressSyncCursorPrefix = 'progress_sync_cursor:';
-  static const _enrollmentDeletionCursorPrefix = 'enrollment_deletion_cursor:';
-  static const _coursePromptBundleVersionPrefix =
-      'course_prompt_bundle_version:';
   static const _installedCourseBundleVersionPrefix =
       'installed_course_bundle_version:';
   static const _promptMetadataAppliedAtPrefix = 'prompt_metadata_applied_at:';
   static const _syncItemStatePrefix = 'sync_item_state:';
+  static const _localSyncState2Prefix = 'local_sync_state2:';
   static const _syncListEtagPrefix = 'sync_list_etag:';
   static const _syncRunAtPrefix = 'sync_run_at:';
   static final String _syncRunDeviceHash = _buildSyncRunDeviceHash();
@@ -173,6 +168,21 @@ class SecureStorageService {
     return _storage.delete(key: '$_apiKeyPrefix$hash');
   }
 
+  Future<String?> readOAuthCredentials(String providerId) {
+    return _storage.read(key: _oauthCredentialsKey(providerId));
+  }
+
+  Future<void> writeOAuthCredentials(String providerId, String value) {
+    return _storage.write(
+      key: _oauthCredentialsKey(providerId),
+      value: value.trim(),
+    );
+  }
+
+  Future<void> deleteOAuthCredentials(String providerId) {
+    return _storage.delete(key: _oauthCredentialsKey(providerId));
+  }
+
   Future<String?> readAuthAccessToken() =>
       _storage.read(key: _authAccessTokenKey);
 
@@ -224,79 +234,6 @@ class SecureStorageService {
 
   Future<void> deleteRemoteStudyModePinHash() {
     return _storage.delete(key: _remoteStudyModePinHashKey);
-  }
-
-  Future<String?> readUserPrivateKey(int remoteUserId) {
-    return _storage.read(key: '$_userPrivateKeyPrefix$remoteUserId');
-  }
-
-  Future<void> writeUserPrivateKey(int remoteUserId, String value) {
-    return _storage.write(
-      key: '$_userPrivateKeyPrefix$remoteUserId',
-      value: value.trim(),
-    );
-  }
-
-  Future<void> deleteUserPrivateKey(int remoteUserId) {
-    return _storage.delete(key: '$_userPrivateKeyPrefix$remoteUserId');
-  }
-
-  Future<String?> readUserPublicKey(int remoteUserId) {
-    return _storage.read(key: '$_userPublicKeyPrefix$remoteUserId');
-  }
-
-  Future<void> writeUserPublicKey(int remoteUserId, String value) {
-    return _storage.write(
-      key: '$_userPublicKeyPrefix$remoteUserId',
-      value: value.trim(),
-    );
-  }
-
-  Future<String?> readSessionSyncCursor(int remoteUserId) {
-    return _storage.read(key: '$_sessionSyncCursorPrefix$remoteUserId');
-  }
-
-  Future<void> writeSessionSyncCursor(int remoteUserId, String value) {
-    return _storage.write(
-      key: '$_sessionSyncCursorPrefix$remoteUserId',
-      value: value.trim(),
-    );
-  }
-
-  Future<void> deleteSessionSyncCursor(int remoteUserId) {
-    return _storage.delete(key: '$_sessionSyncCursorPrefix$remoteUserId');
-  }
-
-  Future<String?> readProgressSyncCursor(int remoteUserId) {
-    return _storage.read(key: '$_progressSyncCursorPrefix$remoteUserId');
-  }
-
-  Future<void> writeProgressSyncCursor(int remoteUserId, String value) {
-    return _storage.write(
-      key: '$_progressSyncCursorPrefix$remoteUserId',
-      value: value.trim(),
-    );
-  }
-
-  Future<void> deleteProgressSyncCursor(int remoteUserId) {
-    return _storage.delete(key: '$_progressSyncCursorPrefix$remoteUserId');
-  }
-
-  Future<int?> readEnrollmentDeletionCursor(int remoteUserId) async {
-    final value = await _storage.read(
-      key: '$_enrollmentDeletionCursorPrefix$remoteUserId',
-    );
-    if (value == null || value.trim().isEmpty) {
-      return null;
-    }
-    return int.tryParse(value.trim());
-  }
-
-  Future<void> writeEnrollmentDeletionCursor(int remoteUserId, int eventId) {
-    return _storage.write(
-      key: '$_enrollmentDeletionCursorPrefix$remoteUserId',
-      value: eventId.toString(),
-    );
   }
 
   Future<int?> readInstalledCourseBundleVersion({
@@ -385,6 +322,53 @@ class SecureStorageService {
       ),
       value: payload,
     );
+  }
+
+  Future<String?> readLocalSyncState2({
+    required int remoteUserId,
+    required String domain,
+  }) {
+    return _storage.read(
+      key: _localSyncState2Key(
+        remoteUserId: remoteUserId,
+        domain: domain,
+      ),
+    );
+  }
+
+  Future<void> writeLocalSyncState2({
+    required int remoteUserId,
+    required String domain,
+    required String state2,
+  }) {
+    return _storage.write(
+      key: _localSyncState2Key(
+        remoteUserId: remoteUserId,
+        domain: domain,
+      ),
+      value: state2.trim(),
+    );
+  }
+
+  Future<void> deleteLocalSyncState2({
+    required int remoteUserId,
+    required String domain,
+  }) {
+    return _storage.delete(
+      key: _localSyncState2Key(
+        remoteUserId: remoteUserId,
+        domain: domain,
+      ),
+    );
+  }
+
+  Future<void> clearAllLocalSyncState2() async {
+    final all = await _storage.readAll();
+    for (final key in all.keys) {
+      if (key.startsWith(_localSyncState2Prefix)) {
+        await _storage.delete(key: key);
+      }
+    }
   }
 
   Future<String?> readSyncListEtag({
@@ -500,45 +484,30 @@ class SecureStorageService {
     );
   }
 
-  Future<int?> readCoursePromptBundleVersion({
-    required int remoteUserId,
-    required int remoteCourseId,
-  }) async {
-    final installed = await readInstalledCourseBundleVersion(
-      remoteUserId: remoteUserId,
-      remoteCourseId: remoteCourseId,
-    );
-    if (installed != null) {
-      return installed;
+  Future<void> clearLegacySyncCompatibilityState() async {
+    const obsoletePrefixes = <String>[
+      'user_private_key:',
+      'user_public_key:',
+      'session_sync_cursor:',
+      'progress_sync_cursor:',
+      'enrollment_deletion_cursor:',
+      'course_prompt_bundle_version:',
+    ];
+    final all = await _storage.readAll();
+    for (final key in all.keys) {
+      if (obsoletePrefixes.any(key.startsWith)) {
+        await _storage.delete(key: key);
+      }
     }
-    final legacy = await _storage.read(
-      key: '$_coursePromptBundleVersionPrefix$remoteUserId:$remoteCourseId',
-    );
-    if (legacy == null || legacy.trim().isEmpty) {
-      return null;
-    }
-    return int.tryParse(legacy.trim());
-  }
-
-  Future<void> writeCoursePromptBundleVersion({
-    required int remoteUserId,
-    required int remoteCourseId,
-    required int versionId,
-  }) async {
-    await writeInstalledCourseBundleVersion(
-      remoteUserId: remoteUserId,
-      remoteCourseId: remoteCourseId,
-      versionId: versionId,
-    );
-    await _storage.write(
-      key: '$_coursePromptBundleVersionPrefix$remoteUserId:$remoteCourseId',
-      value: versionId.toString(),
-    );
   }
 
   String _baseUrlKey(String baseUrl) {
     final normalized = baseUrl.trim().toLowerCase();
     return '$_apiKeyBasePrefix${sha256Hex(normalized)}';
+  }
+
+  String _oauthCredentialsKey(String providerId) {
+    return '$_oauthCredentialsPrefix${providerId.trim().toLowerCase()}';
   }
 
   String _syncItemStateKey({
@@ -561,6 +530,14 @@ class SecureStorageService {
     final normalizedScope = scopeKey.trim();
     final scopeHash = sha256Hex(normalizedScope);
     return '$_syncListEtagPrefix$remoteUserId:$normalizedDomain:$scopeHash';
+  }
+
+  String _localSyncState2Key({
+    required int remoteUserId,
+    required String domain,
+  }) {
+    final normalizedDomain = domain.trim().toLowerCase();
+    return '$_localSyncState2Prefix$remoteUserId:$normalizedDomain';
   }
 
   String _syncRunAtKey({

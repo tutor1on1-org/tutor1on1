@@ -71,22 +71,22 @@ class TutorControlState {
     required this.step,
     required this.turnFinished,
     required this.helpBias,
-    required this.allowedActions,
     required this.recommendedAction,
     required this.activeReviewQuestion,
+    required this.currentReviewDifficulty,
     required this.justPassedKpEvent,
   });
 
-  static const int currentVersion = 2;
+  static const int currentVersion = 4;
 
   final int version;
   final TutorMode mode;
   final TutorTurnStep step;
   final bool turnFinished;
   final TutorHelpBias helpBias;
-  final List<TutorFinishedAction> allowedActions;
   final TutorFinishedAction? recommendedAction;
   final Map<String, dynamic>? activeReviewQuestion;
+  final String? currentReviewDifficulty;
   final TutorJustPassedKpEvent? justPassedKpEvent;
 
   bool get hasActiveReviewQuestion =>
@@ -97,9 +97,9 @@ class TutorControlState {
     TutorTurnStep? step,
     bool? turnFinished,
     TutorHelpBias? helpBias,
-    List<TutorFinishedAction>? allowedActions,
-    TutorFinishedAction? recommendedAction,
+    Object? recommendedAction = _unset,
     Object? activeReviewQuestion = _unset,
+    Object? currentReviewDifficulty = _unset,
     Object? justPassedKpEvent = _unset,
   }) {
     return TutorControlState(
@@ -108,11 +108,15 @@ class TutorControlState {
       step: step ?? this.step,
       turnFinished: turnFinished ?? this.turnFinished,
       helpBias: helpBias ?? this.helpBias,
-      allowedActions: allowedActions ?? this.allowedActions,
-      recommendedAction: recommendedAction ?? this.recommendedAction,
+      recommendedAction: identical(recommendedAction, _unset)
+          ? this.recommendedAction
+          : (recommendedAction as TutorFinishedAction?),
       activeReviewQuestion: identical(activeReviewQuestion, _unset)
           ? this.activeReviewQuestion
           : (activeReviewQuestion as Map<String, dynamic>?),
+      currentReviewDifficulty: identical(currentReviewDifficulty, _unset)
+          ? this.currentReviewDifficulty
+          : (currentReviewDifficulty as String?),
       justPassedKpEvent: identical(justPassedKpEvent, _unset)
           ? this.justPassedKpEvent
           : (justPassedKpEvent as TutorJustPassedKpEvent?),
@@ -126,9 +130,9 @@ class TutorControlState {
       'step': step.wireValue,
       'turn_finished': turnFinished,
       'help_bias': helpBias.wireValue,
-      'allowed_actions': allowedActions.map((item) => item.wireValue).toList(),
       'recommended_action': recommendedAction?.wireValue,
       'active_review_question': activeReviewQuestion,
+      'current_review_difficulty': currentReviewDifficulty,
       'just_passed_kp_event': justPassedKpEvent?.toJson(),
     };
   }
@@ -159,25 +163,6 @@ class TutorControlState {
     if (mode == null || step == null || helpBias == null) {
       return null;
     }
-    final allowedRaw = json['allowed_actions'];
-    if (allowedRaw != null && allowedRaw is! List) {
-      return null;
-    }
-    final allowed = <TutorFinishedAction>[];
-    if (allowedRaw is List) {
-      for (final entry in allowedRaw) {
-        if (entry is! String) {
-          return null;
-        }
-        final action = TutorFinishedAction.fromWire(entry);
-        if (action == null) {
-          return null;
-        }
-        if (!allowed.contains(action)) {
-          allowed.add(action);
-        }
-      }
-    }
     final recommendedRaw = json['recommended_action'];
     if (recommendedRaw != null && recommendedRaw is! String) {
       return null;
@@ -193,6 +178,13 @@ class TutorControlState {
         activeReviewQuestionRaw is! Map<String, dynamic>) {
       return null;
     }
+    final currentReviewDifficulty =
+        _normalizeLevel(json['current_review_difficulty']);
+    if (json['current_review_difficulty'] is String &&
+        (json['current_review_difficulty'] as String).trim().isNotEmpty &&
+        currentReviewDifficulty == null) {
+      return null;
+    }
     final justPassedKpEvent = TutorJustPassedKpEvent.fromJson(
       json['just_passed_kp_event'],
     );
@@ -205,11 +197,11 @@ class TutorControlState {
       step: step,
       turnFinished: turnFinished,
       helpBias: helpBias,
-      allowedActions: allowed,
       recommendedAction: recommended,
       activeReviewQuestion: activeReviewQuestionRaw == null
           ? null
           : Map<String, dynamic>.from(activeReviewQuestionRaw as Map),
+      currentReviewDifficulty: currentReviewDifficulty,
       justPassedKpEvent: justPassedKpEvent,
     );
   }
@@ -221,9 +213,9 @@ class TutorControlState {
       step: TutorTurnStep.newTurn,
       turnFinished: false,
       helpBias: TutorHelpBias.unchanged,
-      allowedActions: const <TutorFinishedAction>[],
       recommendedAction: null,
       activeReviewQuestion: null,
+      currentReviewDifficulty: null,
       justPassedKpEvent: null,
     );
   }
@@ -259,11 +251,11 @@ class TutorControlState {
         step: finished ? TutorTurnStep.newTurn : TutorTurnStep.continueTurn,
         turnFinished: finished,
         helpBias: TutorHelpBias.unchanged,
-        allowedActions: const <TutorFinishedAction>[],
         recommendedAction: TutorFinishedAction.fromWire(
           (parsed['next_action'] as String?)?.trim().toUpperCase(),
         ),
         activeReviewQuestion: activeReviewQuestion,
+        currentReviewDifficulty: difficultyLevel,
         justPassedKpEvent: null,
       );
     }
@@ -283,9 +275,9 @@ class TutorControlState {
       step: TutorTurnStep.newTurn,
       turnFinished: true,
       helpBias: helpBias,
-      allowedActions: const <TutorFinishedAction>[],
       recommendedAction: nextAction,
       activeReviewQuestion: null,
+      currentReviewDifficulty: null,
       justPassedKpEvent: null,
     );
   }
@@ -373,6 +365,9 @@ class TutorEvidenceState {
     required this.easyPassedCount,
     required this.mediumPassedCount,
     required this.hardPassedCount,
+    required this.easyFailedCount,
+    required this.mediumFailedCount,
+    required this.hardFailedCount,
     required this.lastAssessedAction,
     required this.lastEvidence,
   });
@@ -389,6 +384,9 @@ class TutorEvidenceState {
   final int easyPassedCount;
   final int mediumPassedCount;
   final int hardPassedCount;
+  final int easyFailedCount;
+  final int mediumFailedCount;
+  final int hardFailedCount;
   final String? lastAssessedAction;
   final Map<String, dynamic>? lastEvidence;
 
@@ -404,6 +402,9 @@ class TutorEvidenceState {
     int? easyPassedCount,
     int? mediumPassedCount,
     int? hardPassedCount,
+    int? easyFailedCount,
+    int? mediumFailedCount,
+    int? hardFailedCount,
     String? lastAssessedAction,
     Map<String, dynamic>? lastEvidence,
   }) {
@@ -418,6 +419,9 @@ class TutorEvidenceState {
       easyPassedCount: easyPassedCount ?? this.easyPassedCount,
       mediumPassedCount: mediumPassedCount ?? this.mediumPassedCount,
       hardPassedCount: hardPassedCount ?? this.hardPassedCount,
+      easyFailedCount: easyFailedCount ?? this.easyFailedCount,
+      mediumFailedCount: mediumFailedCount ?? this.mediumFailedCount,
+      hardFailedCount: hardFailedCount ?? this.hardFailedCount,
       lastAssessedAction: lastAssessedAction ?? this.lastAssessedAction,
       lastEvidence: lastEvidence ?? this.lastEvidence,
     );
@@ -434,6 +438,9 @@ class TutorEvidenceState {
       'easy_passed_count': easyPassedCount,
       'medium_passed_count': mediumPassedCount,
       'hard_passed_count': hardPassedCount,
+      'easy_failed_count': easyFailedCount,
+      'medium_failed_count': mediumFailedCount,
+      'hard_failed_count': hardFailedCount,
       'last_assessed_action': lastAssessedAction,
       'last_evidence': lastEvidence,
     };
@@ -452,6 +459,9 @@ class TutorEvidenceState {
       easyPassedCount: 0,
       mediumPassedCount: 0,
       hardPassedCount: 0,
+      easyFailedCount: 0,
+      mediumFailedCount: 0,
+      hardFailedCount: 0,
       lastAssessedAction: null,
       lastEvidence: null,
     );
@@ -487,6 +497,9 @@ class TutorEvidenceState {
       easyPassedCount: (json['easy_passed_count'] as num?)?.toInt() ?? 0,
       mediumPassedCount: (json['medium_passed_count'] as num?)?.toInt() ?? 0,
       hardPassedCount: (json['hard_passed_count'] as num?)?.toInt() ?? 0,
+      easyFailedCount: (json['easy_failed_count'] as num?)?.toInt() ?? 0,
+      mediumFailedCount: (json['medium_failed_count'] as num?)?.toInt() ?? 0,
+      hardFailedCount: (json['hard_failed_count'] as num?)?.toInt() ?? 0,
       lastAssessedAction: (json['last_assessed_action'] as String?)?.trim(),
       lastEvidence: json['last_evidence'] is Map<String, dynamic>
           ? Map<String, dynamic>.from(json['last_evidence'] as Map)
@@ -498,28 +511,59 @@ class TutorEvidenceState {
     required TutorEvidenceState current,
     required String actionMode,
     required Map<String, dynamic>? parsed,
+    required bool hadActiveReviewQuestion,
     String? passedLevel,
   }) {
     final normalizedAction = actionMode.trim().toUpperCase();
     if (normalizedAction == 'REVIEW' && parsed != null) {
       final finished = parsed['finished'];
       if (finished is bool) {
-        final normalizedPassedLevel = _normalizeLevel(parsed['difficulty']) ??
+        final normalizedLevel = _normalizeLevel(parsed['difficulty']) ??
             _normalizeLevel(passedLevel);
         final mistakeTags = _stringListFromValue(parsed['mistakes']);
+        final shouldCountReviewAttempt = hadActiveReviewQuestion;
         return current.copyWith(
-          gradedReviewCount: current.gradedReviewCount + (finished ? 1 : 0),
-          reviewCorrectTotal: current.reviewCorrectTotal + (finished ? 1 : 0),
-          reviewAttemptTotal: current.reviewAttemptTotal + (finished ? 1 : 0),
+          gradedReviewCount:
+              current.gradedReviewCount + (shouldCountReviewAttempt ? 1 : 0),
+          reviewCorrectTotal: current.reviewCorrectTotal +
+              (shouldCountReviewAttempt && finished ? 1 : 0),
+          reviewAttemptTotal:
+              current.reviewAttemptTotal + (shouldCountReviewAttempt ? 1 : 0),
           easyPassedCount: current.easyPassedCount +
-              (finished && normalizedPassedLevel == 'easy' ? 1 : 0),
+              (shouldCountReviewAttempt && finished && normalizedLevel == 'easy'
+                  ? 1
+                  : 0),
           mediumPassedCount: current.mediumPassedCount +
-              (finished && normalizedPassedLevel == 'medium' ? 1 : 0),
+              (shouldCountReviewAttempt &&
+                      finished &&
+                      normalizedLevel == 'medium'
+                  ? 1
+                  : 0),
           hardPassedCount: current.hardPassedCount +
-              (finished && normalizedPassedLevel == 'hard' ? 1 : 0),
+              (shouldCountReviewAttempt && finished && normalizedLevel == 'hard'
+                  ? 1
+                  : 0),
+          easyFailedCount: current.easyFailedCount +
+              (shouldCountReviewAttempt &&
+                      !finished &&
+                      normalizedLevel == 'easy'
+                  ? 1
+                  : 0),
+          mediumFailedCount: current.mediumFailedCount +
+              (shouldCountReviewAttempt &&
+                      !finished &&
+                      normalizedLevel == 'medium'
+                  ? 1
+                  : 0),
+          hardFailedCount: current.hardFailedCount +
+              (shouldCountReviewAttempt &&
+                      !finished &&
+                      normalizedLevel == 'hard'
+                  ? 1
+                  : 0),
           lastAssessedAction: 'REVIEW',
           lastEvidence: <String, dynamic>{
-            'difficulty': normalizedPassedLevel,
+            'difficulty': normalizedLevel,
             'finished': finished,
             'mistakes': mistakeTags,
           },
@@ -553,15 +597,29 @@ class TutorEvidenceState {
       easyPassedCount: 0,
       mediumPassedCount: 0,
       hardPassedCount: 0,
+      easyFailedCount: 0,
+      mediumFailedCount: 0,
+      hardFailedCount: 0,
       lastAssessedAction: null,
       lastEvidence: null,
     );
+    var hasActiveReviewQuestion = false;
     for (final turn in turns) {
       rebuilt = TutorEvidenceState.updateFromAssistantPayload(
         current: rebuilt,
         actionMode: turn.actionMode,
         parsed: turn.parsed,
+        hadActiveReviewQuestion: hasActiveReviewQuestion,
       );
+      final normalizedAction = turn.actionMode.trim().toUpperCase();
+      if (normalizedAction == 'REVIEW' && turn.parsed != null) {
+        final finished = turn.parsed!['finished'];
+        if (finished is bool) {
+          hasActiveReviewQuestion = !finished;
+        }
+      } else if (normalizedAction != 'REVIEW') {
+        hasActiveReviewQuestion = false;
+      }
     }
     final cappedSummaryConsumed =
         seed.summaryConsumedReviewCount > rebuilt.gradedReviewCount

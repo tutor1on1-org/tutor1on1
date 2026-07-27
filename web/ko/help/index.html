@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta content="width=device-width, initial-scale=1.0" name="viewport">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Tutor1on1 도움말: 개인 맞춤 지도, 오답 복습, API config, 코스 공개, 수강 신청, 세션, 동기화.">
+  <meta content="#f7f9fb" name="theme-color">
+  <title>Tutor1on1 도움말</title>
+  <link rel="apple-touch-icon" href="../../icons/Icon-192.png">
+  <link rel="icon" type="image/png" href="../../favicon.png">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="stylesheet" href="../../styles.css">
+  <script src="/site.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="/ko/">
+        <span class="brand-mark">T1</span>
+        <span class="brand-text"><strong>Tutor1on1</strong><span>도움말</span></span>
+      </a>
+      <nav class="topnav" aria-label="탐색 및 언어">
+        <table class="topnav-table" role="presentation"><tr>
+          <td><a class="nav-link nav-action" href="/ko/">홈</a></td>
+          <td><a class="nav-link nav-action" href="/ko/install/">설치</a></td>
+          <td><select class="lang-select nav-action" aria-label="탐색 및 언어" data-language-switcher><option value="ko">한국어</option></select></td>
+        </tr></table>
+      </nav>
+    </header>
+
+    <main class="page">
+      <section class="hero hero-compact">
+        <p class="eyebrow">빠른 시작</p>
+        <h1>역할에 맞게 Tutor1on1 사용하기.</h1>
+        <p class="lead">교사는 코스를 공개하고 관리합니다. 학생은 수강을 신청하고 승인된 콘텐츠를 다운로드한 뒤, 자신의 진도에 맞는 지도, 연습, 오답 복습을 받습니다.</p>
+        <div class="actions">
+          <a class="button button-primary" href="/ko/install/">먼저 설치</a>
+          <a class="button button-ghost" href="#teacher">교사 흐름</a>
+          <a class="button button-ghost" href="#student">학생 흐름</a>
+          <a class="button button-ghost" href="#course-folder">코스 folder</a>
+          <a class="button button-ghost" href="#config">API config</a>
+          <a class="button button-ghost" href="#oauth">ChatGPT OAuth</a>
+        </div>
+      </section>
+
+      <section class="role-strip section-block">
+        <article class="role-card teacher" id="teacher">
+          <p class="eyebrow">교사 흐름</p>
+          <h2>코스를 공개하고 계속 개인화합니다.</h2>
+          <ol class="help-list"><li>교사로 로그인하거나 교사 계정을 등록합니다.</li><li>로컬 코스 버전을 만들거나 불러옵니다.</li><li>검증된 bundle을 marketplace에 업로드합니다.</li><li>학생 수강 신청을 승인합니다.</li><li>교사 홈에서 학생별 진도, 반복 오답, 동기화된 세션을 확인합니다.</li></ol>
+        </article>
+        <article class="role-card student" id="student">
+          <p class="eyebrow">학생 흐름</p>
+          <h2>수강하고 자신의 속도로 공부합니다.</h2>
+          <ol class="help-list"><li>학생으로 로그인하거나 학생 계정을 등록합니다.</li><li>marketplace를 열고 코스 수강을 신청합니다.</li><li>교사 승인을 기다립니다.</li><li>승인된 코스 bundle을 다운로드합니다.</li><li>코스를 열고 진도에 맞는 Learn 또는 Review 세션을 시작합니다.</li></ol>
+        </article>
+      </section>
+
+      <section class="content-block" id="course-folder">
+        <p class="eyebrow">AI로 코스 만들기</p>
+        <h2>PDF, PPT, 수업 자료를 Tutor1on1 코스 folder로 변환합니다.</h2>
+        <p class="muted">기존 자료는 먼저 외부 AI agent로 Tutor1on1용 folder로 정리합니다. Tutor1on1은 검증, 불러오기, 게시, 그리고 KP별 편집을 담당합니다.</p>
+        <ol class="help-list"><li>PDF, PPT, Word, 워크시트, 답안 메모를 source folder에 넣습니다. 스캔 자료는 먼저 OCR을 하고 수식과 도표를 직접 확인합니다.</li><li>처음에는 Codex에 <code>contents.txt</code> outline만 만들게 합니다. KP 순서, title, 단위를 확인한 뒤 파일 생성을 요청합니다.</li><li>Codex에 출력 course folder를 만들게 합니다. <code>contents.txt</code>의 모든 id에는 대응하는 <code>&lt;id&gt;_lecture.txt</code>가 필요합니다. 선택 질문 파일은 <code>&lt;id&gt;_easy.txt</code>, <code>&lt;id&gt;_medium.txt</code>, <code>&lt;id&gt;_hard.txt</code>입니다.</li><li>교사로 Tutor1on1에서 folder를 불러옵니다. missing file 또는 id 오류가 나오면 그 오류를 Codex에 붙여 넣고 folder를 수정하게 합니다.</li><li>불러오기에 성공하면 KP를 오른쪽 클릭하고 <strong>AI edit content</strong>로 lesson 또는 질문 풀을 작게 수정합니다.</li></ol>
+        <pre class="code-block"><code>special_relativity_course/
+  contents.txt
+  context.txt
+  1_lecture.txt
+  1.1_lecture.txt
+  1.1_easy.txt
+  1.1_medium.txt
+  1.1_hard.txt</code></pre>
+        <h3>Codex web</h3>
+        <ol class="help-list"><li>새 작업을 만듭니다: <strong>Generate Tutor1on1 course folder from teaching materials</strong>.</li><li>PDF/PPT/Word 파일을 업로드합니다.</li><li>Prompt: <code>Read the uploaded materials and propose a Tutor1on1 contents.txt outline. Use dotted ids like 1, 1.1, 1.2. Do not generate files yet. Wait for my approval.</code></li><li>outline 승인 후 prompt: <code>Create a complete Tutor1on1 course folder with contents.txt, one &lt;id&gt;_lecture.txt for every id, and optional easy/medium/hard question files. Run a self-check and list missing files.</code></li><li>생성된 folder 또는 zip을 다운로드하고 압축을 푼 뒤 Tutor1on1에서 불러옵니다.</li></ol>
+        <h3>Codex desktop 또는 local GUI</h3>
+        <ol class="help-list"><li>원본 문서용 <code>source_materials/</code>와 빈 출력 folder인 <code>special_relativity_course/</code>를 만듭니다.</li><li>그 상위 workspace를 Codex에서 엽니다.</li><li>Prompt: <code>Use source_materials/ as input. Create a complete Tutor1on1 course folder in special_relativity_course/. Do not modify source_materials/. First generate contents.txt, then generate all lecture and question files. After writing files, check that every contents.txt id has &lt;id&gt;_lecture.txt.</code></li><li>Codex가 파일을 직접 쓰게 합니다. 마지막에 self-check report를 요청한 뒤 출력 folder를 Tutor1on1에서 불러옵니다.</li></ol>
+        <h3>Tutor1on1 안에서 AI edit course</h3>
+        <ol class="help-list"><li>folder를 불러온 뒤 교사로 course skill tree를 엽니다.</li><li>대상 KP node 또는 아래 title을 오른쪽 클릭하고 <strong>AI edit content</strong>를 선택합니다.</li><li>lesson 본문이 필요하면 <strong>Content</strong>, 해당 KP의 질문 풀 텍스트가 필요하면 <strong>Question</strong>을 선택합니다.</li><li>최신 AI 답변을 저장할 수 있을 때까지 대화합니다. 각 요청은 현재 KP에 집중합니다.</li><li>AI 답변의 <strong>Edit</strong>를 눌러 diff window를 엽니다. 왼쪽은 현재 내용이고 오른쪽은 제안 내용이며, 오른쪽은 직접 수정할 수 있습니다.</li><li><strong>Add</strong>는 추가, <strong>Replace</strong>는 덮어쓰기입니다. Question이면 <strong>easy</strong>, <strong>medium</strong>, <strong>hard</strong>도 선택합니다.</li><li>저장합니다. Marketplace 학생이 업데이트를 받으려면 course bundle을 다시 업로드합니다.</li></ol>
+      </section>
+
+      <section class="content-block">
+        <h2>개인 맞춤 학습 흐름</h2>
+        <div class="steps"><article class="step"><span class="step-number">1</span><div><h3>학습</h3><p>Tutor는 코스 내용과 학생의 현재 진도를 바탕으로 다음 개념을 설명합니다.</p></div></article><article class="step"><span class="step-number">2</span><div><h3>연습</h3><p>연습은 학생 답변에 맞춰 조정되며 필요할 때 힌트, 더 쉬운 예, 긍정적 피드백을 제공합니다.</p></div></article><article class="step"><span class="step-number">3</span><div><h3>오답 복습</h3><p>의미 있는 오답은 오답 노트에 요약되어 이후 복습이 실제 약점을 겨냥하게 합니다.</p></div></article></div>
+      </section>
+
+      <section class="content-block" id="config">
+        <h2>API config 항목</h2>
+        <ul class="help-list"><li><strong>Provider</strong>는 OpenAI 또는 SiliconFlow 같은 모델 서비스를 선택합니다.</li><li><strong>Base URL</strong>은 Tutor1on1이 모델 서비스에 요청을 보내는 endpoint이며, 선택한 provider에 맞게 표시됩니다.</li><li><strong>API Key</strong>는 로컬에 저장되며 tutor, TTS, STT 등 모델 서비스가 필요한 기능에 사용됩니다.</li><li><strong>Test API key</strong>는 <code>{baseUrl}/models</code>를 호출해 key를 검증하고 사용 가능한 text, TTS, STT 모델 목록을 불러옵니다. 모델을 다운로드하지 않으며 새 모델을 자동 선택하지 않습니다.</li><li><strong>Text model</strong>은 tutor 대화에 사용됩니다. <strong>Thinking effort</strong>는 reasoning control을 지원하는 provider에서만 표시됩니다.</li><li><strong>TTS model</strong>은 음성 출력, <strong>STT model</strong>은 음성 입력 전사를 제어합니다. 음성을 쓰지 않으면 비워 둘 수 있습니다.</li><li><strong>저장된 API config</strong>는 provider URL, 선택한 모델, thinking effort, key hash를 저장해 검증된 설정을 다시 사용할 수 있게 합니다.</li></ul>
+      </section>
+
+      <section class="content-block" id="oauth">
+        <h2>API key 대신 ChatGPT OAuth 사용</h2>
+        <ol class="help-list"><li>Settings의 API Settings를 열고 <strong>Provider</strong>를 <strong>OpenAI Codex (ChatGPT OAuth)</strong>로 선택합니다.</li><li><strong>Login with ChatGPT</strong>를 누르고 브라우저에서 로그인을 완료합니다. 앱으로 자동 복귀하지 않으면 마지막 redirect URL 또는 authorization code를 대화상자에 붙여 넣습니다.</li><li><strong>Refresh models</strong>를 누르고 <code>gpt-5.5</code> 같은 text model을 선택한 뒤 API config를 저장합니다.</li><li>tutor 세션을 시작하거나 다시 열고 모델 선택기에서 저장된 Codex OAuth 모델을 선택합니다.</li></ol>
+        <p class="muted">이 옵션은 tutor 텍스트 대화에 ChatGPT/Codex OAuth quota를 사용합니다. 음성이 필요하면 TTS와 STT는 계속 API-key provider를 사용합니다.</p>
+      </section>
+
+      <section class="grid grid-three section-block"><article class="card"><span class="kicker">Marketplace</span><h2>코스 찾기</h2><p>교사는 코스 listing을 공개합니다. 학생은 탐색하고 수강 신청을 하며 승인 후 다운로드합니다.</p></article><article class="card"><span class="kicker">Sessions</span><h2>개인 피드백</h2><p>Learn은 새 내용, Review는 회상 연습에 사용합니다. 피드백은 학생 답변에 맞춰 바뀌며 진도를 보이게 합니다.</p></article><article class="card"><span class="kicker">Sync</span><h2>연속성</h2><p>교사와 학생 홈은 계정에 연결된 수강 상태, 세션, 진도, 오답 노트 신호를 동기화합니다.</p></article></section>
+
+      <section class="content-block">
+        <h2>자주 겪는 문제</h2>
+        <ul class="help-list"><li>로그인이나 코스 로딩이 실패하면 앱이 <code>api.tutor1on1.org</code>에 연결되는지 확인하세요.</li><li>학생이 코스에 들어갈 수 없으면 수강 신청이 승인되었고 bundle이 다운로드되었는지 확인하세요.</li><li>모델 목록이 오래되어 보이면 현재 provider와 key로 Test API key를 다시 실행하세요.</li><li>여러 기기의 진도가 오래되어 보이면 동기화 완료를 기다리거나 수동 새로고침을 실행하세요.</li></ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Tutor1on1 도움말</p>
+      <p><a class="footer-link" href="/ko/">홈</a></p>
+      <p><a class="footer-link" href="/ko/legal/">법률</a></p>
+      <p><a class="footer-link" href="/ko/legal/#privacy">개인정보</a></p>
+      <p><a class="footer-link" href="/ko/legal/#license">라이선스</a></p>
+      <p>교사 공개, 학생 수강, 개인 맞춤 학습.</p>
+    </footer>
+  </div>
+</body>
+</html>

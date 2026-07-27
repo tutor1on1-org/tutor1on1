@@ -25,6 +25,20 @@ class RemoteStudentIdentityService {
           '${existing.id} (${existing.role}).',
         );
       }
+      if ((usernameHint ?? '').trim().isNotEmpty) {
+        final username = await _buildUniquePlaceholderUsername(
+          db: db,
+          remoteStudentId: remoteStudentId,
+          usernameHint: usernameHint,
+          excludeUserId: existing.id,
+        );
+        if (username.trim().isNotEmpty && username != existing.username) {
+          await db.updateUsername(
+            userId: existing.id,
+            username: username,
+          );
+        }
+      }
       if (teacherId != null && existing.teacherId != teacherId) {
         await db.updateStudentTeacherId(
           studentId: existing.id,
@@ -51,15 +65,19 @@ class RemoteStudentIdentityService {
     required AppDatabase db,
     required int remoteStudentId,
     String? usernameHint,
+    int? excludeUserId,
   }) async {
     final hinted = (usernameHint ?? '').trim();
     final base = hinted.isNotEmpty ? hinted : 'remote_student_$remoteStudentId';
     var candidate = base;
     var suffix = 1;
-    while (await db.findUserByUsername(candidate) != null) {
+    while (true) {
+      final existing = await db.findUserByUsername(candidate);
+      if (existing == null || existing.id == excludeUserId) {
+        return candidate;
+      }
       candidate = '${base}_$suffix';
       suffix++;
     }
-    return candidate;
   }
 }

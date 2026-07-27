@@ -208,6 +208,9 @@
   "granularityFieldLabel": "粒度",
   "textbookOutlineLabel": "教材大纲",
   "saveButton": "保存",
+  "editCourseDescriptionTooltip": "编辑介绍",
+  "editCourseDescriptionTitle": "编辑课程介绍",
+  "courseDescriptionUpdatedMessage": "课程介绍已更新。",
   "savingLabel": "保存中...",
   "loadingLabel": "加载中...",
   "generateTreeButton": "生成树",
@@ -437,6 +440,14 @@
   "restoreConfirmButton": "恢复",
   "restoreCompletedMessage": "数据库已恢复，正在重启...",
   "appSectionTitle": "应用",
+  "appVersionLabel": "应用版本",
+  "publicReleaseTagLabel": "公开发布标签",
+  "appVersionLoadFailed": "加载应用版本失败：{error}",
+  "@appVersionLoadFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
   "studyModeLabel": "学习模式",
   "studyModeDescription": "保持常亮，进入全屏或沉浸模式，退出时需要教师 PIN。",
   "quitButton": "退出（教师密码）",
@@ -490,6 +501,7 @@
   "promptReview": "复习",
   "promptSummarize": "总结",
   "promptStatusDefault": "当前：默认",
+  "promptStatusInherited": "当前：继承上层",
   "promptStatusCustom": "当前：自定义（{time}）",
   "@promptStatusCustom": {
     "placeholders": {
@@ -498,7 +510,7 @@
   },
   "promptHistoryTitle": "历史",
   "promptHistoryEmpty": "暂无历史。",
-  "useDefaultButton": "使用默认",
+  "useDefaultButton": "重置为上层",
   "previewButton": "预览",
   "useButton": "使用",
   "promptEditTitle": "编辑提示词（{name}）",
@@ -521,7 +533,7 @@
     }
   },
   "promptSaved": "提示词已保存。",
-  "promptReverted": "已恢复默认。",
+  "promptReverted": "已重置为上层。",
   "promptActivated": "已设为当前。",
   "promptPreviewTitle": "提示词预览",
   "promptValidationFailedTitle": "提示词验证失败",
@@ -768,8 +780,8 @@
       "name": {}
     }
   },
-  "deleteSessionMessage": "这将删除该会话及其消息。",
-  "deleteSessionSuccess": "会话已删除。",
+  "deleteSessionMessage": "这将删除该会话及其消息、重置该知识点的进度，并保留错题本记录。",
+  "deleteSessionSuccess": "会话已删除，知识点进度已重置。",
   "resetPinButton": "重置密码",
   "resetPinDialogTitle": "为 {name} 重置密码",
   "@resetPinDialogTitle": {

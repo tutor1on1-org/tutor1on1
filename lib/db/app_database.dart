@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:path/path.dart' as p;
@@ -79,6 +81,7 @@ class ProgressEntries extends Table {
   TextColumn get kpKey => text()();
   BoolColumn get lit => boolean().withDefault(const Constant(false))();
   IntColumn get litPercent => integer().withDefault(const Constant(0))();
+  IntColumn get masteryLevel => integer().nullable()();
   TextColumn get questionLevel => text().nullable()();
   IntColumn get easyPassedCount => integer().withDefault(const Constant(0))();
   IntColumn get mediumPassedCount => integer().withDefault(const Constant(0))();
@@ -91,6 +94,35 @@ class ProgressEntries extends Table {
   @override
   List<Set<Column>> get uniqueKeys => [
         {studentId, courseVersionId, kpKey},
+      ];
+}
+
+class MistakeEntries extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  IntColumn get studentId => integer()();
+  IntColumn get courseVersionId => integer()();
+  TextColumn get kpKey => text()();
+  TextColumn get bundleVersionId => text().nullable()();
+  IntColumn get sessionId => integer()();
+  IntColumn get messageId => integer()();
+  TextColumn get mistakeTagRaw => text()();
+  TextColumn get mistakeTagKey => text()();
+  TextColumn get mistakeNote => text().nullable()();
+  TextColumn get questionExcerpt => text().nullable()();
+  TextColumn get difficulty => text().nullable()();
+  TextColumn get evidenceJson => text()();
+  IntColumn get occurrences => integer().withDefault(const Constant(1))();
+  DateTimeColumn get firstSeenAt => dateTime()();
+  DateTimeColumn get lastSeenAt => dateTime()();
+  TextColumn get status => text().withDefault(const Constant('open'))();
+  DateTimeColumn get nextReviewAt => dateTime().nullable()();
+  DateTimeColumn get snoozedUntil => dateTime().nullable()();
+  BoolColumn get dismissed => boolean().withDefault(const Constant(false))();
+  IntColumn get reviewStreak => integer().withDefault(const Constant(0))();
+
+  @override
+  List<Set<Column>> get uniqueKeys => [
+        {studentId, courseVersionId, kpKey, mistakeTagKey},
       ];
 }
 
@@ -208,6 +240,33 @@ class ApiConfigs extends Table {
       ];
 }
 
+class ApiModelCaches extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get baseUrl => text()();
+  TextColumn get apiKeyHash => text()();
+  TextColumn get textModelsJson => text()();
+  TextColumn get ttsModelsJson => text()();
+  TextColumn get sttModelsJson => text()();
+  DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+
+  @override
+  List<Set<Column>> get uniqueKeys => [
+        {baseUrl, apiKeyHash},
+      ];
+}
+
+class CachedApiModelLists {
+  const CachedApiModelLists({
+    required this.textModels,
+    required this.ttsModels,
+    required this.sttModels,
+  });
+
+  final List<String> textModels;
+  final List<String> ttsModels;
+  final List<String> sttModels;
+}
+
 class PromptTemplates extends Table {
   IntColumn get id => integer().autoIncrement()();
   IntColumn get teacherId => integer()();
@@ -277,6 +336,56 @@ class SyncMetadataEntries extends Table {
   Set<Column> get primaryKey => {remoteUserId, kind, domain, scopeKey};
 }
 
+class SyncRelevantChange {
+  const SyncRelevantChange({
+    this.localUserIds = const <int>{},
+    this.refreshEnrollmentState = true,
+    this.refreshSessionArtifacts = true,
+  });
+
+  final Set<int> localUserIds;
+  final bool refreshEnrollmentState;
+  final bool refreshSessionArtifacts;
+
+  bool get isEmpty =>
+      localUserIds.isEmpty ||
+      (!refreshEnrollmentState && !refreshSessionArtifacts);
+}
+
+class SyncedProgressUpsert {
+  const SyncedProgressUpsert({
+    required this.studentId,
+    required this.courseVersionId,
+    required this.kpKey,
+    required this.lit,
+    required this.litPercent,
+    required this.updatedAt,
+    this.masteryLevel,
+    this.easyPassedCount = 0,
+    this.mediumPassedCount = 0,
+    this.hardPassedCount = 0,
+    this.questionLevel,
+    this.summaryText,
+    this.summaryRawResponse,
+    this.summaryValid,
+  });
+
+  final int studentId;
+  final int courseVersionId;
+  final String kpKey;
+  final bool lit;
+  final int litPercent;
+  final int? masteryLevel;
+  final int easyPassedCount;
+  final int mediumPassedCount;
+  final int hardPassedCount;
+  final String? questionLevel;
+  final String? summaryText;
+  final String? summaryRawResponse;
+  final bool? summaryValid;
+  final DateTime updatedAt;
+}
+
 @DriftDatabase(
   tables: [
     Users,
@@ -285,11 +394,13 @@ class SyncMetadataEntries extends Table {
     CourseEdges,
     StudentCourseAssignments,
     ProgressEntries,
+    MistakeEntries,
     ChatSessions,
     ChatMessages,
     LlmCalls,
     AppSettings,
     ApiConfigs,
+    ApiModelCaches,
     PromptTemplates,
     StudentPromptProfiles,
     StudentPassConfigs,
@@ -306,6 +417,7 @@ class AppDatabase extends _$AppDatabase {
       PinHasher.hash('remote_student_placeholder');
   static final String _remoteUserPlaceholderPinHash =
       PinHasher.hash('remote_user_placeholder');
+  Future<void> Function(SyncRelevantChange change)? _onSyncRelevantChange;
 
   factory AppDatabase.open() {
     return AppDatabase(_openConnection());
@@ -315,8 +427,151 @@ class AppDatabase extends _$AppDatabase {
     return AppDatabase(executor);
   }
 
+  void setSyncRelevantChangeCallback(
+    Future<void> Function(SyncRelevantChange change)? callback,
+  ) {
+    _onSyncRelevantChange = callback;
+  }
+
+  Future<void> _notifySyncRelevantChange([
+    SyncRelevantChange change = const SyncRelevantChange(),
+  ]) async {
+    final callback = _onSyncRelevantChange;
+    if (callback == null || change.isEmpty) {
+      return;
+    }
+    await callback(change);
+  }
+
+  Future<void> _notifySyncRelevantUsers(
+    Iterable<int> userIds, {
+    bool refreshEnrollmentState = true,
+    bool refreshSessionArtifacts = false,
+  }) async {
+    final normalized = <int>{};
+    for (final userId in userIds) {
+      if (userId > 0) {
+        normalized.add(userId);
+      }
+    }
+    await _notifySyncRelevantChange(
+      SyncRelevantChange(
+        localUserIds: normalized,
+        refreshEnrollmentState: refreshEnrollmentState,
+        refreshSessionArtifacts: refreshSessionArtifacts,
+      ),
+    );
+  }
+
+  /// Marks the student's session artifacts stale so the sync layer rebuilds
+  /// them now; without this, artifacts are only rebuilt by the quit-app
+  /// syncNow / manual force-push paths and graded-turn evidence stays local.
+  Future<void> notifySessionArtifactsChanged(int studentId) {
+    return _notifySyncRelevantUsers(
+      <int>[studentId],
+      refreshEnrollmentState: false,
+      refreshSessionArtifacts: true,
+    );
+  }
+
+  Future<Set<int>> _syncAffectedUsersForCourseVersion(
+      int courseVersionId) async {
+    final affected = <int>{};
+    final course = await getCourseVersionById(courseVersionId);
+    if (course != null && course.teacherId > 0) {
+      affected.add(course.teacherId);
+    }
+    final assignments = await getAssignmentsForCourse(courseVersionId);
+    for (final assignment in assignments) {
+      if (assignment.studentId > 0) {
+        affected.add(assignment.studentId);
+      }
+    }
+    return affected;
+  }
+
+  Set<int> _syncAffectedUsersForTeacherOnly(int teacherId) {
+    if (teacherId <= 0) {
+      return const <int>{};
+    }
+    return <int>{teacherId};
+  }
+
+  Future<Set<int>> _syncAffectedUsersForCourseTeacherOnly(
+    int courseVersionId,
+  ) async {
+    final course = await getCourseVersionById(courseVersionId);
+    if (course == null || course.teacherId <= 0) {
+      return const <int>{};
+    }
+    return <int>{course.teacherId};
+  }
+
+  Future<Set<int>> _syncAffectedUsersForTeacher(
+    int teacherId, {
+    required bool includeAssignedStudents,
+  }) async {
+    final affected = <int>{};
+    if (teacherId > 0) {
+      affected.add(teacherId);
+    }
+    if (!includeAssignedStudents) {
+      return affected;
+    }
+    final courses = await getCourseVersionsForTeacher(teacherId);
+    for (final course in courses) {
+      final assignments = await getAssignmentsForCourse(course.id);
+      for (final assignment in assignments) {
+        if (assignment.studentId > 0) {
+          affected.add(assignment.studentId);
+        }
+      }
+    }
+    return affected;
+  }
+
+  Future<Set<int>> _syncAffectedUsersForStudent(
+    int studentId, {
+    required bool includeAssignedTeachers,
+  }) async {
+    final affected = <int>{};
+    if (studentId > 0) {
+      affected.add(studentId);
+    }
+    if (!includeAssignedTeachers) {
+      return affected;
+    }
+    final courses = await getAssignedCoursesForStudent(studentId);
+    for (final course in courses) {
+      if (course.teacherId > 0) {
+        affected.add(course.teacherId);
+      }
+    }
+    return affected;
+  }
+
+  Future<Set<int>> _syncAffectedUsersForUser(int userId) async {
+    final user = await getUserById(userId);
+    if (user == null) {
+      return const <int>{};
+    }
+    if (user.role == 'teacher') {
+      return _syncAffectedUsersForTeacher(
+        userId,
+        includeAssignedStudents: true,
+      );
+    }
+    if (user.role == 'student') {
+      return _syncAffectedUsersForStudent(
+        userId,
+        includeAssignedTeachers: true,
+      );
+    }
+    return <int>{userId};
+  }
+
   @override
-  int get schemaVersion => 30;
+  int get schemaVersion => 34;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -328,6 +583,8 @@ class AppDatabase extends _$AppDatabase {
             'ON users(remote_user_id) '
             'WHERE remote_user_id IS NOT NULL',
           );
+          await _ensureApiConfigNormalizedUniqueIndex();
+          await _ensureMistakeEntryIndexes();
         },
         onUpgrade: (m, from, to) async {
           if (from < 2) {
@@ -548,8 +805,84 @@ ORDER BY id
               'ALTER TABLE llm_calls_new RENAME TO llm_calls',
             );
           }
+          if (from < 31) {
+            await customStatement('DELETE FROM prompt_templates');
+          }
+          if (from < 32 && await _apiConfigsTableExists()) {
+            await _deduplicateApiConfigs();
+            await _ensureApiConfigNormalizedUniqueIndex();
+          }
+          if (from < 33) {
+            await m.createTable(apiModelCaches);
+          }
+          if (from < 34) {
+            if (await _tableExists('progress_entries')) {
+              await m.addColumn(progressEntries, progressEntries.masteryLevel);
+            }
+            await m.createTable(mistakeEntries);
+            await _ensureMistakeEntryIndexes();
+          }
         },
       );
+
+  Future<void> _ensureMistakeEntryIndexes() async {
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS '
+      'idx_mistake_entries_student_course_status '
+      'ON mistake_entries(student_id, course_version_id, status)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_mistake_entries_next_review '
+      'ON mistake_entries(next_review_at)',
+    );
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_mistake_entries_session '
+      'ON mistake_entries(session_id)',
+    );
+  }
+
+  Future<bool> _apiConfigsTableExists() async {
+    return _tableExists('api_configs');
+  }
+
+  Future<bool> _tableExists(String tableName) async {
+    final rows = await customSelect(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name = ?",
+      variables: [Variable.withString(tableName)],
+    ).get();
+    return rows.isNotEmpty;
+  }
+
+  Future<void> _deduplicateApiConfigs() async {
+    await customStatement('''
+DELETE FROM api_configs
+WHERE id NOT IN (
+  SELECT MIN(id)
+  FROM api_configs
+  GROUP BY
+    lower(trim(base_url)),
+    trim(model),
+    lower(trim(coalesce(reasoning_effort, 'medium'))),
+    coalesce(trim(tts_model), ''),
+    coalesce(trim(stt_model), ''),
+    trim(api_key_hash)
+)
+''');
+  }
+
+  Future<void> _ensureApiConfigNormalizedUniqueIndex() async {
+    await customStatement('''
+CREATE UNIQUE INDEX IF NOT EXISTS uq_api_configs_normalized
+ON api_configs (
+  lower(trim(base_url)),
+  trim(model),
+  lower(trim(coalesce(reasoning_effort, 'medium'))),
+  coalesce(trim(tts_model), ''),
+  coalesce(trim(stt_model), ''),
+  trim(api_key_hash)
+)
+''');
+  }
 
   Future<User?> findUserByUsername(String username) {
     return (select(users)..where((tbl) => tbl.username.equals(username)))
@@ -596,10 +929,12 @@ ORDER BY id
   Future<void> updateUsername({
     required int userId,
     required String username,
-  }) {
-    return (update(users)..where((tbl) => tbl.id.equals(userId))).write(
+  }) async {
+    final affectedUsers = await _syncAffectedUsersForUser(userId);
+    await (update(users)..where((tbl) => tbl.id.equals(userId))).write(
       UsersCompanion(username: Value(username)),
     );
+    await _notifySyncRelevantUsers(affectedUsers);
   }
 
   Stream<List<User>> watchStudents(int teacherId) {
@@ -661,8 +996,8 @@ ORDER BY id
     required int granularity,
     required String textbookText,
     String? sourcePath,
-  }) {
-    return into(courseVersions).insert(
+  }) async {
+    final courseVersionId = await into(courseVersions).insert(
       CourseVersionsCompanion.insert(
         teacherId: teacherId,
         subject: subject,
@@ -673,6 +1008,8 @@ ORDER BY id
         treeGenValid: const Value(false),
       ),
     );
+    await _notifySyncRelevantUsers(<int>{teacherId});
+    return courseVersionId;
   }
 
   Future<void> updateCourseVersion({
@@ -682,6 +1019,7 @@ ORDER BY id
     required String textbookText,
     String? sourcePath,
   }) async {
+    final affectedUsers = await _syncAffectedUsersForCourseVersion(id);
     await (update(courseVersions)..where((tbl) => tbl.id.equals(id))).write(
       CourseVersionsCompanion(
         subject: Value(subject),
@@ -692,35 +1030,42 @@ ORDER BY id
         updatedAt: Value(DateTime.now()),
       ),
     );
+    await _notifySyncRelevantUsers(affectedUsers);
   }
 
   Future<void> updateCourseVersionSubject({
     required int id,
     required String subject,
-  }) {
-    return (update(courseVersions)..where((tbl) => tbl.id.equals(id))).write(
+  }) async {
+    final affectedUsers = await _syncAffectedUsersForCourseVersion(id);
+    await (update(courseVersions)..where((tbl) => tbl.id.equals(id))).write(
       CourseVersionsCompanion(
         subject: Value(subject),
         updatedAt: Value(DateTime.now()),
       ),
     );
+    await _notifySyncRelevantUsers(affectedUsers);
   }
 
   Future<void> updateCourseVersionTeacherId({
     required int id,
     required int teacherId,
-  }) {
-    return (update(courseVersions)..where((tbl) => tbl.id.equals(id))).write(
+  }) async {
+    final affectedUsers = await _syncAffectedUsersForCourseVersion(id);
+    await (update(courseVersions)..where((tbl) => tbl.id.equals(id))).write(
       CourseVersionsCompanion(
         teacherId: Value(teacherId),
         updatedAt: Value(DateTime.now()),
       ),
     );
+    affectedUsers.addAll(await _syncAffectedUsersForCourseVersion(id));
+    await _notifySyncRelevantUsers(affectedUsers);
   }
 
   Future<void> assignStudent({
     required int studentId,
     required int courseVersionId,
+    bool notifySyncUsers = true,
   }) async {
     await into(studentCourseAssignments).insert(
       StudentCourseAssignmentsCompanion.insert(
@@ -729,6 +1074,11 @@ ORDER BY id
       ),
       mode: InsertMode.insertOrIgnore,
     );
+    if (notifySyncUsers) {
+      await _notifySyncRelevantUsers(
+        await _syncAffectedUsersForCourseVersion(courseVersionId),
+      );
+    }
   }
 
   Stream<List<CourseVersion>> watchAssignedCourses(int studentId) {
@@ -926,7 +1276,24 @@ ORDER BY c.subject COLLATE NOCASE ASC
   }
 
   Future<void> deleteSession(int sessionId) async {
+    final session = await getSession(sessionId);
     await transaction(() async {
+      await (update(mistakeEntries)
+            ..where((tbl) => tbl.sessionId.equals(sessionId)))
+          .write(
+        const MistakeEntriesCompanion(
+          sessionId: Value(0),
+          messageId: Value(0),
+        ),
+      );
+      if (session != null) {
+        await (delete(progressEntries)
+              ..where((tbl) =>
+                  tbl.studentId.equals(session.studentId) &
+                  tbl.courseVersionId.equals(session.courseVersionId) &
+                  tbl.kpKey.equals(session.kpKey)))
+            .go();
+      }
       await (delete(chatMessages)
             ..where((tbl) => tbl.sessionId.equals(sessionId)))
           .go();
@@ -935,6 +1302,9 @@ ORDER BY c.subject COLLATE NOCASE ASC
       await (delete(chatSessions)..where((tbl) => tbl.id.equals(sessionId)))
           .go();
     });
+    if (session != null) {
+      await notifySessionArtifactsChanged(session.studentId);
+    }
   }
 
   Future<void> deleteMessagesFrom({
@@ -1030,6 +1400,526 @@ ORDER BY s.started_at DESC
               tbl.courseVersionId.equals(courseVersionId) &
               tbl.kpKey.equals(kpKey)))
         .watchSingleOrNull();
+  }
+
+  static String normalizeMistakeTagKey(String value) {
+    final trimmed = value
+        .trim()
+        .replaceAll('\u3000', ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .toLowerCase();
+    return trimmed;
+  }
+
+  Future<List<MistakeEntry>> getMistakeEntriesForScope({
+    required int studentId,
+    required int courseVersionId,
+    required String kpKey,
+  }) {
+    return (select(mistakeEntries)
+          ..where((tbl) =>
+              tbl.studentId.equals(studentId) &
+              tbl.courseVersionId.equals(courseVersionId) &
+              tbl.kpKey.equals(kpKey))
+          ..orderBy([
+            (tbl) => OrderingTerm(
+                  expression: tbl.lastSeenAt,
+                  mode: OrderingMode.desc,
+                ),
+          ]))
+        .get();
+  }
+
+  Future<List<MistakeEntry>> getMistakeEntriesForCourse({
+    required int studentId,
+    required int courseVersionId,
+  }) {
+    return (select(mistakeEntries)
+          ..where((tbl) =>
+              tbl.studentId.equals(studentId) &
+              tbl.courseVersionId.equals(courseVersionId))
+          ..orderBy([
+            (tbl) => OrderingTerm(
+                  expression: tbl.lastSeenAt,
+                  mode: OrderingMode.desc,
+                ),
+          ]))
+        .get();
+  }
+
+  Future<List<MistakeEntry>> getDueMistakeEntriesForCourse({
+    required int studentId,
+    required int courseVersionId,
+    String? kpKey,
+    int limit = 5,
+  }) {
+    final now = DateTime.now();
+    final query = select(mistakeEntries)
+      ..where((tbl) =>
+          tbl.studentId.equals(studentId) &
+          tbl.courseVersionId.equals(courseVersionId) &
+          tbl.status.equals('open') &
+          tbl.dismissed.equals(false) &
+          (tbl.snoozedUntil.isNull() |
+              tbl.snoozedUntil.isSmallerOrEqualValue(now)) &
+          (tbl.nextReviewAt.isNull() |
+              tbl.nextReviewAt.isSmallerOrEqualValue(now)))
+      ..orderBy([
+        (tbl) => OrderingTerm(expression: tbl.nextReviewAt),
+        (tbl) => OrderingTerm(
+              expression: tbl.occurrences,
+              mode: OrderingMode.desc,
+            ),
+        (tbl) => OrderingTerm(
+              expression: tbl.lastSeenAt,
+              mode: OrderingMode.desc,
+            ),
+      ])
+      ..limit(limit);
+    final normalizedKp = kpKey?.trim();
+    if (normalizedKp != null && normalizedKp.isNotEmpty) {
+      query.where((tbl) => tbl.kpKey.equals(normalizedKp));
+    }
+    return query.get();
+  }
+
+  /// Course-agnostic due-mistake feed for a student (snooze-aware), backing a
+  /// home "Review due" surface. Local-only scheduling fields only.
+  Future<List<MistakeEntry>> getDueMistakeEntriesForStudent({
+    required int studentId,
+    int limit = 50,
+  }) {
+    final now = DateTime.now();
+    return (select(mistakeEntries)
+          ..where((tbl) =>
+              tbl.studentId.equals(studentId) &
+              tbl.status.equals('open') &
+              tbl.dismissed.equals(false) &
+              (tbl.snoozedUntil.isNull() |
+                  tbl.snoozedUntil.isSmallerOrEqualValue(now)) &
+              (tbl.nextReviewAt.isNull() |
+                  tbl.nextReviewAt.isSmallerOrEqualValue(now)))
+          ..orderBy([
+            (tbl) => OrderingTerm(expression: tbl.nextReviewAt),
+            (tbl) => OrderingTerm(
+                  expression: tbl.occurrences,
+                  mode: OrderingMode.desc,
+                ),
+          ])
+          ..limit(limit))
+        .get();
+  }
+
+  Stream<List<MistakeEntry>> watchMistakeEntriesForSession(int sessionId) {
+    return (select(mistakeEntries)
+          ..where((tbl) => tbl.sessionId.equals(sessionId))
+          ..orderBy([
+            (tbl) => OrderingTerm(
+                  expression: tbl.lastSeenAt,
+                  mode: OrderingMode.desc,
+                ),
+          ]))
+        .watch();
+  }
+
+  Stream<List<MistakeEntry>> watchMistakeEntriesForCourse(
+    int studentId,
+    int courseVersionId,
+  ) {
+    return (select(mistakeEntries)
+          ..where((tbl) =>
+              tbl.studentId.equals(studentId) &
+              tbl.courseVersionId.equals(courseVersionId))
+          ..orderBy([
+            (tbl) => OrderingTerm(
+                  expression: tbl.lastSeenAt,
+                  mode: OrderingMode.desc,
+                ),
+          ]))
+        .watch();
+  }
+
+  Stream<List<MistakeEntry>> watchMistakeEntriesForStudent(
+    int studentId, {
+    int? courseVersionId,
+  }) {
+    final query = select(mistakeEntries)
+      ..where((tbl) => tbl.studentId.equals(studentId))
+      ..orderBy([
+        (tbl) => OrderingTerm(
+              expression: tbl.lastSeenAt,
+              mode: OrderingMode.desc,
+            ),
+      ]);
+    if (courseVersionId != null && courseVersionId > 0) {
+      query.where((tbl) => tbl.courseVersionId.equals(courseVersionId));
+    }
+    return query.watch();
+  }
+
+  Future<void> upsertMistakeEvidence({
+    required int studentId,
+    required int courseVersionId,
+    required String kpKey,
+    required int sessionId,
+    required int messageId,
+    required String mistakeTag,
+    String? mistakeNote,
+    String? questionExcerpt,
+    String? difficulty,
+    required String evidenceJson,
+    DateTime? seenAt,
+  }) async {
+    final rawTag = mistakeTag.trim();
+    final tagKey = normalizeMistakeTagKey(rawTag);
+    if (rawTag.isEmpty || tagKey.isEmpty) {
+      return;
+    }
+    final normalizedKp = kpKey.trim();
+    if (studentId <= 0 || courseVersionId <= 0 || normalizedKp.isEmpty) {
+      return;
+    }
+    final now = (seenAt ?? DateTime.now()).toUtc();
+    final existing = await (select(mistakeEntries)
+          ..where((tbl) =>
+              tbl.studentId.equals(studentId) &
+              tbl.courseVersionId.equals(courseVersionId) &
+              tbl.kpKey.equals(normalizedKp) &
+              tbl.mistakeTagKey.equals(tagKey)))
+        .getSingleOrNull();
+    if (existing == null) {
+      await into(mistakeEntries).insert(
+        MistakeEntriesCompanion.insert(
+          studentId: studentId,
+          courseVersionId: courseVersionId,
+          kpKey: normalizedKp,
+          sessionId: sessionId,
+          messageId: messageId,
+          mistakeTagRaw: rawTag,
+          mistakeTagKey: tagKey,
+          mistakeNote: Value(_emptyToNull(mistakeNote)),
+          questionExcerpt: Value(_emptyToNull(questionExcerpt)),
+          difficulty: Value(_emptyToNull(difficulty)),
+          evidenceJson: evidenceJson.trim().isEmpty ? '{}' : evidenceJson,
+          occurrences: const Value(1),
+          firstSeenAt: now,
+          lastSeenAt: now,
+          status: const Value('open'),
+          nextReviewAt: Value(now),
+          dismissed: const Value(false),
+        ),
+      );
+      return;
+    }
+    await (update(mistakeEntries)..where((tbl) => tbl.id.equals(existing.id)))
+        .write(
+      MistakeEntriesCompanion(
+        sessionId: Value(sessionId),
+        messageId: Value(messageId),
+        mistakeTagRaw: Value(rawTag),
+        mistakeNote: Value(_emptyToNull(mistakeNote) ?? existing.mistakeNote),
+        questionExcerpt:
+            Value(_emptyToNull(questionExcerpt) ?? existing.questionExcerpt),
+        difficulty: Value(_emptyToNull(difficulty) ?? existing.difficulty),
+        evidenceJson: Value(evidenceJson.trim().isEmpty ? '{}' : evidenceJson),
+        occurrences: Value(existing.occurrences + 1),
+        lastSeenAt: Value(now),
+        status: const Value('open'),
+        nextReviewAt: Value(now),
+        dismissed: const Value(false),
+        // Got it wrong again: due now and the spaced-review streak resets, so
+        // the resurfacing ladder starts over.
+        reviewStreak: const Value(0),
+      ),
+    );
+  }
+
+  /// Local interval ladder (days) for a mistake's spaced resurfacing, indexed by
+  /// the count of successful focused reviews. All fields are local-only, so this
+  /// never touches the synced artifact payload.
+  static Duration mistakeReviewIntervalForStreak(int streak) {
+    const days = <int>[1, 3, 7, 16, 35];
+    final index =
+        streak <= 0 ? 0 : (streak >= days.length ? days.length - 1 : streak);
+    return Duration(days: days[index]);
+  }
+
+  /// Records a successful focused review: open, currently-due entries for this
+  /// KP whose tag the LLM did NOT re-flag this turn get their streak bumped and
+  /// their next review pushed out along the ladder. This drains the due queue
+  /// without the App making any semantic judgment — "not re-flagged" is the
+  /// LLM's signal, not the App's.
+  Future<void> creditReviewedDueMistakes({
+    required int studentId,
+    required int courseVersionId,
+    required String kpKey,
+    required Set<String> reflaggedTagKeys,
+    DateTime? reviewedAt,
+  }) async {
+    final normalizedKp = kpKey.trim();
+    if (studentId <= 0 || courseVersionId <= 0 || normalizedKp.isEmpty) {
+      return;
+    }
+    final now = (reviewedAt ?? DateTime.now()).toUtc();
+    final due = await (select(mistakeEntries)
+          ..where((tbl) =>
+              tbl.studentId.equals(studentId) &
+              tbl.courseVersionId.equals(courseVersionId) &
+              tbl.kpKey.equals(normalizedKp) &
+              tbl.status.equals('open') &
+              tbl.dismissed.equals(false) &
+              (tbl.nextReviewAt.isNull() |
+                  tbl.nextReviewAt.isSmallerOrEqualValue(now))))
+        .get();
+    for (final entry in due) {
+      if (reflaggedTagKeys.contains(entry.mistakeTagKey)) {
+        continue;
+      }
+      final nextStreak = entry.reviewStreak + 1;
+      await (update(mistakeEntries)..where((tbl) => tbl.id.equals(entry.id)))
+          .write(
+        MistakeEntriesCompanion(
+          reviewStreak: Value(nextStreak),
+          nextReviewAt:
+              Value(now.add(mistakeReviewIntervalForStreak(nextStreak))),
+        ),
+      );
+    }
+  }
+
+  Future<void> setMistakeEntryStatus({
+    required int id,
+    required String status,
+    bool dismissed = false,
+  }) async {
+    final normalizedStatus = _normalizeMistakeStatus(status);
+    await (update(mistakeEntries)..where((tbl) => tbl.id.equals(id))).write(
+      MistakeEntriesCompanion(
+        status: Value(normalizedStatus),
+        dismissed: Value(dismissed),
+      ),
+    );
+  }
+
+  Future<void> deleteMistakeEntriesForScope({
+    required int studentId,
+    required int courseVersionId,
+    required String kpKey,
+  }) {
+    return (delete(mistakeEntries)
+          ..where((tbl) =>
+              tbl.studentId.equals(studentId) &
+              tbl.courseVersionId.equals(courseVersionId) &
+              tbl.kpKey.equals(kpKey.trim())))
+        .go();
+  }
+
+  Future<void> importMistakeEntriesFromArtifact({
+    required int studentId,
+    required int courseVersionId,
+    required String kpKey,
+    required List entries,
+    bool replaceScope = true,
+    List<MistakeEntry>? preservedLocalState,
+  }) async {
+    final normalizedKp = kpKey.trim();
+    if (normalizedKp.isEmpty) {
+      return;
+    }
+    await transaction(() async {
+      final localStateByKey = <String, MistakeEntry>{};
+      for (final entry in preservedLocalState ?? const <MistakeEntry>[]) {
+        localStateByKey[entry.mistakeTagKey] = entry;
+      }
+      if (replaceScope) {
+        final existingLocal = await getMistakeEntriesForScope(
+          studentId: studentId,
+          courseVersionId: courseVersionId,
+          kpKey: normalizedKp,
+        );
+        for (final entry in existingLocal) {
+          localStateByKey.putIfAbsent(entry.mistakeTagKey, () => entry);
+        }
+      }
+      if (replaceScope) {
+        await deleteMistakeEntriesForScope(
+          studentId: studentId,
+          courseVersionId: courseVersionId,
+          kpKey: normalizedKp,
+        );
+      }
+      for (final rawEntry in entries) {
+        if (rawEntry is! Map<String, dynamic>) {
+          continue;
+        }
+        final rawTag =
+            (rawEntry['mistake_tag'] as String?)?.trim().isNotEmpty == true
+                ? (rawEntry['mistake_tag'] as String).trim()
+                : (rawEntry['mistake_tag_raw'] as String?)?.trim() ?? '';
+        final tagKey = ((rawEntry['mistake_tag_key'] as String?)?.trim() ??
+                normalizeMistakeTagKey(rawTag))
+            .trim();
+        if (rawTag.isEmpty || tagKey.isEmpty) {
+          continue;
+        }
+        final localState = localStateByKey[tagKey];
+        final firstSeenAt =
+            _parseStoredDateTime(rawEntry['first_seen_at']) ?? DateTime.now();
+        final lastSeenAt =
+            _parseStoredDateTime(rawEntry['last_seen_at']) ?? firstSeenAt;
+        await into(mistakeEntries).insert(
+          MistakeEntriesCompanion.insert(
+            studentId: studentId,
+            courseVersionId: courseVersionId,
+            kpKey: normalizedKp,
+            bundleVersionId: Value(_emptyToNull(
+              rawEntry['bundle_version_id']?.toString(),
+            )),
+            sessionId: _readInt(rawEntry['session_id']) ?? 0,
+            messageId: _readInt(rawEntry['message_id']) ?? 0,
+            mistakeTagRaw: rawTag,
+            mistakeTagKey: tagKey,
+            mistakeNote: Value(
+              _emptyToNull(rawEntry['mistake_note']?.toString()),
+            ),
+            questionExcerpt: Value(
+              _emptyToNull(rawEntry['question_excerpt']?.toString()),
+            ),
+            difficulty: Value(_emptyToNull(rawEntry['difficulty']?.toString())),
+            evidenceJson: _encodeStoredJson(rawEntry['evidence_json']),
+            occurrences: Value(_readInt(rawEntry['occurrences']) ?? 1),
+            firstSeenAt: firstSeenAt.toUtc(),
+            lastSeenAt: lastSeenAt.toUtc(),
+            status: Value(_normalizeMistakeStatus(
+              localState?.status ?? rawEntry['status']?.toString() ?? 'open',
+            )),
+            nextReviewAt: Value(
+              localState?.nextReviewAt ??
+                  _parseStoredDateTime(rawEntry['next_review_at']),
+            ),
+            snoozedUntil: Value(
+              localState?.snoozedUntil ??
+                  _parseStoredDateTime(rawEntry['snoozed_until']),
+            ),
+            dismissed: Value(
+              localState?.dismissed ?? rawEntry['dismissed'] == true,
+            ),
+            reviewStreak: Value(
+              localState?.reviewStreak ??
+                  _readInt(rawEntry['review_streak']) ??
+                  0,
+            ),
+          ),
+          mode: InsertMode.insertOrReplace,
+        );
+      }
+    });
+  }
+
+  Future<void> backfillMistakeEntriesFromMessages() async {
+    final messages = await (select(chatMessages)
+          ..where((tbl) => tbl.role.equals('assistant')))
+        .get();
+    final pending = <String, _BackfilledMistakeEntry>{};
+    final seenSessionTags = <String>{};
+    for (final message in messages) {
+      final action = (message.action ?? '').trim().toLowerCase();
+      if (action != 'review') {
+        continue;
+      }
+      final parsed = _tryDecodeObject(message.parsedJson);
+      if (parsed == null || parsed['finished'] is! bool) {
+        continue;
+      }
+      final session = await getSession(message.sessionId);
+      if (session == null) {
+        continue;
+      }
+      final entries = _mistakeEntriesFromParsed(parsed);
+      for (final entry in entries) {
+        final tagKey = normalizeMistakeTagKey(entry.tag);
+        if (tagKey.isEmpty) {
+          continue;
+        }
+        final key =
+            '${session.studentId}:${session.courseVersionId}:${session.kpKey}:$tagKey';
+        // Stored messages carry no per-question identity, so cap occurrences
+        // at one bump per (session, tag): the prompt re-describes the same
+        // mistake across turns of one question, which would inflate counts.
+        final firstInSession =
+            seenSessionTags.add('${message.sessionId}:$tagKey');
+        final existing = pending[key];
+        if (existing == null) {
+          pending[key] = _BackfilledMistakeEntry(
+            studentId: session.studentId,
+            courseVersionId: session.courseVersionId,
+            kpKey: session.kpKey,
+            sessionId: message.sessionId,
+            messageId: message.id,
+            tag: entry.tag,
+            tagKey: tagKey,
+            note: entry.note,
+            questionExcerpt: _questionExcerptFromParsed(parsed),
+            difficulty: _difficultyFromParsed(parsed),
+            evidenceJson: jsonEncode(<String, dynamic>{
+              'prompt_name': 'review_cont_backfill',
+              'active_question': null,
+              'assistant_payload': parsed,
+            }),
+            occurrences: 1,
+            firstSeenAt: message.createdAt,
+            lastSeenAt: message.createdAt,
+          );
+          continue;
+        }
+        if (firstInSession) {
+          existing.occurrences += 1;
+        }
+        existing.sessionId = message.sessionId;
+        existing.messageId = message.id;
+        existing.lastSeenAt = message.createdAt;
+        if ((entry.note ?? '').trim().isNotEmpty) {
+          existing.note = entry.note;
+        }
+      }
+    }
+    if (pending.isEmpty) {
+      return;
+    }
+    await transaction(() async {
+      for (final entry in pending.values) {
+        final existing = await (select(mistakeEntries)
+              ..where((tbl) =>
+                  tbl.studentId.equals(entry.studentId) &
+                  tbl.courseVersionId.equals(entry.courseVersionId) &
+                  tbl.kpKey.equals(entry.kpKey) &
+                  tbl.mistakeTagKey.equals(entry.tagKey)))
+            .getSingleOrNull();
+        if (existing != null) {
+          continue;
+        }
+        await into(mistakeEntries).insert(
+          MistakeEntriesCompanion.insert(
+            studentId: entry.studentId,
+            courseVersionId: entry.courseVersionId,
+            kpKey: entry.kpKey,
+            sessionId: entry.sessionId,
+            messageId: entry.messageId,
+            mistakeTagRaw: entry.tag,
+            mistakeTagKey: entry.tagKey,
+            mistakeNote: Value(_emptyToNull(entry.note)),
+            questionExcerpt: Value(_emptyToNull(entry.questionExcerpt)),
+            difficulty: Value(_emptyToNull(entry.difficulty)),
+            evidenceJson: entry.evidenceJson,
+            occurrences: Value(entry.occurrences),
+            firstSeenAt: entry.firstSeenAt.toUtc(),
+            lastSeenAt: entry.lastSeenAt.toUtc(),
+            status: const Value('open'),
+            nextReviewAt: Value(entry.lastSeenAt.toUtc()),
+          ),
+        );
+      }
+    });
   }
 
   Future<DateTime?> getLatestProgressUpdatedAtForSync({
@@ -1211,6 +2101,7 @@ WHERE p.student_id = ? AND p.kp_key <> ?
           kpKey: kpKey,
           lit: Value(lit),
           litPercent: Value(resolvedPercent),
+          masteryLevel: Value(resolvedPercent),
           easyPassedCount: Value(normalizedCounts.easyPassedCount),
           mediumPassedCount: Value(normalizedCounts.mediumPassedCount),
           hardPassedCount: Value(normalizedCounts.hardPassedCount),
@@ -1224,10 +2115,47 @@ WHERE p.student_id = ? AND p.kp_key <> ?
       ProgressEntriesCompanion(
         lit: Value(lit),
         litPercent: Value(resolvedPercent),
+        masteryLevel: Value(resolvedPercent),
         questionLevel: const Value(null),
         easyPassedCount: Value(normalizedCounts.easyPassedCount),
         mediumPassedCount: Value(normalizedCounts.mediumPassedCount),
         hardPassedCount: Value(normalizedCounts.hardPassedCount),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+  }
+
+  Future<void> setProgressQuestionLevel({
+    required int studentId,
+    required int courseVersionId,
+    required String kpKey,
+    required String questionLevel,
+  }) async {
+    final normalizedLevel = _normalizeLevel(questionLevel);
+    if (normalizedLevel == null) {
+      throw StateError('Unsupported question level: $questionLevel');
+    }
+    final existing = await getProgress(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+      kpKey: kpKey,
+    );
+    if (existing == null) {
+      await into(progressEntries).insert(
+        ProgressEntriesCompanion.insert(
+          studentId: studentId,
+          courseVersionId: courseVersionId,
+          kpKey: kpKey,
+          questionLevel: Value(normalizedLevel),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+      return;
+    }
+    await (update(progressEntries)..where((tbl) => tbl.id.equals(existing.id)))
+        .write(
+      ProgressEntriesCompanion(
+        questionLevel: Value(normalizedLevel),
         updatedAt: Value(DateTime.now()),
       ),
     );
@@ -1266,6 +2194,7 @@ WHERE p.student_id = ? AND p.kp_key <> ?
           courseVersionId: courseVersionId,
           kpKey: kpKey,
           litPercent: Value(derivedLitPercent),
+          masteryLevel: Value(derivedLitPercent),
           questionLevel: const Value(null),
           easyPassedCount: Value(easyCount),
           mediumPassedCount: Value(mediumCount),
@@ -1279,6 +2208,7 @@ WHERE p.student_id = ? AND p.kp_key <> ?
         .write(
       ProgressEntriesCompanion(
         litPercent: Value(derivedLitPercent),
+        masteryLevel: Value(derivedLitPercent),
         questionLevel: const Value(null),
         easyPassedCount: Value(easyCount),
         mediumPassedCount: Value(mediumCount),
@@ -1316,6 +2246,7 @@ WHERE p.student_id = ? AND p.kp_key <> ?
           kpKey: kpKey,
           lit: Value(shouldLit),
           litPercent: Value(resolvedPercent),
+          masteryLevel: Value(resolvedPercent),
           easyPassedCount: const Value(0),
           mediumPassedCount: const Value(0),
           hardPassedCount: const Value(0),
@@ -1332,6 +2263,7 @@ WHERE p.student_id = ? AND p.kp_key <> ?
       ProgressEntriesCompanion(
         lit: Value(shouldLit),
         litPercent: Value(resolvedPercent),
+        masteryLevel: Value(resolvedPercent),
         questionLevel: const Value(null),
         summaryText: Value(summaryText),
         summaryRawResponse: Value(summaryRawResponse),
@@ -1347,6 +2279,7 @@ WHERE p.student_id = ? AND p.kp_key <> ?
     required String kpKey,
     required bool lit,
     required int litPercent,
+    int? masteryLevel,
     int easyPassedCount = 0,
     int mediumPassedCount = 0,
     int hardPassedCount = 0,
@@ -1355,12 +2288,8 @@ WHERE p.student_id = ? AND p.kp_key <> ?
     String? summaryRawResponse,
     bool? summaryValid,
     required DateTime updatedAt,
+    bool mergeWithLocal = true,
   }) async {
-    final existing = await getProgress(
-      studentId: studentId,
-      courseVersionId: courseVersionId,
-      kpKey: kpKey,
-    );
     final normalizedCounts = _normalizePassedCounts(
       lit: lit,
       litPercent: litPercent,
@@ -1368,12 +2297,45 @@ WHERE p.student_id = ? AND p.kp_key <> ?
       easyPassedCount: easyPassedCount,
       mediumPassedCount: mediumPassedCount,
       hardPassedCount: hardPassedCount,
+      fallbackHardForLit: lit,
     );
     final clampedPercent = _deriveLitPercentFromPassedCounts(
       easyPassedCount: normalizedCounts.easyPassedCount,
       mediumPassedCount: normalizedCounts.mediumPassedCount,
       hardPassedCount: normalizedCounts.hardPassedCount,
       fallbackPercent: litPercent.clamp(0, 100),
+    );
+    final normalizedQuestionLevel = _normalizeLevel(questionLevel) == null
+        ? null
+        : _normalizeLevel(questionLevel);
+    final clampedMasteryLevel =
+        masteryLevel == null ? null : masteryLevel.clamp(0, 100).toInt();
+    if (!mergeWithLocal) {
+      await into(progressEntries).insert(
+        ProgressEntriesCompanion.insert(
+          studentId: studentId,
+          courseVersionId: courseVersionId,
+          kpKey: kpKey,
+          lit: Value(lit),
+          litPercent: Value(clampedPercent),
+          masteryLevel: Value(clampedMasteryLevel),
+          questionLevel: Value(normalizedQuestionLevel),
+          easyPassedCount: Value(normalizedCounts.easyPassedCount),
+          mediumPassedCount: Value(normalizedCounts.mediumPassedCount),
+          hardPassedCount: Value(normalizedCounts.hardPassedCount),
+          summaryText: Value(summaryText),
+          summaryRawResponse: Value(summaryRawResponse),
+          summaryValid: Value(summaryValid),
+          updatedAt: Value(updatedAt),
+        ),
+        mode: InsertMode.insertOrReplace,
+      );
+      return;
+    }
+    final existing = await getProgress(
+      studentId: studentId,
+      courseVersionId: courseVersionId,
+      kpKey: kpKey,
     );
     if (existing == null) {
       await into(progressEntries).insert(
@@ -1383,7 +2345,28 @@ WHERE p.student_id = ? AND p.kp_key <> ?
           kpKey: kpKey,
           lit: Value(lit),
           litPercent: Value(clampedPercent),
-          questionLevel: const Value(null),
+          masteryLevel: Value(clampedMasteryLevel),
+          questionLevel: Value(mergeWithLocal ? null : normalizedQuestionLevel),
+          easyPassedCount: Value(normalizedCounts.easyPassedCount),
+          mediumPassedCount: Value(normalizedCounts.mediumPassedCount),
+          hardPassedCount: Value(normalizedCounts.hardPassedCount),
+          summaryText: Value(summaryText),
+          summaryRawResponse: Value(summaryRawResponse),
+          summaryValid: Value(summaryValid),
+          updatedAt: Value(updatedAt),
+        ),
+      );
+      return;
+    }
+    if (!mergeWithLocal) {
+      await (update(progressEntries)
+            ..where((tbl) => tbl.id.equals(existing.id)))
+          .write(
+        ProgressEntriesCompanion(
+          lit: Value(lit),
+          litPercent: Value(clampedPercent),
+          masteryLevel: Value(clampedMasteryLevel),
+          questionLevel: Value(normalizedQuestionLevel),
           easyPassedCount: Value(normalizedCounts.easyPassedCount),
           mediumPassedCount: Value(normalizedCounts.mediumPassedCount),
           hardPassedCount: Value(normalizedCounts.hardPassedCount),
@@ -1426,6 +2409,11 @@ WHERE p.student_id = ? AND p.kp_key <> ?
       ProgressEntriesCompanion(
         lit: Value(shouldTakeIncomingDetails ? lit : existing.lit),
         litPercent: Value(mergedLitPercent),
+        masteryLevel: Value(
+          shouldTakeIncomingDetails
+              ? clampedMasteryLevel
+              : existing.masteryLevel,
+        ),
         questionLevel: const Value(null),
         easyPassedCount: Value(mergedEasyPassedCount),
         mediumPassedCount: Value(mergedMediumPassedCount),
@@ -1535,29 +2523,81 @@ ORDER BY l.created_at DESC
     return row.read(apiConfigs.id.count()) ?? 0;
   }
 
-  Future<int> insertApiConfig({
+  Future<bool> insertApiConfig({
     required String baseUrl,
     required String model,
     required String reasoningEffort,
     required String ttsModel,
     required String sttModel,
     required String apiKeyHash,
-  }) {
-    return into(apiConfigs).insert(
-      ApiConfigsCompanion.insert(
-        baseUrl: baseUrl.trim(),
-        model: model.trim(),
-        reasoningEffort: Value(
-          reasoningEffort.trim().isEmpty
-              ? 'medium'
-              : reasoningEffort.trim().toLowerCase(),
+  }) async {
+    final normalizedBaseUrl = baseUrl.trim();
+    final normalizedModel = model.trim();
+    final normalizedReasoningEffort = reasoningEffort.trim().isEmpty
+        ? 'medium'
+        : reasoningEffort.trim().toLowerCase();
+    final normalizedTtsModel = ttsModel.trim();
+    final normalizedSttModel = sttModel.trim();
+    final normalizedApiKeyHash = apiKeyHash.trim();
+
+    return transaction(() async {
+      if (await _apiConfigExists(
+        baseUrl: normalizedBaseUrl,
+        model: normalizedModel,
+        reasoningEffort: normalizedReasoningEffort,
+        ttsModel: normalizedTtsModel,
+        sttModel: normalizedSttModel,
+        apiKeyHash: normalizedApiKeyHash,
+      )) {
+        return false;
+      }
+      await into(apiConfigs).insert(
+        ApiConfigsCompanion.insert(
+          baseUrl: normalizedBaseUrl,
+          model: normalizedModel,
+          reasoningEffort: Value(normalizedReasoningEffort),
+          ttsModel:
+              Value(normalizedTtsModel.isEmpty ? null : normalizedTtsModel),
+          sttModel:
+              Value(normalizedSttModel.isEmpty ? null : normalizedSttModel),
+          apiKeyHash: normalizedApiKeyHash,
         ),
-        ttsModel: Value(ttsModel.trim().isEmpty ? null : ttsModel.trim()),
-        sttModel: Value(sttModel.trim().isEmpty ? null : sttModel.trim()),
-        apiKeyHash: apiKeyHash.trim(),
-      ),
-      mode: InsertMode.insertOrIgnore,
-    );
+      );
+      return true;
+    });
+  }
+
+  Future<bool> _apiConfigExists({
+    required String baseUrl,
+    required String model,
+    required String reasoningEffort,
+    required String ttsModel,
+    required String sttModel,
+    required String apiKeyHash,
+  }) async {
+    final rows = await customSelect(
+      '''
+SELECT id
+FROM api_configs
+WHERE lower(trim(base_url)) = lower(trim(?))
+  AND trim(model) = trim(?)
+  AND lower(trim(coalesce(reasoning_effort, 'medium'))) = lower(trim(?))
+  AND coalesce(trim(tts_model), '') = trim(?)
+  AND coalesce(trim(stt_model), '') = trim(?)
+  AND trim(api_key_hash) = trim(?)
+LIMIT 1
+''',
+      variables: [
+        Variable.withString(baseUrl),
+        Variable.withString(model),
+        Variable.withString(reasoningEffort),
+        Variable.withString(ttsModel),
+        Variable.withString(sttModel),
+        Variable.withString(apiKeyHash),
+      ],
+      readsFrom: {apiConfigs},
+    ).get();
+    return rows.isNotEmpty;
   }
 
   Future<void> backfillApiConfigModels({
@@ -1596,6 +2636,156 @@ ORDER BY l.created_at DESC
     }
   }
 
+  Stream<List<ApiModelCache>> watchApiModelCaches() {
+    return (select(apiModelCaches)
+          ..orderBy([
+            (tbl) => OrderingTerm(
+                  expression: tbl.updatedAt,
+                  mode: OrderingMode.desc,
+                ),
+          ]))
+        .watch();
+  }
+
+  Future<void> upsertApiModelCache({
+    required String baseUrl,
+    required String apiKeyHash,
+    required Iterable<String> textModels,
+    required Iterable<String> ttsModels,
+    required Iterable<String> sttModels,
+  }) async {
+    final normalizedBaseUrl = _normalizeBaseUrl(baseUrl).toLowerCase();
+    final normalizedApiKeyHash = apiKeyHash.trim();
+    if (normalizedBaseUrl.isEmpty) {
+      throw ArgumentError.value(baseUrl, 'baseUrl', 'baseUrl is required');
+    }
+    if (normalizedApiKeyHash.isEmpty) {
+      throw ArgumentError.value(
+        apiKeyHash,
+        'apiKeyHash',
+        'apiKeyHash is required',
+      );
+    }
+    await customInsert(
+      '''
+INSERT INTO api_model_caches (
+  base_url,
+  api_key_hash,
+  text_models_json,
+  tts_models_json,
+  stt_models_json,
+  updated_at
+) VALUES (?, ?, ?, ?, ?, CAST(strftime('%s', 'now') AS INTEGER))
+ON CONFLICT(base_url, api_key_hash) DO UPDATE SET
+  text_models_json = excluded.text_models_json,
+  tts_models_json = excluded.tts_models_json,
+  stt_models_json = excluded.stt_models_json,
+  updated_at = excluded.updated_at
+''',
+      variables: [
+        Variable.withString(normalizedBaseUrl),
+        Variable.withString(normalizedApiKeyHash),
+        Variable.withString(jsonEncode(_normalizeModelList(textModels))),
+        Variable.withString(jsonEncode(_normalizeModelList(ttsModels))),
+        Variable.withString(jsonEncode(_normalizeModelList(sttModels))),
+      ],
+      updates: {apiModelCaches},
+    );
+  }
+
+  static CachedApiModelLists? cachedModelListsFor(
+    List<ApiModelCache> caches, {
+    required String baseUrl,
+    required String? apiKeyHash,
+  }) {
+    final normalizedBaseUrl = _normalizeBaseUrlValue(baseUrl).toLowerCase();
+    final normalizedApiKeyHash = apiKeyHash?.trim() ?? '';
+    if (normalizedBaseUrl.isEmpty || normalizedApiKeyHash.isEmpty) {
+      return null;
+    }
+    for (final cache in caches) {
+      if (_normalizeBaseUrlValue(cache.baseUrl).toLowerCase() !=
+          normalizedBaseUrl) {
+        continue;
+      }
+      if (cache.apiKeyHash.trim() != normalizedApiKeyHash) {
+        continue;
+      }
+      return CachedApiModelLists(
+        textModels: _decodeModelList(cache.textModelsJson),
+        ttsModels: _decodeModelList(cache.ttsModelsJson),
+        sttModels: _decodeModelList(cache.sttModelsJson),
+      );
+    }
+    return null;
+  }
+
+  static List<String> _normalizeModelList(Iterable<String> models) {
+    return <String>{
+      ...models.map((model) => model.trim()).where((model) => model.isNotEmpty),
+    }.toList()
+      ..sort();
+  }
+
+  static List<String> _decodeModelList(String raw) {
+    final decoded = jsonDecode(raw);
+    if (decoded is! List) {
+      throw StateError('Cached model list is not a JSON array.');
+    }
+    return _normalizeModelList(decoded.map((model) => model.toString()));
+  }
+
+  Future<void> upsertProgressBatchFromSync({
+    required List<SyncedProgressUpsert> rows,
+  }) async {
+    if (rows.isEmpty) {
+      return;
+    }
+    await batch((batch) {
+      for (final row in rows) {
+        final normalizedCounts = _normalizePassedCounts(
+          lit: row.lit,
+          litPercent: row.litPercent,
+          questionLevel: row.questionLevel,
+          easyPassedCount: row.easyPassedCount,
+          mediumPassedCount: row.mediumPassedCount,
+          hardPassedCount: row.hardPassedCount,
+          fallbackHardForLit: row.lit,
+        );
+        final clampedPercent = _deriveLitPercentFromPassedCounts(
+          easyPassedCount: normalizedCounts.easyPassedCount,
+          mediumPassedCount: normalizedCounts.mediumPassedCount,
+          hardPassedCount: normalizedCounts.hardPassedCount,
+          fallbackPercent: row.litPercent.clamp(0, 100),
+        );
+        final normalizedQuestionLevel = _normalizeLevel(row.questionLevel);
+        final clampedMasteryLevel = row.masteryLevel == null
+            ? null
+            : row.masteryLevel!.clamp(0, 100).toInt();
+        batch.insert(
+          progressEntries,
+          ProgressEntriesCompanion.insert(
+            studentId: row.studentId,
+            courseVersionId: row.courseVersionId,
+            kpKey: row.kpKey,
+            lit: Value(row.lit),
+            litPercent: Value(clampedPercent),
+            masteryLevel: Value(clampedMasteryLevel),
+            questionLevel: Value(normalizedQuestionLevel),
+            easyPassedCount: Value(normalizedCounts.easyPassedCount),
+            mediumPassedCount: Value(normalizedCounts.mediumPassedCount),
+            hardPassedCount: Value(normalizedCounts.hardPassedCount),
+            summaryText: Value(row.summaryText),
+            summaryRawResponse: Value(row.summaryRawResponse),
+            summaryValid: Value(row.summaryValid),
+            updatedAt: Value(row.updatedAt),
+          ),
+          mode: InsertMode.insertOrReplace,
+        );
+      }
+    });
+  }
+
   Future<int> deleteApiConfigById(int id) {
     return (delete(apiConfigs)..where((tbl) => tbl.id.equals(id))).go();
   }
@@ -1614,8 +2804,9 @@ ORDER BY l.created_at DESC
     required String pinHash,
     required String role,
     int? remoteUserId,
-  }) {
-    return (update(users)..where((tbl) => tbl.id.equals(userId))).write(
+  }) async {
+    final affectedUsers = await _syncAffectedUsersForUser(userId);
+    await (update(users)..where((tbl) => tbl.id.equals(userId))).write(
       UsersCompanion(
         pinHash: Value(pinHash),
         role: Value(role),
@@ -1623,6 +2814,8 @@ ORDER BY l.created_at DESC
             remoteUserId == null ? const Value.absent() : Value(remoteUserId),
       ),
     );
+    affectedUsers.addAll(await _syncAffectedUsersForUser(userId));
+    await _notifySyncRelevantUsers(affectedUsers);
   }
 
   Future<User> upsertAuthenticatedUser({
@@ -1664,20 +2857,23 @@ ORDER BY l.created_at DESC
           role: role,
           remoteUserId: remoteUserId,
         );
+        await _notifySyncRelevantUsers(<int>{userId});
         return (await getUserById(userId))!;
       }
       final targetId = target.id;
+      final affectedUsers = await _syncAffectedUsersForUser(targetId);
 
       await (update(users)..where((tbl) => tbl.id.equals(targetId))).write(
         UsersCompanion(
           username: Value(normalizedUsername),
           pinHash: Value(pinHash),
           role: Value(role),
-          teacherId: const Value(null),
           remoteUserId:
               remoteUserId == null ? const Value.absent() : Value(remoteUserId),
         ),
       );
+      affectedUsers.addAll(await _syncAffectedUsersForUser(targetId));
+      await _notifySyncRelevantUsers(affectedUsers);
       return (await getUserById(targetId))!;
     });
   }
@@ -1725,6 +2921,9 @@ HAVING COUNT(*) > 1
     if (keepUserId == removeUserId) {
       return;
     }
+    final affectedUsers = <int>{keepUserId, removeUserId}
+      ..addAll(await _syncAffectedUsersForUser(keepUserId))
+      ..addAll(await _syncAffectedUsersForUser(removeUserId));
     await transaction(() async {
       final keep = await getUserById(keepUserId);
       final remove = await getUserById(removeUserId);
@@ -1756,13 +2955,17 @@ HAVING COUNT(*) > 1
       );
       await (delete(users)..where((tbl) => tbl.id.equals(removeUserId))).go();
     });
+    affectedUsers.addAll(await _syncAffectedUsersForUser(keepUserId));
+    await _notifySyncRelevantUsers(affectedUsers);
   }
 
   Future<void> updateStudentTeacherId({
     required int studentId,
     required int teacherId,
-  }) {
-    return (update(users)
+  }) async {
+    final affectedUsers = <int>{studentId, teacherId}
+      ..addAll(await _syncAffectedUsersForUser(studentId));
+    await (update(users)
           ..where(
               (tbl) => tbl.id.equals(studentId) & tbl.role.equals('student')))
         .write(
@@ -1770,6 +2973,8 @@ HAVING COUNT(*) > 1
         teacherId: Value(teacherId),
       ),
     );
+    affectedUsers.addAll(await _syncAffectedUsersForUser(studentId));
+    await _notifySyncRelevantUsers(affectedUsers);
   }
 
   Future<void> _mergeTeacherReferences({
@@ -1872,6 +3077,9 @@ HAVING COUNT(*) > 1
                   : progress.litPercent,
             ),
           ),
+          masteryLevel: Value(
+            sourceIsNewer ? progress.masteryLevel : existing.masteryLevel,
+          ),
           questionLevel: const Value(null),
           easyPassedCount: Value(mergedEasyPassedCount),
           mediumPassedCount: Value(mergedMediumPassedCount),
@@ -1894,6 +3102,49 @@ HAVING COUNT(*) > 1
       );
       await (delete(progressEntries)
             ..where((tbl) => tbl.id.equals(progress.id)))
+          .go();
+    }
+
+    final sourceMistakes = await (select(mistakeEntries)
+          ..where((tbl) => tbl.studentId.equals(removeUserId)))
+        .get();
+    for (final mistake in sourceMistakes) {
+      final existing = await (select(mistakeEntries)
+            ..where((tbl) =>
+                tbl.studentId.equals(keepUserId) &
+                tbl.courseVersionId.equals(mistake.courseVersionId) &
+                tbl.kpKey.equals(mistake.kpKey) &
+                tbl.mistakeTagKey.equals(mistake.mistakeTagKey)))
+          .getSingleOrNull();
+      if (existing == null) {
+        await (update(mistakeEntries)
+              ..where((tbl) => tbl.id.equals(mistake.id)))
+            .write(MistakeEntriesCompanion(studentId: Value(keepUserId)));
+        continue;
+      }
+      await (update(mistakeEntries)..where((tbl) => tbl.id.equals(existing.id)))
+          .write(
+        MistakeEntriesCompanion(
+          occurrences: Value(existing.occurrences + mistake.occurrences),
+          lastSeenAt: Value(
+            mistake.lastSeenAt.isAfter(existing.lastSeenAt)
+                ? mistake.lastSeenAt
+                : existing.lastSeenAt,
+          ),
+          firstSeenAt: Value(
+            mistake.firstSeenAt.isBefore(existing.firstSeenAt)
+                ? mistake.firstSeenAt
+                : existing.firstSeenAt,
+          ),
+          status: Value(
+            existing.status == 'open' || mistake.status == 'open'
+                ? 'open'
+                : existing.status,
+          ),
+          dismissed: Value(existing.dismissed && mistake.dismissed),
+        ),
+      );
+      await (delete(mistakeEntries)..where((tbl) => tbl.id.equals(mistake.id)))
           .go();
     }
 
@@ -1932,13 +3183,16 @@ HAVING COUNT(*) > 1
   Future<void> upsertCourseRemoteLink({
     required int courseVersionId,
     required int remoteCourseId,
-  }) {
-    return into(courseRemoteLinks).insert(
+  }) async {
+    await into(courseRemoteLinks).insert(
       CourseRemoteLinksCompanion.insert(
         courseVersionId: courseVersionId,
         remoteCourseId: remoteCourseId,
       ),
       mode: InsertMode.insertOrReplace,
+    );
+    await _notifySyncRelevantUsers(
+      await _syncAffectedUsersForCourseVersion(courseVersionId),
     );
   }
 
@@ -1949,6 +3203,15 @@ HAVING COUNT(*) > 1
     return row?.remoteCourseId;
   }
 
+  Future<void> deleteCourseRemoteLink(int courseVersionId) async {
+    await (delete(courseRemoteLinks)
+          ..where((tbl) => tbl.courseVersionId.equals(courseVersionId)))
+        .go();
+    await _notifySyncRelevantUsers(
+      await _syncAffectedUsersForCourseVersion(courseVersionId),
+    );
+  }
+
   Future<int?> getCourseVersionIdForRemoteCourse(int remoteCourseId) async {
     final row = await (select(courseRemoteLinks)
           ..where((tbl) => tbl.remoteCourseId.equals(remoteCourseId)))
@@ -1956,7 +3219,18 @@ HAVING COUNT(*) > 1
     return row?.courseVersionId;
   }
 
+  Future<int?> getRemoteCourseIdForCourseVersion(int courseVersionId) async {
+    final row = await (select(courseRemoteLinks)
+          ..where((tbl) => tbl.courseVersionId.equals(courseVersionId)))
+        .getSingleOrNull();
+    return row?.remoteCourseId;
+  }
+
   String _normalizeBaseUrl(String value) {
+    return _normalizeBaseUrlValue(value);
+  }
+
+  static String _normalizeBaseUrlValue(String value) {
     var trimmed = value.trim();
     if (trimmed.endsWith('/')) {
       trimmed = trimmed.substring(0, trimmed.length - 1);
@@ -1984,6 +3258,26 @@ HAVING COUNT(*) > 1
           .get();
       final courseIds = courses.map((course) => course.id).toList();
       if (courseIds.isNotEmpty) {
+        final sessions = await (select(chatSessions)
+              ..where((tbl) => tbl.courseVersionId.isIn(courseIds)))
+            .get();
+        final sessionIds = sessions.map((session) => session.id).toList();
+        if (sessionIds.isNotEmpty) {
+          await (delete(chatMessages)
+                ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+              .go();
+          await (delete(llmCalls)
+                ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+              .go();
+          await (delete(chatSessions)..where((tbl) => tbl.id.isIn(sessionIds)))
+              .go();
+        }
+        await (delete(mistakeEntries)
+              ..where((tbl) => tbl.courseVersionId.isIn(courseIds)))
+            .go();
+        await (delete(progressEntries)
+              ..where((tbl) => tbl.courseVersionId.isIn(courseIds)))
+            .go();
         await (delete(courseNodes)
               ..where((tbl) => tbl.courseVersionId.isIn(courseIds)))
             .go();
@@ -2009,12 +3303,18 @@ HAVING COUNT(*) > 1
   }
 
   Future<void> deleteCourseVersion(int courseVersionId) async {
+    final affectedUsers = await _syncAffectedUsersForCourseVersion(
+      courseVersionId,
+    );
     await transaction(() async {
       final sessions = await (select(chatSessions)
             ..where((tbl) => tbl.courseVersionId.equals(courseVersionId)))
           .get();
       final sessionIds = sessions.map((session) => session.id).toList();
       if (sessionIds.isNotEmpty) {
+        await (delete(mistakeEntries)
+              ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+            .go();
         await (delete(chatMessages)
               ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
             .go();
@@ -2024,6 +3324,9 @@ HAVING COUNT(*) > 1
             .go();
       }
       await (delete(progressEntries)
+            ..where((tbl) => tbl.courseVersionId.equals(courseVersionId)))
+          .go();
+      await (delete(mistakeEntries)
             ..where((tbl) => tbl.courseVersionId.equals(courseVersionId)))
           .go();
       await (delete(studentCourseAssignments)
@@ -2045,6 +3348,7 @@ HAVING COUNT(*) > 1
             ..where((tbl) => tbl.id.equals(courseVersionId)))
           .go();
     });
+    await _notifySyncRelevantUsers(affectedUsers);
   }
 
   Future<void> deleteStudentCourseData({
@@ -2052,6 +3356,9 @@ HAVING COUNT(*) > 1
     required int courseVersionId,
     bool removeAssignment = true,
   }) async {
+    final affectedUsers = removeAssignment
+        ? await _syncAffectedUsersForCourseVersion(courseVersionId)
+        : const <int>{};
     await transaction(() async {
       final sessions = await (select(chatSessions)
             ..where((tbl) =>
@@ -2060,6 +3367,9 @@ HAVING COUNT(*) > 1
           .get();
       final sessionIds = sessions.map((session) => session.id).toList();
       if (sessionIds.isNotEmpty) {
+        await (delete(mistakeEntries)
+              ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+            .go();
         await (delete(chatMessages)
               ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
             .go();
@@ -2073,6 +3383,11 @@ HAVING COUNT(*) > 1
                 tbl.studentId.equals(studentId) &
                 tbl.courseVersionId.equals(courseVersionId)))
           .go();
+      await (delete(mistakeEntries)
+            ..where((tbl) =>
+                tbl.studentId.equals(studentId) &
+                tbl.courseVersionId.equals(courseVersionId)))
+          .go();
       if (removeAssignment) {
         await (delete(studentCourseAssignments)
               ..where((tbl) =>
@@ -2081,6 +3396,7 @@ HAVING COUNT(*) > 1
             .go();
       }
     });
+    await _notifySyncRelevantUsers(affectedUsers);
   }
 
   Future<void> migrateStudentCourseData({
@@ -2123,6 +3439,7 @@ HAVING COUNT(*) > 1
                   fallbackPercent: progress.litPercent,
                 ),
               ),
+              masteryLevel: Value(progress.masteryLevel),
               questionLevel: const Value(null),
               easyPassedCount: Value(progress.easyPassedCount),
               mediumPassedCount: Value(progress.mediumPassedCount),
@@ -2164,6 +3481,9 @@ HAVING COUNT(*) > 1
           ProgressEntriesCompanion(
             lit: Value(mergedLit),
             litPercent: Value(mergedLitPercent),
+            masteryLevel: Value(
+              sourceIsNewer ? progress.masteryLevel : existing.masteryLevel,
+            ),
             questionLevel: const Value(null),
             easyPassedCount: Value(mergedEasyPassedCount),
             mediumPassedCount: Value(mergedMediumPassedCount),
@@ -2202,6 +3522,51 @@ HAVING COUNT(*) > 1
         ),
       );
 
+      final sourceMistakes = await (select(mistakeEntries)
+            ..where((tbl) =>
+                tbl.studentId.equals(studentId) &
+                tbl.courseVersionId.equals(fromCourseVersionId)))
+          .get();
+      for (final mistake in sourceMistakes) {
+        final existing = await (select(mistakeEntries)
+              ..where((tbl) =>
+                  tbl.studentId.equals(studentId) &
+                  tbl.courseVersionId.equals(toCourseVersionId) &
+                  tbl.kpKey.equals(mistake.kpKey) &
+                  tbl.mistakeTagKey.equals(mistake.mistakeTagKey)))
+            .getSingleOrNull();
+        if (existing == null) {
+          await (update(mistakeEntries)
+                ..where((tbl) => tbl.id.equals(mistake.id)))
+              .write(
+            MistakeEntriesCompanion(
+              courseVersionId: Value(toCourseVersionId),
+            ),
+          );
+          continue;
+        }
+        await (update(mistakeEntries)
+              ..where((tbl) => tbl.id.equals(existing.id)))
+            .write(
+          MistakeEntriesCompanion(
+            occurrences: Value(existing.occurrences + mistake.occurrences),
+            lastSeenAt: Value(
+              mistake.lastSeenAt.isAfter(existing.lastSeenAt)
+                  ? mistake.lastSeenAt
+                  : existing.lastSeenAt,
+            ),
+            firstSeenAt: Value(
+              mistake.firstSeenAt.isBefore(existing.firstSeenAt)
+                  ? mistake.firstSeenAt
+                  : existing.firstSeenAt,
+            ),
+          ),
+        );
+        await (delete(mistakeEntries)
+              ..where((tbl) => tbl.id.equals(mistake.id)))
+            .go();
+      }
+
       await (delete(studentCourseAssignments)
             ..where((tbl) =>
                 tbl.studentId.equals(studentId) &
@@ -2216,6 +3581,9 @@ HAVING COUNT(*) > 1
         .get();
     final sessionIds = sessions.map((session) => session.id).toList();
     if (sessionIds.isNotEmpty) {
+      await (delete(mistakeEntries)
+            ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
+          .go();
       await (delete(chatMessages)
             ..where((tbl) => tbl.sessionId.isIn(sessionIds)))
           .go();
@@ -2225,6 +3593,9 @@ HAVING COUNT(*) > 1
           .go();
     }
     await (delete(progressEntries)
+          ..where((tbl) => tbl.studentId.equals(studentId)))
+        .go();
+    await (delete(mistakeEntries)
           ..where((tbl) => tbl.studentId.equals(studentId)))
         .go();
     await (delete(studentCourseAssignments)
@@ -2295,7 +3666,7 @@ HAVING COUNT(*) > 1
     int? studentId,
   }) async {
     final normalizedCourseKey = _normalizeCourseKey(courseKey);
-    return transaction(() async {
+    final templateId = await transaction(() async {
       await (update(promptTemplates)
             ..where((tbl) =>
                 tbl.teacherId.equals(teacherId) &
@@ -2318,6 +3689,72 @@ HAVING COUNT(*) > 1
         ),
       );
     });
+    await _notifySyncRelevantUsers(_syncAffectedUsersForTeacherOnly(teacherId));
+    return templateId;
+  }
+
+  Future<int> importPromptTemplate({
+    required int teacherId,
+    required String promptName,
+    required String content,
+    required DateTime createdAt,
+    String? courseKey,
+    int? studentId,
+  }) async {
+    final normalizedCourseKey = _normalizeCourseKey(courseKey);
+    final normalizedCreatedAt = createdAt.toUtc();
+    final templateId = await transaction(() async {
+      await (update(promptTemplates)
+            ..where((tbl) =>
+                tbl.teacherId.equals(teacherId) &
+                tbl.promptName.equals(promptName) &
+                _promptScopeMatch(
+                  courseKey: normalizedCourseKey,
+                  studentId: studentId,
+                )(tbl)))
+          .write(
+        const PromptTemplatesCompanion(isActive: Value(false)),
+      );
+      final existing = await (select(promptTemplates)
+            ..where((tbl) =>
+                tbl.teacherId.equals(teacherId) &
+                tbl.promptName.equals(promptName) &
+                tbl.content.equals(content) &
+                tbl.createdAt.equals(normalizedCreatedAt) &
+                _promptScopeMatch(
+                  courseKey: normalizedCourseKey,
+                  studentId: studentId,
+                )(tbl))
+            ..orderBy([
+              (tbl) => OrderingTerm(
+                    expression: tbl.id,
+                    mode: OrderingMode.desc,
+                  ),
+            ])
+            ..limit(1))
+          .getSingleOrNull();
+      if (existing != null) {
+        await (update(promptTemplates)
+              ..where((tbl) => tbl.id.equals(existing.id)))
+            .write(
+          const PromptTemplatesCompanion(isActive: Value(true)),
+        );
+        return existing.id;
+      }
+      return into(promptTemplates).insert(
+        PromptTemplatesCompanion.insert(
+          teacherId: teacherId,
+          courseKey: Value(normalizedCourseKey),
+          studentId: Value(studentId),
+          promptName: promptName,
+          content: content,
+          isActive: const Value(true),
+          createdAt: Value(normalizedCreatedAt),
+        ),
+      );
+    });
+    await _notifySyncRelevantUsers(_syncAffectedUsersForTeacherOnly(teacherId));
+    return templateId;
   }
 
   Future<void> setActivePromptTemplate({
@@ -2353,6 +3790,7 @@ HAVING COUNT(*) > 1
         const PromptTemplatesCompanion(isActive: Value(true)),
       );
     });
+    await _notifySyncRelevantUsers(_syncAffectedUsersForTeacherOnly(teacherId));
   }
 
   Future<void> clearActivePromptTemplates({
@@ -2360,9 +3798,9 @@ HAVING COUNT(*) > 1
     required String promptName,
     String? courseKey,
     int? studentId,
-  }) {
+  }) async {
     final normalizedCourseKey = _normalizeCourseKey(courseKey);
-    return (update(promptTemplates)
+    await (update(promptTemplates)
           ..where((tbl) =>
               tbl.teacherId.equals(teacherId) &
               tbl.promptName.equals(promptName) &
@@ -2373,6 +3811,7 @@ HAVING COUNT(*) > 1
         .write(
       const PromptTemplatesCompanion(isActive: Value(false)),
     );
+    await _notifySyncRelevantUsers(_syncAffectedUsersForTeacherOnly(teacherId));
   }
 
   Future<StudentPromptProfile?> getStudentPromptProfile({
@@ -2421,6 +3860,13 @@ HAVING COUNT(*) > 1
             courseKey: normalizedCourseKey,
             studentId: null,
           );
+    final studentGlobalProfile = studentId == null
+        ? null
+        : await getStudentPromptProfile(
+            teacherId: teacherId,
+            courseKey: null,
+            studentId: studentId,
+          );
     final studentProfile = (normalizedCourseKey == null || studentId == null)
         ? null
         : await getStudentPromptProfile(
@@ -2430,41 +3876,49 @@ HAVING COUNT(*) > 1
           );
     final gradeLevel = _resolveStudentPromptField(
       studentProfile?.gradeLevel,
+      studentGlobalProfile?.gradeLevel,
       courseProfile?.gradeLevel,
       systemProfile?.gradeLevel,
     );
     final readingLevel = _resolveStudentPromptField(
       studentProfile?.readingLevel,
+      studentGlobalProfile?.readingLevel,
       courseProfile?.readingLevel,
       systemProfile?.readingLevel,
     );
     final preferredLanguage = _resolveStudentPromptField(
       studentProfile?.preferredLanguage,
+      studentGlobalProfile?.preferredLanguage,
       courseProfile?.preferredLanguage,
       systemProfile?.preferredLanguage,
     );
     final interests = _resolveStudentPromptField(
       studentProfile?.interests,
+      studentGlobalProfile?.interests,
       courseProfile?.interests,
       systemProfile?.interests,
     );
     final preferredTone = _resolveStudentPromptField(
       studentProfile?.preferredTone,
+      studentGlobalProfile?.preferredTone,
       courseProfile?.preferredTone,
       systemProfile?.preferredTone,
     );
     final preferredPace = _resolveStudentPromptField(
       studentProfile?.preferredPace,
+      studentGlobalProfile?.preferredPace,
       courseProfile?.preferredPace,
       systemProfile?.preferredPace,
     );
     final preferredFormat = _resolveStudentPromptField(
       studentProfile?.preferredFormat,
+      studentGlobalProfile?.preferredFormat,
       courseProfile?.preferredFormat,
       systemProfile?.preferredFormat,
     );
     final supportNotes = _resolveStudentPromptField(
       studentProfile?.supportNotes,
+      studentGlobalProfile?.supportNotes,
       courseProfile?.supportNotes,
       systemProfile?.supportNotes,
     );
@@ -2561,6 +4015,9 @@ HAVING COUNT(*) > 1
           updatedAt: Value(now),
         ),
       );
+      await _notifySyncRelevantUsers(
+        _syncAffectedUsersForTeacherOnly(teacherId),
+      );
       return;
     }
     await (update(studentPromptProfiles)
@@ -2578,15 +4035,107 @@ HAVING COUNT(*) > 1
         updatedAt: Value(now),
       ),
     );
+    await _notifySyncRelevantUsers(_syncAffectedUsersForTeacherOnly(teacherId));
+  }
+
+  Future<void> importStudentPromptProfile({
+    required int teacherId,
+    String? courseKey,
+    int? studentId,
+    String? gradeLevel,
+    String? readingLevel,
+    String? preferredLanguage,
+    String? interests,
+    String? preferredTone,
+    String? preferredPace,
+    String? preferredFormat,
+    String? supportNotes,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) async {
+    final normalizedCourseKey = _normalizeCourseKey(courseKey);
+    final normalizedGradeLevel = _normalizePromptField(gradeLevel);
+    final normalizedReadingLevel = _normalizePromptField(readingLevel);
+    final normalizedPreferredLanguage =
+        _normalizePromptField(preferredLanguage);
+    final normalizedInterests = _normalizePromptField(interests);
+    final normalizedPreferredTone = _normalizePromptField(preferredTone);
+    final normalizedPreferredPace = _normalizePromptField(preferredPace);
+    final normalizedPreferredFormat = _normalizePromptField(preferredFormat);
+    final normalizedSupportNotes = _normalizePromptField(supportNotes);
+    final normalizedCreatedAt =
+        (createdAt ?? updatedAt ?? DateTime.now()).toUtc();
+    final normalizedUpdatedAt =
+        (updatedAt ?? createdAt ?? DateTime.now()).toUtc();
+    final existing = await (select(studentPromptProfiles)
+          ..where((tbl) =>
+              tbl.teacherId.equals(teacherId) &
+              _profileScopeMatch(
+                tbl,
+                courseKey: normalizedCourseKey,
+                studentId: studentId,
+              ))
+          ..orderBy([
+            (tbl) => OrderingTerm(
+                  expression: tbl.updatedAt,
+                  mode: OrderingMode.desc,
+                ),
+            (tbl) => OrderingTerm(
+                  expression: tbl.createdAt,
+                  mode: OrderingMode.desc,
+                ),
+          ])
+          ..limit(1))
+        .getSingleOrNull();
+    if (existing == null) {
+      await into(studentPromptProfiles).insert(
+        StudentPromptProfilesCompanion.insert(
+          teacherId: teacherId,
+          courseKey: Value(normalizedCourseKey),
+          studentId: Value(studentId),
+          gradeLevel: Value(normalizedGradeLevel),
+          readingLevel: Value(normalizedReadingLevel),
+          preferredLanguage: Value(normalizedPreferredLanguage),
+          interests: Value(normalizedInterests),
+          preferredTone: Value(normalizedPreferredTone),
+          preferredPace: Value(normalizedPreferredPace),
+          preferredFormat: Value(normalizedPreferredFormat),
+          supportNotes: Value(normalizedSupportNotes),
+          createdAt: Value(normalizedCreatedAt),
+          updatedAt: Value(normalizedUpdatedAt),
+        ),
+      );
+      await _notifySyncRelevantUsers(
+        _syncAffectedUsersForTeacherOnly(teacherId),
+      );
+      return;
+    }
+    await (update(studentPromptProfiles)
+          ..where((tbl) => tbl.id.equals(existing.id)))
+        .write(
+      StudentPromptProfilesCompanion(
+        gradeLevel: Value(normalizedGradeLevel),
+        readingLevel: Value(normalizedReadingLevel),
+        preferredLanguage: Value(normalizedPreferredLanguage),
+        interests: Value(normalizedInterests),
+        preferredTone: Value(normalizedPreferredTone),
+        preferredPace: Value(normalizedPreferredPace),
+        preferredFormat: Value(normalizedPreferredFormat),
+        supportNotes: Value(normalizedSupportNotes),
+        createdAt: Value(normalizedCreatedAt),
+        updatedAt: Value(normalizedUpdatedAt),
+      ),
+    );
+    await _notifySyncRelevantUsers(_syncAffectedUsersForTeacherOnly(teacherId));
   }
 
   Future<void> deleteStudentPromptProfile({
     required int teacherId,
     String? courseKey,
     int? studentId,
-  }) {
+  }) async {
     final normalizedCourseKey = _normalizeCourseKey(courseKey);
-    return (delete(studentPromptProfiles)
+    await (delete(studentPromptProfiles)
           ..where((tbl) =>
               tbl.teacherId.equals(teacherId) &
               _profileScopeMatch(
@@ -2595,6 +4144,7 @@ HAVING COUNT(*) > 1
                 studentId: studentId,
               )))
         .go();
+    await _notifySyncRelevantUsers(_syncAffectedUsersForTeacherOnly(teacherId));
   }
 
   Future<StudentPassConfig?> getStudentPassConfig({
@@ -2687,6 +4237,9 @@ HAVING COUNT(*) > 1
           updatedAt: Value(now),
         ),
       );
+      await _notifySyncRelevantUsers(
+        await _syncAffectedUsersForCourseTeacherOnly(courseVersionId),
+      );
       return;
     }
     await (update(studentPassConfigs)
@@ -2700,23 +4253,85 @@ HAVING COUNT(*) > 1
         updatedAt: Value(now),
       ),
     );
+    await _notifySyncRelevantUsers(
+      await _syncAffectedUsersForCourseTeacherOnly(courseVersionId),
+    );
+  }
+
+  Future<void> importStudentPassConfig({
+    required int courseVersionId,
+    required int studentId,
+    required double easyWeight,
+    required double mediumWeight,
+    required double hardWeight,
+    required double passThreshold,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) async {
+    final normalizedCreatedAt =
+        (createdAt ?? updatedAt ?? DateTime.now()).toUtc();
+    final normalizedUpdatedAt =
+        (updatedAt ?? createdAt ?? DateTime.now()).toUtc();
+    final existing = await getStudentPassConfig(
+      courseVersionId: courseVersionId,
+      studentId: studentId,
+    );
+    if (existing == null) {
+      await into(studentPassConfigs).insert(
+        StudentPassConfigsCompanion.insert(
+          courseVersionId: courseVersionId,
+          studentId: studentId,
+          easyWeight: Value(easyWeight),
+          mediumWeight: Value(mediumWeight),
+          hardWeight: Value(hardWeight),
+          passThreshold: Value(passThreshold),
+          createdAt: Value(normalizedCreatedAt),
+          updatedAt: Value(normalizedUpdatedAt),
+        ),
+      );
+      await _notifySyncRelevantUsers(
+        await _syncAffectedUsersForCourseTeacherOnly(courseVersionId),
+      );
+      return;
+    }
+    await (update(studentPassConfigs)
+          ..where((tbl) => tbl.id.equals(existing.id)))
+        .write(
+      StudentPassConfigsCompanion(
+        easyWeight: Value(easyWeight),
+        mediumWeight: Value(mediumWeight),
+        hardWeight: Value(hardWeight),
+        passThreshold: Value(passThreshold),
+        createdAt: Value(normalizedCreatedAt),
+        updatedAt: Value(normalizedUpdatedAt),
+      ),
+    );
+    await _notifySyncRelevantUsers(
+      await _syncAffectedUsersForCourseTeacherOnly(courseVersionId),
+    );
   }
 
   Future<void> deleteStudentPassConfig({
     required int courseVersionId,
     required int studentId,
-  }) {
-    return (delete(studentPassConfigs)
+  }) async {
+    await (delete(studentPassConfigs)
           ..where((tbl) =>
               tbl.courseVersionId.equals(courseVersionId) &
               tbl.studentId.equals(studentId)))
         .go();
+    await _notifySyncRelevantUsers(
+      await _syncAffectedUsersForCourseTeacherOnly(courseVersionId),
+    );
   }
 
-  Future<void> deleteStudentPassConfigsForCourse(int courseVersionId) {
-    return (delete(studentPassConfigs)
+  Future<void> deleteStudentPassConfigsForCourse(int courseVersionId) async {
+    await (delete(studentPassConfigs)
           ..where((tbl) => tbl.courseVersionId.equals(courseVersionId)))
         .go();
+    await _notifySyncRelevantUsers(
+      await _syncAffectedUsersForCourseTeacherOnly(courseVersionId),
+    );
   }
 
   User _preferAuthCanonicalUser(User left, User right) {
@@ -2789,12 +4404,17 @@ HAVING COUNT(*) > 1
 
   String? _resolveStudentPromptField(
     String? studentValue,
+    String? studentGlobalValue,
     String? courseValue,
     String? systemValue,
   ) {
     final resolvedStudent = _normalizePromptField(studentValue);
     if (resolvedStudent != null) {
       return resolvedStudent;
+    }
+    final resolvedStudentGlobal = _normalizePromptField(studentGlobalValue);
+    if (resolvedStudentGlobal != null) {
+      return resolvedStudentGlobal;
     }
     final resolvedCourse = _normalizePromptField(courseValue);
     if (resolvedCourse != null) {
@@ -2942,6 +4562,211 @@ HAVING COUNT(*) > 1
     }
     return incomingUpdatedAt.isAfter(existing.updatedAt);
   }
+
+  static String? _emptyToNull(String? value) {
+    final trimmed = value?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return null;
+    }
+    return trimmed;
+  }
+
+  static int? _readInt(dynamic value) {
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    if (value is String) {
+      return int.tryParse(value.trim());
+    }
+    return null;
+  }
+
+  static DateTime? _parseStoredDateTime(dynamic value) {
+    if (value == null) {
+      return null;
+    }
+    if (value is DateTime) {
+      return value.toUtc();
+    }
+    if (value is num) {
+      final raw = value.toInt();
+      final millis = raw > 1000000000000 ? raw : raw * 1000;
+      return DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true);
+    }
+    if (value is String) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty) {
+        return null;
+      }
+      return DateTime.tryParse(trimmed)?.toUtc();
+    }
+    return null;
+  }
+
+  static String _encodeStoredJson(dynamic value) {
+    if (value == null) {
+      return '{}';
+    }
+    if (value is String) {
+      final trimmed = value.trim();
+      return trimmed.isEmpty ? '{}' : trimmed;
+    }
+    return jsonEncode(value);
+  }
+
+  static String _normalizeMistakeStatus(String value) {
+    final normalized = value.trim().toLowerCase();
+    switch (normalized) {
+      case 'open':
+      case 'dismissed':
+      case 'resolved':
+        return normalized;
+      default:
+        return 'open';
+    }
+  }
+
+  static Map<String, dynamic>? _tryDecodeObject(String? raw) {
+    final trimmed = raw?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(trimmed);
+      if (decoded is Map<String, dynamic>) {
+        return decoded;
+      }
+      if (decoded is Map) {
+        return decoded.map(
+          (key, value) => MapEntry(key.toString(), value),
+        );
+      }
+    } catch (_) {
+      return null;
+    }
+    return null;
+  }
+
+  static List<_ParsedMistakeEntry> _mistakeEntriesFromParsed(
+    Map<String, dynamic>? parsed,
+  ) {
+    if (parsed == null) {
+      return const <_ParsedMistakeEntry>[];
+    }
+    final result = <_ParsedMistakeEntry>[];
+    final update = parsed['error_book_update'];
+    if (update is Map) {
+      final tag = update['mistake_tag']?.toString().trim() ?? '';
+      if (tag.isNotEmpty) {
+        result.add(
+          _ParsedMistakeEntry(
+            tag: tag,
+            note: update['mistake_note']?.toString(),
+          ),
+        );
+      }
+    }
+    final source = parsed['mistakes'] ?? parsed['mistake_tags'];
+    if (source is List) {
+      for (final item in source) {
+        if (item is String) {
+          final tag = item.trim();
+          if (tag.isNotEmpty) {
+            result.add(_ParsedMistakeEntry(tag: tag));
+          }
+          continue;
+        }
+        if (item is Map) {
+          final tag =
+              (item['mistake_tag'] ?? item['tag'])?.toString().trim() ?? '';
+          if (tag.isNotEmpty) {
+            result.add(
+              _ParsedMistakeEntry(
+                tag: tag,
+                note: item['mistake_note']?.toString() ??
+                    item['note']?.toString(),
+              ),
+            );
+          }
+        }
+      }
+    }
+    return result;
+  }
+
+  static String? _questionExcerptFromParsed(Map<String, dynamic>? parsed) {
+    if (parsed == null) {
+      return null;
+    }
+    final question = parsed['question'];
+    if (question is Map) {
+      final text = question['text']?.toString().trim() ??
+          question['question_text']?.toString().trim() ??
+          '';
+      if (text.isNotEmpty) {
+        return text;
+      }
+    }
+    for (final key in const <String>['question_text', 'active_question']) {
+      final value = parsed[key]?.toString().trim();
+      if (value != null && value.isNotEmpty) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  static String? _difficultyFromParsed(Map<String, dynamic>? parsed) {
+    final value = parsed?['difficulty']?.toString().trim();
+    return value == null || value.isEmpty ? null : value;
+  }
+}
+
+class _ParsedMistakeEntry {
+  const _ParsedMistakeEntry({
+    required this.tag,
+    this.note,
+  });
+
+  final String tag;
+  final String? note;
+}
+
+class _BackfilledMistakeEntry {
+  _BackfilledMistakeEntry({
+    required this.studentId,
+    required this.courseVersionId,
+    required this.kpKey,
+    required this.sessionId,
+    required this.messageId,
+    required this.tag,
+    required this.tagKey,
+    required this.evidenceJson,
+    required this.occurrences,
+    required this.firstSeenAt,
+    required this.lastSeenAt,
+    this.note,
+    this.questionExcerpt,
+    this.difficulty,
+  });
+
+  final int studentId;
+  final int courseVersionId;
+  final String kpKey;
+  int sessionId;
+  int messageId;
+  final String tag;
+  final String tagKey;
+  String? note;
+  final String? questionExcerpt;
+  final String? difficulty;
+  final String evidenceJson;
+  int occurrences;
+  final DateTime firstSeenAt;
+  DateTime lastSeenAt;
 }
 
 class _NormalizedPassedCounts {

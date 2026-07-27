@@ -23,6 +23,7 @@ class SkillNode {
     this.yearEnd,
     this.parentId,
     this.isPlaceholder = false,
+    this.isHidden = false,
   });
 
   final String id;
@@ -34,7 +35,30 @@ class SkillNode {
   final int? yearEnd;
   String? parentId;
   final bool isPlaceholder;
+  final bool isHidden;
   final List<SkillNode> children = [];
+}
+
+int compareSkillNodeIds(String left, String right) {
+  final leftParts = left.split('.');
+  final rightParts = right.split('.');
+  var index = 0;
+  while (index < leftParts.length && index < rightParts.length) {
+    final leftNumber = int.tryParse(leftParts[index]);
+    final rightNumber = int.tryParse(rightParts[index]);
+    final partCompare = leftNumber != null && rightNumber != null
+        ? leftNumber.compareTo(rightNumber)
+        : leftParts[index].compareTo(rightParts[index]);
+    if (partCompare != 0) {
+      return partCompare;
+    }
+    index += 1;
+  }
+  final lengthCompare = leftParts.length.compareTo(rightParts.length);
+  if (lengthCompare != 0) {
+    return lengthCompare;
+  }
+  return left.compareTo(right);
 }
 
 class SkillTreeParser {
@@ -62,6 +86,10 @@ class SkillTreeParser {
       if (rest.startsWith('.')) {
         rest = rest.substring(1).trimLeft();
       }
+      final isHidden = rest.startsWith('[hidden]');
+      if (isHidden) {
+        rest = rest.substring('[hidden]'.length).trimLeft();
+      }
       final isLeaf = _startsWithParen(rest);
       final grade = _extractGrade(trimmed);
       final yearRange = _extractYearRange(trimmed);
@@ -75,6 +103,7 @@ class SkillTreeParser {
         grade: grade,
         yearStart: yearRange?.$1,
         yearEnd: yearRange?.$2,
+        isHidden: isHidden,
       );
     }
 
@@ -101,7 +130,7 @@ class SkillTreeParser {
       return placeholder;
     }
 
-    for (final node in nodes.values) {
+    for (final node in nodes.values.toList()) {
       final parentId = _parentId(node.id);
       node.parentId = parentId;
       if (parentId == null) {
@@ -111,12 +140,22 @@ class SkillTreeParser {
         parent.children.add(node);
       }
     }
+    _sortChildren(root);
 
     return SkillTreeParseResult(
       root: root,
       nodes: nodes,
       unparsedLines: unparsed,
     );
+  }
+
+  void _sortChildren(SkillNode node) {
+    node.children.sort(
+      (left, right) => compareSkillNodeIds(left.id, right.id),
+    );
+    for (final child in node.children) {
+      _sortChildren(child);
+    }
   }
 
   String? _parentId(String id) {

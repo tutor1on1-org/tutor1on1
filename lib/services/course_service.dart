@@ -8,6 +8,7 @@ import '../constants.dart';
 import '../db/app_database.dart';
 import '../models/skill_tree.dart';
 import 'course_artifact_service.dart';
+import 'course_source_policy.dart';
 
 class CourseLoadResult {
   CourseLoadResult({
@@ -130,13 +131,49 @@ class CourseService {
     }
 
     final contents = await contentsSource.readAsString(encoding: utf8);
+    return _previewCourseLoadCore(
+      normalizedPath: normalizedPath,
+      contents: contents,
+      contentsLabel: p.basename(contentsSource.path),
+      courseVersionId: courseVersionId,
+      courseNameOverride: courseNameOverride,
+      validateLectureFiles: true,
+    );
+  }
+
+  Future<CourseLoadPreview> previewCourseLoadFromContents({
+    required String sourcePath,
+    required String contents,
+    int? courseVersionId,
+    String? courseNameOverride,
+    String contentsLabel = 'contents.txt',
+  }) {
+    return _previewCourseLoadCore(
+      normalizedPath: p.normalize(sourcePath),
+      contents: contents,
+      contentsLabel: contentsLabel,
+      courseVersionId: courseVersionId,
+      courseNameOverride: courseNameOverride,
+      validateLectureFiles: false,
+    );
+  }
+
+  Future<CourseLoadPreview> _previewCourseLoadCore({
+    required String normalizedPath,
+    required String contents,
+    required String contentsLabel,
+    required int? courseVersionId,
+    required String? courseNameOverride,
+    required bool validateLectureFiles,
+  }) async {
     final parser = SkillTreeParser();
     final parseResult = parser.parse(contents);
     final errors = _validateContents(
       contents: contents,
       parseResult: parseResult,
       basePath: normalizedPath,
-      contentsLabel: p.basename(contentsSource.path),
+      contentsLabel: contentsLabel,
+      validateLectureFiles: validateLectureFiles,
     );
     if (errors.isNotEmpty) {
       return CourseLoadPreview(
@@ -295,6 +332,7 @@ GROUP BY kp_key
     required int teacherId,
     required CourseLoadPreview preview,
     required CourseReloadMode mode,
+    bool rebuildCourseArtifacts = true,
   }) async {
     if (!preview.success ||
         preview.parseResult == null ||
@@ -349,40 +387,46 @@ GROUP BY kp_key
             ..where((tbl) => tbl.courseVersionId.equals(courseId)))
           .go();
 
+      final nodeRows = <CourseNodesCompanion>[];
+      final edgeRows = <CourseEdgesCompanion>[];
       var orderIndex = 0;
-      for (final node in preview.parseResult!.nodes.values) {
+      for (final node in _orderedCourseNodes(preview.parseResult!)) {
         if (node.isPlaceholder) {
           continue;
         }
-        await _db.into(_db.courseNodes).insert(
-              CourseNodesCompanion.insert(
-                courseVersionId: courseId,
-                kpKey: node.id,
-                title: node.title,
-                description:
-                    node.rawLine.isNotEmpty ? node.rawLine : node.title,
-                orderIndex: orderIndex++,
-              ),
-              mode: InsertMode.insertOrReplace,
-            );
-      }
-
-      for (final node in preview.parseResult!.nodes.values) {
-        if (node.isPlaceholder) {
-          continue;
-        }
+        nodeRows.add(
+          CourseNodesCompanion.insert(
+            courseVersionId: courseId,
+            kpKey: node.id,
+            title: node.title,
+            description: node.rawLine.isNotEmpty ? node.rawLine : node.title,
+            orderIndex: orderIndex++,
+          ),
+        );
         final parentId = node.parentId;
         if (parentId == null) {
           continue;
         }
-        await _db.into(_db.courseEdges).insert(
-              CourseEdgesCompanion.insert(
-                courseVersionId: courseId,
-                fromKpKey: parentId,
-                toKpKey: node.id,
-              ),
-            );
+        edgeRows.add(
+          CourseEdgesCompanion.insert(
+            courseVersionId: courseId,
+            fromKpKey: parentId,
+            toKpKey: node.id,
+          ),
+        );
       }
+      await _db.batch((batch) {
+        for (final row in nodeRows) {
+          batch.insert(
+            _db.courseNodes,
+            row,
+            mode: InsertMode.insertOrReplace,
+          );
+        }
+        for (final row in edgeRows) {
+          batch.insert(_db.courseEdges, row);
+        }
+      });
 
       await (_db.update(_db.courseVersions)
             ..where((tbl) => tbl.id.equals(courseId)))
@@ -432,43 +476,54 @@ GROUP BY kp_key
                   tbl.kpKey.isNotValue(kTreeViewStateKpKey)))
             .go();
 
-        for (final entry in merged.values) {
-          await _db.into(_db.progressEntries).insert(
-                ProgressEntriesCompanion.insert(
-                  studentId: entry.studentId,
-                  courseVersionId: courseId,
-                  kpKey: entry.kpKey,
-                  lit: Value(entry.lit),
-                  litPercent: Value(
-                    _deriveProgressPercent(
-                      easyPassedCount: entry.easyPassedCount,
-                      mediumPassedCount: entry.mediumPassedCount,
-                      hardPassedCount: entry.hardPassedCount,
-                      fallbackPercent: entry.litPercent,
-                    ),
+        final sessionUpdates = <({int sessionId, String kpKey})>[];
+        await _db.batch((batch) {
+          for (final entry in merged.values) {
+            batch.insert(
+              _db.progressEntries,
+              ProgressEntriesCompanion.insert(
+                studentId: entry.studentId,
+                courseVersionId: courseId,
+                kpKey: entry.kpKey,
+                lit: Value(entry.lit),
+                litPercent: Value(
+                  _deriveProgressPercent(
+                    easyPassedCount: entry.easyPassedCount,
+                    mediumPassedCount: entry.mediumPassedCount,
+                    hardPassedCount: entry.hardPassedCount,
+                    fallbackPercent: entry.litPercent,
                   ),
-                  questionLevel: const Value(null),
-                  easyPassedCount: Value(entry.easyPassedCount),
-                  mediumPassedCount: Value(entry.mediumPassedCount),
-                  hardPassedCount: Value(entry.hardPassedCount),
-                  summaryText: Value(entry.summaryText),
-                  summaryRawResponse: Value(entry.summaryRawResponse),
-                  summaryValid: Value(entry.summaryValid),
-                  updatedAt: Value(entry.updatedAt),
                 ),
-                mode: InsertMode.insertOrReplace,
-              );
-        }
+                questionLevel: const Value(null),
+                easyPassedCount: Value(entry.easyPassedCount),
+                mediumPassedCount: Value(entry.mediumPassedCount),
+                hardPassedCount: Value(entry.hardPassedCount),
+                summaryText: Value(entry.summaryText),
+                summaryRawResponse: Value(entry.summaryRawResponse),
+                summaryValid: Value(entry.summaryValid),
+                updatedAt: Value(entry.updatedAt),
+              ),
+              mode: InsertMode.insertOrReplace,
+            );
+          }
+        });
 
         for (final session in sessions) {
           final newId = preview.oldIdToNewId[session.kpKey];
           if (newId == null || newId == session.kpKey) {
             continue;
           }
-          await (_db.update(_db.chatSessions)
-                ..where((tbl) => tbl.id.equals(session.id)))
-              .write(ChatSessionsCompanion(kpKey: Value(newId)));
+          sessionUpdates.add((sessionId: session.id, kpKey: newId));
         }
+        await _db.batch((batch) {
+          for (final update in sessionUpdates) {
+            batch.update(
+              _db.chatSessions,
+              ChatSessionsCompanion(kpKey: Value(update.kpKey)),
+              where: (tbl) => tbl.id.equals(update.sessionId),
+            );
+          }
+        });
       } else if (mode == CourseReloadMode.wipe) {
         await (_db.delete(_db.progressEntries)
               ..where((tbl) => tbl.courseVersionId.equals(courseId)))
@@ -476,7 +531,7 @@ GROUP BY kp_key
       }
     });
 
-    if (_courseArtifactService != null) {
+    if (rebuildCourseArtifacts && _courseArtifactService != null) {
       await _courseArtifactService.rebuildCourseArtifacts(
         courseVersionId: courseId,
         folderPath: preview.normalizedPath!,
@@ -491,11 +546,142 @@ GROUP BY kp_key
     );
   }
 
+  Future<CourseLoadResult> applyCourseContentsEdit({
+    required int courseVersionId,
+    required String contents,
+  }) async {
+    final course = await _db.getCourseVersionById(courseVersionId);
+    if (course == null) {
+      return CourseLoadResult(
+        success: false,
+        message: 'Course version not found: $courseVersionId',
+      );
+    }
+
+    final parser = SkillTreeParser();
+    final parseResult = parser.parse(contents);
+    if (parseResult.nodes.values
+        .where((node) =>
+            !node.isPlaceholder && !_isHiddenInTree(node, parseResult))
+        .isEmpty) {
+      return CourseLoadResult(
+        success: false,
+        message: 'contents.txt: no visible nodes found.',
+      );
+    }
+
+    if (_courseArtifactService != null) {
+      final sourceDirectory = CourseSourcePolicy.editableSourceDirectory(
+        course.sourcePath,
+      );
+      if (sourceDirectory != null) {
+        final contentsFile = File(p.join(sourceDirectory.path, 'contents.txt'));
+        final contextFile = File(p.join(sourceDirectory.path, 'context.txt'));
+        final targetFile = contentsFile.existsSync()
+            ? contentsFile
+            : (contextFile.existsSync() ? contextFile : contentsFile);
+        await targetFile.parent.create(recursive: true);
+        await targetFile.writeAsString(contents, flush: true);
+        await _courseArtifactService.rebuildCourseArtifacts(
+          courseVersionId: courseVersionId,
+          folderPath: sourceDirectory.path,
+        );
+      } else {
+        await _courseArtifactService.updateStoredTextEntry(
+          courseVersionId: courseVersionId,
+          preferredRelativePath: 'contents.txt',
+          candidateRelativePaths: const ['contents.txt', 'context.txt'],
+          text: contents,
+        );
+      }
+    }
+
+    await _db.transaction(() async {
+      await (_db.delete(_db.courseNodes)
+            ..where((tbl) => tbl.courseVersionId.equals(courseVersionId)))
+          .go();
+      await (_db.delete(_db.courseEdges)
+            ..where((tbl) => tbl.courseVersionId.equals(courseVersionId)))
+          .go();
+
+      final nodeRows = <CourseNodesCompanion>[];
+      final edgeRows = <CourseEdgesCompanion>[];
+      final visibleIds = <String>{};
+      var orderIndex = 0;
+      for (final node in _orderedCourseNodes(parseResult)) {
+        if (node.isPlaceholder || _isHiddenInTree(node, parseResult)) {
+          continue;
+        }
+        visibleIds.add(node.id);
+        nodeRows.add(
+          CourseNodesCompanion.insert(
+            courseVersionId: courseVersionId,
+            kpKey: node.id,
+            title: node.title,
+            description: node.rawLine.isNotEmpty ? node.rawLine : node.title,
+            orderIndex: orderIndex++,
+          ),
+        );
+      }
+      for (final node in _orderedCourseNodes(parseResult)) {
+        final parentId = node.parentId;
+        if (parentId == null ||
+            !visibleIds.contains(node.id) ||
+            !visibleIds.contains(parentId)) {
+          continue;
+        }
+        edgeRows.add(
+          CourseEdgesCompanion.insert(
+            courseVersionId: courseVersionId,
+            fromKpKey: parentId,
+            toKpKey: node.id,
+          ),
+        );
+      }
+      await _db.batch((batch) {
+        for (final row in nodeRows) {
+          batch.insert(
+            _db.courseNodes,
+            row,
+            mode: InsertMode.insertOrReplace,
+          );
+        }
+        for (final row in edgeRows) {
+          batch.insert(_db.courseEdges, row);
+        }
+      });
+
+      await (_db.update(_db.courseVersions)
+            ..where((tbl) => tbl.id.equals(courseVersionId)))
+          .write(
+        CourseVersionsCompanion(
+          subject: Value(course.subject),
+          sourcePath: Value(course.sourcePath),
+          granularity: Value(_maxDepth(parseResult.nodes.values)),
+          textbookText: Value(contents),
+          treeGenStatus: const Value('loaded'),
+          treeGenRawResponse: const Value(null),
+          treeGenValid: const Value(true),
+          treeGenParseError: const Value(null),
+          updatedAt: Value(DateTime.now()),
+        ),
+      );
+    });
+
+    final updated = await _db.getCourseVersionById(courseVersionId);
+    return CourseLoadResult(
+      success: true,
+      message: 'Course contents updated.',
+      course: updated,
+    );
+  }
+
   List<String> _validateContents({
     required String contents,
     required SkillTreeParseResult parseResult,
     required String basePath,
     required String contentsLabel,
+    bool validateLectureFiles = true,
   }) {
     final errors = <String>[];
     if (parseResult.nodes.isEmpty) {
@@ -533,19 +719,46 @@ GROUP BY kp_key
       }
     }
 
-    for (final node in parseResult.nodes.values) {
-      if (node.isPlaceholder) {
-        continue;
+    if (validateLectureFiles) {
+      final missingLecturePaths = <String>[];
+      var expectedLectureCount = 0;
+      for (final node in parseResult.nodes.values) {
+        if (node.isPlaceholder || _isHiddenInTree(node, parseResult)) {
+          continue;
+        }
+        expectedLectureCount += 1;
+        final lecturePath = p.join(basePath, '${node.id}_lecture.txt');
+        final legacyLecturePath = p.join(basePath, node.id, 'lecture.txt');
+        if (!File(lecturePath).existsSync() &&
+            !File(legacyLecturePath).existsSync()) {
+          missingLecturePaths.add(lecturePath);
+        }
       }
-      final lecturePath = p.join(basePath, '${node.id}_lecture.txt');
-      final legacyLecturePath = p.join(basePath, node.id, 'lecture.txt');
-      if (!File(lecturePath).existsSync() &&
-          !File(legacyLecturePath).existsSync()) {
-        errors.add('Missing file: $lecturePath');
+      if (missingLecturePaths.isNotEmpty) {
+        final allLecturesMissing = expectedLectureCount > 0 &&
+            missingLecturePaths.length == expectedLectureCount;
+        if (allLecturesMissing) {
+          errors.add(_describeMissingLectureRoot(basePath));
+        } else {
+          errors.addAll(
+            missingLecturePaths
+                .map((lecturePath) => 'Missing file: $lecturePath'),
+          );
+        }
       }
     }
 
     return errors;
+  }
+
+  String _describeMissingLectureRoot(String basePath) {
+    final normalizedBasePath = p.normalize(basePath);
+    if (CourseSourcePolicy.isDownloadedCoursePath(normalizedBasePath)) {
+      return 'Course folder is not a reloadable source folder: '
+          '$normalizedBasePath. This synced scaffold only contains contents.txt. '
+          'Choose the original local course folder.';
+    }
+    return 'Course folder is missing all lecture files: $normalizedBasePath';
   }
 
   String _signatureFromLine(String line) {
@@ -636,6 +849,31 @@ GROUP BY kp_key
       }
     }
     return maxDepth;
+  }
+
+  List<SkillNode> _orderedCourseNodes(SkillTreeParseResult parseResult) {
+    return parseResult.nodes.values
+        .where((node) => !node.isPlaceholder)
+        .toList()
+      ..sort((left, right) => compareSkillNodeIds(left.id, right.id));
+  }
+
+  bool _isHiddenInTree(SkillNode node, SkillTreeParseResult parseResult) {
+    if (node.isHidden) {
+      return true;
+    }
+    var parentId = node.parentId;
+    while (parentId != null) {
+      final parent = parseResult.nodes[parentId];
+      if (parent == null) {
+        return false;
+      }
+      if (parent.isHidden) {
+        return true;
+      }
+      parentId = parent.parentId;
+    }
+    return false;
   }
 }
 

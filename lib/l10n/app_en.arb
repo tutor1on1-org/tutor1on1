@@ -208,6 +208,9 @@
   "granularityFieldLabel": "Granularity",
   "textbookOutlineLabel": "Textbook Outline",
   "saveButton": "Save",
+  "editCourseDescriptionTooltip": "Edit description",
+  "editCourseDescriptionTitle": "Edit course description",
+  "courseDescriptionUpdatedMessage": "Course description updated.",
   "savingLabel": "Saving...",
   "loadingLabel": "Loading...",
   "generateTreeButton": "Generate Tree",
@@ -437,6 +440,14 @@
   "restoreConfirmButton": "Restore",
   "restoreCompletedMessage": "Database restored. Restarting...",
   "appSectionTitle": "App",
+  "appVersionLabel": "App version",
+  "publicReleaseTagLabel": "Public release tag",
+  "appVersionLoadFailed": "Failed to load app version: {error}",
+  "@appVersionLoadFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
   "studyModeLabel": "Study mode",
   "studyModeDescription": "Keep screen awake, use fullscreen or immersive mode, and require teacher PIN to exit.",
   "quitButton": "Quit (Teacher Password)",
@@ -490,6 +501,7 @@
   "promptReview": "Review",
   "promptSummarize": "Summarize",
   "promptStatusDefault": "Current: Default",
+  "promptStatusInherited": "Current: Inherited",
   "promptStatusCustom": "Current: Custom ({time})",
   "@promptStatusCustom": {
     "placeholders": {
@@ -498,7 +510,7 @@
   },
   "promptHistoryTitle": "History",
   "promptHistoryEmpty": "No history yet.",
-  "useDefaultButton": "Use Default",
+  "useDefaultButton": "Reset to Parent",
   "previewButton": "Preview",
   "useButton": "Use",
   "promptEditTitle": "Edit Prompt ({name})",
@@ -521,7 +533,7 @@
     }
   },
   "promptSaved": "Prompt saved.",
-  "promptReverted": "Reverted to default.",
+  "promptReverted": "Reset to parent.",
   "promptActivated": "Prompt set active.",
   "promptPreviewTitle": "Prompt Preview",
   "promptValidationFailedTitle": "Prompt validation failed",
@@ -768,8 +780,8 @@
       "name": {}
     }
   },
-  "deleteSessionMessage": "This will remove the session and its messages.",
-  "deleteSessionSuccess": "Session deleted.",
+  "deleteSessionMessage": "This will remove the session and its messages, reset progress for this knowledge point, and keep Mistake Book entries.",
+  "deleteSessionSuccess": "Session deleted and knowledge-point progress reset.",
   "resetPinButton": "Reset Password",
   "resetPinDialogTitle": "Reset password for {name}",
   "@resetPinDialogTitle": {

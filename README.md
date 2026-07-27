@@ -8,24 +8,25 @@ Included in this snapshot:
 
 - Flutter application code under `lib/`
 - Platform launchers for Android, iOS, macOS, Linux, and Windows
-- Client tests under `test/` and `integration_test/`
+- Client tests under `test/` and non-live `integration_test/` paths
 - Bundled assets under `assets/`
-- Static English download website under `web/`
+- Static localized download website under `web/`
 - Public GitHub Release packaging helpers under `public_release/`
 - Tracked client-side support packages under `packages/` and `third_party/`
 
 Intentionally excluded from this snapshot:
 
 - Backend/server source under `remote/`
+- Host-bound live diagnostic integration tests and their account configuration
 - Private release, deploy, and internal maintenance scripts
 - Local `.env` files, logs, databases, build outputs, and other untracked files
 - Private runbooks and host-specific operational docs
 
 ## What This Client Does
 
-- Teacher workflows: course import/reload, marketplace upload, enrollment review, student progress review
+- Teacher workflows: course import/reload, marketplace upload, enrollment review, and artifact publishing
 - Student workflows: login, catalog browsing, enrollment request, bundle download, guided tutor sessions
-- Multi-device sync for session and progress data
+- Artifact-manifest sync for course and bundle updates
 - Optional LLM/TTS/STT integrations with user-supplied API keys
 
 ## Transparency Notes
@@ -45,12 +46,13 @@ The client stores data in two places:
 
 Official app backend:
 
-- Default auth/sync/course-download base URL: `https://api.tutor1on1.org`
+- Default backend base URL: `https://api.tutor1on1.org`
 - This can be overridden at build time with `--dart-define=AUTH_BASE_URL=...`
 
 Optional user-configured model providers:
 
 - `https://api.openai.com/v1`
+- `https://openrouter.ai/api/v1`
 - `https://api.anthropic.com/v1`
 - `https://generativelanguage.googleapis.com/v1beta/openai`
 - `https://api.x.ai/v1`
@@ -96,8 +98,8 @@ flutter run --dart-define=AUTH_ALLOW_INSECURE_TLS=true
 
 The public release flow is versioned around Git tags and GitHub Release assets.
 
-- Current first public release tag: `v1.0`
-- App version in `pubspec.yaml`: `1.0.0+1`
+- Current public release tag: `v1.0.55`
+- App version in `pubspec.yaml`: `1.0.55`
 - Standard asset names:
   - `Tutor1on1.apk`
   - `Tutor1on1.zip`
@@ -106,21 +108,27 @@ The public release flow is versioned around Git tags and GitHub Release assets.
 Build release assets from this snapshot with:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File public_release/package_github_release.ps1 -ReleaseTag v1.0
+powershell -ExecutionPolicy Bypass -File public_release/package_github_release.ps1 -ReleaseTag v1.0.55
+```
+
+Or publish the GitHub Release assets directly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File public_release/publish_github_release.ps1 -ReleaseTag v1.0.55
 ```
 
 That script builds Android and Windows release artifacts and writes them to:
 
 ```text
-public_release/dist/v1.0/
+public_release/dist/v1.0.55/
 ```
 
-The static website under `web/` is prepared to point download buttons at the versioned GitHub Release assets for the configured tag.
+The static website under `web/` displays the configured release tag and points download buttons at the stable canonical files on `https://api.tutor1on1.org/downloads`.
 
 The default website config currently targets:
 
 - GitHub repo slug: `tutor1on1-org/tutor1on1`
-- GitHub Release tag: `v1.0`
+- GitHub Release tag: `v1.0.55`
 
 ## Trust And Verification
 

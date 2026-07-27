@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta content="width=device-width, initial-scale=1.0" name="viewport">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Aide Tutor1on1 : tutorat personnalisé, révision des erreurs, API config, publication de cours, inscriptions, sessions et synchronisation.">
+  <meta content="#f7f9fb" name="theme-color">
+  <title>Aide Tutor1on1</title>
+  <link rel="apple-touch-icon" href="../../icons/Icon-192.png">
+  <link rel="icon" type="image/png" href="../../favicon.png">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="stylesheet" href="../../styles.css">
+  <script src="/site.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="/fr/">
+        <span class="brand-mark">T1</span>
+        <span class="brand-text"><strong>Tutor1on1</strong><span>Aide</span></span>
+      </a>
+      <nav class="topnav" aria-label="Navigation et langue">
+        <table class="topnav-table" role="presentation"><tr>
+          <td><a class="nav-link nav-action" href="/fr/">Accueil</a></td>
+          <td><a class="nav-link nav-action" href="/fr/install/">Installer</a></td>
+          <td><select class="lang-select nav-action" aria-label="Navigation et langue" data-language-switcher><option value="fr">Français</option></select></td>
+        </tr></table>
+      </nav>
+    </header>
+
+    <main class="page">
+      <section class="hero hero-compact">
+        <p class="eyebrow">Démarrage rapide</p>
+        <h1>Utiliser Tutor1on1 selon le rôle.</h1>
+        <p class="lead">Les enseignants publient et gèrent les cours. Les élèves demandent une inscription, téléchargent le contenu approuvé et reçoivent un guidage, des exercices et une révision des erreurs adaptés à leur progression.</p>
+        <div class="actions">
+          <a class="button button-primary" href="/fr/install/">Installer d&#x27;abord</a>
+          <a class="button button-ghost" href="#teacher">Parcours enseignant</a>
+          <a class="button button-ghost" href="#student">Parcours élève</a>
+          <a class="button button-ghost" href="#course-folder">Dossier cours</a>
+          <a class="button button-ghost" href="#config">API config</a>
+          <a class="button button-ghost" href="#oauth">ChatGPT OAuth</a>
+        </div>
+      </section>
+
+      <section class="role-strip section-block">
+        <article class="role-card teacher" id="teacher">
+          <p class="eyebrow">Parcours enseignant</p>
+          <h2>Publier et personnaliser les cours.</h2>
+          <ol class="help-list"><li>Connectez-vous comme enseignant ou créez un compte enseignant.</li><li>Créez ou chargez une version locale du cours.</li><li>Téléversez le bundle validé dans le marketplace.</li><li>Approuvez les demandes d&#x27;inscription des élèves.</li><li>Depuis la page enseignant, suivez la progression, les erreurs récurrentes et les sessions synchronisées de chaque élève.</li></ol>
+        </article>
+        <article class="role-card student" id="student">
+          <p class="eyebrow">Parcours élève</p>
+          <h2>S’inscrire et étudier à son rythme.</h2>
+          <ol class="help-list"><li>Connectez-vous comme élève ou créez un compte élève.</li><li>Ouvrez le marketplace et demandez une inscription à un cours.</li><li>Attendez l&#x27;approbation de l&#x27;enseignant.</li><li>Téléchargez le bundle de cours approuvé.</li><li>Ouvrez le cours et lancez une session Learn ou Review qui suit votre progression.</li></ol>
+        </article>
+      </section>
+
+      <section class="content-block" id="course-folder">
+        <p class="eyebrow">Créer un cours avec AI</p>
+        <h2>Transformer un PDF, un PPT ou des notes en dossier de cours Tutor1on1.</h2>
+        <p class="muted">Utilisez un agent AI en dehors de l’app pour reformater les supports existants. Tutor1on1 valide, charge, publie et permet ensuite d’ajuster un KP à la fois.</p>
+        <ol class="help-list"><li>Placez PDF, PPT, Word, exercices et notes de réponses dans un dossier source. Pour les scans, faites un OCR puis vérifiez les formules manuellement.</li><li>Demandez d’abord à Codex de proposer seulement le plan <code>contents.txt</code>. Validez l’ordre, les titres et la granularité des KP avant de créer les fichiers.</li><li>Demandez à Codex de créer le dossier de sortie. Chaque id de <code>contents.txt</code> doit avoir son <code>&lt;id&gt;_lecture.txt</code>. Les banques de questions optionnelles utilisent <code>&lt;id&gt;_easy.txt</code>, <code>&lt;id&gt;_medium.txt</code> et <code>&lt;id&gt;_hard.txt</code>.</li><li>Chargez le dossier dans Tutor1on1 comme enseignant. Si l’app signale un fichier manquant ou un id invalide, collez l’erreur dans Codex et demandez une réparation.</li><li>Une fois le cours chargé, utilisez clic droit <strong>AI edit content</strong> sur un KP pour ajuster une leçon ou une banque de questions.</li></ol>
+        <pre class="code-block"><code>special_relativity_course/
+  contents.txt
+  context.txt
+  1_lecture.txt
+  1.1_lecture.txt
+  1.1_easy.txt
+  1.1_medium.txt
+  1.1_hard.txt</code></pre>
+        <h3>Codex web</h3>
+        <ol class="help-list"><li>Créez une tâche : <strong>Generate Tutor1on1 course folder from teaching materials</strong>.</li><li>Téléversez les fichiers PDF/PPT/Word.</li><li>Prompt : <code>Read the uploaded materials and propose a Tutor1on1 contents.txt outline. Use dotted ids like 1, 1.1, 1.2. Do not generate files yet. Wait for my approval.</code></li><li>Après validation du plan, prompt : <code>Create a complete Tutor1on1 course folder with contents.txt, one &lt;id&gt;_lecture.txt for every id, and optional easy/medium/hard question files. Run a self-check and list missing files.</code></li><li>Téléchargez le dossier ou zip, décompressez-le, puis chargez ce dossier dans Tutor1on1.</li></ol>
+        <h3>Codex bureau ou GUI locale</h3>
+        <ol class="help-list"><li>Créez <code>source_materials/</code> pour les documents originaux et un dossier vide comme <code>special_relativity_course/</code>.</li><li>Ouvrez le workspace parent dans Codex.</li><li>Prompt : <code>Use source_materials/ as input. Create a complete Tutor1on1 course folder in special_relativity_course/. Do not modify source_materials/. First generate contents.txt, then generate all lecture and question files. After writing files, check that every contents.txt id has &lt;id&gt;_lecture.txt.</code></li><li>Laissez Codex écrire les fichiers directement. Demandez un rapport final de self-check, puis chargez le dossier de sortie dans Tutor1on1.</li></ol>
+        <h3>AI edit course dans Tutor1on1</h3>
+        <ol class="help-list"><li>Après le chargement du dossier, ouvrez le skill tree du cours comme enseignant.</li><li>Faites clic droit sur le KP cible ou son titre, puis choisissez <strong>AI edit content</strong>.</li><li>Choisissez <strong>Content</strong> pour le texte de leçon, ou <strong>Question</strong> pour le texte de banque de questions du KP.</li><li>Discutez avec l’AI jusqu’à ce que la dernière réponse soit prête à enregistrer. Gardez chaque demande centrée sur ce KP.</li><li>Cliquez sur <strong>Edit</strong> dans la réponse AI pour ouvrir la fenêtre diff. Vérifiez le texte actuel à gauche et modifiez la proposition à droite.</li><li>Choisissez <strong>Add</strong> pour ajouter ou <strong>Replace</strong> pour écraser. Pour les questions, choisissez aussi <strong>easy</strong>, <strong>medium</strong> ou <strong>hard</strong>.</li><li>Enregistrez le changement. Téléversez à nouveau le course bundle quand vous voulez que les élèves du marketplace reçoivent le contenu mis à jour.</li></ol>
+      </section>
+
+      <section class="content-block">
+        <h2>Boucle d’apprentissage personnalisé</h2>
+        <div class="steps"><article class="step"><span class="step-number">1</span><div><h3>Apprendre</h3><p>Le tutor explique le concept suivant dans le contexte du cours et de la progression actuelle de l&#x27;élève.</p></div></article><article class="step"><span class="step-number">2</span><div><h3>Pratiquer</h3><p>Les exercices s&#x27;adaptent aux réponses de l&#x27;élève, avec indices, exemples plus simples et feedback positif si nécessaire.</p></div></article><article class="step"><span class="step-number">3</span><div><h3>Réviser les erreurs</h3><p>Les erreurs significatives sont résumées dans le carnet d’erreurs afin que la révision cible de vraies faiblesses.</p></div></article></div>
+      </section>
+
+      <section class="content-block" id="config">
+        <h2>Champs API config</h2>
+        <ul class="help-list"><li><strong>Provider</strong> choisit le service de modèles, par exemple OpenAI ou SiliconFlow.</li><li><strong>Base URL</strong> est l’endpoint utilisé par Tutor1on1 pour le provider sélectionné.</li><li><strong>API Key</strong> est gardée localement et utilisée pour tutor, TTS et STT quand ces fonctions en ont besoin.</li><li><strong>Test API key</strong> appelle <code>{baseUrl}/models</code>, vérifie la key et charge les listes de modèles text, TTS et STT disponibles. Il ne télécharge pas de modèle et ne sélectionne pas automatiquement un nouveau modèle.</li><li><strong>Text model</strong> alimente la conversation tutor. <strong>Thinking effort</strong> apparaît seulement pour les providers qui prennent en charge les contrôles de reasoning.</li><li><strong>TTS model</strong> contrôle la sortie vocale. <strong>STT model</strong> contrôle la transcription voix-texte. Ils peuvent rester vides si vous n’utilisez pas la voix.</li><li><strong>Saved API configs</strong> conserve provider URL, modèles choisis, thinking effort et key hash pour réutiliser des configurations validées.</li></ul>
+      </section>
+
+      <section class="content-block" id="oauth">
+        <h2>Utiliser ChatGPT OAuth au lieu d’une API key</h2>
+        <ol class="help-list"><li>Ouvrez Settings, API Settings, puis choisissez <strong>OpenAI Codex (ChatGPT OAuth)</strong> comme <strong>Provider</strong>.</li><li>Cliquez sur <strong>Login with ChatGPT</strong> et terminez la connexion dans le navigateur. Si l’app ne revient pas automatiquement, collez le redirect URL final ou l’authorization code dans la boîte de dialogue.</li><li>Cliquez sur <strong>Refresh models</strong>, choisissez un text model comme <code>gpt-5.5</code>, puis enregistrez l’API config.</li><li>Lancez ou rouvrez une session tutor et choisissez le modèle Codex OAuth enregistré dans le sélecteur de modèles.</li></ol>
+        <p class="muted">Cette option utilise le quota ChatGPT/Codex OAuth pour les conversations texte du tutor. TTS et STT utilisent toujours des providers avec API key quand la voix est nécessaire.</p>
+      </section>
+
+      <section class="grid grid-three section-block"><article class="card"><span class="kicker">Marketplace</span><h2>Découverte des cours</h2><p>Les enseignants publient des fiches de cours. Les élèves consultent, demandent une inscription et téléchargent après approbation.</p></article><article class="card"><span class="kicker">Sessions</span><h2>Feedback personnel</h2><p>Learn sert au nouveau contenu et Review à la pratique de rappel. Le feedback s&#x27;adapte à la réponse de l&#x27;élève et rend la progression visible.</p></article><article class="card"><span class="kicker">Sync</span><h2>Continuité</h2><p>Les pages enseignant et élève synchronisent inscriptions, sessions, progression et signaux du carnet d’erreurs liés au compte.</p></article></section>
+
+      <section class="content-block">
+        <h2>Problèmes fréquents</h2>
+        <ul class="help-list"><li>Si la connexion ou le chargement du cours échoue, vérifiez que l’app atteint <code>api.tutor1on1.org</code>.</li><li>Si un élève ne peut pas entrer dans un cours, confirmez que l’inscription est approuvée et que le bundle est téléchargé.</li><li>Si la liste des modèles semble ancienne, relancez Test API key pour le provider et la key actifs.</li><li>Si la progression semble ancienne entre appareils, attendez la fin de la synchronisation ou lancez une actualisation manuelle.</li></ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Aide Tutor1on1</p>
+      <p><a class="footer-link" href="/fr/">Accueil</a></p>
+      <p><a class="footer-link" href="/fr/legal/">Mentions légales</a></p>
+      <p><a class="footer-link" href="/fr/legal/#privacy">Confidentialité</a></p>
+      <p><a class="footer-link" href="/fr/legal/#license">Licence</a></p>
+      <p>Publication enseignant, inscription élève et étude personnalisée.</p>
+    </footer>
+  </div>
+</body>
+</html>

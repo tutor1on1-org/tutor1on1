@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:tutor1on1/l10n/app_localizations.dart';
 
 import '../../db/app_database.dart';
 import '../../llm/prompt_repository.dart';
 import '../../services/app_services.dart';
+import '../../services/prompt_variable_registry.dart';
 import '../../services/prompt_template_validator.dart';
-import 'package:tutor1on1/l10n/app_localizations.dart';
 import '../app_close_button.dart';
+import '../widgets/prompt_editor_dialog.dart';
 
 class PromptSettingsPage extends StatefulWidget {
   const PromptSettingsPage({super.key, required this.teacherId});
@@ -43,9 +45,18 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
     final l10n = AppLocalizations.of(context)!;
     final db = context.read<AppDatabase>();
     final courses = await db.watchCourseVersions(widget.teacherId).first;
+    final students = await db.watchStudents(widget.teacherId).first;
     final scopes = <_PromptScope>[
       _PromptScope.systemScope(label: l10n.promptScopeDefault),
     ];
+    for (final student in students) {
+      scopes.add(
+        _PromptScope.studentGlobalScope(
+          label: 'Student - ${student.username}',
+          studentId: student.id,
+        ),
+      );
+    }
     for (final course in courses) {
       final courseKey = (course.sourcePath ?? '').trim();
       if (courseKey.isEmpty) {
@@ -97,8 +108,12 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
         title: l10n.promptLearn,
       ),
       _PromptItem(
-        name: 'review',
-        title: l10n.promptReview,
+        name: 'review_init',
+        title: '${l10n.promptReview} init',
+      ),
+      _PromptItem(
+        name: 'review_cont',
+        title: '${l10n.promptReview} continue',
       ),
     ];
 
@@ -175,7 +190,9 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
                 builder: (context, snapshot) {
                   final active = snapshot.data;
                   final statusText = active == null
-                      ? l10n.promptStatusDefault
+                      ? ((scope?.isSystem ?? false)
+                          ? l10n.promptStatusDefault
+                          : l10n.promptStatusInherited)
                       : l10n.promptStatusCustom(
                           _formatTime(active.createdAt),
                         );
@@ -197,7 +214,6 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
                               promptRepo,
                               item,
                               active?.content,
-                              isSystemScope: scope?.isSystem ?? false,
                               courseKey: courseKey,
                               studentId: studentId,
                             ),
@@ -208,7 +224,6 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
                               context,
                               promptRepo,
                               item.name,
-                              isSystemScope: scope?.isSystem ?? false,
                               courseKey: courseKey,
                               studentId: studentId,
                             ),
@@ -274,7 +289,6 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
                                         promptRepo,
                                         item.name,
                                         entry,
-                                        isSystemScope: scope?.isSystem ?? false,
                                         courseKey: courseKey,
                                         studentId: studentId,
                                       ),
@@ -320,85 +334,29 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
 
   Future<void> _openEditor(BuildContext context, PromptRepository promptRepo,
       _PromptItem item, String? currentContent,
-      {required bool isSystemScope, String? courseKey, int? studentId}) async {
+      {String? courseKey, int? studentId}) async {
     final l10n = AppLocalizations.of(context)!;
-    final defaultContent = isSystemScope
-        ? await promptRepo.loadBundledSystemPrompt(item.name)
-        : await promptRepo.loadAppendPrompt(
-            item.name,
-            teacherId: widget.teacherId,
-            courseKey: courseKey,
-            studentId: studentId,
-          );
+    final defaultContent = await promptRepo.loadPrompt(
+      item.name,
+      teacherId: widget.teacherId,
+      courseKey: courseKey,
+      studentId: studentId,
+    );
     final controller =
         TextEditingController(text: currentContent ?? defaultContent);
 
     final result = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(l10n.promptEditTitle(item.title)),
-        content: SizedBox(
-          width: 640,
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(
-                  controller: controller,
-                  maxLines: 18,
-                  minLines: 8,
-                  decoration: InputDecoration(
-                    labelText: l10n.promptTemplateLabel,
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  l10n.promptRequiredVars(
-                    _validator.requiredVariables(item.name).join(', '),
-                  ),
-                ),
-                Text(
-                  l10n.promptAllowedVars(
-                    _validator.allowedVariables(item.name).join(', '),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Prompt variables',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                ..._buildVariableRows(item.name),
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'All supported variables',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                ..._buildVariableRowsForVariables(
-                  _validator.allSupportedVariables().toList()..sort(),
-                ),
-              ],
-            ),
-          ),
+      builder: (context) => PromptEditorDialog(
+        title: l10n.promptEditTitle(item.title),
+        promptName: item.name,
+        initialContent: controller.text,
+        validator: _validator,
+        variableRows: _buildVariableRows(item.name),
+        allVariableRows: _buildVariableRowsForVariables(
+          _validator.allSupportedVariables().toList()..sort(),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text(l10n.cancelButton),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(controller.text),
-            child: Text(l10n.saveButton),
-          ),
-        ],
+        requireRequiredVariables: true,
       ),
     );
 
@@ -409,10 +367,15 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
     final validation = _validator.validate(
       promptName: item.name,
       content: result,
-      allowMissingRequired: true,
+      allowMissingRequired: false,
     );
     if (!validation.isValid) {
-      await _showValidationErrors(context, validation);
+      if (context.mounted) {
+        _showMessage(
+          context,
+          buildPromptValidationMessages(l10n, validation).join('\n'),
+        );
+      }
       return;
     }
 
@@ -434,23 +397,16 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
     BuildContext context,
     PromptRepository promptRepo,
     String promptName, {
-    required bool isSystemScope,
     String? courseKey,
     int? studentId,
   }) async {
     final l10n = AppLocalizations.of(context)!;
-    final preview = isSystemScope
-        ? await promptRepo.loadResolvedSystemPrompt(
-            promptName,
-            teacherId: widget.teacherId,
-          )
-        : await promptRepo.buildPromptPreview(
-            name: promptName,
-            teacherId: widget.teacherId,
-            courseKey: courseKey,
-            studentId: studentId,
-            includeSystem: false,
-          );
+    final preview = await promptRepo.loadPrompt(
+      promptName,
+      teacherId: widget.teacherId,
+      courseKey: courseKey,
+      studentId: studentId,
+    );
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
@@ -476,34 +432,17 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
     PromptRepository promptRepo,
     String promptName,
     PromptTemplate entry, {
-    required bool isSystemScope,
     String? courseKey,
     int? studentId,
   }) async {
     final l10n = AppLocalizations.of(context)!;
-    final current = isSystemScope
-        ? await promptRepo.loadResolvedSystemPrompt(
-            promptName,
-            teacherId: widget.teacherId,
-          )
-        : await promptRepo.buildPromptPreview(
-            name: promptName,
-            teacherId: widget.teacherId,
-            courseKey: courseKey,
-            studentId: studentId,
-            includeSystem: false,
-          );
-    final historical = isSystemScope
-        ? entry.content
-        : await promptRepo.buildPromptPreview(
-            name: promptName,
-            teacherId: widget.teacherId,
-            courseKey: courseKey,
-            studentId: studentId,
-            courseAppendOverride: studentId == null ? entry.content : null,
-            studentAppendOverride: studentId == null ? null : entry.content,
-            includeSystem: false,
-          );
+    final current = await promptRepo.loadPrompt(
+      promptName,
+      teacherId: widget.teacherId,
+      courseKey: courseKey,
+      studentId: studentId,
+    );
+    final historical = entry.content;
     final diff = _buildUnifiedDiff(
       current,
       historical,
@@ -586,35 +525,6 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
     return result.reversed.toList();
   }
 
-  Future<void> _showValidationErrors(
-    BuildContext context,
-    PromptValidationResult validation,
-  ) async {
-    final l10n = AppLocalizations.of(context)!;
-    final missing = validation.missingVariables.join(', ');
-    final unknown = validation.unknownVariables.join(', ');
-    final messages = <String>[];
-    if (validation.missingVariables.isNotEmpty) {
-      messages.add(l10n.promptMissingVars(missing));
-    }
-    if (validation.unknownVariables.isNotEmpty) {
-      messages.add(l10n.promptUnknownVars(unknown));
-    }
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(l10n.promptValidationFailedTitle),
-        content: SelectableText(messages.join('\n')),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text(l10n.closeButton),
-          ),
-        ],
-      ),
-    );
-  }
-
   void _showMessage(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
@@ -644,10 +554,9 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
   }
 
   List<Widget> _buildVariableRowsForVariables(List<String> variables) {
-    final info = _variableDescriptions();
     return variables.map((variable) {
-      final description =
-          info[variable] ?? 'Value provided by the session context.';
+      final description = PromptVariableRegistry.descriptionFor(variable) ??
+          'Value provided by the session context.';
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: SelectableText.rich(
@@ -663,36 +572,6 @@ class _PromptSettingsPageState extends State<PromptSettingsPage> {
         ),
       );
     }).toList();
-  }
-
-  Map<String, String> _variableDescriptions() {
-    return {
-      'kp_title': 'Knowledge point title from the course node.',
-      'kp_description':
-          'Knowledge point description from the course node (raw line).',
-      'student_input': 'Latest student input text in this session.',
-      'recent_chat':
-          'Short recent chat window so the tutor does not repeat itself.',
-      'student_summary':
-          'Saved summary for this student/course/kp (falls back to the session summary).',
-      'student_profile':
-          'Resolved student profile from teacher-defined fields (level, language, interests, support notes).',
-      'student_preferences':
-          'Resolved student preferences from teacher-defined fields (tone, pace, format).',
-      'lesson_content': 'Lesson content for the current knowledge point.',
-      'error_book_summary':
-          'Aggregated mistake counts and tags for this knowledge point.',
-      'presented_questions':
-          'Candidate question pool provided for review question selection.',
-      'active_review_question_json':
-          'JSON for the one active review question, or null when no review question is open.',
-      'target_difficulty':
-          'App-selected review difficulty level (easy/medium/hard).',
-      'review_correct_total':
-          'Number of closed review questions answered correctly in this session.',
-      'review_attempt_total':
-          'Number of closed review questions attempted in this session.',
-    };
   }
 }
 
@@ -1323,6 +1202,15 @@ class _PromptScope {
         courseVersionId = courseVersionId,
         courseKey = courseKey,
         studentId = null;
+
+  _PromptScope.studentGlobalScope({
+    required String label,
+    required int studentId,
+  })  : label = label,
+        isSystem = false,
+        courseVersionId = null,
+        courseKey = null,
+        studentId = studentId;
 
   final String label;
   final bool isSystem;

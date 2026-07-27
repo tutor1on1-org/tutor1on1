@@ -6,12 +6,19 @@ enum MaxTokensParam {
 
 enum LlmApiFormat {
   openAiChatCompletions,
+  openAiCodexResponses,
   anthropicMessages,
+}
+
+enum LlmAuthMode {
+  apiKey,
+  openAiCodexOAuth,
 }
 
 enum ReasoningControlStyle {
   unsupported,
   openAiEffort,
+  openRouterReasoning,
   anthropicThinking,
   deepSeekThinking,
   siliconFlowThinkingBudget,
@@ -24,12 +31,16 @@ class LlmProvider {
     required this.baseUrl,
     required this.models,
     required this.maxTokensParam,
+    this.supportsTts = false,
+    this.supportsStt = false,
     this.noTemperatureModelPrefixes = const [],
     this.authHeader = 'Authorization',
     this.authPrefix = 'Bearer ',
     this.chatPath = '/chat/completions',
     this.apiFormat = LlmApiFormat.openAiChatCompletions,
+    this.authMode = LlmAuthMode.apiKey,
     this.reasoningControlStyle = ReasoningControlStyle.unsupported,
+    this.supportsStructuredOutputs = false,
     this.extraHeaders = const <String, String>{},
   });
 
@@ -38,12 +49,16 @@ class LlmProvider {
   final String baseUrl;
   final List<String> models;
   final MaxTokensParam maxTokensParam;
+  final bool supportsTts;
+  final bool supportsStt;
   final List<String> noTemperatureModelPrefixes;
   final String authHeader;
   final String authPrefix;
   final String chatPath;
   final LlmApiFormat apiFormat;
+  final LlmAuthMode authMode;
   final ReasoningControlStyle reasoningControlStyle;
+  final bool supportsStructuredOutputs;
   final Map<String, String> extraHeaders;
 
   String maxTokensField(String model) {
@@ -76,6 +91,8 @@ class LlmProvider {
 
   bool get supportsReasoning =>
       reasoningControlStyle != ReasoningControlStyle.unsupported;
+
+  bool get usesOpenAiCodexOAuth => authMode == LlmAuthMode.openAiCodexOAuth;
 }
 
 class LlmProviders {
@@ -94,16 +111,54 @@ class LlmProviders {
           'gpt-4o-mini',
         ],
         maxTokensParam: MaxTokensParam.auto,
+        supportsTts: true,
+        supportsStt: true,
         noTemperatureModelPrefixes: ['gpt-'],
         reasoningControlStyle: ReasoningControlStyle.openAiEffort,
+        supportsStructuredOutputs: true,
+      ),
+      const LlmProvider(
+        id: 'openai-codex',
+        label: 'OpenAI Codex (ChatGPT OAuth)',
+        baseUrl: 'https://chatgpt.com/backend-api',
+        models: [
+          'gpt-5.5',
+          'gpt-5.4',
+          'gpt-5.4-mini',
+        ],
+        maxTokensParam: MaxTokensParam.maxTokens,
+        authMode: LlmAuthMode.openAiCodexOAuth,
+        chatPath: '/codex/responses',
+        apiFormat: LlmApiFormat.openAiCodexResponses,
+        noTemperatureModelPrefixes: ['gpt-'],
+        reasoningControlStyle: ReasoningControlStyle.openAiEffort,
+        supportsStructuredOutputs: true,
+      ),
+      const LlmProvider(
+        id: 'openrouter',
+        label: 'OpenRouter',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        models: [
+          'openai/gpt-5.2',
+          'anthropic/claude-sonnet-4',
+          'google/gemini-2.5-flash',
+        ],
+        maxTokensParam: MaxTokensParam.maxTokens,
+        reasoningControlStyle: ReasoningControlStyle.openRouterReasoning,
+        supportsStructuredOutputs: true,
+        extraHeaders: <String, String>{
+          'HTTP-Referer': 'https://www.tutor1on1.org',
+          'X-OpenRouter-Title': 'Tutor1on1',
+        },
       ),
       const LlmProvider(
         id: 'anthropic',
         label: 'Anthropic',
         baseUrl: 'https://api.anthropic.com/v1',
         models: [
-          'claude-3-5-sonnet-20240620',
-          'claude-3-5-haiku-20241022',
+          'claude-sonnet-4-6',
+          'claude-haiku-4-5',
+          'claude-opus-4-6',
         ],
         maxTokensParam: MaxTokensParam.maxTokens,
         authHeader: 'x-api-key',
@@ -120,23 +175,27 @@ class LlmProviders {
         label: 'Google Gemini',
         baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
         models: [
-          'gemini-3-pro-preview',
-          'gemini-3-flash-preview',
+          'gemini-2.5-pro',
+          'gemini-2.5-flash',
+          'gemini-2.5-flash-lite',
         ],
         maxTokensParam: MaxTokensParam.maxTokens,
         authHeader: 'Authorization',
         authPrefix: 'Bearer ',
         reasoningControlStyle: ReasoningControlStyle.openAiEffort,
+        supportsStructuredOutputs: true,
       ),
       const LlmProvider(
         id: 'grok',
         label: 'Grok',
         baseUrl: 'https://api.x.ai/v1',
         models: [
-          'grok-2',
-          'grok-2-mini',
+          'grok-4',
+          'grok-4-fast-reasoning',
+          'grok-4-fast-non-reasoning',
         ],
         maxTokensParam: MaxTokensParam.maxTokens,
+        supportsStructuredOutputs: true,
       ),
       const LlmProvider(
         id: 'siliconflow',
@@ -146,12 +205,14 @@ class LlmProviders {
           'deepseek-ai/DeepSeek-V3.2',
         ],
         maxTokensParam: MaxTokensParam.maxTokens,
+        supportsTts: true,
+        supportsStt: true,
         reasoningControlStyle: ReasoningControlStyle.siliconFlowThinkingBudget,
       ),
       const LlmProvider(
         id: 'deepseek',
         label: 'DeepSeek',
-        baseUrl: 'https://api.deepseek.com/v1',
+        baseUrl: 'https://api.deepseek.com',
         models: [
           'deepseek-chat',
           'deepseek-reasoner',
