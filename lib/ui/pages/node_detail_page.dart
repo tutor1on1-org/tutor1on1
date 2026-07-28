@@ -6,6 +6,7 @@ import '../../db/app_database.dart';
 import '../../services/app_services.dart';
 import '../../state/auth_controller.dart';
 import '../app_close_button.dart';
+import '../auth_session_guard.dart';
 import '../progress_display.dart';
 import '../tutor_session_page.dart';
 
@@ -116,17 +117,18 @@ class _NodeDetailPageState extends State<NodeDetailPage> {
                   await _openSession(existing.id);
                   return;
                 }
-                final sessionId = await context
-                    .read<AppServices>()
-                    .sessionService
-                    .startSession(
-                      studentId: studentId,
-                      courseVersionId: _courseVersion!.id,
-                      kpKey: _node!.kpKey,
-                    );
-                if (context.mounted) {
-                  await _openSession(sessionId);
+                final sessionId = await runWithActiveAuthSession<int>(
+                  context,
+                  () => context.read<AppServices>().sessionService.startSession(
+                        studentId: studentId,
+                        courseVersionId: _courseVersion!.id,
+                        kpKey: _node!.kpKey,
+                      ),
+                );
+                if (sessionId == null || !context.mounted) {
+                  return;
                 }
+                await _openSession(sessionId);
               },
               child: Text(l10n.startContinueSession),
             ),

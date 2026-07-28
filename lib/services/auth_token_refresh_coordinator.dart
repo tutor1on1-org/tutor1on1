@@ -64,6 +64,7 @@ class AuthTokenRefreshCoordinator {
     final refreshToken =
         (await secureStorage.readAuthRefreshToken())?.trim() ?? '';
     if (refreshToken.isEmpty) {
+      await secureStorage.invalidateAuthSession();
       return const _RefreshOutcome(refreshed: false);
     }
 
@@ -86,7 +87,7 @@ class AuthTokenRefreshCoordinator {
         final latestRefreshToken =
             (await secureStorage.readAuthRefreshToken())?.trim() ?? '';
         if (latestRefreshToken == refreshToken) {
-          await secureStorage.deleteAuthTokens();
+          await secureStorage.invalidateAuthSession();
         }
         return const _RefreshOutcome(refreshed: false);
       }

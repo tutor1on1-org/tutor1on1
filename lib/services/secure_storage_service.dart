@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -46,8 +47,12 @@ class SecureStorageService {
   static const _syncRunAtPrefix = 'sync_run_at:';
   static final String _syncRunDeviceHash = _buildSyncRunDeviceHash();
   final FlutterSecureStorage _storage;
+  final StreamController<void> _authSessionInvalidatedController =
+      StreamController<void>.broadcast(sync: true);
 
   static String get syncRunDeviceHash => _syncRunDeviceHash;
+  Stream<void> get authSessionInvalidated =>
+      _authSessionInvalidatedController.stream;
 
   Future<void> ensureReadableOrReset() async {
     if (Platform.isWindows) {
@@ -200,6 +205,13 @@ class SecureStorageService {
   Future<void> deleteAuthTokens() async {
     await _storage.delete(key: _authAccessTokenKey);
     await _storage.delete(key: _authRefreshTokenKey);
+  }
+
+  Future<void> invalidateAuthSession() async {
+    await deleteAuthTokens();
+    if (!_authSessionInvalidatedController.isClosed) {
+      _authSessionInvalidatedController.add(null);
+    }
   }
 
   Future<String?> readAuthDeviceKey() => _storage.read(key: _authDeviceKey);

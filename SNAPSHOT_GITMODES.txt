@@ -160,6 +160,7 @@
 100644 lib/state/study_mode_controller.dart
 100644 lib/ui/app_close_button.dart
 100644 lib/ui/app_settings_page.dart
+100644 lib/ui/auth_session_guard.dart
 100644 lib/ui/pages/account_devices_page.dart
 100644 lib/ui/pages/admin_home_page.dart
 100644 lib/ui/pages/course_builder_conversation_page.dart
@@ -286,6 +287,7 @@
 100644 test/artifact_sync_api_service_test.dart
 100644 test/audio_model_selection_test.dart
 100644 test/auth_controller_test.dart
+100644 test/auth_session_guard_test.dart
 100644 test/auth_token_refresh_coordinator_test.dart
 100644 test/course_artifact_service_test.dart
 100644 test/course_builder_service_test.dart

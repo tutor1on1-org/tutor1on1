@@ -12,8 +12,8 @@ This public client snapshot uses a simple release scheme:
 
 ## Current Public Release
 
-- Git tag: `v1.0.55`
-- App version: `1.0.55`
+- Git tag: `v1.0.57`
+- App version: `1.0.57`
 
 ## Release Checklist
 

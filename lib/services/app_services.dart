@@ -37,6 +37,7 @@ class AppServices {
     required this.courseBuilderService,
     required this.courseService,
     required this.sessionService,
+    required this.marketplaceApiService,
     required this.enrollmentSyncService,
     required this.sessionSyncService,
     required this.sessionUploadCacheService,
@@ -59,6 +60,7 @@ class AppServices {
   final CourseBuilderService courseBuilderService;
   final CourseService courseService;
   final SessionService sessionService;
+  final MarketplaceApiService marketplaceApiService;
   final EnrollmentSyncService enrollmentSyncService;
   final SessionSyncService sessionSyncService;
   final SessionUploadCacheService sessionUploadCacheService;
@@ -161,6 +163,7 @@ class AppServices {
       courseBuilderService: courseBuilderService,
       courseService: courseService,
       sessionService: sessionService,
+      marketplaceApiService: marketplaceApi,
       enrollmentSyncService: enrollmentSyncService,
       sessionSyncService: sessionSyncService,
       sessionUploadCacheService: sessionUploadCacheService,

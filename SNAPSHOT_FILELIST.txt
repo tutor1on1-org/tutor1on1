@@ -160,6 +160,7 @@ lib/state/settings_controller.dart
 lib/state/study_mode_controller.dart
 lib/ui/app_close_button.dart
 lib/ui/app_settings_page.dart
+lib/ui/auth_session_guard.dart
 lib/ui/pages/account_devices_page.dart
 lib/ui/pages/admin_home_page.dart
 lib/ui/pages/course_builder_conversation_page.dart
@@ -286,6 +287,7 @@ test/app_database_remote_user_test.dart
 test/artifact_sync_api_service_test.dart
 test/audio_model_selection_test.dart
 test/auth_controller_test.dart
+test/auth_session_guard_test.dart
 test/auth_token_refresh_coordinator_test.dart
 test/course_artifact_service_test.dart
 test/course_builder_service_test.dart

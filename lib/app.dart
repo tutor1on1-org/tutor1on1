@@ -10,6 +10,7 @@ import 'services/app_services.dart';
 import 'state/auth_controller.dart';
 import 'state/settings_controller.dart';
 import 'state/study_mode_controller.dart';
+import 'ui/auth_session_guard.dart';
 import 'ui/quit_app_flow.dart';
 import 'ui/pages/admin_home_page.dart';
 import 'ui/pages/teacher_pending_page.dart';
@@ -37,6 +38,9 @@ class Tutor1on1App extends StatelessWidget {
             services.secureStorage,
             deviceIdentityService: services.deviceIdentityService,
             studyModeController: context.read<StudyModeController>(),
+            authSessionValidator: () async {
+              await services.marketplaceApiService.getAccountProfile();
+            },
           ),
         ),
         ChangeNotifierProvider(
@@ -105,14 +109,49 @@ class _StudyModeExitGuardState extends State<_StudyModeExitGuard> {
   }
 }
 
-class AuthGate extends StatelessWidget {
+class AuthGate extends StatefulWidget {
   const AuthGate({super.key});
+
+  @override
+  State<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
+  bool _wasAuthenticated = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(validateActiveAuthSession(context));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Consumer<AuthController>(
       builder: (context, auth, _) {
         final user = auth.currentUser;
+        final authenticated = user != null;
+        if (_wasAuthenticated && !authenticated) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              Navigator.of(context).popUntil((route) => route.isFirst);
+            }
+          });
+        }
+        _wasAuthenticated = authenticated;
         if (user == null) {
           return const WelcomePage();
         }

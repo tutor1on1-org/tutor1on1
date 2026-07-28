@@ -131,9 +131,27 @@ class _WelcomePageState extends State<WelcomePage> {
 
   Widget _buildLogin(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final auth = context.watch<AuthController>();
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        if (auth.remoteSessionInvalidated) ...[
+          Container(
+            key: const Key('remote_session_invalidated_message'),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.errorContainer,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              l10n.remoteSessionInvalidatedMessage,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onErrorContainer,
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
         _buildLanguageSelector(context),
         const SizedBox(height: 16),
         TextField(

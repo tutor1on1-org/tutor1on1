@@ -12,6 +12,7 @@ import '../../db/app_database.dart';
 import '../../models/skill_tree.dart';
 import '../progress_display.dart';
 import '../../services/app_services.dart';
+import '../auth_session_guard.dart';
 import '../../state/auth_controller.dart';
 import '../app_close_button.dart';
 import '../tutor_session_page.dart';
@@ -1238,13 +1239,23 @@ class _SkillTreePageState extends State<SkillTreePage> {
     if (selectedId == null) {
       return;
     }
-    final sessionId = selectedId == _newSessionChoice
-        ? await context.read<AppServices>().sessionService.startSession(
+    late final int sessionId;
+    if (selectedId == _newSessionChoice) {
+      final createdSessionId = await runWithActiveAuthSession<int>(
+        context,
+        () => context.read<AppServices>().sessionService.startSession(
               studentId: studentId,
               courseVersionId: widget.courseVersionId,
               kpKey: node.id,
-            )
-        : selectedId;
+            ),
+      );
+      if (createdSessionId == null || !mounted) {
+        return;
+      }
+      sessionId = createdSessionId;
+    } else {
+      sessionId = selectedId;
+    }
     if (!mounted) {
       return;
     }

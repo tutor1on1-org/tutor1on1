@@ -41,17 +41,13 @@ class AppQuitFlow {
     if (!confirmed) {
       return false;
     }
-    final synced = await _runFinalSync(
+    final auth = context.read<AuthController>();
+    await _runFinalSync(
       context,
       actionLabel: 'logout',
+      actionContinuesOnFailure: true,
     );
-    if (!synced) {
-      return false;
-    }
-    if (!context.mounted) {
-      return false;
-    }
-    await context.read<AuthController>().logout();
+    await auth.logout();
     return true;
   }
 
@@ -252,6 +248,7 @@ class AppQuitFlow {
   static Future<bool> _runFinalSync(
     BuildContext context, {
     required String actionLabel,
+    bool actionContinuesOnFailure = false,
   }) async {
     final auth = context.read<AuthController>();
     final user = auth.currentUser;
@@ -315,6 +312,7 @@ class AppQuitFlow {
         final failure = _describeExitSyncFailure(
           actionLabel: actionLabel,
           error: error,
+          actionContinuesOnFailure: actionContinuesOnFailure,
         );
         _showMessage(context, failure);
       }
@@ -329,8 +327,15 @@ class AppQuitFlow {
   static String _describeExitSyncFailure({
     required String actionLabel,
     required Object error,
+    required bool actionContinuesOnFailure,
   }) {
     final raw = '$error'.trim();
+    if (actionContinuesOnFailure) {
+      if (raw.isEmpty) {
+        return 'Logged out locally, but the final sync failed.';
+      }
+      return 'Logged out locally, but the final sync failed: $raw';
+    }
     if (raw.isEmpty) {
       return 'Could not $actionLabel because the final sync failed.';
     }

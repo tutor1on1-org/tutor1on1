@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../db/app_database.dart';
 import '../../services/app_services.dart';
+import '../auth_session_guard.dart';
 import '../../state/auth_controller.dart';
 import '../app_close_button.dart';
 import '../tutor_session_page.dart';
@@ -221,12 +222,18 @@ class _MistakeBookPageState extends State<MistakeBookPage> {
       return;
     }
     final sessionService = context.read<AppServices>().sessionService;
-    final sessionId = await sessionService.startSession(
-      studentId: widget.studentId,
-      courseVersionId: entry.courseVersionId,
-      kpKey: entry.kpKey,
-      title: 'Review: ${entry.mistakeTagRaw}',
+    final sessionId = await runWithActiveAuthSession<int>(
+      context,
+      () => sessionService.startSession(
+        studentId: widget.studentId,
+        courseVersionId: entry.courseVersionId,
+        kpKey: entry.kpKey,
+        title: 'Review: ${entry.mistakeTagRaw}',
+      ),
     );
+    if (sessionId == null || !mounted) {
+      return;
+    }
     sessionService.setPendingMistakeFocusTag(
       sessionId: sessionId,
       tag: entry.mistakeTagRaw,

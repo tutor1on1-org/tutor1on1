@@ -284,4 +284,42 @@ void main() {
     expect(ok, isFalse);
     expect(auth.lastError, equals('reset failed'));
   });
+
+  test('revoked remote session clears the active local user', () async {
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    final storage = _MemorySecureStorage();
+    late AuthController auth;
+    addTearDown(() async {
+      auth.dispose();
+      LogCryptoService.instance.clear();
+      await db.close();
+    });
+    auth = AuthController(
+      db,
+      storage,
+      authApi: _FakeAuthApiService(
+        AuthResponse(
+          accessToken: 'token',
+          refreshToken: 'refresh',
+          tokenType: 'bearer',
+          expiresIn: 3600,
+          userId: 3001,
+          role: 'student',
+          teacherId: null,
+        ),
+      ),
+      deviceIdentityService: _FakeDeviceIdentityService(),
+      authSessionValidator: () async {
+        await storage.invalidateAuthSession();
+        throw AuthApiException('unauthorized', statusCode: 401);
+      },
+    );
+
+    expect(await auth.login('alice', 'pw123456'), isTrue);
+    expect(auth.currentUser, isNotNull);
+
+    expect(await auth.validateCurrentSession(), isFalse);
+    expect(auth.currentUser, isNull);
+    expect(auth.remoteSessionInvalidated, isTrue);
+  });
 }

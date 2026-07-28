@@ -852,6 +852,13 @@
   "yearFilterAll": "All years",
   "zoomInLabel": "Zoom in",
   "zoomOutLabel": "Zoom out",
+  "remoteSessionInvalidatedMessage": "This account was signed in on another device. Please sign in again.",
+  "sessionValidationFailedMessage": "Could not verify login: {error}",
+  "@sessionValidationFailedMessage": {
+    "placeholders": {
+      "error": {}
+    }
+  },
   "kpPassedDialogTitle": "Knowledge point passed",
   "kpPassedDialogMessage": "Congratulations. You passed this knowledge point.\n\nEasy correct: {easy}\nMedium correct: {medium}\nHard correct: {hard}",
   "@kpPassedDialogMessage": {

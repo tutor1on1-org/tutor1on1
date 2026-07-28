@@ -101,4 +101,27 @@ void main() {
       expect(await storage.readAuthRefreshToken(), equals('refresh-2'));
     },
   );
+
+  test('rejected refresh token invalidates the local auth session', () async {
+    final storage = _SharedTokenSecureStorage(
+      accessToken: 'expired-token',
+      refreshToken: 'revoked-refresh',
+    );
+    final invalidated = storage.authSessionInvalidated.first;
+    final client = MockClient((request) async {
+      expect(request.url.path, '/api/auth/refresh');
+      return http.Response('{"error":"invalid refresh token"}', 401);
+    });
+
+    final refreshed = await AuthTokenRefreshCoordinator.refresh(
+      client: client,
+      secureStorage: storage,
+      baseUrl: 'https://revoked.example.com',
+    );
+
+    expect(refreshed, isFalse);
+    await expectLater(invalidated, completes);
+    expect(await storage.readAuthAccessToken(), isEmpty);
+    expect(await storage.readAuthRefreshToken(), isEmpty);
+  });
 }

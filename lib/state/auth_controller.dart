@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../constants.dart';
@@ -9,6 +11,8 @@ import '../services/log_crypto_service.dart';
 import '../services/secure_storage_service.dart';
 import 'study_mode_controller.dart';
 
+typedef AuthSessionValidator = Future<void> Function();
+
 class AuthController extends ChangeNotifier {
   AuthController(
     AppDatabase db,
@@ -16,6 +20,7 @@ class AuthController extends ChangeNotifier {
     AuthApiService? authApi,
     DeviceIdentityService? deviceIdentityService,
     StudyModeController? studyModeController,
+    AuthSessionValidator? authSessionValidator,
   })  : _authApi = authApi ??
             AuthApiService(
               baseUrl: kAuthBaseUrl,
@@ -24,19 +29,29 @@ class AuthController extends ChangeNotifier {
         _db = db,
         _secureStorage = secureStorage,
         _studyModeController = studyModeController,
+        _authSessionValidator = authSessionValidator,
         _deviceIdentityService =
-            deviceIdentityService ?? DeviceIdentityService(secureStorage);
+            deviceIdentityService ?? DeviceIdentityService(secureStorage) {
+    _authSessionInvalidatedSubscription =
+        _secureStorage.authSessionInvalidated.listen((_) {
+      _handleAuthSessionInvalidated();
+    });
+  }
 
   final AppDatabase _db;
   final SecureStorageService _secureStorage;
   final AuthApiService _authApi;
   final DeviceIdentityService _deviceIdentityService;
   final StudyModeController? _studyModeController;
+  final AuthSessionValidator? _authSessionValidator;
+  late final StreamSubscription<void> _authSessionInvalidatedSubscription;
   User? _currentUser;
   String? _lastError;
+  bool _remoteSessionInvalidated = false;
 
   User? get currentUser => _currentUser;
   String? get lastError => _lastError;
+  bool get remoteSessionInvalidated => _remoteSessionInvalidated;
 
   Future<bool> login(String username, String password) async {
     _lastError = null;
@@ -189,6 +204,7 @@ class AuthController extends ChangeNotifier {
       accessToken: response.accessToken,
       refreshToken: response.refreshToken,
     );
+    _remoteSessionInvalidated = false;
     await _secureStorage.deleteRemoteStudyModePinHash();
     final normalizedUsername = username.trim().toLowerCase();
     final hashed = PinHasher.hash(password);
@@ -220,10 +236,32 @@ class AuthController extends ChangeNotifier {
     LogCryptoService.instance.clear();
     _currentUser = null;
     _lastError = null;
+    _remoteSessionInvalidated = false;
     await _studyModeController?.clear();
     await _secureStorage.deleteAuthTokens();
     await _secureStorage.deleteRemoteStudyModePinHash();
     notifyListeners();
+  }
+
+  Future<bool> validateCurrentSession() async {
+    final current = currentUser;
+    if (current == null) {
+      return false;
+    }
+    final remoteUserId = current.remoteUserId;
+    final validator = _authSessionValidator;
+    if (remoteUserId == null || remoteUserId <= 0 || validator == null) {
+      return true;
+    }
+    try {
+      await validator();
+      return currentUser != null;
+    } on Object {
+      if (currentUser == null) {
+        return false;
+      }
+      rethrow;
+    }
   }
 
   Future<void> refreshCurrentUser() async {
@@ -234,5 +272,32 @@ class AuthController extends ChangeNotifier {
     _currentUser = await _db.getUserById(current.id);
     await _studyModeController?.syncAuthUser(_currentUser);
     notifyListeners();
+  }
+
+  void _handleAuthSessionInvalidated() {
+    if (_currentUser == null) {
+      return;
+    }
+    LogCryptoService.instance.clear();
+    _currentUser = null;
+    _lastError = null;
+    _remoteSessionInvalidated = true;
+    notifyListeners();
+    unawaited(_finishInvalidatedSessionCleanup());
+  }
+
+  Future<void> _finishInvalidatedSessionCleanup() async {
+    try {
+      await _studyModeController?.clear();
+      await _secureStorage.deleteRemoteStudyModePinHash();
+    } on Object catch (error) {
+      debugPrint('Revoked-session cleanup failed: $error');
+    }
+  }
+
+  @override
+  void dispose() {
+    unawaited(_authSessionInvalidatedSubscription.cancel());
+    super.dispose();
   }
 }
