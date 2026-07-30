@@ -1,8 +1,13 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 
 import 'app.dart';
 import 'app_theme.dart';
 import 'services/app_services.dart';
+import 'services/window_lifecycle_diagnostics.dart';
 import 'ui/app_close_button.dart';
 
 class AppBootstrap extends StatefulWidget {
@@ -14,16 +19,59 @@ class AppBootstrap extends StatefulWidget {
 
 class _AppBootstrapState extends State<AppBootstrap> {
   late Future<AppServices> _servicesFuture;
+  WindowLifecycleDiagnostics? _windowDiagnostics;
 
   @override
   void initState() {
     super.initState();
-    _servicesFuture = AppServices.create();
+    _servicesFuture = _initializeServices();
   }
 
   @override
   void dispose() {
+    final diagnostics = _windowDiagnostics;
+    _windowDiagnostics = null;
+    if (diagnostics != null) {
+      unawaited(diagnostics.stop());
+    }
     super.dispose();
+  }
+
+  Future<AppServices> _initializeServices() async {
+    final services = await AppServices.create();
+    if (Platform.isWindows && mounted) {
+      unawaited(_startWindowDiagnostics(services));
+    }
+    return services;
+  }
+
+  Future<void> _startWindowDiagnostics(AppServices services) async {
+    try {
+      final settings = await services.settingsRepository.load();
+      if (!mounted) {
+        return;
+      }
+      final logDirectory = (settings.logDirectory ?? '').trim();
+      if (logDirectory.isEmpty) {
+        return;
+      }
+      final diagnostics = WindowLifecycleDiagnostics(
+        sink: JsonlWindowLifecycleLogSink(
+          File(p.join(logDirectory, 'window_lifecycle.jsonl')),
+        ),
+      );
+      await diagnostics.start();
+      if (!mounted) {
+        await diagnostics.stop();
+        return;
+      }
+      _windowDiagnostics = diagnostics;
+    } catch (error, stackTrace) {
+      debugPrint(
+        'Failed to start window lifecycle diagnostics: '
+        '$error\n$stackTrace',
+      );
+    }
   }
 
   @override

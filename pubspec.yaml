@@ -1,7 +1,7 @@
 name: tutor1on1
 description: Tutor1on1 client with LLM-backed tutoring and skill trees.
 publish_to: "none"
-version: 1.0.57
+version: 1.0.58
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -25,7 +25,7 @@ dependencies:
   json_schema: ^5.2.0
   file_picker: ^8.0.6
   uuid: ^4.4.0
-  window_manager: ^0.3.9
+  window_manager: ^0.5.2
   flutter_math_fork: ^0.7.2
   graphview: ^1.2.0
   just_audio: ^0.9.38

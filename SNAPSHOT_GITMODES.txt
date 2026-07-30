@@ -155,6 +155,7 @@
 100644 lib/services/tts_log_repository.dart
 100644 lib/services/tts_service.dart
 100644 lib/services/tts_text_sanitizer.dart
+100644 lib/services/window_lifecycle_diagnostics.dart
 100644 lib/state/auth_controller.dart
 100644 lib/state/settings_controller.dart
 100644 lib/state/study_mode_controller.dart
@@ -339,6 +340,7 @@
 100644 test/tutor_session_page_footer_test.dart
 100644 test/tutor_turn_logic_test.dart
 100644 test/widget_test.dart
+100644 test/window_lifecycle_diagnostics_test.dart
 100644 third_party/webview_windows/analysis_options.yaml
 100644 third_party/webview_windows/CHANGELOG.md
 100644 third_party/webview_windows/example/lib/main.dart

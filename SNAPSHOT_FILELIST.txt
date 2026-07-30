@@ -155,6 +155,7 @@ lib/services/tts_chunker.dart
 lib/services/tts_log_repository.dart
 lib/services/tts_service.dart
 lib/services/tts_text_sanitizer.dart
+lib/services/window_lifecycle_diagnostics.dart
 lib/state/auth_controller.dart
 lib/state/settings_controller.dart
 lib/state/study_mode_controller.dart
@@ -339,6 +340,7 @@ test/tutor_contract_test.dart
 test/tutor_session_page_footer_test.dart
 test/tutor_turn_logic_test.dart
 test/widget_test.dart
+test/window_lifecycle_diagnostics_test.dart
 third_party/webview_windows/analysis_options.yaml
 third_party/webview_windows/CHANGELOG.md
 third_party/webview_windows/example/lib/main.dart
