@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -169,6 +170,7 @@ void main() {
       model: 'gpt-5.5',
     );
 
+    final responseController = StreamController<List<int>>();
     final service = LlmService(
       SettingsRepository(db),
       _FakeSecureStorage(),
@@ -184,7 +186,7 @@ void main() {
           email: 'user@example.com',
         ),
       ),
-      clientFactory: () => MockClient((request) async {
+      clientFactory: () => MockClient.streaming((request, bodyStream) async {
         expect(request.method, equals('POST'));
         expect(
           request.url.toString(),
@@ -198,7 +200,9 @@ void main() {
         expect(headers['chatgpt-account-id'], equals('acct_123'));
         expect(headers['originator'], equals('pi'));
         expect(headers['openai-beta'], equals('responses=experimental'));
-        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        final body = jsonDecode(
+          utf8.decode(await bodyStream.toBytes()),
+        ) as Map<String, dynamic>;
         expect(body['model'], equals('gpt-5.5'));
         expect(body['stream'], isTrue);
         expect(body['store'], isFalse);
@@ -217,11 +221,8 @@ void main() {
           (content.single as Map<String, dynamic>)['text'],
           equals('Explain fractions.'),
         );
-        return http.Response(
-          'data: {"type":"response.output_text.delta","delta":"OAuth"}\r\n\r\n'
-          'data: {"type":"response.output_text.delta","delta":" result"}\r\n\r\n'
-          'data: {"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"output_text","text":"OAuth result"}]}]}}\r\n\r\n'
-          'data: [DONE]\r\n\r\n',
+        return http.StreamedResponse(
+          responseController.stream,
           200,
           headers: <String, String>{
             'content-type': 'text/event-stream',
@@ -237,10 +238,26 @@ void main() {
       onChunk: chunks.add,
     );
 
-    final result = await handle.future;
-
-    expect(chunks, equals(<String>['OAuth', ' result']));
-    expect(result.responseText, equals('OAuth result'));
-    expect(logRepository.statuses, equals(<String>['ok']));
+    responseController.add(
+      utf8.encode(
+        'data: {"type":"response.output_text.delta","delta":"OAuth"}\r\n\r\n'
+        'data: {"type":"response.output_text.delta","delta":" result"}\r\n\r\n'
+        'data: {"type":"response.completed","response":{"output":[{"type":"message","content":[{"type":"output_text","text":"OAuth result"}]}]}}\r\n\r\n',
+      ),
+    );
+    final resultFuture = handle.future;
+    try {
+      final result = await resultFuture.timeout(const Duration(seconds: 2));
+      expect(chunks, equals(<String>['OAuth', ' result']));
+      expect(result.responseText, equals('OAuth result'));
+      expect(logRepository.statuses, equals(<String>['ok']));
+    } finally {
+      await responseController.close();
+      try {
+        await resultFuture;
+      } catch (_) {
+        // Preserve the original test failure while draining the request.
+      }
+    }
   });
 }

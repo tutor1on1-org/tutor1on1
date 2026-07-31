@@ -1009,9 +1009,19 @@ class LlmService {
           LlmReasoningSupport.appendReasoningFragment(reasoningBuffer, delta);
           continue;
         }
-        if (type == 'response.completed' ||
-            type == 'response.done' ||
-            type == 'response.incomplete') {
+        if (type == 'response.completed') {
+          final responseObject = decoded['response'];
+          if (responseObject is Map<String, dynamic>) {
+            finalPayload = responseObject;
+          }
+          return _finalizeOpenAiCodexResponse(
+            provider: provider,
+            responseBuffer: responseBuffer,
+            reasoningBuffer: reasoningBuffer,
+            finalPayload: finalPayload,
+          );
+        }
+        if (type == 'response.done' || type == 'response.incomplete') {
           final responseObject = decoded['response'];
           if (responseObject is Map<String, dynamic>) {
             finalPayload = responseObject;

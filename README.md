@@ -98,8 +98,8 @@ flutter run --dart-define=AUTH_ALLOW_INSECURE_TLS=true
 
 The public release flow is versioned around Git tags and GitHub Release assets.
 
-- Current public release tag: `v1.0.58`
-- App version in `pubspec.yaml`: `1.0.58`
+- Current public release tag: `v1.0.59`
+- App version in `pubspec.yaml`: `1.0.59`
 - Standard asset names:
   - `Tutor1on1.apk`
   - `Tutor1on1.zip`
@@ -108,19 +108,19 @@ The public release flow is versioned around Git tags and GitHub Release assets.
 Build release assets from this snapshot with:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File public_release/package_github_release.ps1 -ReleaseTag v1.0.58
+powershell -ExecutionPolicy Bypass -File public_release/package_github_release.ps1 -ReleaseTag v1.0.59
 ```
 
 Or publish the GitHub Release assets directly:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File public_release/publish_github_release.ps1 -ReleaseTag v1.0.58
+powershell -ExecutionPolicy Bypass -File public_release/publish_github_release.ps1 -ReleaseTag v1.0.59
 ```
 
 That script builds Android and Windows release artifacts and writes them to:
 
 ```text
-public_release/dist/v1.0.58/
+public_release/dist/v1.0.59/
 ```
 
 The static website under `web/` displays the configured release tag and points download buttons at the stable canonical files on `https://api.tutor1on1.org/downloads`.
@@ -128,7 +128,7 @@ The static website under `web/` displays the configured release tag and points d
 The default website config currently targets:
 
 - GitHub repo slug: `tutor1on1-org/tutor1on1`
-- GitHub Release tag: `v1.0.58`
+- GitHub Release tag: `v1.0.59`
 
 ## Trust And Verification
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.0.59
+
+- Pass confirmation no longer waits for the streaming connection to close after the API has emitted `response.completed`
+
 ## v1.0.1
 
 - Windows ZIP now ships `tutor1on1.exe` instead of `family_teacher.exe`
