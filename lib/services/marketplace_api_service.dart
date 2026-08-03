@@ -1,11 +1,15 @@
 import 'dart:convert';
-import 'dart:io';
+import 'dart:typed_data';
+
+import 'file_system.dart';
 
 import 'package:http/http.dart' as http;
+import 'package:path/path.dart' as p;
 
 import '../constants.dart';
 import 'api_http_client.dart';
 import 'auth_token_refresh_coordinator.dart';
+import 'course_bundle_service.dart';
 import 'secure_storage_service.dart';
 
 class MarketplaceApiException implements Exception {
@@ -893,8 +897,10 @@ class MarketplaceApiService {
     String? baseUrl,
     http.Client? client,
     FirstPartyApiHttpClientFactory? clientFactory,
+    int? Function()? browserAuthUserReader,
   })  : assert(client == null || clientFactory == null),
         _secureStorage = secureStorage,
+        _browserAuthUserReader = browserAuthUserReader,
         _baseUrl = _normalizeBaseUrl(baseUrl ?? kAuthBaseUrl),
         _clientFactory =
             clientFactory ?? (() => _buildClient(kAuthAllowInsecureTls)),
@@ -903,6 +909,7 @@ class MarketplaceApiService {
             (clientFactory ?? (() => _buildClient(kAuthAllowInsecureTls)))();
 
   final SecureStorageService _secureStorage;
+  final int? Function()? _browserAuthUserReader;
   final String _baseUrl;
   final FirstPartyApiHttpClientFactory _clientFactory;
   final bool _ownsClient;
@@ -1521,6 +1528,9 @@ class MarketplaceApiService {
     required String courseName,
     required File bundleFile,
   }) async {
+    final bundleService = CourseBundleService();
+    bundleService.validateCompressedByteLength(bundleFile.lengthSync());
+    await bundleService.validateBundleForImport(bundleFile);
     final uri = Uri.parse('$_baseUrl/api/bundles/upload').replace(
       queryParameters: {
         'bundle_id': bundleId.toString(),
@@ -1533,9 +1543,10 @@ class MarketplaceApiService {
         action: () async {
           final request = http.MultipartRequest('POST', uri);
           request.headers['Authorization'] = 'Bearer $token';
-          request.files.add(await http.MultipartFile.fromPath(
+          request.files.add(http.MultipartFile.fromBytes(
             'bundle',
-            bundleFile.path,
+            await bundleFile.readAsBytes(),
+            filename: p.basename(bundleFile.path),
           ));
           return _client.send(request);
         },
@@ -1590,22 +1601,20 @@ class MarketplaceApiService {
         statusCode: streamed.statusCode,
       );
     }
+    final bundleService = CourseBundleService();
+    final declaredLength = streamed.contentLength;
+    if (declaredLength != null) {
+      bundleService.validateCompressedByteLength(declaredLength);
+    }
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in streamed.stream) {
+      bundleService.validateCompressedByteLength(builder.length + chunk.length);
+      builder.add(chunk);
+    }
+    final bytes = builder.takeBytes();
     final file = File(targetPath);
     await file.parent.create(recursive: true);
-    if (!file.existsSync()) {
-      await file.create(recursive: true);
-    }
-    final sink = file.openWrite();
-    var writtenBytes = 0;
-    try {
-      await for (final chunk in streamed.stream) {
-        writtenBytes += chunk.length;
-        sink.add(chunk);
-      }
-    } finally {
-      await sink.close();
-    }
-    if (writtenBytes <= 0) {
+    if (bytes.isEmpty) {
       if (file.existsSync()) {
         await file.delete();
       }
@@ -1613,6 +1622,7 @@ class MarketplaceApiService {
         'Download returned empty body for bundle_version_id=$bundleVersionId.',
       );
     }
+    await file.writeAsBytes(bytes, flush: true);
     return file;
   }
 
@@ -1700,7 +1710,10 @@ class MarketplaceApiService {
   }
 
   Future<String> _requireAccessToken() async {
-    final token = await _secureStorage.readAuthAccessToken();
+    final token = await AuthTokenRefreshCoordinator.readAccessToken(
+      secureStorage: _secureStorage,
+      browserAuthUserReader: _browserAuthUserReader,
+    );
     if (token == null || token.trim().isEmpty) {
       throw MarketplaceApiException('Missing auth token.');
     }
@@ -1713,6 +1726,7 @@ class MarketplaceApiService {
         client: _client,
         secureStorage: _secureStorage,
         baseUrl: _baseUrl,
+        browserAuthUserReader: _browserAuthUserReader,
       );
     } on AuthTokenRefreshException catch (error) {
       if (_ownsClient && isFreshFirstPartyApiClientRetryableError(error)) {
@@ -1723,6 +1737,7 @@ class MarketplaceApiService {
             client: _client,
             secureStorage: _secureStorage,
             baseUrl: _baseUrl,
+            browserAuthUserReader: _browserAuthUserReader,
           );
         } on AuthTokenRefreshException catch (retryError) {
           throw MarketplaceApiException(

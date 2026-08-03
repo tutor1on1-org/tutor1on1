@@ -1,7 +1,7 @@
 name: tutor1on1
 description: Tutor1on1 client with LLM-backed tutoring and skill trees.
 publish_to: "none"
-version: 1.0.59
+version: 1.0.60
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -14,7 +14,6 @@ dependencies:
   provider: ^6.1.2
   drift: ^2.30.0
   drift_flutter: ^0.2.8
-  sqlite3_flutter_libs: ^0.5.20
   path_provider: ^2.1.4
   path: ^1.9.0
   flutter_secure_storage: ^9.2.2
@@ -25,17 +24,14 @@ dependencies:
   json_schema: ^5.2.0
   file_picker: ^8.0.6
   uuid: ^4.4.0
-  window_manager: ^0.5.2
   flutter_math_fork: ^0.7.2
   graphview: ^1.2.0
   just_audio: ^0.9.38
-  just_audio_windows: ^0.2.0
   markdown: ^7.2.2
   record: ^5.1.2
-  ffmpeg_kit_flutter_new_full: ^2.0.0
   archive: ^3.6.1
-  wakelock_plus: ^1.4.0
   package_info_plus: ^9.0.0
+  web: ^1.1.1
 
 dev_dependencies:
   flutter_test:
@@ -45,12 +41,6 @@ dev_dependencies:
   build_runner: ^2.4.11
   drift_dev: ^2.30.0
   sqlite3: ^2.4.3
-
-dependency_overrides:
-  record_linux:
-    path: packages/record_linux
-  record_windows:
-    path: packages/record_windows
 
 flutter:
   uses-material-design: true

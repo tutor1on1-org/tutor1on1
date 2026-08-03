@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -12,6 +14,7 @@ import 'package:tutor1on1/services/secure_storage_service.dart';
 class _MemorySecureStorage extends SecureStorageService {
   String? _accessToken;
   String? _refreshToken;
+  int deleteAuthTokensCallCount = 0;
 
   @override
   Future<String?> readAuthAccessToken() async => _accessToken;
@@ -30,6 +33,7 @@ class _MemorySecureStorage extends SecureStorageService {
 
   @override
   Future<void> deleteAuthTokens() async {
+    deleteAuthTokensCallCount += 1;
     _accessToken = null;
     _refreshToken = null;
   }
@@ -288,6 +292,7 @@ void main() {
   test('revoked remote session clears the active local user', () async {
     final db = AppDatabase.forTesting(NativeDatabase.memory());
     final storage = _MemorySecureStorage();
+    final writes = <int?>[];
     late AuthController auth;
     addTearDown(() async {
       auth.dispose();
@@ -313,6 +318,7 @@ void main() {
         await storage.invalidateAuthSession();
         throw AuthApiException('unauthorized', statusCode: 401);
       },
+      browserAuthUserWriter: writes.add,
     );
 
     expect(await auth.login('alice', 'pw123456'), isTrue);
@@ -321,5 +327,109 @@ void main() {
     expect(await auth.validateCurrentSession(), isFalse);
     expect(auth.currentUser, isNull);
     expect(auth.remoteSessionInvalidated, isTrue);
+    expect(writes, equals(<int?>[3001, null]));
+  });
+
+  test(
+    'cross-tab account change clears only the stale in-memory user',
+    () async {
+      final db = AppDatabase.forTesting(NativeDatabase.memory());
+      final storage = _MemorySecureStorage();
+      final changes = StreamController<int?>.broadcast(sync: true);
+      final writes = <int?>[];
+      int? activeBrowserUserId;
+      late AuthController auth;
+      addTearDown(() async {
+        auth.dispose();
+        await changes.close();
+        LogCryptoService.instance.clear();
+        await db.close();
+      });
+      auth = AuthController(
+        db,
+        storage,
+        authApi: _FakeAuthApiService(
+          AuthResponse(
+            accessToken: 'token',
+            refreshToken: 'refresh',
+            tokenType: 'bearer',
+            expiresIn: 3600,
+            userId: 3001,
+            role: 'student',
+            teacherId: null,
+          ),
+        ),
+        deviceIdentityService: _FakeDeviceIdentityService(),
+        browserAuthUserChanges: changes.stream,
+        browserAuthUserReader: () => activeBrowserUserId,
+        browserAuthUserWriter: (remoteUserId) {
+          activeBrowserUserId = remoteUserId;
+          writes.add(remoteUserId);
+        },
+      );
+
+      expect(await auth.login('alice', 'pw123456'), isTrue);
+      expect(writes, equals(<int?>[3001]));
+      expect(storage.boundAuthRemoteUserId, equals(3001));
+
+      changes.add(3001);
+      expect(auth.currentUser, isNotNull);
+
+      activeBrowserUserId = 4002;
+      changes.add(activeBrowserUserId);
+      expect(auth.currentUser, isNull);
+      expect(auth.remoteSessionInvalidated, isFalse);
+      expect(storage.boundAuthRemoteUserId, isNull);
+      expect(storage.deleteAuthTokensCallCount, isZero);
+      expect(await storage.readAuthAccessToken(), equals('token'));
+      expect(await storage.readAuthRefreshToken(), equals('refresh'));
+      expect(writes, equals(<int?>[3001]));
+
+      await auth.logout();
+      expect(storage.deleteAuthTokensCallCount, isZero);
+      expect(activeBrowserUserId, equals(4002));
+      expect(writes, equals(<int?>[3001]));
+    },
+  );
+
+  test('logout clears shared tokens and broadcasts a signed-out marker',
+      () async {
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    final storage = _MemorySecureStorage();
+    final writes = <int?>[];
+    late AuthController auth;
+    addTearDown(() async {
+      auth.dispose();
+      LogCryptoService.instance.clear();
+      await db.close();
+    });
+    auth = AuthController(
+      db,
+      storage,
+      authApi: _FakeAuthApiService(
+        AuthResponse(
+          accessToken: 'token',
+          refreshToken: 'refresh',
+          tokenType: 'bearer',
+          expiresIn: 3600,
+          userId: 3001,
+          role: 'student',
+          teacherId: null,
+        ),
+      ),
+      deviceIdentityService: _FakeDeviceIdentityService(),
+      browserAuthUserWriter: writes.add,
+    );
+
+    expect(await auth.login('alice', 'pw123456'), isTrue);
+    expect(storage.boundAuthRemoteUserId, equals(3001));
+    await auth.logout();
+
+    expect(auth.currentUser, isNull);
+    expect(storage.boundAuthRemoteUserId, isNull);
+    expect(storage.deleteAuthTokensCallCount, equals(1));
+    expect(await storage.readAuthAccessToken(), isNull);
+    expect(await storage.readAuthRefreshToken(), isNull);
+    expect(writes, equals(<int?>[3001, null]));
   });
 }

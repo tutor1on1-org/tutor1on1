@@ -8,10 +8,9 @@ import 'package:tutor1on1/state/study_mode_controller.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('teacher-enforced heartbeat enables study mode and PIN requirement',
+  test('teacher heartbeat retains state without browser exit PIN enforcement',
       () async {
-    final bridge = FakeStudyModePlatformBridge(isAndroid: true);
-    final service = ScreenLockService(bridge: bridge);
+    final service = ScreenLockService();
     final controller = StudyModeController(screenLockService: service);
     addTearDown(service.stop);
 
@@ -30,15 +29,13 @@ void main() {
     );
 
     expect(controller.enabled, isTrue);
-    expect(controller.requiresTeacherPin, isTrue);
+    expect(controller.requiresTeacherPin, isFalse);
     expect(controller.controllerTeacherUserId, 44);
-    expect(bridge.screenAwake, isTrue);
-    expect(bridge.studyUiEnabled, isTrue);
+    expect(service.isEnabled, isTrue);
   });
 
   test('default heartbeat clears teacher-enforced study mode', () async {
-    final bridge = FakeStudyModePlatformBridge(isAndroid: true);
-    final service = ScreenLockService(bridge: bridge);
+    final service = ScreenLockService();
     final controller = StudyModeController(screenLockService: service);
     addTearDown(service.stop);
 
@@ -70,13 +67,11 @@ void main() {
     expect(controller.enabled, isFalse);
     expect(controller.requiresTeacherPin, isFalse);
     expect(controller.controllerTeacherUserId, 0);
-    expect(bridge.screenAwake, isFalse);
-    expect(bridge.studyUiEnabled, isFalse);
+    expect(service.isEnabled, isFalse);
   });
 
   test('auth change away from student clears enforced study mode', () async {
-    final bridge = FakeStudyModePlatformBridge(isAndroid: true);
-    final service = ScreenLockService(bridge: bridge);
+    final service = ScreenLockService();
     final controller = StudyModeController(screenLockService: service);
     addTearDown(service.stop);
 
@@ -98,14 +93,12 @@ void main() {
 
     expect(controller.enabled, isFalse);
     expect(controller.requiresTeacherPin, isFalse);
-    expect(bridge.screenAwake, isFalse);
-    expect(bridge.studyUiEnabled, isFalse);
+    expect(service.isEnabled, isFalse);
   });
 
   test('same student auth sync clears stale enforced study mode state',
       () async {
-    final bridge = FakeStudyModePlatformBridge(isAndroid: true);
-    final service = ScreenLockService(bridge: bridge);
+    final service = ScreenLockService();
     final controller = StudyModeController(screenLockService: service);
     addTearDown(service.stop);
 
@@ -127,8 +120,7 @@ void main() {
 
     expect(controller.enabled, isFalse);
     expect(controller.requiresTeacherPin, isFalse);
-    expect(bridge.screenAwake, isFalse);
-    expect(bridge.studyUiEnabled, isFalse);
+    expect(service.isEnabled, isFalse);
   });
 }
 

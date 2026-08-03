@@ -1,11 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:tutor1on1/l10n/app_localizations.dart';
-import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 
 import '../db/app_database.dart';
@@ -16,6 +14,7 @@ import '../models/tutor_contract.dart';
 import '../security/hash_utils.dart';
 import '../services/app_services.dart';
 import '../services/openai_codex_oauth_service.dart';
+import '../services/runtime_environment.dart';
 import '../services/stt_service.dart';
 import '../services/text_model_selection.dart';
 import '../services/tts_chunker.dart';
@@ -219,8 +218,8 @@ class _ChatSessionPageState extends State<ChatSessionPage>
     final db = context.read<AppDatabase>();
     final settings = context.watch<SettingsController>().settings;
     final currentUser = context.watch<AuthController>().currentUser;
-    final envBaseUrl = Platform.environment['OPENAI_BASE_URL']?.trim() ?? '';
-    final envModel = Platform.environment['OPENAI_MODEL']?.trim() ?? '';
+    final envBaseUrl = runtimeOpenAiBaseUrl.trim();
+    final envModel = runtimeOpenAiModel.trim();
     final providers = LlmProviders.defaultProviders(
       envBaseUrl: envBaseUrl,
       envModel: envModel,
@@ -246,8 +245,8 @@ class _ChatSessionPageState extends State<ChatSessionPage>
         _ttsPlaybackActive || _ttsStreamPaused || _ttsChunkInFlight;
     final canInteract = !_closed && !widget.readOnly;
     final sttBusy = _sttPressActive || _sttRecording || _sttTranscribing;
-    final enterToSend = !Platform.isAndroid && (settings?.enterToSend ?? true);
-    final compactControls = Platform.isAndroid;
+    final enterToSend = settings?.enterToSend ?? true;
+    final compactControls = MediaQuery.sizeOf(context).width < 600;
     final footerProgressBadge = currentUser?.role == 'student'
         ? _SessionFooterProgressBadge(
             db: db,
@@ -386,46 +385,22 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                   );
                                   final ttsService =
                                       context.read<AppServices>().ttsService;
-                                  final ttsAudioDir =
-                                      settings?.ttsAudioPath?.trim() ?? '';
-                                  final logDir =
-                                      (settings?.logDirectory ?? '').trim();
-                                  final sttAudioDir = logDir.isNotEmpty
-                                      ? logDir
-                                      : () {
-                                          final llmLog =
-                                              (settings?.llmLogPath ?? '')
-                                                  .trim();
-                                          if (llmLog.isNotEmpty) {
-                                            return p.dirname(llmLog);
-                                          }
-                                          final ttsLog =
-                                              (settings?.ttsLogPath ?? '')
-                                                  .trim();
-                                          if (ttsLog.isNotEmpty) {
-                                            return p.dirname(ttsLog);
-                                          }
-                                          return '';
-                                        }();
                                   String? audioPath;
-                                  if (message.role == 'assistant' &&
-                                      ttsAudioDir.isNotEmpty) {
+                                  if (message.role == 'assistant') {
                                     audioPath =
                                         TtsService.buildMessageAudioPath(
-                                      baseDir: ttsAudioDir,
+                                      baseDir: '',
                                       messageId: message.id,
                                     );
-                                  } else if (message.role == 'user' &&
-                                      sttAudioDir.isNotEmpty) {
+                                  } else if (message.role == 'user') {
                                     audioPath =
                                         SttService.buildMessageAudioPath(
-                                      baseDir: sttAudioDir,
+                                      baseDir: '',
                                       messageId: message.id,
                                     );
                                   }
                                   final hasAudio = audioPath != null &&
-                                      File(audioPath).existsSync() &&
-                                      File(audioPath).lengthSync() > 0;
+                                      TtsService.hasSavedAudio(audioPath);
                                   return Column(
                                     crossAxisAlignment:
                                         CrossAxisAlignment.stretch,
@@ -2562,9 +2537,6 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       return;
     }
     if (_ttsHardStopped) {
-      if (audio != null && await audio.file.exists()) {
-        await audio.file.delete();
-      }
       return;
     }
     if (audio == null) {

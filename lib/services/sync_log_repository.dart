@@ -1,8 +1,4 @@
-import 'dart:convert';
-import 'dart:io';
-
-import 'package:path/path.dart' as p;
-
+import 'browser_jsonl_store.dart';
 import 'settings_repository.dart';
 
 class SyncTransferLogItem {
@@ -97,9 +93,10 @@ class SyncRunStats {
 }
 
 class SyncLogRepository {
-  SyncLogRepository(this._settingsRepository);
+  SyncLogRepository(SettingsRepository _, {BrowserJsonlStore? store})
+      : _store = store ?? const BrowserJsonlStore();
 
-  final SettingsRepository _settingsRepository;
+  final BrowserJsonlStore _store;
   Future<void> _writeQueue = Future.value();
 
   Future<void> appendSummary({
@@ -113,7 +110,6 @@ class SyncLogRepository {
       return;
     }
     _writeQueue = _writeQueue.then((_) async {
-      final file = await _resolveFile();
       final payload = <String, dynamic>{
         'created_at': DateTime.now().toIso8601String(),
         'event': 'sync_summary',
@@ -133,11 +129,7 @@ class SyncLogRepository {
         'uploaded': uploaded.map((item) => item.toJson()).toList(),
         'downloaded': downloaded.map((item) => item.toJson()).toList(),
       };
-      await file.writeAsString(
-        '${jsonEncode(payload)}\n',
-        mode: FileMode.append,
-        flush: true,
-      );
+      await _store.append('sync', payload);
     });
     return _writeQueue;
   }
@@ -155,7 +147,6 @@ class SyncLogRepository {
     }
     final normalizedError = (error ?? '').trim();
     _writeQueue = _writeQueue.then((_) async {
-      final file = await _resolveFile();
       final payload = <String, dynamic>{
         'created_at': DateTime.now().toIso8601String(),
         'event': 'sync_run',
@@ -173,30 +164,9 @@ class SyncLogRepository {
       if (normalizedError.isNotEmpty) {
         payload['error'] = normalizedError;
       }
-      await file.writeAsString(
-        '${jsonEncode(payload)}\n',
-        mode: FileMode.append,
-        flush: true,
-      );
+      await _store.append('sync', payload);
     });
     return _writeQueue;
-  }
-
-  Future<File> _resolveFile() async {
-    final settings = await _settingsRepository.load();
-    final logDirectory = (settings.logDirectory ?? '').trim();
-    final filePath = logDirectory.isNotEmpty
-        ? p.join(logDirectory, 'sync_logs.jsonl')
-        : p.join(Directory.current.path, 'sync_logs.jsonl');
-    final dir = Directory(p.dirname(filePath));
-    if (!await dir.exists()) {
-      await dir.create(recursive: true);
-    }
-    final file = File(filePath);
-    if (!await file.exists()) {
-      await file.create(recursive: true);
-    }
-    return file;
   }
 
   int _roundBytesToKb(int bytes) {

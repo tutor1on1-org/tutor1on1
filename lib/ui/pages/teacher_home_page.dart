@@ -1,17 +1,16 @@
 import 'dart:async';
-import 'dart:io';
+import '../../services/file_system.dart';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 import 'package:tutor1on1/l10n/app_localizations.dart';
 
 import '../../db/app_database.dart';
 import '../../services/app_services.dart';
+import '../../services/browser_exclusive_lock.dart';
 import '../../services/course_bundle_service.dart';
-import '../../services/course_service.dart';
 import '../../services/course_source_policy.dart';
 import '../../services/home_sync_coordinator.dart';
 import '../../services/marketplace_api_service.dart';
@@ -30,7 +29,6 @@ import 'prompt_settings_page.dart';
 import 'teacher_students_page.dart';
 import 'subject_admin_page.dart';
 import 'teacher_enrollment_requests_page.dart';
-import 'teacher_study_mode_page.dart';
 import '../widgets/action_indicators.dart';
 import '../widgets/server_sync_overlay.dart';
 
@@ -41,18 +39,13 @@ class TeacherHomePage extends StatefulWidget {
   State<TeacherHomePage> createState() => _TeacherHomePageState();
 }
 
-class _TeacherHomePageState extends State<TeacherHomePage>
-    with WidgetsBindingObserver {
-  static const Duration _autoSyncInterval = Duration(seconds: 60);
-  static const Duration _resumeSyncDelay = Duration(seconds: 3);
+class _TeacherHomePageState extends State<TeacherHomePage> {
   bool _syncStarted = false;
   bool _syncInProgress = false;
   bool _syncingFromServer = false;
   String _syncProgressMessage = '';
   double? _syncProgressValue;
   String? _syncProgressDetail;
-  Timer? _autoSyncTimer;
-  Timer? _resumeSyncTimer;
   final Set<int> _uploadingCourseIds = {};
   final Set<int> _pullingCourseIds = {};
   final Set<int> _savingCourseIds = {};
@@ -68,7 +61,6 @@ class _TeacherHomePageState extends State<TeacherHomePage>
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     final services = context.read<AppServices>();
     _marketplaceApi =
         MarketplaceApiService(secureStorage: services.secureStorage);
@@ -85,25 +77,7 @@ class _TeacherHomePageState extends State<TeacherHomePage>
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _startSync();
       unawaited(_refreshMarketplaceState(surfaceAuthErrors: true));
-      _startAutoSync();
     });
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _autoSyncTimer?.cancel();
-    _resumeSyncTimer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _scheduleResumeSync();
-      return;
-    }
-    _stopAutoSync();
   }
 
   Future<void> _startSync() async {
@@ -112,34 +86,6 @@ class _TeacherHomePageState extends State<TeacherHomePage>
     }
     _syncStarted = true;
     await _runSyncCycle(showOverlay: true);
-  }
-
-  void _startAutoSync() {
-    _autoSyncTimer?.cancel();
-    _autoSyncTimer = Timer.periodic(_autoSyncInterval, (_) async {
-      await _runSyncCycle(showOverlay: false);
-    });
-  }
-
-  void _stopAutoSync() {
-    _autoSyncTimer?.cancel();
-    _autoSyncTimer = null;
-    _resumeSyncTimer?.cancel();
-    _resumeSyncTimer = null;
-  }
-
-  void _scheduleResumeSync() {
-    if (!_syncStarted || !mounted) {
-      return;
-    }
-    _resumeSyncTimer?.cancel();
-    _resumeSyncTimer = Timer(_resumeSyncDelay, () async {
-      if (!mounted) {
-        return;
-      }
-      _startAutoSync();
-      await _runSyncCycle(showOverlay: false);
-    });
   }
 
   Future<void> _runSyncCycle({required bool showOverlay}) async {
@@ -164,28 +110,40 @@ class _TeacherHomePageState extends State<TeacherHomePage>
     final trigger = showOverlay ? 'login' : 'timer';
     String? syncError;
     try {
-      if (showOverlay) {
-        await _syncCoordinator.runLoginSync(
-          user: user,
-          trigger: trigger,
-          onProgress: _applySyncProgress,
-          includeSessionSync: true,
-          sessionSyncMode: SessionSyncMode.downloadOnly,
-        );
-        _clearPersistentError();
-      } else {
-        await _syncCoordinator.runCoreSync(
-          user: user,
-          trigger: trigger,
-          onProgress: null,
-          includeSessionSync: true,
-        );
-        _clearPersistentError();
+      Future<void> syncAction() async {
+        if (showOverlay) {
+          await _syncCoordinator.runLoginSync(
+            user: user,
+            trigger: trigger,
+            onProgress: _applySyncProgress,
+            includeSessionSync: true,
+            sessionSyncMode: SessionSyncMode.downloadOnly,
+          );
+          _clearPersistentError();
+        } else {
+          await _syncCoordinator.runCoreSync(
+            user: user,
+            trigger: trigger,
+            onProgress: null,
+            includeSessionSync: true,
+          );
+          _clearPersistentError();
+        }
+        if (showOverlay) {
+          unawaited(_refreshMarketplaceState(surfaceAuthErrors: true));
+        } else {
+          await _refreshMarketplaceState(surfaceAuthErrors: false);
+        }
       }
-      if (showOverlay) {
-        unawaited(_refreshMarketplaceState(surfaceAuthErrors: true));
+
+      final remoteUserId = user.remoteUserId;
+      if (remoteUserId != null && remoteUserId > 0) {
+        await runWithBrowserExclusiveLock<void>(
+          browserSyncLockName(remoteUserId),
+          syncAction,
+        );
       } else {
-        await _refreshMarketplaceState(surfaceAuthErrors: false);
+        await syncAction();
       }
     } on HomeSyncException catch (error) {
       syncError = error.message;
@@ -394,16 +352,6 @@ class _TeacherHomePageState extends State<TeacherHomePage>
                         );
                       },
                       child: const Text('Subject Admin'),
-                    ),
-                    ElevatedButton(
-                      onPressed: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => const TeacherStudyModePage(),
-                          ),
-                        );
-                      },
-                      child: const Text('Student Study Mode'),
                     ),
                   ],
                 ),
@@ -727,15 +675,9 @@ class _TeacherHomePageState extends State<TeacherHomePage>
     });
 
     String? temporarySourcePath;
-    Directory? targetDir;
+    File? exportedBundle;
     try {
       final services = context.read<AppServices>();
-      final destinationRoot = await FilePicker.platform.getDirectoryPath(
-        dialogTitle: 'Choose folder to save course',
-      );
-      if (destinationRoot == null || destinationRoot.trim().isEmpty) {
-        return;
-      }
       final source = await _resolveSaveSourcePath(
         services: services,
         course: course,
@@ -743,46 +685,27 @@ class _TeacherHomePageState extends State<TeacherHomePage>
       if (source.deleteAfterCopy) {
         temporarySourcePath = source.path;
       }
-      targetDir = await _createUniqueCourseSaveDirectory(
-        parentPath: destinationRoot,
-        courseName: course.subject,
+      exportedBundle = await CourseBundleService().createBundleFromFolder(
+        source.path,
       );
-      await _copyDirectoryContents(
-        sourcePath: source.path,
-        targetPath: targetDir.path,
+      await FilePicker.platform.saveFile(
+        dialogTitle: 'Export course ZIP',
+        fileName: '${_sanitizeCourseSaveFolderName(course.subject)}.zip',
+        type: FileType.custom,
+        allowedExtensions: const <String>['zip'],
+        bytes: await exportedBundle.readAsBytes(),
       );
-      final auth = context.read<AuthController>();
-      final teacher = auth.currentUser;
-      if (teacher == null) {
-        throw StateError('Teacher is not signed in.');
-      }
-      final preview = await services.courseService.previewCourseLoad(
-        folderPath: targetDir.path,
-        courseVersionId: course.id,
-      );
-      if (!preview.success) {
-        throw StateError(preview.message);
-      }
-      final loadResult = await services.courseService.applyCourseLoad(
-        teacherId: teacher.id,
-        preview: preview,
-        mode: CourseReloadMode.override,
-      );
-      if (!loadResult.success) {
-        throw StateError(loadResult.message);
-      }
       _setPersistentMessage(
-        'Saved "${course.subject}" course files to ${targetDir.path} '
-        'and set it as the editable source folder.',
+        'Exported "${course.subject}" as a course ZIP.',
       );
     } catch (error) {
-      if (targetDir != null && targetDir.existsSync()) {
-        await targetDir.delete(recursive: true);
-      }
       _setPersistentMessage(
         'Failed to save "${course.subject}" course files: $error',
       );
     } finally {
+      if (exportedBundle != null && exportedBundle.existsSync()) {
+        await exportedBundle.delete();
+      }
       if (temporarySourcePath != null) {
         final temporarySource = Directory(temporarySourcePath);
         if (temporarySource.existsSync()) {
@@ -837,30 +760,6 @@ class _TeacherHomePageState extends State<TeacherHomePage>
     );
   }
 
-  Future<Directory> _createUniqueCourseSaveDirectory({
-    required String parentPath,
-    required String courseName,
-  }) async {
-    final parent = Directory(parentPath);
-    if (!parent.existsSync()) {
-      await parent.create(recursive: true);
-    }
-    final baseName = _sanitizeCourseSaveFolderName(courseName);
-    var candidate = Directory(p.join(parent.path, baseName));
-    if (!candidate.existsSync()) {
-      await candidate.create(recursive: true);
-      return candidate;
-    }
-
-    final timestamp = DateTime.now()
-        .toUtc()
-        .toIso8601String()
-        .replaceAll(RegExp(r'[:.]'), '-');
-    candidate = Directory(p.join(parent.path, '${baseName}_$timestamp'));
-    await candidate.create(recursive: true);
-    return candidate;
-  }
-
   String _sanitizeCourseSaveFolderName(String value) {
     var safe = value
         .trim()
@@ -899,40 +798,6 @@ class _TeacherHomePageState extends State<TeacherHomePage>
       safe = '${safe}_course';
     }
     return safe;
-  }
-
-  Future<void> _copyDirectoryContents({
-    required String sourcePath,
-    required String targetPath,
-  }) async {
-    final source = Directory(sourcePath);
-    if (!source.existsSync()) {
-      throw StateError('Source course folder not found: $sourcePath');
-    }
-    final target = Directory(targetPath);
-    final normalizedSource = p.normalize(source.absolute.path);
-    final normalizedTarget = p.normalize(target.absolute.path);
-    if (p.equals(normalizedSource, normalizedTarget) ||
-        p.isWithin(normalizedSource, normalizedTarget)) {
-      throw StateError('Target folder cannot be inside the source folder.');
-    }
-
-    await target.create(recursive: true);
-    await for (final entity
-        in source.list(recursive: true, followLinks: false)) {
-      final relativePath = p.relative(entity.path, from: source.path);
-      if (relativePath == '.') {
-        continue;
-      }
-      final outputPath = p.join(target.path, relativePath);
-      if (entity is Directory) {
-        await Directory(outputPath).create(recursive: true);
-      } else if (entity is File) {
-        final outputFile = File(outputPath);
-        await outputFile.parent.create(recursive: true);
-        await entity.copy(outputFile.path);
-      }
-    }
   }
 
   Future<String> _resolveUploadSourcePath({

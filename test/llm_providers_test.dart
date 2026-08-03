@@ -40,6 +40,10 @@ void main() {
         anthropic.models,
         isNot(contains('claude-3-5-sonnet-20240620')),
       );
+      expect(
+        anthropic.extraHeaders['anthropic-dangerous-direct-browser-access'],
+        equals('true'),
+      );
 
       final gemini = LlmProviders.findById(providers, 'gemini');
       expect(
@@ -59,17 +63,7 @@ void main() {
       expect(openAi.supportsStt, isTrue);
 
       final openAiCodex = LlmProviders.findById(providers, 'openai-codex');
-      expect(openAiCodex, isNotNull);
-      expect(
-        openAiCodex!.baseUrl,
-        equals('https://chatgpt.com/backend-api'),
-      );
-      expect(openAiCodex.authMode, equals(LlmAuthMode.openAiCodexOAuth));
-      expect(
-        openAiCodex.apiFormat,
-        equals(LlmApiFormat.openAiCodexResponses),
-      );
-      expect(openAiCodex.models, contains('gpt-5.5'));
+      expect(openAiCodex, isNull);
 
       final siliconflow = LlmProviders.findById(providers, 'siliconflow');
       expect(siliconflow!.supportsTts, isTrue);

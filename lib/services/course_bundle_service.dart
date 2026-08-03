@@ -1,12 +1,14 @@
-import 'dart:io';
+import 'dart:convert';
 import 'dart:isolate';
 import 'dart:typed_data';
-import 'dart:convert';
 
-import 'package:archive/archive_io.dart';
+import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+
+import 'file_system.dart';
+import 'storage_directories.dart';
 
 import '../models/skill_tree.dart';
 import 'prompt_bundle_compat.dart';
@@ -25,7 +27,38 @@ class CourseKpDiffSummary {
   bool get hasChanges => addedCount > 0 || removedCount > 0 || updatedCount > 0;
 }
 
+class CourseBundleSafetyLimits {
+  const CourseBundleSafetyLimits({
+    this.maxCompressedBytes = browserMaxCompressedBytes,
+    this.maxUncompressedBytes = browserMaxUncompressedBytes,
+    this.maxEntryCount = browserMaxEntryCount,
+    this.maxExpansionRatio = browserMaxExpansionRatio,
+  })  : assert(maxCompressedBytes > 0),
+        assert(maxUncompressedBytes > 0),
+        assert(maxEntryCount > 0),
+        assert(maxExpansionRatio > 0);
+
+  // The server accepts larger archival transfers, but the Chrome client fully
+  // buffers ZIP input and therefore enforces a smaller memory-safe ceiling.
+  static const int serverDefaultMaxBundleBytes = 1024 * 1024 * 1024;
+  static const int browserMaxCompressedBytes = 64 * 1024 * 1024;
+  static const int browserMaxUncompressedBytes = 256 * 1024 * 1024;
+  static const int browserMaxEntryCount = 10000;
+  static const int browserMaxExpansionRatio = 100;
+
+  static const CourseBundleSafetyLimits defaults = CourseBundleSafetyLimits();
+
+  final int maxCompressedBytes;
+  final int maxUncompressedBytes;
+  final int maxEntryCount;
+  final int maxExpansionRatio;
+}
+
 class CourseBundleService {
+  CourseBundleService({
+    this.safetyLimits = CourseBundleSafetyLimits.defaults,
+  });
+
   static const String promptMetadataEntryPath = kCurrentPromptMetadataEntryPath;
   static const int _backgroundBundleThresholdBytes = 256 * 1024;
   static const List<String> _questionLevels = <String>[
@@ -34,6 +67,17 @@ class CourseBundleService {
     'hard',
   ];
   static final RegExp _idPattern = RegExp(r'^(\d+(?:\.\d+)*)\s*(.+)$');
+
+  final CourseBundleSafetyLimits safetyLimits;
+
+  void validateCompressedByteLength(int byteLength) {
+    if (byteLength < 0 || byteLength > safetyLimits.maxCompressedBytes) {
+      throw FormatException(
+        'Course bundle exceeds the '
+        '${safetyLimits.maxCompressedBytes}-byte compressed limit.',
+      );
+    }
+  }
 
   Future<File> createBundleFromFolder(
     String folderPath, {
@@ -46,41 +90,39 @@ class CourseBundleService {
     }
     final requiredEntries = await _collectRequiredBundleEntries(normalized);
     final tempDir = await getTemporaryDirectory();
+    await tempDir.create(recursive: true);
     final safeName = _sanitizeName(p.basename(normalized));
     final zipPath = p.join(
       tempDir.path,
       'bundle_${safeName}_${DateTime.now().millisecondsSinceEpoch}.zip',
     );
-    final encoder = ZipFileEncoder();
-    encoder.create(zipPath);
+    final archive = Archive();
     for (final entry in requiredEntries) {
-      encoder.addFile(entry.file, entry.archivePath);
+      final bytes = await entry.file.readAsBytes();
+      archive.addFile(
+        ArchiveFile(entry.archivePath, bytes.length, bytes),
+      );
     }
-    File? metadataFile;
     if (promptMetadata != null) {
-      metadataFile = File(
-        p.join(
-          tempDir.path,
-          'prompt_bundle_${DateTime.now().millisecondsSinceEpoch}.json',
-        ),
+      final bytes = utf8.encode(jsonEncode(promptMetadata));
+      archive.addFile(
+        ArchiveFile(promptMetadataEntryPath, bytes.length, bytes),
       );
-      await metadataFile.writeAsString(
-        jsonEncode(promptMetadata),
-        encoding: utf8,
-      );
-      encoder.addFile(metadataFile, promptMetadataEntryPath);
     }
-    encoder.close();
-    if (metadataFile != null && metadataFile.existsSync()) {
-      await metadataFile.delete();
+    final encoded = ZipEncoder().encode(archive);
+    archive.clearSync();
+    if (encoded == null) {
+      throw StateError('Failed to encode course bundle.');
     }
     final bundleFile = File(zipPath);
+    await bundleFile.writeAsBytes(encoded, flush: true);
     await validateBundleForImport(bundleFile);
     return bundleFile;
   }
 
   Future<String> createTempBundlePath({String? label}) async {
     final tempDir = await getTemporaryDirectory();
+    await tempDir.create(recursive: true);
     final safeName = _sanitizeName(label ?? 'course');
     return p.join(
       tempDir.path,
@@ -103,17 +145,11 @@ class CourseBundleService {
     );
     final targetDir = Directory(targetPath);
     targetDir.createSync(recursive: true);
-    final input = InputFileStream(bundleFile.path);
-    Archive? archive;
+    final archive = _decodeBundle(await _readBundleBytes(bundleFile));
     try {
-      archive = ZipDecoder().decodeBuffer(input);
-      _validateArchivePaths(archive);
-      // archive.extractArchiveToDisk is async in archive 3.x. Must await to
-      // avoid returning before contents/context files are written.
-      await extractArchiveToDisk(archive, targetPath);
+      await _extractArchiveSafely(archive, targetPath);
     } finally {
-      archive?.clearSync();
-      input.close();
+      archive.clearSync();
     }
     return _resolveExtractedCourseRoot(targetPath);
   }
@@ -133,7 +169,7 @@ class CourseBundleService {
     );
     final targetDir = Directory(targetPath);
     targetDir.createSync(recursive: true);
-    final indexed = _indexBundleArchive(bundleFile.path);
+    final indexed = _indexBundleArchive(await _readBundleBytes(bundleFile));
     final contentsBytes = indexed.entryByName[indexed.selectedContentsName];
     if (contentsBytes == null) {
       throw StateError('Bundle is missing contents.txt or context.txt.');
@@ -160,12 +196,15 @@ class CourseBundleService {
     if (!bundleFile.existsSync()) {
       throw StateError('Bundle file not found: ${bundleFile.path}');
     }
-    final bundlePath = bundleFile.path;
-    if (bundleFile.lengthSync() < _backgroundBundleThresholdBytes) {
-      return _readPromptMetadataFromPath(bundlePath);
+    final bytes = await _readBundleBytes(bundleFile);
+    if (kIsWeb || bundleFile.lengthSync() < _backgroundBundleThresholdBytes) {
+      return _readPromptMetadataFromBytes(bytes);
     }
+    final limits = safetyLimits;
     return Isolate.run<Map<String, dynamic>?>(() {
-      return CourseBundleService()._readPromptMetadataFromPath(bundlePath);
+      return CourseBundleService(
+        safetyLimits: limits,
+      )._readPromptMetadataFromBytes(bytes);
     });
   }
 
@@ -181,11 +220,12 @@ class CourseBundleService {
     );
     final targetDir = Directory(targetPath);
     targetDir.createSync(recursive: true);
-    final archive = ZipDecoder().decodeBytes(bytes, verify: true);
-    _validateArchivePaths(archive);
-    // archive.extractArchiveToDisk is async in archive 3.x. Must await to
-    // avoid returning before contents/context files are written.
-    await extractArchiveToDisk(archive, targetPath);
+    final archive = _decodeBundle(bytes);
+    try {
+      await _extractArchiveSafely(archive, targetPath);
+    } finally {
+      archive.clearSync();
+    }
     return _resolveExtractedCourseRoot(targetPath);
   }
 
@@ -193,13 +233,16 @@ class CourseBundleService {
     if (!bundleFile.existsSync()) {
       throw StateError('Bundle file not found: ${bundleFile.path}');
     }
-    final bundlePath = bundleFile.path;
-    if (bundleFile.lengthSync() < _backgroundBundleThresholdBytes) {
-      _validateBundleForImportPath(bundlePath);
+    final bytes = await _readBundleBytes(bundleFile);
+    if (kIsWeb || bundleFile.lengthSync() < _backgroundBundleThresholdBytes) {
+      _validateBundleForImportBytes(bytes);
       return;
     }
+    final limits = safetyLimits;
     await Isolate.run<void>(() {
-      CourseBundleService()._validateBundleForImportPath(bundlePath);
+      CourseBundleService(
+        safetyLimits: limits,
+      )._validateBundleForImportBytes(bytes);
     });
   }
 
@@ -211,7 +254,7 @@ class CourseBundleService {
     if (!bundleFile.existsSync()) {
       throw StateError('Bundle file not found: ${bundleFile.path}');
     }
-    final bytes = await bundleFile.readAsBytes();
+    final bytes = await _readBundleBytes(bundleFile);
     return sha256.convert(bytes).toString();
   }
 
@@ -222,19 +265,21 @@ class CourseBundleService {
     if (!bundleFile.existsSync()) {
       throw StateError('Bundle file not found: ${bundleFile.path}');
     }
-    final bundlePath = bundleFile.path;
+    final bytes = await _readBundleBytes(bundleFile);
     final normalizedOverride = promptMetadataOverride == null
         ? null
         : Map<String, dynamic>.from(promptMetadataOverride);
-    if (bundleFile.lengthSync() < _backgroundBundleThresholdBytes) {
-      return _computeBundleSemanticHashFromPath(
-        bundlePath,
+    if (kIsWeb || bundleFile.lengthSync() < _backgroundBundleThresholdBytes) {
+      return _computeBundleSemanticHashFromBytes(
+        bytes,
         promptMetadataOverride: normalizedOverride,
       );
     }
+    final limits = safetyLimits;
     return Isolate.run<String>(() {
-      return CourseBundleService()._computeBundleSemanticHashFromPath(
-        bundlePath,
+      return CourseBundleService(safetyLimits: limits)
+          ._computeBundleSemanticHashFromBytes(
+        bytes,
         promptMetadataOverride: normalizedOverride,
       );
     });
@@ -254,7 +299,7 @@ class CourseBundleService {
     if (normalizedCandidates.isEmpty) {
       return null;
     }
-    final indexed = _indexBundleArchive(bundleFile.path);
+    final indexed = _indexBundleArchive(await _readBundleBytes(bundleFile));
     final candidateNames = <String>{
       ...normalizedCandidates,
       if (indexed.selectedRoot.isNotEmpty)
@@ -271,11 +316,10 @@ class CourseBundleService {
     return null;
   }
 
-  Map<String, dynamic>? _readPromptMetadataFromPath(String bundlePath) {
-    final input = InputFileStream(bundlePath);
+  Map<String, dynamic>? _readPromptMetadataFromBytes(List<int> bytes) {
     Archive? archive;
     try {
-      archive = ZipDecoder().decodeBuffer(input);
+      archive = _decodeBundle(bytes);
       for (final file in archive) {
         if (!file.isFile) {
           continue;
@@ -294,16 +338,13 @@ class CourseBundleService {
       return null;
     } finally {
       archive?.clearSync();
-      input.close();
     }
   }
 
-  void _validateBundleForImportPath(String bundlePath) {
-    final input = InputFileStream(bundlePath);
+  void _validateBundleForImportBytes(List<int> bytes) {
     Archive? archive;
     try {
-      archive = ZipDecoder().decodeBuffer(input);
-      _validateArchivePaths(archive);
+      archive = _decodeBundle(bytes);
 
       final fileEntries = archive.files.where((entry) {
         if (!entry.isFile) {
@@ -406,18 +447,16 @@ class CourseBundleService {
       }
     } finally {
       archive?.clearSync();
-      input.close();
     }
   }
 
-  String _computeBundleSemanticHashFromPath(
-    String bundlePath, {
+  String _computeBundleSemanticHashFromBytes(
+    List<int> bytes, {
     Map<String, dynamic>? promptMetadataOverride,
   }) {
-    final input = InputFileStream(bundlePath);
     Archive? archive;
     try {
-      archive = ZipDecoder().decodeBuffer(input);
+      archive = _decodeBundle(bytes);
       final files = <_BundleSemanticFile>[];
       var sawPromptMetadata = false;
       for (final entry in archive.files) {
@@ -483,20 +522,17 @@ class CourseBundleService {
       return digest.toString();
     } finally {
       archive?.clearSync();
-      input.close();
     }
   }
 
-  void _cloneBundleWithPromptMetadataToPath({
-    required String sourcePath,
-    required String targetPath,
+  List<int> _cloneBundleWithPromptMetadataBytes({
+    required List<int> sourceBytes,
     Map<String, dynamic>? promptMetadata,
   }) {
-    final input = InputFileStream(sourcePath);
     Archive? sourceArchive;
     Archive? archive;
     try {
-      sourceArchive = ZipDecoder().decodeBuffer(input);
+      sourceArchive = _decodeBundle(sourceBytes);
       archive = Archive();
       for (final entry in sourceArchive.files) {
         if (!entry.isFile) {
@@ -540,11 +576,10 @@ class CourseBundleService {
       if (bytes == null) {
         throw StateError('Failed to encode cached course bundle.');
       }
-      File(targetPath).writeAsBytesSync(bytes, flush: true);
+      return bytes;
     } finally {
       archive?.clearSync();
       sourceArchive?.clearSync();
-      input.close();
     }
   }
 
@@ -558,26 +593,28 @@ class CourseBundleService {
     }
     final targetPath = await createTempBundlePath(label: label);
     final targetFile = File(targetPath);
-    final sourcePath = sourceBundle.path;
+    final sourceBytes = await _readBundleBytes(sourceBundle);
     final normalizedPromptMetadata = promptMetadata == null
         ? null
         : Map<String, dynamic>.from(promptMetadata);
-    if (sourceBundle.lengthSync() < _backgroundBundleThresholdBytes) {
-      _cloneBundleWithPromptMetadataToPath(
-        sourcePath: sourcePath,
-        targetPath: targetPath,
+    if (kIsWeb || sourceBundle.lengthSync() < _backgroundBundleThresholdBytes) {
+      final bytes = _cloneBundleWithPromptMetadataBytes(
+        sourceBytes: sourceBytes,
         promptMetadata: normalizedPromptMetadata,
       );
+      await targetFile.writeAsBytes(bytes, flush: true);
       await validateBundleForImport(targetFile);
       return targetFile;
     }
-    await Isolate.run<void>(() {
-      CourseBundleService()._cloneBundleWithPromptMetadataToPath(
-        sourcePath: sourcePath,
-        targetPath: targetPath,
+    final limits = safetyLimits;
+    final bytes = await Isolate.run<List<int>>(() {
+      return CourseBundleService(safetyLimits: limits)
+          ._cloneBundleWithPromptMetadataBytes(
+        sourceBytes: sourceBytes,
         promptMetadata: normalizedPromptMetadata,
       );
     });
+    await targetFile.writeAsBytes(bytes, flush: true);
     await validateBundleForImport(targetFile);
     return targetFile;
   }
@@ -616,12 +653,10 @@ class CourseBundleService {
     return root;
   }
 
-  _IndexedBundleArchive _indexBundleArchive(String bundlePath) {
-    final input = InputFileStream(bundlePath);
+  _IndexedBundleArchive _indexBundleArchive(List<int> bytes) {
     Archive? archive;
     try {
-      archive = ZipDecoder().decodeBuffer(input);
-      _validateArchivePaths(archive);
+      archive = _decodeBundle(bytes);
       final entryByName = <String, List<int>>{};
       for (final entry in archive.files) {
         if (!entry.isFile) {
@@ -682,19 +717,470 @@ class CourseBundleService {
       );
     } finally {
       archive?.clearSync();
-      input.close();
+    }
+  }
+
+  Future<Uint8List> _readBundleBytes(File bundleFile) async {
+    validateCompressedByteLength(bundleFile.lengthSync());
+    final bytes = await bundleFile.readAsBytes();
+    validateCompressedByteLength(bytes.length);
+    return bytes;
+  }
+
+  Archive _decodeBundle(List<int> bytes) {
+    validateCompressedByteLength(bytes.length);
+    _preflightZipDirectory(bytes);
+    final archive = ZipDecoder().decodeBytes(bytes, verify: false);
+    try {
+      _validateArchiveMetadata(archive);
+      _validateArchivePaths(archive);
+      return _materializeArchiveSafely(archive);
+    } catch (_) {
+      archive.clearSync();
+      rethrow;
+    }
+  }
+
+  void _validateArchiveMetadata(Archive archive) {
+    if (archive.files.length > safetyLimits.maxEntryCount) {
+      throw FormatException(
+        'Course bundle contains more than '
+        '${safetyLimits.maxEntryCount} entries.',
+      );
+    }
+    var totalUncompressedBytes = 0;
+    for (final entry in archive.files) {
+      final uncompressedBytes = entry.size;
+      final compressedBytes = entry.rawContent?.length ?? 0;
+      if (uncompressedBytes < 0 || compressedBytes < 0) {
+        throw const FormatException('Course bundle has an invalid entry size.');
+      }
+      totalUncompressedBytes += uncompressedBytes;
+      if (totalUncompressedBytes > safetyLimits.maxUncompressedBytes) {
+        throw FormatException(
+          'Course bundle exceeds the '
+          '${safetyLimits.maxUncompressedBytes}-byte uncompressed limit.',
+        );
+      }
+      _validateExpansionRatio(
+        uncompressedBytes: uncompressedBytes,
+        compressedBytes: compressedBytes,
+      );
+    }
+  }
+
+  Archive _materializeArchiveSafely(Archive archive) {
+    final materialized = Archive();
+    var totalUncompressedBytes = 0;
+    try {
+      for (final entry in archive.files) {
+        final content = _materializeEntrySafely(entry);
+        totalUncompressedBytes += content.length;
+        if (totalUncompressedBytes > safetyLimits.maxUncompressedBytes) {
+          throw FormatException(
+            'Course bundle exceeds the '
+            '${safetyLimits.maxUncompressedBytes}-byte uncompressed limit.',
+          );
+        }
+        final safeEntry = ArchiveFile(entry.name, content.length, content)
+          ..mode = entry.mode
+          ..ownerId = entry.ownerId
+          ..groupId = entry.groupId
+          ..lastModTime = entry.lastModTime
+          ..isFile = entry.isFile
+          ..isSymbolicLink = entry.isSymbolicLink
+          ..nameOfLinkedFile = entry.nameOfLinkedFile
+          ..crc32 = entry.crc32
+          ..comment = entry.comment
+          ..compress = entry.compress;
+        materialized.addFile(safeEntry);
+      }
+      archive.clearSync();
+      return materialized;
+    } catch (_) {
+      materialized.clearSync();
+      rethrow;
+    }
+  }
+
+  Uint8List _materializeEntrySafely(ArchiveFile entry) {
+    final rawContent = entry.rawContent;
+    if (rawContent == null) {
+      throw const FormatException('Course bundle entry could not be read.');
+    }
+    final output = _BoundedOutputStream(entry.size);
+    try {
+      switch (entry.compressionType) {
+        case ArchiveFile.STORE:
+          output.writeInputStream(rawContent);
+          break;
+        case ArchiveFile.DEFLATE:
+          Inflate.stream(rawContent, output);
+          break;
+        default:
+          throw FormatException(
+            'Course bundle uses an unsupported compression method: '
+            '${entry.compressionType}',
+          );
+      }
+    } on FormatException {
+      rethrow;
+    } on RangeError catch (error) {
+      throw FormatException(
+        'Course bundle entry is malformed: ${entry.name} ($error)',
+      );
+    } on StateError catch (error) {
+      throw FormatException(
+        'Course bundle entry is malformed: ${entry.name} ($error)',
+      );
+    }
+    if (output.length != entry.size) {
+      throw FormatException(
+        'Course bundle entry size mismatch: ${entry.name}',
+      );
+    }
+    final content = output.bytes;
+    final expectedCrc = entry.crc32;
+    if (expectedCrc != null && getCrc32(content) != expectedCrc) {
+      throw FormatException('Course bundle entry CRC failed: ${entry.name}');
+    }
+    return content;
+  }
+
+  void _validateExpansionRatio({
+    required int uncompressedBytes,
+    required int compressedBytes,
+  }) {
+    if (uncompressedBytes == 0) {
+      return;
+    }
+    if (compressedBytes == 0 ||
+        uncompressedBytes > compressedBytes * safetyLimits.maxExpansionRatio) {
+      throw FormatException(
+        'Course bundle exceeds the '
+        '${safetyLimits.maxExpansionRatio}:1 expansion-ratio limit.',
+      );
+    }
+  }
+
+  void _preflightZipDirectory(List<int> bytes) {
+    const eocdSignature = 0x06054b50;
+    const zip64LocatorSignature = 0x07064b50;
+    const zip64EocdSignature = 0x06064b50;
+    const centralDirectoryEntrySignature = 0x02014b50;
+    const centralDirectoryDigitalSignature = 0x05054b50;
+    const localFileHeaderSignature = 0x04034b50;
+    const eocdSize = 22;
+    const maximumZipCommentBytes = 0xffff;
+    const centralDirectoryEntrySize = 46;
+    const localFileHeaderSize = 30;
+
+    if (bytes.length < eocdSize) {
+      throw const FormatException('Course bundle is not a valid ZIP archive.');
+    }
+    final minimumOffset = bytes.length - eocdSize - maximumZipCommentBytes;
+    var eocdOffset = -1;
+    for (var offset = bytes.length - eocdSize;
+        offset >= (minimumOffset < 0 ? 0 : minimumOffset);
+        offset--) {
+      if (_readUint32(bytes, offset) != eocdSignature) {
+        continue;
+      }
+      final commentLength = _readUint16(bytes, offset + 20);
+      if (offset + eocdSize + commentLength == bytes.length) {
+        eocdOffset = offset;
+        break;
+      }
+    }
+    if (eocdOffset < 0) {
+      throw const FormatException('Course bundle is not a valid ZIP archive.');
+    }
+
+    var declaredEntryCount = _readUint16(bytes, eocdOffset + 10);
+    var directorySize = _readUint32(bytes, eocdOffset + 12);
+    var directoryOffset = _readUint32(bytes, eocdOffset + 16);
+    final zip64LocatorOffset = eocdOffset - 20;
+    final hasZip64Locator = zip64LocatorOffset >= 0 &&
+        _readUint32(bytes, zip64LocatorOffset) == zip64LocatorSignature;
+    if (hasZip64Locator) {
+      final zip64OffsetHigh = _readUint32(bytes, zip64LocatorOffset + 12);
+      final zip64Offset = _readUint32(bytes, zip64LocatorOffset + 8);
+      if (zip64OffsetHigh != 0 ||
+          zip64Offset + 56 > bytes.length ||
+          _readUint32(bytes, zip64Offset) != zip64EocdSignature) {
+        throw const FormatException('Course bundle has invalid ZIP64 data.');
+      }
+      final entryCountHigh = _readUint32(bytes, zip64Offset + 36);
+      if (entryCountHigh != 0) {
+        throw FormatException(
+          'Course bundle contains more than '
+          '${safetyLimits.maxEntryCount} entries.',
+        );
+      }
+      declaredEntryCount = _readUint32(bytes, zip64Offset + 32);
+      final directorySizeHigh = _readUint32(bytes, zip64Offset + 44);
+      final directoryOffsetHigh = _readUint32(bytes, zip64Offset + 52);
+      if (directorySizeHigh != 0 || directoryOffsetHigh != 0) {
+        throw const FormatException('Course bundle ZIP64 data is too large.');
+      }
+      directorySize = _readUint32(bytes, zip64Offset + 40);
+      directoryOffset = _readUint32(bytes, zip64Offset + 48);
+    }
+    if (declaredEntryCount > safetyLimits.maxEntryCount) {
+      throw FormatException(
+        'Course bundle contains more than '
+        '${safetyLimits.maxEntryCount} entries.',
+      );
+    }
+
+    final directoryEnd = directoryOffset + directorySize;
+    if (directoryOffset < 0 ||
+        directoryEnd < directoryOffset ||
+        directoryEnd > eocdOffset) {
+      throw const FormatException(
+        'Course bundle has an invalid central directory.',
+      );
+    }
+    var entryCount = 0;
+    var totalUncompressedBytes = 0;
+    var offset = directoryOffset;
+    while (offset < directoryEnd) {
+      if (offset + 4 > directoryEnd) {
+        throw const FormatException(
+          'Course bundle has an invalid central directory.',
+        );
+      }
+      final signature = _readUint32(bytes, offset);
+      if (signature == centralDirectoryDigitalSignature) {
+        if (offset + 6 > directoryEnd) {
+          throw const FormatException(
+            'Course bundle has an invalid central directory.',
+          );
+        }
+        offset += 6 + _readUint16(bytes, offset + 4);
+        continue;
+      }
+      if (signature != centralDirectoryEntrySignature ||
+          offset + centralDirectoryEntrySize > directoryEnd) {
+        throw const FormatException(
+          'Course bundle has an invalid central directory.',
+        );
+      }
+      final versionMadeBy = _readUint16(bytes, offset + 4);
+      final flags = _readUint16(bytes, offset + 8);
+      final compressionMethod = _readUint16(bytes, offset + 10);
+      final expectedCrc = _readUint32(bytes, offset + 16);
+      final compressedBytes = _readUint32(bytes, offset + 20);
+      final uncompressedBytes = _readUint32(bytes, offset + 24);
+      if (compressedBytes == 0xffffffff || uncompressedBytes == 0xffffffff) {
+        throw const FormatException(
+          'Course bundle ZIP64 entries exceed browser safety limits.',
+        );
+      }
+      totalUncompressedBytes += uncompressedBytes;
+      if (totalUncompressedBytes > safetyLimits.maxUncompressedBytes) {
+        throw FormatException(
+          'Course bundle exceeds the '
+          '${safetyLimits.maxUncompressedBytes}-byte uncompressed limit.',
+        );
+      }
+      _validateExpansionRatio(
+        uncompressedBytes: uncompressedBytes,
+        compressedBytes: compressedBytes,
+      );
+      final fileNameLength = _readUint16(bytes, offset + 28);
+      final extraFieldLength = _readUint16(bytes, offset + 30);
+      final commentLength = _readUint16(bytes, offset + 32);
+      final externalFileAttributes = _readUint32(bytes, offset + 38);
+      final localHeaderOffset = _readUint32(bytes, offset + 42);
+      if ((flags & 0x41) != 0) {
+        throw const FormatException(
+          'Encrypted course bundle entries are not supported.',
+        );
+      }
+      if (compressionMethod != ArchiveFile.STORE &&
+          compressionMethod != ArchiveFile.DEFLATE) {
+        throw FormatException(
+          'Course bundle uses an unsupported compression method: '
+          '$compressionMethod',
+        );
+      }
+      final creatorSystem = versionMadeBy >> 8;
+      final unixFileType = (externalFileAttributes >> 16) & 0xf000;
+      if (creatorSystem == 3 && unixFileType == 0xa000) {
+        throw const FormatException(
+          'Course bundle symbolic links are not supported.',
+        );
+      }
+      _validateLocalZipEntry(
+        bytes,
+        localHeaderOffset: localHeaderOffset,
+        centralDirectoryOffset: directoryOffset,
+        flags: flags,
+        compressionMethod: compressionMethod,
+        expectedCrc: expectedCrc,
+        compressedBytes: compressedBytes,
+        uncompressedBytes: uncompressedBytes,
+        localFileHeaderSignature: localFileHeaderSignature,
+        localFileHeaderSize: localFileHeaderSize,
+      );
+      offset += centralDirectoryEntrySize +
+          fileNameLength +
+          extraFieldLength +
+          commentLength;
+      if (offset > directoryEnd) {
+        throw const FormatException(
+          'Course bundle has an invalid central directory.',
+        );
+      }
+      entryCount++;
+      if (entryCount > safetyLimits.maxEntryCount) {
+        throw FormatException(
+          'Course bundle contains more than '
+          '${safetyLimits.maxEntryCount} entries.',
+        );
+      }
+    }
+    if (offset != directoryEnd || entryCount != declaredEntryCount) {
+      throw const FormatException(
+        'Course bundle central-directory entry count is invalid.',
+      );
+    }
+  }
+
+  void _validateLocalZipEntry(
+    List<int> bytes, {
+    required int localHeaderOffset,
+    required int centralDirectoryOffset,
+    required int flags,
+    required int compressionMethod,
+    required int expectedCrc,
+    required int compressedBytes,
+    required int uncompressedBytes,
+    required int localFileHeaderSignature,
+    required int localFileHeaderSize,
+  }) {
+    if (localHeaderOffset < 0 ||
+        localHeaderOffset + localFileHeaderSize > centralDirectoryOffset ||
+        _readUint32(bytes, localHeaderOffset) != localFileHeaderSignature) {
+      throw const FormatException(
+        'Course bundle has an invalid local file header.',
+      );
+    }
+    final localFlags = _readUint16(bytes, localHeaderOffset + 6);
+    final localCompressionMethod = _readUint16(bytes, localHeaderOffset + 8);
+    if (localFlags != flags || localCompressionMethod != compressionMethod) {
+      throw const FormatException(
+        'Course bundle local and central headers do not match.',
+      );
+    }
+    final localFileNameLength = _readUint16(bytes, localHeaderOffset + 26);
+    final localExtraFieldLength = _readUint16(bytes, localHeaderOffset + 28);
+    final dataOffset = localHeaderOffset +
+        localFileHeaderSize +
+        localFileNameLength +
+        localExtraFieldLength;
+    final dataEnd = dataOffset + compressedBytes;
+    if (dataOffset < localHeaderOffset ||
+        dataEnd < dataOffset ||
+        dataEnd > centralDirectoryOffset) {
+      throw const FormatException(
+        'Course bundle compressed entry data is truncated.',
+      );
+    }
+    if ((flags & 0x08) == 0) {
+      if (_readUint32(bytes, localHeaderOffset + 14) != expectedCrc ||
+          _readUint32(bytes, localHeaderOffset + 18) != compressedBytes ||
+          _readUint32(bytes, localHeaderOffset + 22) != uncompressedBytes) {
+        throw const FormatException(
+          'Course bundle local and central entry sizes do not match.',
+        );
+      }
+      return;
+    }
+
+    var descriptorOffset = dataEnd;
+    if (descriptorOffset + 12 > centralDirectoryOffset) {
+      throw const FormatException(
+        'Course bundle data descriptor is truncated.',
+      );
+    }
+    if (_readUint32(bytes, descriptorOffset) == 0x08074b50) {
+      descriptorOffset += 4;
+      if (descriptorOffset + 12 > centralDirectoryOffset) {
+        throw const FormatException(
+          'Course bundle data descriptor is truncated.',
+        );
+      }
+    }
+    if (_readUint32(bytes, descriptorOffset) != expectedCrc ||
+        _readUint32(bytes, descriptorOffset + 4) != compressedBytes ||
+        _readUint32(bytes, descriptorOffset + 8) != uncompressedBytes) {
+      throw const FormatException(
+        'Course bundle data descriptor does not match its central header.',
+      );
+    }
+  }
+
+  int _readUint16(List<int> bytes, int offset) {
+    if (offset < 0 || offset + 2 > bytes.length) {
+      throw const FormatException('Course bundle ZIP data is truncated.');
+    }
+    return bytes[offset] | (bytes[offset + 1] << 8);
+  }
+
+  int _readUint32(List<int> bytes, int offset) {
+    if (offset < 0 || offset + 4 > bytes.length) {
+      throw const FormatException('Course bundle ZIP data is truncated.');
+    }
+    return bytes[offset] |
+        (bytes[offset + 1] << 8) |
+        (bytes[offset + 2] << 16) |
+        (bytes[offset + 3] << 24);
+  }
+
+  Future<void> _extractArchiveSafely(
+    Archive archive,
+    String targetPath,
+  ) async {
+    final normalizedTarget = p.normalize(targetPath);
+    for (final entry in archive.files) {
+      final normalizedName = _normalizeArchivePath(entry.name);
+      if (normalizedName.isEmpty || normalizedName == '.') {
+        continue;
+      }
+      final destination = p.normalize(
+        p.joinAll(<String>[
+          normalizedTarget,
+          ...p.posix.split(normalizedName),
+        ]),
+      );
+      if (!p.isWithin(normalizedTarget, destination)) {
+        throw FormatException('Bundle contains invalid path: ${entry.name}');
+      }
+      if (!entry.isFile) {
+        await Directory(destination).create(recursive: true);
+        continue;
+      }
+      final output = File(destination);
+      await output.parent.create(recursive: true);
+      await output.writeAsBytes(_entryBytes(entry), flush: true);
     }
   }
 
   void _validateArchivePaths(Archive archive) {
-    for (final file in archive) {
-      final normalized = p.normalize(file.name);
-      if (p.isAbsolute(normalized)) {
-        throw FormatException('Bundle contains invalid path: ${file.name}');
-      }
-      final parts = p.split(normalized);
-      if (parts.contains('..')) {
-        throw FormatException('Bundle contains invalid path: ${file.name}');
+    for (final entry in archive) {
+      final rawName = entry.name;
+      final posixName = rawName.replaceAll('\\', '/');
+      final segments = posixName.split('/');
+      final invalid = rawName.contains('\u0000') ||
+          p.posix.isAbsolute(posixName) ||
+          p.windows.isAbsolute(rawName) ||
+          segments.contains('..') ||
+          segments.any((segment) => segment.contains(':')) ||
+          entry.isSymbolicLink;
+      if (invalid) {
+        throw FormatException('Bundle contains invalid path: $rawName');
       }
     }
   }
@@ -1265,11 +1751,10 @@ class CourseBundleService {
       throw StateError('Bundle file not found: ${bundleFile.path}');
     }
 
-    final input = InputFileStream(bundleFile.path);
+    final bytes = await _readBundleBytes(bundleFile);
     Archive? archive;
     try {
-      archive = ZipDecoder().decodeBuffer(input);
-      _validateArchivePaths(archive);
+      archive = _decodeBundle(bytes);
       final entryByName = <String, ArchiveFile>{};
       for (final entry in archive.files) {
         if (!entry.isFile) {
@@ -1376,7 +1861,6 @@ class CourseBundleService {
       return _CourseKpSnapshot(kpFingerprints: fingerprints);
     } finally {
       archive?.clearSync();
-      input.close();
     }
   }
 
@@ -1471,6 +1955,118 @@ class CourseBundleService {
         '$nodeId/$level/questions.txt',
       ],
     ];
+  }
+}
+
+class _BoundedOutputStream extends OutputStreamBase {
+  _BoundedOutputStream(int maxBytes)
+      : assert(maxBytes >= 0),
+        _maxBytes = maxBytes,
+        _buffer = Uint8List(
+          maxBytes < _initialCapacity ? maxBytes : _initialCapacity,
+        );
+
+  static const int _initialCapacity = 32 * 1024;
+
+  final int _maxBytes;
+  Uint8List _buffer;
+
+  @override
+  int length = 0;
+
+  Uint8List get bytes => Uint8List.view(
+        _buffer.buffer,
+        _buffer.offsetInBytes,
+        length,
+      );
+
+  @override
+  void flush() {}
+
+  @override
+  void writeByte(int value) {
+    _ensureWritable(1);
+    _buffer[length++] = value & 0xff;
+  }
+
+  @override
+  void writeBytes(List<int> bytes, [int? len]) {
+    final byteCount = len ?? bytes.length;
+    if (byteCount < 0 || byteCount > bytes.length) {
+      throw RangeError.range(byteCount, 0, bytes.length, 'len');
+    }
+    _ensureWritable(byteCount);
+    _buffer.setRange(length, length + byteCount, bytes);
+    length += byteCount;
+  }
+
+  @override
+  void writeInputStream(InputStreamBase stream) {
+    final byteCount = stream.length;
+    _ensureWritable(byteCount);
+    writeBytes(stream.toUint8List(), byteCount);
+  }
+
+  @override
+  void writeUint16(int value) {
+    writeByte(value);
+    writeByte(value >> 8);
+  }
+
+  @override
+  void writeUint32(int value) {
+    writeUint16(value);
+    writeUint16(value >> 16);
+  }
+
+  @override
+  void writeUint64(int value) {
+    writeUint32(value);
+    writeUint32(value >> 32);
+  }
+
+  List<int> subset(int start, [int? end]) {
+    var normalizedStart = start < 0 ? length + start : start;
+    var normalizedEnd = end ?? length;
+    if (normalizedEnd < 0) {
+      normalizedEnd = length + normalizedEnd;
+    }
+    if (normalizedStart < 0 ||
+        normalizedEnd < normalizedStart ||
+        normalizedEnd > length) {
+      throw RangeError.range(
+        normalizedStart,
+        0,
+        length,
+        'start',
+      );
+    }
+    return Uint8List.view(
+      _buffer.buffer,
+      _buffer.offsetInBytes + normalizedStart,
+      normalizedEnd - normalizedStart,
+    );
+  }
+
+  void _ensureWritable(int byteCount) {
+    if (byteCount < 0 || byteCount > _maxBytes - length) {
+      throw FormatException(
+        'Course bundle entry exceeds its declared '
+        '$_maxBytes-byte size.',
+      );
+    }
+    final requiredLength = length + byteCount;
+    if (requiredLength <= _buffer.length) {
+      return;
+    }
+    var capacity = _buffer.length == 0 ? 1 : _buffer.length;
+    while (capacity < requiredLength) {
+      final doubled = capacity * 2;
+      capacity = doubled > _maxBytes ? _maxBytes : doubled;
+    }
+    final expanded = Uint8List(capacity);
+    expanded.setRange(0, length, _buffer);
+    _buffer = expanded;
   }
 }
 

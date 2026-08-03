@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased - 2026-08-02
+
+- Migrated the public client to Chrome/WebGUI only and removed the Windows and Android source, dependencies, and release targets.
+- Added durable browser database/file/audio persistence, continuous cross-tab-safe sync, account-bound auth guards, and bounded ZIP handling.
+- Replaced native artifact publishing with an atomic Flutter Web `/app/` release pipeline with preflight validation, full-tree checksums, rollback, a revalidated launcher, and deterministic gzip-compressed immutable release assets.
+- Added fail-closed API CORS and browser security configuration; production server/nginx deployment is required before web promotion, with no database schema migration.
+
 ## v1.0.59
 
 - Pass confirmation no longer waits for the streaming connection to close after the API has emitted `response.completed`

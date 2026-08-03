@@ -33,8 +33,297 @@ Future<void> _withMockTempDir(
   }
 }
 
+Uint8List _buildSafetyTestBundle({
+  int fillerBytes = 0,
+  int extraEntries = 0,
+}) {
+  final archive = Archive()
+    ..addFile(ArchiveFile.string('contents.txt', '1 Root\n'))
+    ..addFile(ArchiveFile.string('1_lecture.txt', 'Root lecture'));
+  if (fillerBytes > 0) {
+    archive.addFile(
+      ArchiveFile(
+        'filler.bin',
+        fillerBytes,
+        Uint8List(fillerBytes),
+      ),
+    );
+  }
+  for (var index = 0; index < extraEntries; index++) {
+    archive.addFile(ArchiveFile.string('extra_$index.txt', 'x'));
+  }
+  final encoded = ZipEncoder().encode(archive);
+  archive.clearSync();
+  if (encoded == null) {
+    throw StateError('Failed to create test bundle.');
+  }
+  return Uint8List.fromList(encoded);
+}
+
+Future<void> _withBundleFile(
+  Uint8List bytes,
+  Future<void> Function(File file) body,
+) async {
+  final tempDir = await Directory.systemTemp.createTemp(
+    'course_bundle_safety_test_',
+  );
+  try {
+    final file = File(p.join(tempDir.path, 'bundle.zip'));
+    await file.writeAsBytes(bytes, flush: true);
+    await body(file);
+  } finally {
+    await tempDir.delete(recursive: true);
+  }
+}
+
+Uint8List _forgeDeclaredEntrySize(
+  Uint8List source, {
+  required String entryName,
+  required int uncompressedBytes,
+}) {
+  const centralDirectorySignature = 0x02014b50;
+  const localFileHeaderSignature = 0x04034b50;
+  final bytes = Uint8List.fromList(source);
+  for (var offset = 0; offset + 46 <= bytes.length; offset++) {
+    if (_readUint32(bytes, offset) != centralDirectorySignature) {
+      continue;
+    }
+    final fileNameLength = _readUint16(bytes, offset + 28);
+    final extraFieldLength = _readUint16(bytes, offset + 30);
+    final commentLength = _readUint16(bytes, offset + 32);
+    final entryEnd =
+        offset + 46 + fileNameLength + extraFieldLength + commentLength;
+    if (entryEnd > bytes.length) {
+      continue;
+    }
+    final name =
+        utf8.decode(bytes.sublist(offset + 46, offset + 46 + fileNameLength));
+    if (name != entryName) {
+      continue;
+    }
+    final flags = _readUint16(bytes, offset + 8);
+    if ((flags & 0x08) != 0) {
+      throw StateError('Test helper does not support ZIP data descriptors.');
+    }
+    final localHeaderOffset = _readUint32(bytes, offset + 42);
+    if (localHeaderOffset + 30 > bytes.length ||
+        _readUint32(bytes, localHeaderOffset) != localFileHeaderSignature) {
+      throw StateError('Test ZIP has an invalid local header.');
+    }
+    _writeUint32(bytes, offset + 24, uncompressedBytes);
+    _writeUint32(bytes, localHeaderOffset + 22, uncompressedBytes);
+    return bytes;
+  }
+  throw StateError('Test ZIP entry not found: $entryName');
+}
+
+int _readUint16(List<int> bytes, int offset) {
+  return bytes[offset] | (bytes[offset + 1] << 8);
+}
+
+int _readUint32(List<int> bytes, int offset) {
+  return bytes[offset] |
+      (bytes[offset + 1] << 8) |
+      (bytes[offset + 2] << 16) |
+      (bytes[offset + 3] << 24);
+}
+
+void _writeUint32(Uint8List bytes, int offset, int value) {
+  bytes[offset] = value;
+  bytes[offset + 1] = value >> 8;
+  bytes[offset + 2] = value >> 16;
+  bytes[offset + 3] = value >> 24;
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('browser bundle limits stay below the server transfer ceiling', () {
+    expect(
+      CourseBundleSafetyLimits.defaults.maxCompressedBytes,
+      64 * 1024 * 1024,
+    );
+    expect(
+      CourseBundleSafetyLimits.defaults.maxCompressedBytes,
+      lessThan(CourseBundleSafetyLimits.serverDefaultMaxBundleBytes),
+    );
+    expect(
+      CourseBundleSafetyLimits.defaults.maxUncompressedBytes,
+      256 * 1024 * 1024,
+    );
+    expect(CourseBundleSafetyLimits.defaults.maxEntryCount, 10000);
+    expect(CourseBundleSafetyLimits.defaults.maxExpansionRatio, 100);
+  });
+
+  test('rejects a course bundle over the compressed byte limit', () async {
+    final bytes = _buildSafetyTestBundle();
+    final service = CourseBundleService(
+      safetyLimits: CourseBundleSafetyLimits(
+        maxCompressedBytes: bytes.length - 1,
+      ),
+    );
+    await _withBundleFile(bytes, (file) async {
+      await expectLater(
+        service.validateBundleForImport(file),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            contains('compressed limit'),
+          ),
+        ),
+      );
+    });
+  });
+
+  test('rejects a course bundle over the uncompressed byte limit', () async {
+    final bytes = _buildSafetyTestBundle(fillerBytes: 64);
+    final service = CourseBundleService(
+      safetyLimits: const CourseBundleSafetyLimits(
+        maxCompressedBytes: 1024 * 1024,
+        maxUncompressedBytes: 64,
+      ),
+    );
+    await _withBundleFile(bytes, (file) async {
+      await expectLater(
+        service.validateBundleForImport(file),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            contains('uncompressed limit'),
+          ),
+        ),
+      );
+    });
+  });
+
+  test('rejects a course bundle over the ZIP entry-count limit', () async {
+    final bytes = _buildSafetyTestBundle(extraEntries: 1);
+    final service = CourseBundleService(
+      safetyLimits: const CourseBundleSafetyLimits(
+        maxEntryCount: 2,
+      ),
+    );
+    await _withBundleFile(bytes, (file) async {
+      await expectLater(
+        service.validateBundleForImport(file),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            contains('more than 2 entries'),
+          ),
+        ),
+      );
+    });
+  });
+
+  test('rejects a course bundle over the expansion-ratio limit', () async {
+    final bytes = _buildSafetyTestBundle(fillerBytes: 4096);
+    final service = CourseBundleService(
+      safetyLimits: const CourseBundleSafetyLimits(
+        maxCompressedBytes: 1024 * 1024,
+        maxUncompressedBytes: 1024 * 1024,
+        maxExpansionRatio: 2,
+      ),
+    );
+    await _withBundleFile(bytes, (file) async {
+      await expectLater(
+        service.validateBundleForImport(file),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            contains('expansion-ratio limit'),
+          ),
+        ),
+      );
+    });
+  });
+
+  test(
+    'rejects forged deflate size before materializing undeclared output',
+    () async {
+      final archive = Archive()
+        ..addFile(ArchiveFile.string('contents.txt', '1 Root\n'))
+        ..addFile(ArchiveFile.string('1_lecture.txt', 'Root lecture'))
+        ..addFile(
+          ArchiveFile(
+            'filler.bin',
+            2 * 1024 * 1024,
+            Uint8List(2 * 1024 * 1024),
+          ),
+        );
+      final encoded = ZipEncoder().encode(archive);
+      archive.clearSync();
+      expect(encoded, isNotNull);
+      final forged = _forgeDeclaredEntrySize(
+        Uint8List.fromList(encoded!),
+        entryName: 'filler.bin',
+        uncompressedBytes: 8,
+      );
+      final service = CourseBundleService(
+        safetyLimits: const CourseBundleSafetyLimits(
+          maxCompressedBytes: 1024 * 1024,
+          maxUncompressedBytes: 128,
+        ),
+      );
+
+      await _withBundleFile(forged, (file) async {
+        await expectLater(
+          service.validateBundleForImport(file),
+          throwsA(
+            isA<FormatException>().having(
+              (error) => error.message,
+              'message',
+              contains('declared 8-byte size'),
+            ),
+          ),
+        );
+      });
+    },
+  );
+
+  test(
+    'rejects forged stored size before copying undeclared output',
+    () async {
+      final filler = Uint8List(4096);
+      final archive = Archive()
+        ..addFile(ArchiveFile.string('contents.txt', '1 Root\n'))
+        ..addFile(ArchiveFile.string('1_lecture.txt', 'Root lecture'))
+        ..addFile(
+          ArchiveFile.noCompress('filler.bin', filler.length, filler),
+        );
+      final encoded = ZipEncoder().encode(archive);
+      archive.clearSync();
+      expect(encoded, isNotNull);
+      final forged = _forgeDeclaredEntrySize(
+        Uint8List.fromList(encoded!),
+        entryName: 'filler.bin',
+        uncompressedBytes: 4,
+      );
+      final service = CourseBundleService(
+        safetyLimits: const CourseBundleSafetyLimits(
+          maxCompressedBytes: 1024 * 1024,
+          maxUncompressedBytes: 128,
+        ),
+      );
+
+      await _withBundleFile(forged, (file) async {
+        await expectLater(
+          service.validateBundleForImport(file),
+          throwsA(
+            isA<FormatException>().having(
+              (error) => error.message,
+              'message',
+              contains('declared 4-byte size'),
+            ),
+          ),
+        );
+      });
+    },
+  );
 
   test(
     'validateBundleForImport handles large zip entries without stream-lifecycle errors',

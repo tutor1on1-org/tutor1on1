@@ -1,12 +1,11 @@
-import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
 import '../security/hash_utils.dart';
+import 'browser_window.dart';
 import 'secure_storage_service.dart';
 
 class OpenAiCodexOAuthCredentials {
@@ -180,17 +179,7 @@ class OpenAiCodexOAuthService {
   }
 
   Future<void> openInBrowser(String url) async {
-    try {
-      if (Platform.isWindows) {
-        await Process.start('rundll32', ['url.dll,FileProtocolHandler', url]);
-      } else if (Platform.isMacOS) {
-        await Process.start('open', [url]);
-      } else if (Platform.isLinux) {
-        await Process.start('xdg-open', [url]);
-      }
-    } catch (_) {
-      // The dialog also shows the URL so the user can open it manually.
-    }
+    openBrowserWindow(url);
   }
 
   Future<OpenAiCodexOAuthCredentials> exchangeAuthorizationInput({
@@ -253,7 +242,7 @@ class OpenAiCodexOAuthService {
       },
     );
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw HttpException(
+      throw http.ClientException(
         'OpenAI OAuth model request failed: HTTP ${response.statusCode}: '
         '${response.body}',
       );
@@ -303,7 +292,7 @@ class OpenAiCodexOAuthService {
   ) async {
     final response = await _postToken(fields);
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw HttpException(
+      throw http.ClientException(
         'OpenAI OAuth token exchange failed: HTTP ${response.statusCode}: '
         '${response.body}',
       );
@@ -437,74 +426,10 @@ class OpenAiCodexOAuthService {
   }
 
   Future<_OAuthCallbackServer> _tryStartCallbackServer(String state) async {
-    try {
-      final server = await _bindCallbackServer();
-      final completer = Completer<String?>();
-      late final StreamSubscription<HttpRequest> subscription;
-      subscription = server.listen((request) async {
-        try {
-          final uri = request.uri;
-          if (uri.path != '/auth/callback') {
-            request.response.statusCode = HttpStatus.notFound;
-            request.response.write('Not found.');
-            await request.response.close();
-            return;
-          }
-          if (uri.queryParameters['state'] != state) {
-            request.response.statusCode = HttpStatus.badRequest;
-            request.response.write('OAuth state mismatch.');
-            await request.response.close();
-            if (!completer.isCompleted) {
-              completer.completeError(StateError('OAuth state mismatch.'));
-            }
-            return;
-          }
-          final code = uri.queryParameters['code']?.trim();
-          if (code == null || code.isEmpty) {
-            request.response.statusCode = HttpStatus.badRequest;
-            request.response.write('Missing OAuth authorization code.');
-            await request.response.close();
-            if (!completer.isCompleted) {
-              completer.completeError(
-                StateError('Missing OAuth authorization code.'),
-              );
-            }
-            return;
-          }
-          request.response.statusCode = HttpStatus.ok;
-          request.response.headers.contentType = ContentType.html;
-          request.response.write(
-            '<!doctype html><html><body>'
-            '<h2>OpenAI authentication completed.</h2>'
-            '<p>You can close this window and return to Tutor1on1.</p>'
-            '</body></html>',
-          );
-          await request.response.close();
-          if (!completer.isCompleted) {
-            completer.complete(code);
-          }
-        } catch (error) {
-          if (!completer.isCompleted) {
-            completer.completeError(error);
-          }
-        }
-      });
-      return _OAuthCallbackServer(
-        waitForCode: () => completer.future,
-        close: () async {
-          if (!completer.isCompleted) {
-            completer.complete(null);
-          }
-          await subscription.cancel();
-          await server.close(force: true);
-        },
-      );
-    } catch (_) {
-      return _OAuthCallbackServer(
-        waitForCode: () async => null,
-        close: () async {},
-      );
-    }
+    return const _OAuthCallbackServer(
+      waitForCode: _noAutomaticAuthorizationCode,
+      close: _closeNoopCallback,
+    );
   }
 
   List<int> _randomBytes(int length) {
@@ -515,19 +440,11 @@ class OpenAiCodexOAuthService {
   String _base64UrlEncode(List<int> bytes) {
     return base64Url.encode(bytes).replaceAll('=', '');
   }
-
-  Future<HttpServer> _bindCallbackServer() async {
-    try {
-      return await HttpServer.bind(
-        InternetAddress.loopbackIPv6,
-        1455,
-        v6Only: false,
-      );
-    } catch (_) {
-      return HttpServer.bind(InternetAddress.loopbackIPv4, 1455);
-    }
-  }
 }
+
+Future<String?> _noAutomaticAuthorizationCode() async => null;
+
+Future<void> _closeNoopCallback() async {}
 
 class _OAuthCallbackServer {
   const _OAuthCallbackServer({

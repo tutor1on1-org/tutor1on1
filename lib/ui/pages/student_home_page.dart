@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../../db/app_database.dart';
 import '../../models/skill_tree.dart';
 import '../../services/app_services.dart';
+import '../../services/browser_exclusive_lock.dart';
 import '../../services/home_sync_coordinator.dart';
 import '../../services/marketplace_api_service.dart';
 import '../../services/student_server_copy_service.dart';
@@ -31,18 +32,13 @@ class StudentHomePage extends StatefulWidget {
   State<StudentHomePage> createState() => _StudentHomePageState();
 }
 
-class _StudentHomePageState extends State<StudentHomePage>
-    with WidgetsBindingObserver {
-  static const Duration _autoSyncInterval = Duration(seconds: 60);
-  static const Duration _resumeSyncDelay = Duration(seconds: 3);
+class _StudentHomePageState extends State<StudentHomePage> {
   bool _syncStarted = false;
   bool _syncInProgress = false;
   bool _syncingFromServer = false;
   String _syncProgressMessage = '';
   double? _syncProgressValue;
   String? _syncProgressDetail;
-  Timer? _autoSyncTimer;
-  Timer? _resumeSyncTimer;
   late final MarketplaceApiService _marketplaceApi;
   late final HomeSyncCoordinator _syncCoordinator;
   late final StudentServerCopyService _serverCopyService;
@@ -56,7 +52,6 @@ class _StudentHomePageState extends State<StudentHomePage>
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     final services = context.read<AppServices>();
     _marketplaceApi =
         MarketplaceApiService(secureStorage: services.secureStorage);
@@ -68,25 +63,7 @@ class _StudentHomePageState extends State<StudentHomePage>
     _serverCopyService = StudentServerCopyService.fromAppServices(services);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _startSync();
-      _startAutoSync();
     });
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _autoSyncTimer?.cancel();
-    _resumeSyncTimer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _scheduleResumeSync();
-      return;
-    }
-    _stopAutoSync();
   }
 
   Future<void> _refreshRemoteEnrollmentState() async {
@@ -149,34 +126,6 @@ class _StudentHomePageState extends State<StudentHomePage>
     await _runSyncCycle(showOverlay: true);
   }
 
-  void _startAutoSync() {
-    _autoSyncTimer?.cancel();
-    _autoSyncTimer = Timer.periodic(_autoSyncInterval, (_) async {
-      await _runSyncCycle(showOverlay: false);
-    });
-  }
-
-  void _stopAutoSync() {
-    _autoSyncTimer?.cancel();
-    _autoSyncTimer = null;
-    _resumeSyncTimer?.cancel();
-    _resumeSyncTimer = null;
-  }
-
-  void _scheduleResumeSync() {
-    if (!_syncStarted || !mounted) {
-      return;
-    }
-    _resumeSyncTimer?.cancel();
-    _resumeSyncTimer = Timer(_resumeSyncDelay, () async {
-      if (!mounted) {
-        return;
-      }
-      _startAutoSync();
-      await _runSyncCycle(showOverlay: false);
-    });
-  }
-
   Future<void> _runSyncCycle({required bool showOverlay}) async {
     if (!mounted || _syncInProgress) {
       return;
@@ -201,35 +150,47 @@ class _StudentHomePageState extends State<StudentHomePage>
     final trigger = showOverlay ? 'login' : 'timer';
     String? syncError;
     try {
-      if (showOverlay) {
-        await _syncCoordinator.runLoginSync(
-          user: user,
-          trigger: trigger,
-          onProgress: _applySyncProgress,
-          includeSessionSync: true,
-          sessionSyncMode: SessionSyncMode.downloadOnly,
-        );
-        _clearPersistentError();
-      } else {
-        await _syncCoordinator.runCoreSync(
-          user: user,
-          trigger: trigger,
-          onProgress: null,
-          includeEnrollmentSync: false,
-          includeSessionSync: true,
-          sessionSyncMode: SessionSyncMode.full,
-        );
-        _clearPersistentError();
+      Future<void> syncAction() async {
+        if (showOverlay) {
+          await _syncCoordinator.runLoginSync(
+            user: user,
+            trigger: trigger,
+            onProgress: _applySyncProgress,
+            includeSessionSync: true,
+            sessionSyncMode: SessionSyncMode.downloadOnly,
+          );
+          _clearPersistentError();
+        } else {
+          await _syncCoordinator.runCoreSync(
+            user: user,
+            trigger: trigger,
+            onProgress: null,
+            includeEnrollmentSync: false,
+            includeSessionSync: true,
+            sessionSyncMode: SessionSyncMode.full,
+          );
+          _clearPersistentError();
+        }
+        if (showOverlay) {
+          unawaited(_refreshLoginUiState(services: services, user: user));
+        } else {
+          await _syncRemoteStudyMode(
+            services: services,
+            user: user,
+            studyModeController: studyModeController,
+          );
+          await _refreshRemoteEnrollmentState();
+        }
       }
-      if (showOverlay) {
-        unawaited(_refreshLoginUiState(services: services, user: user));
-      } else {
-        await _syncRemoteStudyMode(
-          services: services,
-          user: user,
-          studyModeController: studyModeController,
+
+      final remoteUserId = user.remoteUserId;
+      if (remoteUserId != null && remoteUserId > 0) {
+        await runWithBrowserExclusiveLock<void>(
+          browserSyncLockName(remoteUserId),
+          syncAction,
         );
-        await _refreshRemoteEnrollmentState();
+      } else {
+        await syncAction();
       }
     } on HomeSyncException catch (error) {
       syncError = error.message;

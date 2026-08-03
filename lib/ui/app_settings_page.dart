@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -18,6 +17,7 @@ import '../services/audio_model_selection.dart';
 import '../services/marketplace_api_service.dart';
 import '../services/model_list_service.dart';
 import '../services/openai_codex_oauth_service.dart';
+import '../services/runtime_environment.dart';
 import '../services/student_server_copy_service.dart';
 import '../services/sync_progress.dart';
 import '../services/text_model_selection.dart';
@@ -115,8 +115,8 @@ class _SettingsPageState extends State<SettingsPage> {
       );
     }
 
-    final envBaseUrl = Platform.environment['OPENAI_BASE_URL']?.trim() ?? '';
-    final envModel = Platform.environment['OPENAI_MODEL']?.trim() ?? '';
+    final envBaseUrl = runtimeOpenAiBaseUrl;
+    final envModel = runtimeOpenAiModel;
     final providers = LlmProviders.defaultProviders(
       envBaseUrl: envBaseUrl,
       envModel: envModel,
@@ -147,7 +147,7 @@ class _SettingsPageState extends State<SettingsPage> {
       _logDirectoryController.text = settings.logDirectory ?? '';
       _mode = settings.llmMode;
       _sttAutoSend = settings.sttAutoSend;
-      _enterToSend = Platform.isAndroid ? false : settings.enterToSend;
+      _enterToSend = settings.enterToSend;
       _initialized = true;
     }
     _maybeLoadDeviceName(services);
@@ -426,10 +426,8 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         SwitchListTile(
           title: Text(l10n.enterToSendLabel),
-          value: Platform.isAndroid ? false : _enterToSend,
-          onChanged: Platform.isAndroid
-              ? null
-              : (value) => setState(() => _enterToSend = value),
+          value: _enterToSend,
+          onChanged: (value) => setState(() => _enterToSend = value),
         ),
         const SizedBox(height: 8),
         Row(
@@ -441,18 +439,6 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             ),
             const SizedBox(width: 8),
-            TextButton(
-              onPressed: () async {
-                final selected = await FilePicker.platform.getDirectoryPath();
-                if (selected == null) {
-                  return;
-                }
-                setState(() {
-                  _ttsAudioPathController.text = selected;
-                });
-              },
-              child: Text(l10n.browseButton),
-            ),
           ],
         ),
         const SizedBox(height: 8),
@@ -465,18 +451,6 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             ),
             const SizedBox(width: 8),
-            TextButton(
-              onPressed: () async {
-                final selected = await FilePicker.platform.getDirectoryPath();
-                if (selected == null) {
-                  return;
-                }
-                setState(() {
-                  _logDirectoryController.text = selected;
-                });
-              },
-              child: Text(l10n.browseButton),
-            ),
           ],
         ),
         const SizedBox(height: 8),
@@ -571,7 +545,7 @@ class _SettingsPageState extends State<SettingsPage> {
               logDirectory: resolvedLogDir,
               llmMode: _mode,
               sttAutoSend: _sttAutoSend,
-              enterToSend: Platform.isAndroid ? false : _enterToSend,
+              enterToSend: _enterToSend,
             );
             if (context.mounted) {
               _showMessage(context, l10n.settingsSavedMessage);
@@ -667,14 +641,6 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
               child: Text(l10n.changeStudentPasswordButton),
             ),
-          if (currentUser.role == 'teacher')
-            ElevatedButton(
-              onPressed: () => _showSetRemoteControlPinDialog(
-                context,
-                services,
-              ),
-              child: const Text('Set remote study control PIN'),
-            ),
         ],
         const Divider(height: 32),
         Text(
@@ -683,14 +649,14 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         ElevatedButton(
           onPressed: () async {
-            final path = await FilePicker.platform.saveFile(
+            final bytes = await services.backupService.exportBytes();
+            await FilePicker.platform.saveFile(
               dialogTitle: l10n.exportDbDialogTitle,
-              fileName: 'tutor1on1_backup.db',
+              fileName: 'tutor1on1_backup.json',
+              type: FileType.custom,
+              allowedExtensions: const ['json'],
+              bytes: bytes,
             );
-            if (path == null) {
-              return;
-            }
-            await services.backupService.exportTo(File(path));
             if (context.mounted) {
               _showMessage(context, l10n.backupExportedMessage);
             }
@@ -701,6 +667,9 @@ class _SettingsPageState extends State<SettingsPage> {
           onPressed: () async {
             final result = await FilePicker.platform.pickFiles(
               dialogTitle: l10n.restoreDbDialogTitle,
+              type: FileType.custom,
+              allowedExtensions: const ['json'],
+              withData: true,
             );
             if (result == null || result.files.isEmpty) {
               return;
@@ -709,8 +678,11 @@ class _SettingsPageState extends State<SettingsPage> {
             if (!confirm) {
               return;
             }
-            await services.backupService
-                .restoreFrom(File(result.files.single.path!));
+            final bytes = result.files.single.bytes;
+            if (bytes == null) {
+              throw StateError('The selected backup could not be read.');
+            }
+            await services.backupService.restoreFromBytes(bytes);
             if (context.mounted) {
               _showMessage(context, l10n.restoreCompletedMessage);
               RestartWidget.restartApp(context);
@@ -1096,7 +1068,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       logDirectory: resolvedLogDir,
                       llmMode: _mode,
                       sttAutoSend: _sttAutoSend,
-                      enterToSend: Platform.isAndroid ? false : _enterToSend,
+                      enterToSend: _enterToSend,
                     );
                     if (!provider.usesOpenAiCodexOAuth) {
                       await services.secureStorage
@@ -2264,63 +2236,6 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Future<void> _showSetRemoteControlPinDialog(
-    BuildContext context,
-    AppServices services,
-  ) async {
-    final pinController = TextEditingController();
-    final confirmController = TextEditingController();
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Remote study control PIN'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: pinController,
-              decoration: const InputDecoration(labelText: 'New PIN'),
-              obscureText: true,
-            ),
-            TextField(
-              controller: confirmController,
-              decoration: const InputDecoration(labelText: 'Confirm PIN'),
-              obscureText: true,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final pin = pinController.text.trim();
-              final confirm = confirmController.text.trim();
-              if (pin.isEmpty || confirm.isEmpty) {
-                return;
-              }
-              if (pin != confirm) {
-                _showMessage(context, 'PINs do not match.');
-                return;
-              }
-              final api = MarketplaceApiService(
-                secureStorage: services.secureStorage,
-              );
-              await api.upsertTeacherControlPin(controlPin: pin);
-              if (context.mounted) {
-                Navigator.of(dialogContext).pop();
-                _showMessage(context, 'Remote study control PIN updated.');
-              }
-            },
-            child: const Text('Save'),
-          ),
-        ],
       ),
     );
   }

@@ -1,151 +1,61 @@
-# Tutor1on1 Client
+# Tutor1on1 Web Client
 
-This repository is the client-only open-source snapshot of Tutor1on1. It exists so users can inspect the shipped Flutter application, review its network behavior, and verify that the published client does not include bundled secrets or an offline admin backdoor.
+This repository is the client-only open-source snapshot of Tutor1on1, a Flutter Web application for Chrome. It lets users inspect the shipped client, network behavior, browser storage, and release inputs without exposing the private backend repository.
 
 ## Scope
 
-Included in this snapshot:
+Included:
 
 - Flutter application code under `lib/`
-- Platform launchers for Android, iOS, macOS, Linux, and Windows
-- Client tests under `test/` and non-live `integration_test/` paths
-- Bundled assets under `assets/`
-- Static localized download website under `web/`
-- Public GitHub Release packaging helpers under `public_release/`
-- Tracked client-side support packages under `packages/` and `third_party/`
+- Browser bootstrap and pinned Drift assets under `web/`
+- Localized marketing pages under `website/`
+- Tests under `test/` and non-live `integration_test/` paths
+- Bundled course and prompt assets under `assets/`
 
-Intentionally excluded from this snapshot:
+Excluded:
 
-- Backend/server source under `remote/`
-- Host-bound live diagnostic integration tests and their account configuration
-- Private release, deploy, and internal maintenance scripts
-- Local `.env` files, logs, databases, build outputs, and other untracked files
-- Private runbooks and host-specific operational docs
+- Backend source under `remote/`
+- Host-bound live diagnostics and account configuration
+- Private deploy scripts, runbooks, secrets, logs, databases, and build outputs
 
-## What This Client Does
+## Runtime Model
 
-- Teacher workflows: course import/reload, marketplace upload, enrollment review, and artifact publishing
-- Student workflows: login, catalog browsing, enrollment request, bundle download, guided tutor sessions
-- Artifact-manifest sync for course and bundle updates
-- Optional LLM/TTS/STT integrations with user-supplied API keys
+- Chrome loads the app from `https://www.tutor1on1.org/app/`.
+- Drift stores local data in browser-supported SQLite/WASM storage.
+- Auth uses the official API at `https://api.tutor1on1.org` with bearer tokens.
+- Course, session, progress, and mistake-book data synchronize with the server.
+- Optional LLM, TTS, and STT integrations use the provider configuration selected by the user.
 
-## Transparency Notes
-
-This source tree does not ship:
-
-- Hardcoded Telegram, SMTP, or cloud API credentials
-- A built-in offline admin password
-- A local admin fallback login path when remote authentication fails
-
-The client stores data in two places:
-
-- Local app data, including the SQLite database and logs
-- OS-backed secure storage for auth tokens, per-provider API keys, and local encryption key material
-
-## Network Behavior Visible In Source
-
-Official app backend:
-
-- Default backend base URL: `https://api.tutor1on1.org`
-- This can be overridden at build time with `--dart-define=AUTH_BASE_URL=...`
-
-Optional user-configured model providers:
-
-- `https://api.openai.com/v1`
-- `https://openrouter.ai/api/v1`
-- `https://api.anthropic.com/v1`
-- `https://generativelanguage.googleapis.com/v1beta/openai`
-- `https://api.x.ai/v1`
-- `https://api.siliconflow.cn/v1`
-- `https://api.deepseek.com/v1`
-
-Speech features:
-
-- TTS uses OpenAI-compatible APIs when enabled
-- STT supports OpenAI-compatible APIs and SiliconFlow-compatible APIs
-
-Permissions visible in tracked client code:
-
-- Android: `android.permission.INTERNET`, `android.permission.RECORD_AUDIO`
-- iOS/macOS: microphone usage strings for speech-to-text
+The client does not contain hardcoded service credentials, an offline admin password, or an authentication fallback.
 
 ## Build
 
-Run from repository root:
-
 ```powershell
 flutter pub get
-flutter analyze
-flutter test
-flutter build apk --release
-flutter build windows --release
-flutter build macos --release
+powershell -ExecutionPolicy Bypass -File scripts/validate_web_shell.ps1
+flutter analyze --no-pub
+flutter test --no-pub
+flutter build web --release --base-href /app/ --pwa-strategy=none --no-pub
 ```
 
-Override the default backend only if you intentionally want to point the client at a different server:
+Override the backend only for an intentional non-production build:
 
 ```powershell
-flutter build windows --release --dart-define=AUTH_BASE_URL=https://example.com
+flutter build web --release --base-href /app/ --pwa-strategy=none --dart-define=AUTH_BASE_URL=https://example.com
 ```
 
-Do not enable insecure TLS outside local debugging:
+## Releases
 
-```powershell
-flutter run --dart-define=AUTH_ALLOW_INSECURE_TLS=true
-```
+- Current public release tag: `v1.0.60`
+- App version in `pubspec.yaml`: `1.0.60`
 
-## GitHub Releases
+The canonical private release wrapper validates the source, builds and boots one service-worker-free candidate, verifies production CORS, publishes source refs only after those gates pass, installs that exact attested candidate under an immutable versioned directory, and atomically promotes `/app/`; only the small launcher revalidates, while gzip-compressed runtime files use one-year immutable release URLs, and failed live verification restores the prior release.
 
-The public release flow is versioned around Git tags and GitHub Release assets.
-
-- Current public release tag: `v1.0.59`
-- App version in `pubspec.yaml`: `1.0.59`
-- Standard asset names:
-  - `Tutor1on1.apk`
-  - `Tutor1on1.zip`
-  - `SHA256SUMS.txt`
-
-Build release assets from this snapshot with:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File public_release/package_github_release.ps1 -ReleaseTag v1.0.59
-```
-
-Or publish the GitHub Release assets directly:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File public_release/publish_github_release.ps1 -ReleaseTag v1.0.59
-```
-
-That script builds Android and Windows release artifacts and writes them to:
-
-```text
-public_release/dist/v1.0.59/
-```
-
-The static website under `web/` displays the configured release tag and points download buttons at the stable canonical files on `https://api.tutor1on1.org/downloads`.
-
-The default website config currently targets:
-
-- GitHub repo slug: `tutor1on1-org/tutor1on1`
-- GitHub Release tag: `v1.0.59`
+Open the public app at `https://www.tutor1on1.org/app/`; every release is served from an immutable web candidate.
 
 ## Trust And Verification
 
-Open source alone does not prove that a published binary matches this source tree. A trustworthy release should publish:
-
-- The exact source tag or commit
-- A `SHA-256` hash for each artifact
-- A build command or CI workflow that reproduces the artifact from that tag
-
-See also:
-
-- `VERSIONING.md`
-- `CHANGELOG.md`
-
-## Status Of The Server
-
-This snapshot does not include the production server implementation. The official client can talk to the official Tutor1on1 service, but self-hosting the full backend is out of scope for this public snapshot.
+A release should identify the exact source tag, commit, immutable deployment id, build command, and pinned `drift_worker.js` plus `sqlite3.wasm` hashes. See `VERSIONING.md` and `CHANGELOG.md`.
 
 ## License
 

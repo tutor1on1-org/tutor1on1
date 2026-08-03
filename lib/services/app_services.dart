@@ -4,6 +4,8 @@ import '../llm/prompt_repository.dart';
 import '../llm/schema_validator.dart';
 import 'artifact_sync_api_service.dart';
 import 'backup_service.dart';
+import 'browser_audio_store.dart';
+import 'browser_storage_persistence.dart';
 import 'course_artifact_service.dart';
 import 'course_builder_service.dart';
 import 'course_service.dart';
@@ -46,6 +48,7 @@ class AppServices {
     required this.ttsService,
     required this.ttsLogRepository,
     required this.llmLogRepository,
+    required this.browserStorageProtected,
   });
 
   final AppDatabase db;
@@ -69,9 +72,21 @@ class AppServices {
   final TtsService ttsService;
   final TtsLogRepository ttsLogRepository;
   final LlmLogRepository llmLogRepository;
+  final bool browserStorageProtected;
 
   static Future<AppServices> create({AppDatabase? databaseOverride}) async {
+    final browserStorageProtected = await requestPersistentBrowserStorage();
     final db = databaseOverride ?? AppDatabase.open();
+    final messageIdColumn = db.chatMessages.id;
+    final messageRows = await (db.selectOnly(db.chatMessages)
+          ..addColumns([messageIdColumn]))
+        .get();
+    await BrowserAudioStore.pruneMessageAudio(
+      messageRows
+          .map((row) => row.read(messageIdColumn))
+          .whereType<int>()
+          .toSet(),
+    );
     final settingsRepository = SettingsRepository(db);
     final secureStorage = SecureStorageService();
     await secureStorage.ensureReadableOrReset();
@@ -172,6 +187,7 @@ class AppServices {
       ttsService: ttsService,
       ttsLogRepository: ttsLogRepository,
       llmLogRepository: llmLogRepository,
+      browserStorageProtected: browserStorageProtected,
     );
   }
 }

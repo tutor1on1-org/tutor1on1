@@ -1,9 +1,5 @@
-import 'dart:convert';
-import 'dart:io';
-
-import 'package:path/path.dart' as p;
-
 import '../db/app_database.dart';
+import 'browser_jsonl_store.dart';
 import 'log_crypto_service.dart';
 import 'settings_repository.dart';
 
@@ -67,15 +63,17 @@ class TtsLogEntry {
 
 class TtsLogRepository {
   TtsLogRepository(
-    this._settingsRepository, {
+    SettingsRepository _, {
     AppDatabase? db,
     LogCryptoService? logCrypto,
+    BrowserJsonlStore? store,
   })  : _db = db,
-        _logCrypto = logCrypto ?? LogCryptoService.instance;
+        _logCrypto = logCrypto ?? LogCryptoService.instance,
+        _store = store ?? const BrowserJsonlStore();
 
-  final SettingsRepository _settingsRepository;
   final AppDatabase? _db;
   final LogCryptoService _logCrypto;
+  final BrowserJsonlStore _store;
   Future<void> _writeQueue = Future.value();
 
   Future<void> appendEvent({
@@ -91,7 +89,6 @@ class TtsLogRepository {
   }) async {
     _writeQueue = _writeQueue.then((_) async {
       try {
-        final file = await _resolveFile();
         final scope = await _resolveScope(sessionId);
         final encryptedMessage =
             await _logCrypto.encryptForCurrentUser(_truncate(message, 800));
@@ -121,11 +118,7 @@ class TtsLogRepository {
           'owner_role': scope.ownerRole,
           'text_length': textLength,
         };
-        await file.writeAsString(
-          '${jsonEncode(payload)}\n',
-          mode: FileMode.append,
-          flush: true,
-        );
+        await _store.append('tts', payload);
       } catch (_) {
         // Ignore logging failures to avoid blocking TTS output.
       }
@@ -160,23 +153,9 @@ class TtsLogRepository {
     if (!_logCrypto.hasActiveKey) {
       return [];
     }
-    final file = await _resolveFile();
-    if (!await file.exists()) {
-      return [];
-    }
-    final bytes = await file.readAsBytes();
-    final content = utf8.decode(bytes, allowMalformed: true);
-    final lines = const LineSplitter().convert(content);
     final entries = <TtsLogEntry>[];
     final sessionScopeCache = <int, _LogScope>{};
-    for (final line in lines) {
-      if (line.trim().isEmpty) {
-        continue;
-      }
-      final decoded = jsonDecode(line);
-      if (decoded is! Map<String, dynamic>) {
-        throw StateError('TTS log row is not a JSON object.');
-      }
+    for (final decoded in await _store.read('tts')) {
       final isV2 = (decoded['log_version'] as num?)?.toInt() == 2;
       if (isV2) {
         final teacherId = (decoded['teacher_id'] as num?)?.toInt();
@@ -258,23 +237,6 @@ class TtsLogRepository {
       entries.add(TtsLogEntry.fromJson(decoded));
     }
     return entries.reversed.toList();
-  }
-
-  Future<File> _resolveFile() async {
-    final settings = await _settingsRepository.load();
-    final resolvedPath = (settings.ttsLogPath ?? '').trim();
-    final filePath = resolvedPath.isNotEmpty
-        ? resolvedPath
-        : p.join(Directory.current.path, 'tts_logs.jsonl');
-    final dir = Directory(p.dirname(filePath));
-    if (!await dir.exists()) {
-      await dir.create(recursive: true);
-    }
-    final file = File(filePath);
-    if (!await file.exists()) {
-      await file.create(recursive: true);
-    }
-    return file;
   }
 
   String _truncate(String value, int max) {

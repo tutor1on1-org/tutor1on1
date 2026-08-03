@@ -30,21 +30,15 @@ void main() {
       await tester.pumpWidget(const _BootstrapLoadingShell());
 
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
-      expect(find.byIcon(Icons.close), findsOneWidget);
+      expect(find.byIcon(Icons.close), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
 
-  testWidgets('can disable close action while writes are in flight',
-      (tester) async {
+  testWidgets('does not add a native close control in Chrome', (tester) async {
     await tester.pumpWidget(const _BootstrapLoadingShell(closeEnabled: false));
 
-    final button = tester.widget<IconButton>(
-      find.ancestor(
-        of: find.byIcon(Icons.close),
-        matching: find.byType(IconButton),
-      ),
-    );
-    expect(button.onPressed, isNull);
+    expect(find.byIcon(Icons.close), findsNothing);
+    expect(find.byType(IconButton), findsNothing);
   });
 }

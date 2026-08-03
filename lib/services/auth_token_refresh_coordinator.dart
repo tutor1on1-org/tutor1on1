@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import 'browser_auth_session.dart' as browser_auth;
+import 'browser_exclusive_lock.dart';
 import 'secure_storage_service.dart';
 
 class AuthTokenRefreshException implements Exception {
@@ -19,28 +21,50 @@ class AuthTokenRefreshCoordinator {
 
   static final Map<String, Future<_RefreshOutcome>> _inFlightByBaseUrl = {};
 
+  static Future<String?> readAccessToken({
+    required SecureStorageService secureStorage,
+    int? Function()? browserAuthUserReader,
+  }) async {
+    final expectedRemoteUserId = secureStorage.boundAuthRemoteUserId;
+    return runWithBrowserExclusiveLock<String?>(
+      browserAuthRefreshLockName,
+      () => _readAccessTokenForSession(
+        secureStorage: secureStorage,
+        expectedRemoteUserId: expectedRemoteUserId,
+        browserAuthUserReader:
+            browserAuthUserReader ?? browser_auth.readBrowserAuthUser,
+      ),
+    );
+  }
+
   static Future<bool> refresh({
     required http.Client client,
     required SecureStorageService secureStorage,
     required String baseUrl,
+    int? Function()? browserAuthUserReader,
   }) async {
     final normalizedBaseUrl = _normalizeBaseUrl(baseUrl);
-    final existing = _inFlightByBaseUrl[normalizedBaseUrl];
+    final expectedRemoteUserId = secureStorage.boundAuthRemoteUserId;
+    final refreshKey = '$normalizedBaseUrl#${expectedRemoteUserId ?? 0}';
+    final existing = _inFlightByBaseUrl[refreshKey];
     if (existing != null) {
       return _awaitOutcome(existing);
     }
 
-    final refreshFuture = _performRefresh(
+    final refreshFuture = _performRefreshWithLock(
       client: client,
       secureStorage: secureStorage,
       baseUrl: normalizedBaseUrl,
+      expectedRemoteUserId: expectedRemoteUserId,
+      browserAuthUserReader:
+          browserAuthUserReader ?? browser_auth.readBrowserAuthUser,
     );
-    _inFlightByBaseUrl[normalizedBaseUrl] = refreshFuture;
+    _inFlightByBaseUrl[refreshKey] = refreshFuture;
     try {
       return await _awaitOutcome(refreshFuture);
     } finally {
-      if (identical(_inFlightByBaseUrl[normalizedBaseUrl], refreshFuture)) {
-        _inFlightByBaseUrl.remove(normalizedBaseUrl);
+      if (identical(_inFlightByBaseUrl[refreshKey], refreshFuture)) {
+        _inFlightByBaseUrl.remove(refreshKey);
       }
     }
   }
@@ -60,9 +84,12 @@ class AuthTokenRefreshCoordinator {
     required http.Client client,
     required SecureStorageService secureStorage,
     required String baseUrl,
+    required String accessToken,
+    required String refreshToken,
+    required int? browserAuthUserId,
+    required int? expectedRemoteUserId,
+    required int? Function() browserAuthUserReader,
   }) async {
-    final refreshToken =
-        (await secureStorage.readAuthRefreshToken())?.trim() ?? '';
     if (refreshToken.isEmpty) {
       await secureStorage.invalidateAuthSession();
       return const _RefreshOutcome(refreshed: false);
@@ -76,19 +103,38 @@ class AuthTokenRefreshCoordinator {
         body: jsonEncode({'refresh_token': refreshToken}),
       );
     } on Exception catch (error) {
+      final changed = await _changedSessionOutcome(
+        secureStorage: secureStorage,
+        expectedAccessToken: accessToken,
+        expectedRefreshToken: refreshToken,
+        expectedBrowserAuthUserId: browserAuthUserId,
+        expectedRemoteUserId: expectedRemoteUserId,
+        browserAuthUserReader: browserAuthUserReader,
+      );
+      if (changed != null) {
+        return changed;
+      }
       return _RefreshOutcome(
         refreshed: false,
         errorMessage: 'Token refresh failed: $error',
       );
     }
 
+    final changed = await _changedSessionOutcome(
+      secureStorage: secureStorage,
+      expectedAccessToken: accessToken,
+      expectedRefreshToken: refreshToken,
+      expectedBrowserAuthUserId: browserAuthUserId,
+      expectedRemoteUserId: expectedRemoteUserId,
+      browserAuthUserReader: browserAuthUserReader,
+    );
+    if (changed != null) {
+      return changed;
+    }
+
     if (response.statusCode < 200 || response.statusCode >= 300) {
       if (response.statusCode == 400 || response.statusCode == 401) {
-        final latestRefreshToken =
-            (await secureStorage.readAuthRefreshToken())?.trim() ?? '';
-        if (latestRefreshToken == refreshToken) {
-          await secureStorage.invalidateAuthSession();
-        }
+        await secureStorage.invalidateAuthSession();
         return const _RefreshOutcome(refreshed: false);
       }
       return _RefreshOutcome(
@@ -106,21 +152,183 @@ class AuthTokenRefreshCoordinator {
       );
     }
 
-    final accessToken = (decoded['access_token'] as String?)?.trim() ?? '';
+    final responseAccessToken =
+        (decoded['access_token'] as String?)?.trim() ?? '';
     final nextRefreshToken =
         (decoded['refresh_token'] as String?)?.trim() ?? '';
-    if (accessToken.isEmpty || nextRefreshToken.isEmpty) {
+    if (responseAccessToken.isEmpty || nextRefreshToken.isEmpty) {
       return const _RefreshOutcome(
         refreshed: false,
         errorMessage: 'Token refresh response missing tokens.',
       );
     }
+    if (!_accessTokenMatchesRemoteUser(
+      responseAccessToken,
+      expectedRemoteUserId,
+    )) {
+      return const _RefreshOutcome(
+        refreshed: false,
+        errorMessage: 'Token refresh response belongs to another account.',
+      );
+    }
 
     await secureStorage.writeAuthTokens(
-      accessToken: accessToken,
+      accessToken: responseAccessToken,
       refreshToken: nextRefreshToken,
     );
     return const _RefreshOutcome(refreshed: true);
+  }
+
+  static Future<_RefreshOutcome> _performRefreshWithLock({
+    required http.Client client,
+    required SecureStorageService secureStorage,
+    required String baseUrl,
+    required int? expectedRemoteUserId,
+    required int? Function() browserAuthUserReader,
+  }) async {
+    final accessTokenBefore =
+        (await secureStorage.readAuthAccessToken())?.trim() ?? '';
+    final refreshToken =
+        (await secureStorage.readAuthRefreshToken())?.trim() ?? '';
+    final accessTokenAfter =
+        (await secureStorage.readAuthAccessToken())?.trim() ?? '';
+    if (accessTokenBefore != accessTokenAfter ||
+        !_accessTokenMatchesRemoteUser(
+          accessTokenBefore,
+          expectedRemoteUserId,
+        )) {
+      return const _RefreshOutcome(refreshed: false);
+    }
+    final outcome = await runWithBrowserExclusiveLock<_RefreshOutcome>(
+      browserAuthRefreshLockName,
+      () async {
+        final browserAuthUserId = browserAuthUserReader();
+        if (secureStorage.boundAuthRemoteUserId != expectedRemoteUserId ||
+            browserAuthUserId != expectedRemoteUserId) {
+          return const _RefreshOutcome(refreshed: false);
+        }
+        final changed = await _changedSessionOutcome(
+          secureStorage: secureStorage,
+          expectedAccessToken: accessTokenBefore,
+          expectedRefreshToken: refreshToken,
+          expectedBrowserAuthUserId: browserAuthUserId,
+          expectedRemoteUserId: expectedRemoteUserId,
+          browserAuthUserReader: browserAuthUserReader,
+        );
+        if (changed != null) {
+          return changed;
+        }
+        return _performRefresh(
+          client: client,
+          secureStorage: secureStorage,
+          baseUrl: baseUrl,
+          accessToken: accessTokenBefore,
+          refreshToken: refreshToken,
+          browserAuthUserId: browserAuthUserId,
+          expectedRemoteUserId: expectedRemoteUserId,
+          browserAuthUserReader: browserAuthUserReader,
+        );
+      },
+    );
+    return outcome ??
+        const _RefreshOutcome(
+          refreshed: false,
+          errorMessage: 'Could not acquire the browser auth-token lock.',
+        );
+  }
+
+  static Future<_RefreshOutcome?> _changedSessionOutcome({
+    required SecureStorageService secureStorage,
+    required String expectedAccessToken,
+    required String expectedRefreshToken,
+    required int? expectedBrowserAuthUserId,
+    required int? expectedRemoteUserId,
+    required int? Function() browserAuthUserReader,
+  }) async {
+    if (secureStorage.boundAuthRemoteUserId != expectedRemoteUserId) {
+      return const _RefreshOutcome(refreshed: false);
+    }
+    final browserAuthUserIdBefore = browserAuthUserReader();
+    final currentAccessTokenBefore =
+        (await secureStorage.readAuthAccessToken())?.trim() ?? '';
+    final currentRefreshToken =
+        (await secureStorage.readAuthRefreshToken())?.trim() ?? '';
+    final currentAccessTokenAfter =
+        (await secureStorage.readAuthAccessToken())?.trim() ?? '';
+    final browserAuthUserIdAfter = browserAuthUserReader();
+    if (browserAuthUserIdBefore != expectedBrowserAuthUserId ||
+        browserAuthUserIdAfter != expectedBrowserAuthUserId ||
+        secureStorage.boundAuthRemoteUserId != expectedRemoteUserId) {
+      return const _RefreshOutcome(refreshed: false);
+    }
+    if (currentAccessTokenBefore != currentAccessTokenAfter) {
+      return const _RefreshOutcome(refreshed: false);
+    }
+    if (currentAccessTokenBefore != expectedAccessToken ||
+        currentRefreshToken != expectedRefreshToken) {
+      return _RefreshOutcome(
+        refreshed: currentRefreshToken.isNotEmpty &&
+            _accessTokenMatchesRemoteUser(
+              currentAccessTokenBefore,
+              expectedRemoteUserId,
+            ),
+      );
+    }
+    return null;
+  }
+
+  static Future<String?> _readAccessTokenForSession({
+    required SecureStorageService secureStorage,
+    required int? expectedRemoteUserId,
+    required int? Function() browserAuthUserReader,
+  }) async {
+    if (secureStorage.boundAuthRemoteUserId != expectedRemoteUserId ||
+        browserAuthUserReader() != expectedRemoteUserId) {
+      return null;
+    }
+    final token = (await secureStorage.readAuthAccessToken())?.trim() ?? '';
+    if (token.isEmpty ||
+        secureStorage.boundAuthRemoteUserId != expectedRemoteUserId ||
+        browserAuthUserReader() != expectedRemoteUserId ||
+        !_accessTokenMatchesRemoteUser(token, expectedRemoteUserId)) {
+      return null;
+    }
+    return token;
+  }
+
+  static bool _accessTokenMatchesRemoteUser(
+    String token,
+    int? expectedRemoteUserId,
+  ) {
+    if (token.trim().isEmpty) {
+      return false;
+    }
+    if (expectedRemoteUserId == null) {
+      return true;
+    }
+    return _accessTokenRemoteUserId(token) == expectedRemoteUserId;
+  }
+
+  static int? _accessTokenRemoteUserId(String token) {
+    final parts = token.split('.');
+    if (parts.length != 3) {
+      return null;
+    }
+    try {
+      final payload =
+          utf8.decode(base64Url.decode(base64Url.normalize(parts[1])));
+      final decoded = jsonDecode(payload);
+      if (decoded is! Map<String, dynamic>) {
+        return null;
+      }
+      final subject = decoded['sub'];
+      final remoteUserId = subject is num
+          ? subject.toInt()
+          : int.tryParse(subject?.toString().trim() ?? '');
+      return remoteUserId != null && remoteUserId > 0 ? remoteUserId : null;
+    } on Object {
+      return null;
+    }
   }
 
   static String _normalizeBaseUrl(String value) {

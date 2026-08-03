@@ -38,7 +38,60 @@ class _TokenSecureStorageService extends SecureStorageService {
   }
 }
 
+String _accessTokenForUser(int remoteUserId) {
+  String encodePart(Map<String, dynamic> value) =>
+      base64Url.encode(utf8.encode(jsonEncode(value))).replaceAll('=', '');
+
+  return '${encodePart(<String, dynamic>{'alg': 'none'})}.'
+      '${encodePart(<String, dynamic>{'sub': '$remoteUserId'})}.signature';
+}
+
 void main() {
+  test(
+    'mutation rejects another account token before the marker changes',
+    () async {
+      const localUserId = 3001;
+      final storage = _TokenSecureStorageService(
+        accessToken: _accessTokenForUser(localUserId),
+      )..bindAuthRemoteUser(localUserId);
+      var browserAuthUserId = localUserId;
+      var requestCalls = 0;
+      final api = MarketplaceApiService(
+        secureStorage: storage,
+        baseUrl: 'https://identity-race.example.com',
+        browserAuthUserReader: () => browserAuthUserId,
+        client: MockClient((request) async {
+          requestCalls++;
+          return http.Response('{}', 200);
+        }),
+      );
+
+      await storage.writeAuthTokens(
+        accessToken: _accessTokenForUser(4002),
+        refreshToken: 'other-user-refresh',
+      );
+
+      await expectLater(
+        api.createEnrollmentRequest(courseId: 17),
+        throwsA(
+          isA<MarketplaceApiException>().having(
+            (error) => error.message,
+            'message',
+            'Missing auth token.',
+          ),
+        ),
+      );
+      expect(requestCalls, isZero);
+
+      browserAuthUserId = 4002;
+      await expectLater(
+        api.createEnrollmentRequest(courseId: 17),
+        throwsA(isA<MarketplaceApiException>()),
+      );
+      expect(requestCalls, isZero);
+    },
+  );
+
   test(
     'listStudentQuitRequests returns empty when older server responds 404',
     () async {

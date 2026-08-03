@@ -1,13 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:path/path.dart' as p;
 
 import '../security/hash_utils.dart';
-import 'legacy_brand_compat.dart';
 
 class SyncItemState {
   SyncItemState({
@@ -23,11 +19,6 @@ class SyncItemState {
 
 class SecureStorageService {
   SecureStorageService() : _storage = const FlutterSecureStorage();
-
-  static const String windowsStorageCompanyName = 'com.example';
-  static const String windowsStableProductName = 'Tutor1on1';
-  static final String windowsMigratedProductName =
-      buildLegacyWindowsProductName();
 
   static const _apiKeyKey = 'openai_api_key';
   static const _apiKeyPrefix = 'openai_api_key:';
@@ -47,93 +38,22 @@ class SecureStorageService {
   static const _syncRunAtPrefix = 'sync_run_at:';
   static final String _syncRunDeviceHash = _buildSyncRunDeviceHash();
   final FlutterSecureStorage _storage;
+  int? _boundAuthRemoteUserId;
   final StreamController<void> _authSessionInvalidatedController =
       StreamController<void>.broadcast(sync: true);
 
   static String get syncRunDeviceHash => _syncRunDeviceHash;
   Stream<void> get authSessionInvalidated =>
       _authSessionInvalidatedController.stream;
+  int? get boundAuthRemoteUserId => _boundAuthRemoteUserId;
+
+  void bindAuthRemoteUser(int? remoteUserId) {
+    _boundAuthRemoteUserId =
+        remoteUserId != null && remoteUserId > 0 ? remoteUserId : null;
+  }
 
   Future<void> ensureReadableOrReset() async {
-    if (Platform.isWindows) {
-      await migrateWindowsRenamedProductStorage();
-    }
-    try {
-      await _storage.readAll();
-      return;
-    } catch (error) {
-      if (!_isWindowsDpapiDecryptFailure(error)) {
-        rethrow;
-      }
-      debugPrint(
-        'Secure storage DPAPI decrypt failed. Resetting secure storage. '
-        'error=$error',
-      );
-      await _storage.deleteAll();
-      try {
-        await _storage.readAll();
-      } catch (verifyError) {
-        throw StateError(
-          'Secure storage reset verification failed after DPAPI decrypt '
-          'error. original=$error verify=$verifyError',
-        );
-      }
-    }
-  }
-
-  @visibleForTesting
-  static Future<void> migrateWindowsRenamedProductStorage({
-    Directory? roamingAppDataDir,
-  }) async {
-    final root = roamingAppDataDir ?? _defaultWindowsRoamingAppDataDir();
-    if (root == null) {
-      return;
-    }
-    final source = Directory(
-      p.join(
-        root.path,
-        windowsStorageCompanyName,
-        windowsMigratedProductName,
-      ),
-    );
-    if (!await source.exists()) {
-      return;
-    }
-    final target = Directory(
-      p.join(
-        root.path,
-        windowsStorageCompanyName,
-        windowsStableProductName,
-      ),
-    );
-    await target.create(recursive: true);
-    await for (final entity in source.list(followLinks: false)) {
-      if (entity is! File || !entity.path.endsWith('.secure')) {
-        continue;
-      }
-      final sourceStat = await entity.stat();
-      final targetFile = File(p.join(target.path, p.basename(entity.path)));
-      if (!await targetFile.exists()) {
-        await entity.copy(targetFile.path);
-        await targetFile.setLastModified(sourceStat.modified);
-        continue;
-      }
-      final targetStat = await targetFile.stat();
-      if (!sourceStat.modified.isAfter(targetStat.modified)) {
-        continue;
-      }
-      await targetFile.delete();
-      await entity.copy(targetFile.path);
-      await targetFile.setLastModified(sourceStat.modified);
-    }
-  }
-
-  static Directory? _defaultWindowsRoamingAppDataDir() {
-    final path = Platform.environment['APPDATA'];
-    if (path == null || path.trim().isEmpty) {
-      return null;
-    }
-    return Directory(path);
+    await _storage.readAll();
   }
 
   Future<String?> readApiKey() => _storage.read(key: _apiKeyKey);
@@ -561,32 +481,6 @@ class SecureStorageService {
   }
 
   static String _buildSyncRunDeviceHash() {
-    final seed = [
-      Platform.operatingSystem,
-      Platform.operatingSystemVersion,
-      _safeLocalHostname(),
-      Platform.numberOfProcessors.toString(),
-      Platform.pathSeparator,
-    ].join('|');
-    return sha256Hex(seed);
-  }
-
-  static String _safeLocalHostname() {
-    try {
-      return Platform.localHostname.trim();
-    } catch (_) {
-      return '';
-    }
-  }
-
-  bool _isWindowsDpapiDecryptFailure(Object error) {
-    if (!Platform.isWindows) {
-      return false;
-    }
-    final message = error.toString().toLowerCase();
-    return message.contains('cryptunprotectdata') ||
-        message.contains('cryptunrpotectdata') ||
-        message.contains('failure on cryptunprotectdata()') ||
-        message.contains('error_invalid_data');
+    return sha256Hex('tutor1on1:web');
   }
 }

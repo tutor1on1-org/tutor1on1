@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
@@ -150,8 +149,10 @@ class ArtifactSyncApiService {
     String? baseUrl,
     http.Client? client,
     FirstPartyApiHttpClientFactory? clientFactory,
+    int? Function()? browserAuthUserReader,
   })  : assert(client == null || clientFactory == null),
         _secureStorage = secureStorage,
+        _browserAuthUserReader = browserAuthUserReader,
         _baseUrl = _normalizeBaseUrl(baseUrl ?? kAuthBaseUrl),
         _clientFactory = clientFactory ??
             (() => buildFirstPartyApiHttpClient(
@@ -165,6 +166,7 @@ class ArtifactSyncApiService {
                     )))();
 
   final SecureStorageService _secureStorage;
+  final int? Function()? _browserAuthUserReader;
   final String _baseUrl;
   final FirstPartyApiHttpClientFactory _clientFactory;
   final bool _ownsClient;
@@ -539,7 +541,10 @@ class ArtifactSyncApiService {
   }
 
   Future<String> _requireAccessToken() async {
-    final token = await _secureStorage.readAuthAccessToken();
+    final token = await AuthTokenRefreshCoordinator.readAccessToken(
+      secureStorage: _secureStorage,
+      browserAuthUserReader: _browserAuthUserReader,
+    );
     if (token == null || token.trim().isEmpty) {
       throw ArtifactSyncApiException('Missing auth token.');
     }
@@ -552,6 +557,7 @@ class ArtifactSyncApiService {
         client: _client,
         secureStorage: _secureStorage,
         baseUrl: _baseUrl,
+        browserAuthUserReader: _browserAuthUserReader,
       );
     } on AuthTokenRefreshException catch (error) {
       if (_ownsClient && isFreshFirstPartyApiClientRetryableError(error)) {
@@ -562,6 +568,7 @@ class ArtifactSyncApiService {
             client: _client,
             secureStorage: _secureStorage,
             baseUrl: _baseUrl,
+            browserAuthUserReader: _browserAuthUserReader,
           );
         } on AuthTokenRefreshException catch (retryError) {
           throw ArtifactSyncApiException(
@@ -747,16 +754,15 @@ String _describeTransportError({
       message.toLowerCase().contains('timed out')) {
     return 'Request to ${uri.host} timed out. Retry.';
   }
-  if (error is HandshakeException || message.contains('HandshakeException')) {
+  if (message.contains('HandshakeException') ||
+      message.toLowerCase().contains('certificate')) {
     return 'Secure connection to ${uri.host} failed. Check system time, proxy, VPN, or certificate settings and retry.';
   }
   if (message.contains('Failed host lookup') ||
       message.contains('No address associated with hostname')) {
     return 'Could not contact ${uri.host} from this device. Check DNS, proxy, VPN, or firewall settings and retry.';
   }
-  if (error is SocketException ||
-      error is HttpException ||
-      error is http.ClientException) {
+  if (error is http.ClientException) {
     return 'Could not contact ${uri.host}. Check network, proxy, VPN, or firewall settings and retry.';
   }
   return 'Request to ${uri.host} failed: $error';

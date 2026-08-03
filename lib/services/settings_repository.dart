@@ -1,12 +1,10 @@
-import 'dart:io';
-
 import 'package:drift/drift.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 import '../db/app_database.dart';
 import '../llm/llm_models.dart';
 import '../llm/llm_providers.dart';
+import 'runtime_environment.dart';
 
 class SettingsRepository {
   SettingsRepository(this._db);
@@ -21,10 +19,27 @@ class SettingsRepository {
       var companion = AppSettingsCompanion(
         updatedAt: Value(DateTime.now()),
       );
-      if (providerId == null || providerId.isEmpty) {
+      if (providerId == 'openai-codex') {
+        final openAiProvider = LlmProviders.findById(
+          LlmProviders.defaultProviders(
+            envBaseUrl: runtimeOpenAiBaseUrl,
+            envModel: runtimeOpenAiModel,
+          ),
+          'openai',
+        );
+        if (openAiProvider == null || openAiProvider.models.isEmpty) {
+          throw StateError('Built-in OpenAI provider is unavailable.');
+        }
+        companion = companion.copyWith(
+          providerId: Value(openAiProvider.id),
+          baseUrl: Value(openAiProvider.baseUrl),
+          model: Value(openAiProvider.models.first),
+        );
+        needsUpdate = true;
+      } else if (providerId == null || providerId.isEmpty) {
         final providers = LlmProviders.defaultProviders(
-          envBaseUrl: Platform.environment['OPENAI_BASE_URL'],
-          envModel: Platform.environment['OPENAI_MODEL'],
+          envBaseUrl: runtimeOpenAiBaseUrl,
+          envModel: runtimeOpenAiModel,
         );
         final match = LlmProviders.findByBaseUrl(
           providers,
@@ -79,12 +94,6 @@ class SettingsRepository {
         );
         needsUpdate = true;
       }
-      if (Platform.isAndroid && existing.enterToSend) {
-        companion = companion.copyWith(
-          enterToSend: const Value(false),
-        );
-        needsUpdate = true;
-      }
       if (existing.studyModeEnabled) {
         companion = companion.copyWith(
           studyModeEnabled: const Value(false),
@@ -99,8 +108,8 @@ class SettingsRepository {
       }
       return existing;
     }
-    final envBaseUrl = Platform.environment['OPENAI_BASE_URL']?.trim() ?? '';
-    final envModel = Platform.environment['OPENAI_MODEL']?.trim() ?? '';
+    final envBaseUrl = runtimeOpenAiBaseUrl.trim();
+    final envModel = runtimeOpenAiModel.trim();
     final hasEnvBaseUrl = envBaseUrl.isNotEmpty;
     final baseUrl =
         hasEnvBaseUrl ? envBaseUrl : 'https://api.siliconflow.cn/v1';
@@ -121,7 +130,7 @@ class SettingsRepository {
             ttsTextLeadMs: const Value(1000),
             ttsAudioPath: Value(ttsAudioPath),
             sttAutoSend: const Value(false),
-            enterToSend: Value(!Platform.isAndroid),
+            enterToSend: const Value(true),
             studyModeEnabled: const Value(false),
             logDirectory: Value(logDirectory),
             llmLogPath: Value(logPaths['llm']!),
@@ -199,16 +208,11 @@ class SettingsRepository {
   }
 
   Future<String> _defaultTtsAudioPath() async {
-    final dir = await getApplicationDocumentsDirectory();
-    return dir.path;
+    return '/browser/audio';
   }
 
   Future<String> _defaultLogDirectory() async {
-    if (Platform.isWindows) {
-      return r'C:\Tutor1on1\logs';
-    }
-    final dir = await getApplicationDocumentsDirectory();
-    return p.join(dir.path, 'logs');
+    return '/browser/logs';
   }
 
   Map<String, String> _buildLogPaths(String directory) {

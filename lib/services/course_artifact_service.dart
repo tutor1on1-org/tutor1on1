@@ -1,9 +1,10 @@
 import 'dart:convert';
-import 'dart:io';
 
-import 'package:archive/archive_io.dart';
+import 'package:archive/archive.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+
+import 'file_system.dart';
+import 'storage_directories.dart';
 
 import '../models/skill_tree.dart';
 import 'course_bundle_service.dart';
@@ -219,11 +220,13 @@ class CourseArtifactService {
       );
     }
 
-    final input = InputFileStream(contentBundle.path);
     Archive? sourceArchive;
     Archive? archive;
     try {
-      sourceArchive = ZipDecoder().decodeBuffer(input);
+      sourceArchive = ZipDecoder().decodeBytes(
+        await contentBundle.readAsBytes(),
+        verify: true,
+      );
       archive = Archive();
       final existingNames = sourceArchive.files
           .where((entry) => entry.isFile)
@@ -290,7 +293,6 @@ class CourseArtifactService {
     } finally {
       archive?.clearSync();
       sourceArchive?.clearSync();
-      input.close();
     }
   }
 
@@ -674,15 +676,20 @@ class CourseArtifactService {
     for (final chapterKey in sortedKeys) {
       final zipName = 'chapter_${_sanitizeName(chapterKey)}.zip';
       final zipPath = p.join(outputDirectory.path, zipName);
-      final encoder = ZipFileEncoder();
-      encoder.create(zipPath);
+      final archive = Archive();
       final entries = groups[chapterKey]!.entries.toList()
         ..sort((left, right) => left.key.compareTo(right.key));
       for (final entry in entries) {
-        encoder.addFile(entry.value, entry.key);
+        final bytes = await entry.value.readAsBytes();
+        archive.addFile(ArchiveFile(entry.key, bytes.length, bytes));
       }
-      encoder.close();
+      final encoded = ZipEncoder().encode(archive);
+      archive.clearSync();
+      if (encoded == null) {
+        throw StateError('Failed to encode chapter archive: $chapterKey.');
+      }
       final zipFile = File(zipPath);
+      await zipFile.writeAsBytes(encoded, flush: true);
       chapters.add(
         CourseChapterArtifact(
           chapterKey: chapterKey,

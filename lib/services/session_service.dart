@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:drift/drift.dart';
 import 'package:path/path.dart' as p;
@@ -16,10 +15,12 @@ import '../models/tutor_action.dart';
 import '../models/tutor_contract.dart';
 import '../llm/prompt_repository.dart';
 import 'course_artifact_service.dart';
+import 'file_system.dart';
 import 'llm_log_repository.dart';
 import 'prompt_variable_registry.dart';
 import 'session_upload_cache_service.dart';
 import 'settings_repository.dart';
+import 'runtime_environment.dart';
 
 class _RenderResult {
   _RenderResult({
@@ -498,8 +499,9 @@ class SessionService {
                 courseVersionId: courseVersion.id,
                 kpKey: node.kpKey,
               );
-        final pendingFocusTag =
-            session == null ? null : _pendingMistakeFocusTags.remove(session.id);
+        final pendingFocusTag = session == null
+            ? null
+            : _pendingMistakeFocusTags.remove(session.id);
         values[PromptVariableRegistry.presentedQuestions] =
             _questionsWithMistakeFocus(
           questionsText: presentedQuestions,
@@ -2495,8 +2497,8 @@ class SessionService {
   Future<String?> _resolveFallbackModel(String? currentModel) async {
     final settings = await _settingsRepository.load();
     final providers = LlmProviders.defaultProviders(
-      envBaseUrl: Platform.environment['OPENAI_BASE_URL'],
-      envModel: Platform.environment['OPENAI_MODEL'],
+      envBaseUrl: runtimeOpenAiBaseUrl,
+      envModel: runtimeOpenAiModel,
     );
     final provider = LlmProviders.findById(providers, settings.providerId) ??
         LlmProviders.findByBaseUrl(providers, settings.baseUrl);

@@ -449,7 +449,7 @@
     }
   },
   "studyModeLabel": "Study mode",
-  "studyModeDescription": "Keep screen awake, use fullscreen or immersive mode, and require teacher PIN to exit.",
+  "studyModeDescription": "Follow the teacher's scheduled study-mode status in this browser tab.",
   "quitButton": "Quit (Teacher Password)",
   "notLoggedInMessage": "Not logged in.",
   "teacherNotFoundMessage": "Teacher account not found.",
@@ -867,6 +867,7 @@
       "medium": {},
       "hard": {}
     }
-  }
+  },
+  "browserStorageNotProtectedMessage": "Chrome could not protect local data from automatic storage cleanup; export a backup and keep this site installed or frequently used."
 }
 

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -8,6 +7,7 @@ import 'package:http/http.dart' as http;
 import '../services/llm_call_repository.dart';
 import '../services/llm_log_repository.dart';
 import '../services/openai_codex_oauth_service.dart';
+import '../services/runtime_environment.dart';
 import '../services/secure_storage_service.dart';
 import '../services/settings_repository.dart';
 import '../services/transport_retry_policy.dart';
@@ -121,8 +121,8 @@ class LlmService {
     );
     final mode = LlmModeX.fromString(settings.llmMode);
     final providers = LlmProviders.defaultProviders(
-      envBaseUrl: Platform.environment['OPENAI_BASE_URL'],
-      envModel: Platform.environment['OPENAI_MODEL'],
+      envBaseUrl: runtimeOpenAiBaseUrl,
+      envModel: runtimeOpenAiModel,
     );
     final provider = LlmProviders.findById(providers, settings.providerId) ??
         LlmProviders.findByBaseUrl(providers, settings.baseUrl) ??
@@ -327,8 +327,8 @@ class LlmService {
     );
     final mode = LlmModeX.fromString(settings.llmMode);
     final providers = LlmProviders.defaultProviders(
-      envBaseUrl: Platform.environment['OPENAI_BASE_URL'],
-      envModel: Platform.environment['OPENAI_MODEL'],
+      envBaseUrl: runtimeOpenAiBaseUrl,
+      envModel: runtimeOpenAiModel,
     );
     final provider = LlmProviders.findById(providers, settings.providerId) ??
         LlmProviders.findByBaseUrl(providers, settings.baseUrl) ??
@@ -629,7 +629,7 @@ class LlmService {
     final responseBody = utf8.decode(response.bodyBytes);
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw HttpException(
+      throw http.ClientException(
         'HTTP ${response.statusCode}: $responseBody',
       );
     }
@@ -734,7 +734,7 @@ class LlmService {
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final body = await response.stream.bytesToString();
-      throw HttpException('HTTP ${response.statusCode}: $body');
+      throw http.ClientException('HTTP ${response.statusCode}: $body');
     }
 
     final responseBuffer = StringBuffer();
@@ -856,7 +856,7 @@ class LlmService {
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final body = await response.stream.bytesToString();
-      throw HttpException('HTTP ${response.statusCode}: $body');
+      throw http.ClientException('HTTP ${response.statusCode}: $body');
     }
 
     return _readOpenAiCodexSse(
@@ -1220,7 +1220,7 @@ class LlmService {
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final body = await response.stream.bytesToString();
-      throw HttpException('HTTP ${response.statusCode}: $body');
+      throw http.ClientException('HTTP ${response.statusCode}: $body');
     }
 
     final responseBuffer = StringBuffer();

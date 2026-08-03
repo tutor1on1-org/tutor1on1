@@ -27,8 +27,9 @@ class StudyModeController extends ChangeNotifier {
   int get activeScheduleId => _activeScheduleId;
   String get activeScheduleLabel => _activeScheduleLabel;
 
-  bool get requiresTeacherPin =>
-      _enabled && _effectiveSource.trim().toLowerCase() != 'default';
+  // Browser tabs cannot enforce an exit lock, so web study mode never gates
+  // navigation or logout behind a teacher PIN.
+  bool get requiresTeacherPin => false;
 
   Future<void> syncAuthUser(User? user) async {
     final remoteUserId = user?.remoteUserId ?? 0;

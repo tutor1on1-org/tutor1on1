@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:drift/native.dart';
@@ -6,8 +5,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:tutor1on1/db/app_database.dart';
+import 'package:tutor1on1/services/browser_jsonl_store.dart';
 import 'package:tutor1on1/services/settings_repository.dart';
 import 'package:tutor1on1/services/sync_log_repository.dart';
+
+class _RecordingJsonlStore extends BrowserJsonlStore {
+  final List<Map<String, dynamic>> rows = <Map<String, dynamic>>[];
+
+  @override
+  Future<void> append(String key, Map<String, dynamic> payload) async {
+    expect(key, equals('sync'));
+    rows.add(Map<String, dynamic>.from(payload));
+  }
+}
 
 class _FakeSettingsRepository extends SettingsRepository {
   _FakeSettingsRepository(super.db, this._settings);
@@ -22,10 +32,12 @@ void main() {
   late AppDatabase db;
   late SettingsRepository settingsRepository;
   late Directory tempDir;
+  late _RecordingJsonlStore store;
 
   setUp(() async {
     db = AppDatabase.forTesting(NativeDatabase.memory());
     tempDir = await Directory.systemTemp.createTemp('sync_log_repo_test_');
+    store = _RecordingJsonlStore();
     settingsRepository = _FakeSettingsRepository(
       db,
       AppSetting(
@@ -62,8 +74,7 @@ void main() {
   });
 
   test('successful run with no transfer does not create a log line', () async {
-    final repository = SyncLogRepository(settingsRepository);
-    final file = File(p.join(tempDir.path, 'sync_logs.jsonl'));
+    final repository = SyncLogRepository(settingsRepository, store: store);
 
     await repository.appendRunEvent(
       trigger: 'timer',
@@ -73,11 +84,11 @@ void main() {
       success: true,
     );
 
-    expect(await file.exists(), isFalse);
+    expect(store.rows, isEmpty);
   });
 
   test('successful run with transfer writes one summary line', () async {
-    final repository = SyncLogRepository(settingsRepository);
+    final repository = SyncLogRepository(settingsRepository, store: store);
     final stats = SyncRunStats()
       ..addUploaded(count: 2, bytes: 1536)
       ..addDownloaded(count: 1, bytes: 10);
@@ -90,10 +101,8 @@ void main() {
       success: true,
     );
 
-    final file = File(p.join(tempDir.path, 'sync_logs.jsonl'));
-    final lines = await file.readAsLines();
-    expect(lines, hasLength(1));
-    final decoded = jsonDecode(lines.single) as Map<String, dynamic>;
+    expect(store.rows, hasLength(1));
+    final decoded = store.rows.single;
     expect(decoded['event'], equals('sync_run'));
     expect(decoded['status'], equals('success'));
     expect(decoded['trigger'], equals('login'));
@@ -108,7 +117,7 @@ void main() {
   });
 
   test('failed run writes one error line even without transfer', () async {
-    final repository = SyncLogRepository(settingsRepository);
+    final repository = SyncLogRepository(settingsRepository, store: store);
 
     await repository.appendRunEvent(
       trigger: 'timer',
@@ -119,10 +128,8 @@ void main() {
       error: 'HandshakeException',
     );
 
-    final file = File(p.join(tempDir.path, 'sync_logs.jsonl'));
-    final lines = await file.readAsLines();
-    expect(lines, hasLength(1));
-    final decoded = jsonDecode(lines.single) as Map<String, dynamic>;
+    expect(store.rows, hasLength(1));
+    final decoded = store.rows.single;
     expect(decoded['status'], equals('failed'));
     expect(decoded['error'], equals('HandshakeException'));
     expect(decoded['uploaded_count'], equals(0));

@@ -1,6 +1,3 @@
-import 'dart:io';
-
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:tutor1on1/l10n/app_localizations.dart';
 import 'package:path/path.dart' as p;
@@ -241,13 +238,7 @@ class _CourseVersionPageState extends State<CourseVersionPage> {
     final l10n = AppLocalizations.of(context)!;
     String? path;
     try {
-      if (Platform.isAndroid) {
-        path = await CourseImportService.pickAndImportCourseFolder();
-      } else {
-        path = await FilePicker.platform.getDirectoryPath(
-          dialogTitle: l10n.courseFolderPickerTitle,
-        );
-      }
+      path = await CourseImportService.pickAndImportCourseFolder();
     } catch (e) {
       if (!mounted) {
         return;

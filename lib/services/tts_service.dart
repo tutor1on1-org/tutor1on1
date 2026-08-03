@@ -1,12 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:http/http.dart' as http;
 import 'package:just_audio/just_audio.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
+import 'browser_audio_store.dart';
 import 'secure_storage_service.dart';
 import 'settings_repository.dart';
 import 'tts_log_repository.dart';
@@ -26,6 +24,7 @@ class TtsService {
   static const _ttsVoice = 'alloy';
   static const _ttsFormat = 'mp3';
   static const _siliconVoice = 'FunAudioLLM/CosyVoice2-0.5B:alex';
+  static const _lastAudioPath = 'browser-audio://tts/last';
 
   final SecureStorageService _secureStorage;
   final SettingsRepository _settingsRepository;
@@ -53,13 +52,11 @@ class TtsService {
     await stop(sessionId: sessionId);
     try {
       final stopToken = _stopToken;
-      final dir = await getApplicationDocumentsDirectory();
-      final path = '${dir.path}${Platform.pathSeparator}tts_last.mp3';
-      final file = File(path);
-      if (!await file.exists()) {
+      final audio = await BrowserAudioStore.read(_lastAudioPath);
+      if (audio == null || audio.bytes.isEmpty) {
         await _logEvent(
           event: 'test_missing',
-          message: 'Last TTS audio file not found.',
+          message: 'Last TTS audio was not found in browser storage.',
           sessionId: sessionId,
         );
         return const TtsTestResult(status: TtsTestStatus.missing);
@@ -69,8 +66,8 @@ class TtsService {
         message: 'Testing playback of last audio file.',
         sessionId: sessionId,
       );
-      final played = await _playFile(
-        file,
+      final played = await _playUrl(
+        BrowserAudioStore.dataUrl(audio),
         sessionId: sessionId,
         sourceTag: 'test',
         stopToken: stopToken,
@@ -88,7 +85,10 @@ class TtsService {
         message: 'Test playback completed.',
         sessionId: sessionId,
       );
-      return TtsTestResult(status: TtsTestStatus.played, path: file.path);
+      return const TtsTestResult(
+        status: TtsTestStatus.played,
+        path: _lastAudioPath,
+      );
     } catch (error) {
       await _logError(
         message: 'Test playback failed: $error',
@@ -146,11 +146,15 @@ class TtsService {
       _emitReplayState();
       await _logEvent(
         event: 'replay_set',
-        message: 'Setting replay file: $path',
+        message: 'Setting replay audio: $path',
         sessionId: sessionId,
       );
+      final audioUrl = await _resolvePlaybackUrl(path);
+      if (audioUrl == null) {
+        throw StateError('Saved browser audio was not found.');
+      }
       await _replayPlayer.setVolume(1.0);
-      await _replayPlayer.setFilePath(path).timeout(const Duration(seconds: 8));
+      await _replayPlayer.setUrl(audioUrl).timeout(const Duration(seconds: 8));
       await _logEvent(
         event: 'replay_start',
         message: 'Starting replay.',
@@ -230,19 +234,16 @@ class TtsService {
       );
       return null;
     }
-    if (audioDirectory != null &&
-        audioDirectory.trim().isNotEmpty &&
-        messageId != null) {
+    if (messageId != null) {
       await _appendMessageAudio(
-        baseDir: audioDirectory.trim(),
+        baseDir: audioDirectory?.trim() ?? '',
         messageId: messageId,
         bytes: audioBytes,
         sessionId: sessionId,
       );
     }
-    final file = await _writeTempAudio(audioBytes);
     return TtsPrefetchedAudio(
-      file: file,
+      audioUrl: _audioDataUrl(audioBytes),
       textSnippet: trimmed,
       textLength: trimmed.length,
       sessionId: sessionId,
@@ -266,21 +267,8 @@ class TtsService {
       }
       try {
         final stopToken = _stopToken;
-        if (!await audio.file.exists()) {
-          await _logError(
-            message: 'Prefetched audio file missing.',
-            textSnippet: audio.textSnippet,
-            textLength: audio.textLength,
-            sessionId: audio.sessionId,
-          );
-          onPlaybackComplete?.call(false);
-          if (!completer.isCompleted) {
-            completer.complete(false);
-          }
-          return;
-        }
-        final played = await _playFile(
-          audio.file,
+        final played = await _playUrl(
+          audio.audioUrl,
           sessionId: audio.sessionId,
           textSnippet: audio.textSnippet,
           textLength: audio.textLength,
@@ -302,10 +290,6 @@ class TtsService {
         onPlaybackComplete?.call(false);
         if (!completer.isCompleted) {
           completer.complete(false);
-        }
-      } finally {
-        if (await audio.file.exists()) {
-          await audio.file.delete();
         }
       }
     });
@@ -379,11 +363,9 @@ class TtsService {
           onPlaybackComplete?.call(false);
           return;
         }
-        if (audioDirectory != null &&
-            audioDirectory.trim().isNotEmpty &&
-            messageId != null) {
+        if (messageId != null) {
           await _appendMessageAudio(
-            baseDir: audioDirectory.trim(),
+            baseDir: audioDirectory?.trim() ?? '',
             messageId: messageId,
             bytes: audioBytes,
             sessionId: sessionId,
@@ -399,7 +381,6 @@ class TtsService {
           );
           return;
         }
-        final file = await _writeTempAudio(audioBytes);
         final stopToken = _stopToken;
         try {
           if (token != _queueToken) {
@@ -418,8 +399,8 @@ class TtsService {
             textLength: trimmed.length,
             sessionId: sessionId,
           );
-          final played = await _playFile(
-            file,
+          final played = await _playUrl(
+            _audioDataUrl(audioBytes),
             sessionId: sessionId,
             textSnippet: trimmed,
             textLength: trimmed.length,
@@ -447,10 +428,6 @@ class TtsService {
             sessionId: sessionId,
           );
           onPlaybackComplete?.call(false);
-        } finally {
-          if (await file.exists()) {
-            await file.delete();
-          }
         }
       } catch (error) {
         await _logError(
@@ -542,15 +519,8 @@ class TtsService {
     }
   }
 
-  Future<File> _writeTempAudio(List<int> bytes) async {
-    final dir = await getTemporaryDirectory();
-    final timestamp = DateTime.now().microsecondsSinceEpoch;
-    final file = File('${dir.path}${Platform.pathSeparator}tts_$timestamp.mp3');
-    return file.writeAsBytes(bytes, flush: true);
-  }
-
-  Future<bool> _playFile(
-    File file, {
+  Future<bool> _playUrl(
+    String audioUrl, {
     int? sessionId,
     String? textSnippet,
     int? textLength,
@@ -560,7 +530,7 @@ class TtsService {
   }) async {
     final played = await _playWithPlayer(
       _player,
-      file,
+      audioUrl,
       sessionId: sessionId,
       textSnippet: textSnippet,
       textLength: textLength,
@@ -592,7 +562,7 @@ class TtsService {
     try {
       return await _playWithPlayer(
         fallback,
-        file,
+        audioUrl,
         sessionId: sessionId,
         textSnippet: textSnippet,
         textLength: textLength,
@@ -606,7 +576,7 @@ class TtsService {
 
   Future<bool> _playWithPlayer(
     AudioPlayer player,
-    File file, {
+    String audioUrl, {
     int? sessionId,
     String? textSnippet,
     int? textLength,
@@ -635,16 +605,16 @@ class TtsService {
     try {
       await player.setVolume(1.0);
       await _logEvent(
-        event: 'set_file',
-        message: 'Setting audio file ($tag): ${file.path}',
+        event: 'set_audio',
+        message: 'Setting browser audio source ($tag).',
         textSnippet: textSnippet,
         textLength: textLength,
         sessionId: sessionId,
       );
-      await player.setFilePath(file.path).timeout(const Duration(seconds: 8));
+      await player.setUrl(audioUrl).timeout(const Duration(seconds: 8));
       await _logEvent(
-        event: 'set_file_done',
-        message: 'Audio file ready ($tag).',
+        event: 'set_audio_done',
+        message: 'Browser audio source ready ($tag).',
         textSnippet: textSnippet,
         textLength: textLength,
         sessionId: sessionId,
@@ -720,12 +690,14 @@ class TtsService {
     int? sessionId,
   }) async {
     try {
-      final dir = await getApplicationDocumentsDirectory();
-      final file = File('${dir.path}${Platform.pathSeparator}tts_last.mp3');
-      await file.writeAsBytes(bytes, flush: true);
+      await BrowserAudioStore.write(
+        path: _lastAudioPath,
+        bytes: bytes,
+        mimeType: 'audio/mpeg',
+      );
       await _logEvent(
         event: 'saved',
-        message: 'Saved last TTS audio to ${file.path}',
+        message: 'Saved last TTS audio in browser storage.',
         textSnippet: textSnippet,
         textLength: textLength,
         sessionId: sessionId,
@@ -747,16 +719,18 @@ class TtsService {
     int? sessionId,
   }) async {
     try {
-      final dir = Directory(baseDir);
-      if (!await dir.exists()) {
-        await dir.create(recursive: true);
-      }
-      final path = p.join(dir.path, 'tts_message_$messageId.mp3');
-      final file = File(path);
-      await file.writeAsBytes(bytes, mode: FileMode.append, flush: true);
+      final path = buildMessageAudioPath(
+        baseDir: baseDir,
+        messageId: messageId,
+      );
+      await BrowserAudioStore.append(
+        path: path,
+        bytes: bytes,
+        mimeType: 'audio/mpeg',
+      );
       await _logEvent(
         event: 'saved_message_audio',
-        message: 'Appended TTS audio to $path',
+        message: 'Appended TTS audio in browser storage: $path',
         sessionId: sessionId,
       );
     } catch (error) {
@@ -949,7 +923,30 @@ class TtsService {
     required String baseDir,
     required int messageId,
   }) {
-    return p.join(baseDir, 'tts_message_$messageId.mp3');
+    return BrowserAudioStore.messagePath(kind: 'tts', messageId: messageId);
+  }
+
+  static bool hasSavedAudio(String path) {
+    return BrowserAudioStore.contains(path);
+  }
+
+  Future<String?> _resolvePlaybackUrl(String path) async {
+    final trimmed = path.trim();
+    if (trimmed.startsWith('browser-audio://')) {
+      final audio = await BrowserAudioStore.read(trimmed);
+      return audio == null ? null : BrowserAudioStore.dataUrl(audio);
+    }
+    if (trimmed.startsWith('data:') ||
+        trimmed.startsWith('blob:') ||
+        trimmed.startsWith('http://') ||
+        trimmed.startsWith('https://')) {
+      return trimmed;
+    }
+    return null;
+  }
+
+  String _audioDataUrl(List<int> bytes) {
+    return 'data:audio/mpeg;base64,${base64Encode(bytes)}';
   }
 }
 
@@ -978,13 +975,13 @@ class TtsTestResult {
 
 class TtsPrefetchedAudio {
   const TtsPrefetchedAudio({
-    required this.file,
+    required this.audioUrl,
     required this.textSnippet,
     required this.textLength,
     required this.sessionId,
   });
 
-  final File file;
+  final String audioUrl;
   final String? textSnippet;
   final int? textLength;
   final int? sessionId;

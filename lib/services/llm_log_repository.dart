@@ -1,8 +1,4 @@
-import 'dart:convert';
-import 'dart:io';
-
-import 'package:path/path.dart' as p;
-
+import 'browser_jsonl_store.dart';
 import 'log_crypto_service.dart';
 import 'settings_repository.dart';
 
@@ -107,12 +103,14 @@ class LlmLogEntry {
 
 class LlmLogRepository {
   LlmLogRepository(
-    this._settingsRepository, {
+    SettingsRepository _, {
     LogCryptoService? logCrypto,
-  }) : _logCrypto = logCrypto ?? LogCryptoService.instance;
+    BrowserJsonlStore? store,
+  })  : _logCrypto = logCrypto ?? LogCryptoService.instance,
+        _store = store ?? const BrowserJsonlStore();
 
-  final SettingsRepository _settingsRepository;
   final LogCryptoService _logCrypto;
+  final BrowserJsonlStore _store;
   Future<void> _writeQueue = Future.value();
 
   Future<void> appendEntry({
@@ -142,7 +140,6 @@ class LlmLogRepository {
   }) async {
     _writeQueue = _writeQueue.then((_) async {
       try {
-        final file = await _resolveFile();
         final encryptedPromptName =
             await _logCrypto.encryptForCurrentUser(promptName);
         final encryptedModel = await _logCrypto.encryptForCurrentUser(model);
@@ -194,11 +191,7 @@ class LlmLogRepository {
           'owner_user_id': _logCrypto.activeUserId,
           'owner_role': _logCrypto.activeRole,
         };
-        await file.writeAsString(
-          '${jsonEncode(payload)}\n',
-          mode: FileMode.append,
-          flush: true,
-        );
+        await _store.append('llm', payload);
       } catch (_) {
         // Ignore logging failures to avoid blocking LLM calls.
       }
@@ -210,22 +203,8 @@ class LlmLogRepository {
     if (!_logCrypto.hasActiveKey) {
       return [];
     }
-    final file = await _resolveFile();
-    if (!await file.exists()) {
-      return [];
-    }
-    final bytes = await file.readAsBytes();
-    final content = utf8.decode(bytes, allowMalformed: true);
-    final lines = const LineSplitter().convert(content);
     final entries = <LlmLogEntry>[];
-    for (final line in lines) {
-      if (line.trim().isEmpty) {
-        continue;
-      }
-      final decoded = jsonDecode(line);
-      if (decoded is! Map<String, dynamic>) {
-        throw StateError('LLM log row is not a JSON object.');
-      }
+    for (final decoded in await _store.read('llm')) {
       final isV2 = (decoded['log_version'] as num?)?.toInt() == 2;
       if (isV2) {
         if (!_isRelevantToActiveUser(decoded)) {
@@ -331,23 +310,6 @@ class LlmLogRepository {
       }
     }
     return entries.reversed.toList();
-  }
-
-  Future<File> _resolveFile() async {
-    final settings = await _settingsRepository.load();
-    final resolvedPath = (settings.llmLogPath ?? '').trim();
-    final filePath = resolvedPath.isNotEmpty
-        ? resolvedPath
-        : p.join(Directory.current.path, 'llm_logs.jsonl');
-    final dir = Directory(p.dirname(filePath));
-    if (!await dir.exists()) {
-      await dir.create(recursive: true);
-    }
-    final file = File(filePath);
-    if (!await file.exists()) {
-      await file.create(recursive: true);
-    }
-    return file;
   }
 
   bool _isRelevantToActiveUser(Map<String, dynamic> row) {

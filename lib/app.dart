@@ -11,7 +11,7 @@ import 'state/auth_controller.dart';
 import 'state/settings_controller.dart';
 import 'state/study_mode_controller.dart';
 import 'ui/auth_session_guard.dart';
-import 'ui/quit_app_flow.dart';
+import 'ui/continuous_sync_host.dart';
 import 'ui/pages/admin_home_page.dart';
 import 'ui/pages/teacher_pending_page.dart';
 import 'ui/pages/student_home_page.dart';
@@ -56,12 +56,12 @@ class Tutor1on1App extends StatelessWidget {
             locale: appLocaleFromSetting(settings?.locale),
             supportedLocales: AppLocalizations.supportedLocales,
             localizationsDelegates: AppLocalizations.localizationsDelegates,
-            builder: (context, child) => _StudyModeExitGuard(
-              enabled: studyModeController.enabled,
+            builder: (context, child) => _BrowserStorageNotice(
+              show: !services.browserStorageProtected,
               child: child ?? const SizedBox.shrink(),
             ),
             theme: buildTutor1on1Theme(),
-            home: const AuthGate(),
+            home: const ContinuousSyncHost(child: AuthGate()),
           );
         },
       ),
@@ -69,43 +69,39 @@ class Tutor1on1App extends StatelessWidget {
   }
 }
 
-class _StudyModeExitGuard extends StatefulWidget {
-  const _StudyModeExitGuard({
-    required this.enabled,
-    required this.child,
-  });
+class _BrowserStorageNotice extends StatefulWidget {
+  const _BrowserStorageNotice({required this.show, required this.child});
 
-  final bool enabled;
+  final bool show;
   final Widget child;
 
   @override
-  State<_StudyModeExitGuard> createState() => _StudyModeExitGuardState();
+  State<_BrowserStorageNotice> createState() => _BrowserStorageNoticeState();
 }
 
-class _StudyModeExitGuardState extends State<_StudyModeExitGuard> {
-  bool _quitFlowRunning = false;
+class _BrowserStorageNoticeState extends State<_BrowserStorageNotice> {
+  bool _dismissed = false;
 
   @override
   Widget build(BuildContext context) {
-    return PopScope<Object?>(
-      canPop: !widget.enabled,
-      onPopInvokedWithResult: (didPop, result) {
-        if (didPop || !widget.enabled || _quitFlowRunning) {
-          return;
-        }
-        _quitFlowRunning = true;
-        unawaited(_handleStudyModeExit(context));
-      },
-      child: widget.child,
-    );
-  }
-
-  Future<void> _handleStudyModeExit(BuildContext context) async {
-    try {
-      await AppQuitFlow.handleQuit(context);
-    } finally {
-      _quitFlowRunning = false;
+    if (!widget.show || _dismissed) {
+      return widget.child;
     }
+    final l10n = AppLocalizations.of(context)!;
+    return Column(
+      children: [
+        MaterialBanner(
+          content: Text(l10n.browserStorageNotProtectedMessage),
+          actions: [
+            TextButton(
+              onPressed: () => setState(() => _dismissed = true),
+              child: Text(l10n.closeButton),
+            ),
+          ],
+        ),
+        Expanded(child: widget.child),
+      ],
+    );
   }
 }
 

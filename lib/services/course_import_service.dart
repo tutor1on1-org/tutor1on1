@@ -1,20 +1,40 @@
-import 'dart:io';
+import 'dart:typed_data';
 
-import 'package:flutter/services.dart';
+import 'package:file_picker/file_picker.dart';
+
+import 'course_bundle_service.dart';
 
 class CourseImportService {
-  static const MethodChannel _channel =
-      MethodChannel('tutor1on1/course_import');
-
   static Future<String?> pickAndImportCourseFolder() async {
-    if (!Platform.isAndroid) {
-      throw UnsupportedError('Course import is only available on Android.');
-    }
-    final path =
-        await _channel.invokeMethod<String>('pickAndImportCourseFolder');
-    if (path == null || path.trim().isEmpty) {
+    final result = await FilePicker.platform.pickFiles(
+      dialogTitle: 'Import course ZIP',
+      type: FileType.custom,
+      allowedExtensions: const <String>['zip'],
+      withData: false,
+      withReadStream: true,
+    );
+    if (result == null || result.files.isEmpty) {
       return null;
     }
-    return path.trim();
+    final selected = result.files.single;
+    final bundleService = CourseBundleService();
+    bundleService.validateCompressedByteLength(selected.size);
+    final readStream = selected.readStream;
+    if (readStream == null) {
+      throw StateError('The selected course ZIP could not be read.');
+    }
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in readStream) {
+      bundleService.validateCompressedByteLength(builder.length + chunk.length);
+      builder.add(chunk);
+    }
+    final bytes = builder.takeBytes();
+    if (bytes.isEmpty) {
+      throw StateError('The selected course ZIP is empty.');
+    }
+    return bundleService.extractBundleFromBytes(
+      bytes: bytes,
+      courseName: selected.name,
+    );
   }
 }

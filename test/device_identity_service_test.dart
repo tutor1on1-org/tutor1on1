@@ -1,7 +1,4 @@
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
-import 'package:path/path.dart' as p;
 
 import 'package:tutor1on1/services/device_identity_service.dart';
 import 'package:tutor1on1/services/secure_storage_service.dart';
@@ -34,28 +31,20 @@ void main() {
     final storage = _MemoryDeviceStorage();
     await storage.writeAuthDeviceKey('device-123');
     await storage.writeAuthDeviceName('Study Laptop');
-    final backupFile = await _tempBackupFile('reuse-stored');
-    final service = DeviceIdentityService(
-      storage,
-      deviceKeyBackupFileProvider: () async => backupFile,
-    );
+    final service = DeviceIdentityService(storage);
 
     final snapshot = await service.snapshot();
 
     expect(snapshot.deviceKey, equals('device-123'));
-    expect((await backupFile.readAsString()).trim(), equals('device-123'));
     expect(snapshot.deviceName, equals('Study Laptop'));
-    expect(snapshot.platform, isNotEmpty);
+    expect(snapshot.platform, equals('web'));
     expect(snapshot.localWeekday, inInclusiveRange(1, 7));
     expect(snapshot.localMinuteOfDay, inInclusiveRange(0, 1439));
   });
 
   test('writeDeviceName falls back to default on blank input', () async {
     final storage = _MemoryDeviceStorage();
-    final service = DeviceIdentityService(
-      storage,
-      deviceKeyBackupFileProvider: () async => null,
-    );
+    final service = DeviceIdentityService(storage);
 
     await service.writeDeviceName('   ');
 
@@ -71,40 +60,23 @@ void main() {
     final service = DeviceIdentityService(
       storage,
       hostnameProvider: () => throw StateError('hostname unavailable'),
-      platformProvider: () => 'android',
-      deviceKeyBackupFileProvider: () async => null,
+      platformProvider: () => 'web',
     );
 
     final snapshot = await service.snapshot();
 
-    expect(snapshot.deviceName, equals('android'));
+    expect(snapshot.deviceName, equals('web'));
   });
 
-  test('snapshot restores device key from backup file', () async {
+  test('generated device key is stored and reused', () async {
     final storage = _MemoryDeviceStorage();
-    final backupFile = await _tempBackupFile('restore');
-    await backupFile.parent.create(recursive: true);
-    await backupFile.writeAsString('backup-device\n');
-    final service = DeviceIdentityService(
-      storage,
-      deviceKeyBackupFileProvider: () async => backupFile,
-    );
+    final service = DeviceIdentityService(storage);
 
-    final snapshot = await service.snapshot();
+    final first = await service.ensureDeviceKey();
+    final second = await service.ensureDeviceKey();
 
-    expect(snapshot.deviceKey, equals('backup-device'));
-    expect(await storage.readAuthDeviceKey(), equals('backup-device'));
+    expect(first, isNotEmpty);
+    expect(second, equals(first));
+    expect(await storage.readAuthDeviceKey(), equals(first));
   });
-}
-
-Future<File> _tempBackupFile(String name) async {
-  final tempDir = await Directory.systemTemp.createTemp(
-    'device-identity-$name-',
-  );
-  addTearDown(() async {
-    if (await tempDir.exists()) {
-      await tempDir.delete(recursive: true);
-    }
-  });
-  return File(p.join(tempDir.path, 'identity', 'auth_device_key.txt'));
 }

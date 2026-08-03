@@ -11,10 +11,6 @@ build/
 public_release/dist/
 .flutter-plugins
 .flutter-plugins-dependencies
-android/.gradle/
-android/app/debug/
-android/app/profile/
-android/app/release/
 ios/Pods/
 ios/.symlinks/
 ios/Flutter/Flutter.framework

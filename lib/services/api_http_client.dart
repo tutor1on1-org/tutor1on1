@@ -1,7 +1,4 @@
-import 'dart:io';
-
 import 'package:http/http.dart' as http;
-import 'package:http/io_client.dart';
 
 import 'transport_retry_policy.dart';
 
@@ -10,13 +7,12 @@ typedef FirstPartyApiHttpClientFactory = http.Client Function();
 http.Client buildFirstPartyApiHttpClient({
   required bool allowInsecureTls,
 }) {
-  final httpClient = HttpClient()
-    ..findProxy = ((_) => 'DIRECT')
-    ..connectionTimeout = const Duration(seconds: 15);
   if (allowInsecureTls) {
-    httpClient.badCertificateCallback = (cert, host, port) => true;
+    throw UnsupportedError(
+      'Chrome does not allow applications to bypass TLS validation.',
+    );
   }
-  return IOClient(httpClient);
+  return http.Client();
 }
 
 bool isFreshFirstPartyApiClientRetryableError(Object error) {

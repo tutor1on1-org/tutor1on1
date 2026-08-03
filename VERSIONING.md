@@ -1,24 +1,22 @@
 # Public Versioning
 
-This public client snapshot uses a simple release scheme:
+Tutor1on1 ships one Chrome web application:
 
-- Git tags and GitHub Releases are derived from `pubspec.yaml` and use `vMAJOR.MINOR` or `vMAJOR.MINOR.PATCH`
-- The app version in `pubspec.yaml` uses semantic versioning such as `1.0.0`
-- The website download links must point at the same GitHub Release tag as the published assets
-- GitHub Release asset names stay stable:
-  - `Tutor1on1.apk`
-  - `Tutor1on1.zip`
-  - `SHA256SUMS.txt`
+- `pubspec.yaml` is the only version source.
+- Git tags use `vMAJOR.MINOR.PATCH`.
+- Each release has a deterministic immutable id `vMAJOR.MINOR.PATCH-<commit>`; random ids are reserved for temporary publish transactions.
+- The public entry point is `https://www.tutor1on1.org/app/`.
+- The entry page revalidates, while runtime files use gzip-compressed one-year immutable `/app/releases/<release-id>/` URLs so ordinary refreshes download them only after promotion of a new release.
 
 ## Current Public Release
 
-- Git tag: `v1.0.59`
-- App version: `1.0.59`
+- Git tag: `v1.0.60`
+- App version: `1.0.60`
 
 ## Release Checklist
 
-1. Every shipped app update must increment the single `pubspec.yaml` version line before build/publish.
-2. Treat `pubspec.yaml` as the only version source. Derive Android `versionCode`, website metadata, and GitHub release tags from it instead of maintaining a separate build number.
-3. Build release assets with `public_release/package_github_release.ps1`, or publish them directly with `public_release/publish_github_release.ps1`. If no tag is passed, those scripts derive `vMAJOR.MINOR.PATCH` from `pubspec.yaml`.
-4. Ensure the GitHub Release for the same tag contains `Tutor1on1.apk`, `Tutor1on1.zip`, and `SHA256SUMS.txt`.
-5. Publish the static `web/` directory after the GitHub Release assets are live.
+1. Run `scripts/release_public.ps1` with no arguments for the canonical release.
+2. Let the wrapper derive the tag from `pubspec.yaml`, validate once, and build one service-worker-free Flutter Web candidate.
+3. Require its artifact hash, 6 MiB Chrome core gzip budget, headless-Chrome boot, and production API CORS compatibility before publishing private or public refs.
+4. Promote only that exact candidate and verify the live launcher, immutable compressed runtime assets, service-worker absence, and the exact `release.json` id.
+5. On failure, restore the prior symlink; later rollbacks use `scripts/publish_web_release.ps1 -RollbackTo <release-id>`.

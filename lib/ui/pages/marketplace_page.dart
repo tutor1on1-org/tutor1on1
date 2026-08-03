@@ -1,4 +1,4 @@
-import 'dart:io';
+import '../../services/file_system.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../../db/app_database.dart';
 import '../../l10n/app_localizations.dart';
 import '../../services/app_services.dart';
+import '../../services/browser_exclusive_lock.dart';
 import '../../services/course_bundle_service.dart';
 import '../../services/marketplace_api_service.dart';
 import '../../services/prompt_bundle_compat.dart';
@@ -888,7 +889,12 @@ class _MarketplacePageState extends State<MarketplacePage> {
         bundleHash: downloadedBundleHash,
       );
       try {
-        await services.sessionSyncService.syncIfReady(currentUser: user);
+        await runWithBrowserExclusiveLock<void>(
+          browserSyncLockName(user.remoteUserId ?? 0),
+          () async {
+            await services.sessionSyncService.syncIfReady(currentUser: user);
+          },
+        );
       } catch (error) {
         throw StateError(
           'Course downloaded, but student session/progress sync failed: $error',

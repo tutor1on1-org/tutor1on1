@@ -1,12 +1,11 @@
 import 'dart:convert';
 
 import 'package:drift/drift.dart';
-import 'package:drift/native.dart';
 import 'package:path/path.dart' as p;
 
 import '../constants.dart';
 import '../security/pin_hasher.dart';
-import '../services/db_path_provider.dart';
+import 'app_database_connection.dart';
 
 part 'app_database.g.dart';
 
@@ -420,7 +419,7 @@ class AppDatabase extends _$AppDatabase {
   Future<void> Function(SyncRelevantChange change)? _onSyncRelevantChange;
 
   factory AppDatabase.open() {
-    return AppDatabase(_openConnection());
+    return AppDatabase(openAppDatabaseConnection());
   }
 
   factory AppDatabase.forTesting(QueryExecutor executor) {
@@ -5044,11 +5043,4 @@ class CourseStudentTreeInfo {
       studentUsername: (row['student_username'] as String?) ?? '',
     );
   }
-}
-
-LazyDatabase _openConnection() {
-  return LazyDatabase(() async {
-    final file = await DbPathProvider.getDatabaseFile();
-    return NativeDatabase(file);
-  });
 }

@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'dart:io';
+import 'file_system.dart';
 
 import 'package:drift/drift.dart';
 import 'package:path/path.dart' as p;
@@ -2877,14 +2877,7 @@ class EnrollmentSyncService {
     if (bundleFile == null || !bundleFile.existsSync()) {
       return;
     }
-    try {
-      await bundleFile.delete();
-    } on FileSystemException catch (error) {
-      stderr.writeln(
-        'Warning: failed to delete temporary enrollment bundle '
-        '${bundleFile.path}: $error',
-      );
-    }
+    await bundleFile.delete();
   }
 
   CourseArtifactService _requireCourseArtifactService() {

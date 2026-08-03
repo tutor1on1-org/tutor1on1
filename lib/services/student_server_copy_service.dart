@@ -1,5 +1,6 @@
 import '../db/app_database.dart';
 import 'app_services.dart';
+import 'browser_exclusive_lock.dart';
 import 'sync_log_repository.dart';
 import 'sync_progress.dart';
 
@@ -68,30 +69,35 @@ class StudentServerCopyService {
       throw StateError('Take server copy requires a synced student account.');
     }
 
-    final stats = SyncRunStats();
-    onProgress?.call(
-      const SyncProgress(
-        message: 'Taking server copy: syncing enrollments...',
-        forcePaint: true,
-      ),
-    );
-    stats.absorb(
-      await _forcePullEnrollments(currentUser: currentUser),
-    );
-    onProgress?.call(
-      const SyncProgress(
-        message: 'Taking server copy: downloading sessions/progress...',
-        forcePaint: true,
-      ),
-    );
-    stats.absorb(
-      await _forcePullSessions(
-        currentUser: currentUser,
-        wipeLocalStudentData: true,
-        onProgress: onProgress,
-      ),
-    );
-    return stats;
+    return (await runWithBrowserExclusiveLock<SyncRunStats>(
+      browserSyncLockName(currentUser.remoteUserId!),
+      () async {
+        final stats = SyncRunStats();
+        onProgress?.call(
+          const SyncProgress(
+            message: 'Taking server copy: syncing enrollments...',
+            forcePaint: true,
+          ),
+        );
+        stats.absorb(
+          await _forcePullEnrollments(currentUser: currentUser),
+        );
+        onProgress?.call(
+          const SyncProgress(
+            message: 'Taking server copy: downloading sessions/progress...',
+            forcePaint: true,
+          ),
+        );
+        stats.absorb(
+          await _forcePullSessions(
+            currentUser: currentUser,
+            wipeLocalStudentData: true,
+            onProgress: onProgress,
+          ),
+        );
+        return stats;
+      },
+    ))!;
   }
 
   Future<SyncRunStats> takeThisDeviceCopy({
@@ -107,29 +113,34 @@ class StudentServerCopyService {
       );
     }
 
-    final stats = SyncRunStats();
-    onProgress?.call(
-      const SyncProgress(
-        message: 'Taking this device copy: syncing enrollments...',
-        forcePaint: true,
-      ),
-    );
-    stats.absorb(
-      await _forcePullEnrollments(currentUser: currentUser),
-    );
-    onProgress?.call(
-      const SyncProgress(
-        message:
-            'Taking this device copy: overwriting server sessions/progress...',
-        forcePaint: true,
-      ),
-    );
-    stats.absorb(
-      await _forcePushSessions(
-        currentUser: currentUser,
-        onProgress: onProgress,
-      ),
-    );
-    return stats;
+    return (await runWithBrowserExclusiveLock<SyncRunStats>(
+      browserSyncLockName(currentUser.remoteUserId!),
+      () async {
+        final stats = SyncRunStats();
+        onProgress?.call(
+          const SyncProgress(
+            message: 'Taking this device copy: syncing enrollments...',
+            forcePaint: true,
+          ),
+        );
+        stats.absorb(
+          await _forcePullEnrollments(currentUser: currentUser),
+        );
+        onProgress?.call(
+          const SyncProgress(
+            message: 'Taking this device copy: overwriting server '
+                'sessions/progress...',
+            forcePaint: true,
+          ),
+        );
+        stats.absorb(
+          await _forcePushSessions(
+            currentUser: currentUser,
+            onProgress: onProgress,
+          ),
+        );
+        return stats;
+      },
+    ))!;
   }
 }

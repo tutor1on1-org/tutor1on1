@@ -44,7 +44,7 @@ function Get-PublicReleaseVersionInfo {
   }
 }
 
-function Get-PublicReleaseAssetNames {
+function Get-PublicWebReleaseInfo {
   param(
     [Parameter(Mandatory = $true)]
     [string]$RepoRoot
@@ -52,11 +52,8 @@ function Get-PublicReleaseAssetNames {
 
   $versionInfo = Get-PublicReleaseVersionInfo -RepoRoot $RepoRoot
   return [pscustomobject]@{
-    VersionInfo        = $versionInfo
-    AndroidFileName    = 'Tutor1on1.apk'
-    WindowsFileName    = 'Tutor1on1.zip'
-    ChecksumsFileName  = 'SHA256SUMS.txt'
-    DownloadBaseUrl    = 'https://api.tutor1on1.org/downloads'
+    VersionInfo = $versionInfo
+    AppUrl      = 'https://www.tutor1on1.org/app/'
   }
 }
 
@@ -136,21 +133,6 @@ function Get-PublicReleaseDocumentRules {
       Name = 'current pubspec version'
       Pattern = '(?m)(?<=^- App version in `pubspec\.yaml`: `)[0-9]+\.[0-9]+\.[0-9]+(?:\+[0-9]+)?(?=`\s*$)'
       Expected = $VersionInfo.AppVersion
-    },
-    [pscustomobject]@{
-      Name = 'release command tag'
-      Pattern = '(?m)(?<=-ReleaseTag )v[0-9]+\.[0-9]+\.[0-9]+(?=\s*$)'
-      Expected = $VersionInfo.ReleaseTag
-    },
-    [pscustomobject]@{
-      Name = 'release dist tag'
-      Pattern = '(?<=public_release/dist/)v[0-9]+\.[0-9]+\.[0-9]+(?=/)'
-      Expected = $VersionInfo.ReleaseTag
-    },
-    [pscustomobject]@{
-      Name = 'default website release tag'
-      Pattern = '(?m)(?<=^- GitHub Release tag: `)v[0-9]+\.[0-9]+\.[0-9]+(?=`\s*$)'
-      Expected = $VersionInfo.ReleaseTag
     }
   )
 }
@@ -204,17 +186,17 @@ function Sync-WebsiteReleaseConfig {
     [string]$RepoRoot
   )
 
-  $siteJsPath = Join-Path $RepoRoot 'web\site.js'
+  $siteJsPath = Join-Path $RepoRoot 'website\site.js'
   if (-not (Test-Path -LiteralPath $siteJsPath)) {
     throw "Website release config not found: $siteJsPath"
   }
-  $webRoot = Join-Path $RepoRoot 'web'
+  $webRoot = Join-Path $RepoRoot 'website'
   if (-not (Test-Path -LiteralPath $webRoot)) {
     throw "Website root not found: $webRoot"
   }
 
-  $assetNames = Get-PublicReleaseAssetNames -RepoRoot $RepoRoot
-  $versionInfo = $assetNames.VersionInfo
+  $webRelease = Get-PublicWebReleaseInfo -RepoRoot $RepoRoot
+  $versionInfo = $webRelease.VersionInfo
   $documentChangedPaths = @(
     Sync-PublicReleaseDocumentVersions `
       -RepoRoot $RepoRoot `
@@ -248,30 +230,18 @@ function Sync-WebsiteReleaseConfig {
     "`${1}$($versionInfo.ReleaseTag)`${2}",
     1
   )
-  if ($updatedText -notmatch "(?m)^\s*downloadBaseUrl:\s*'[^']+',\s*$") {
+  if ($updatedText -notmatch "(?m)^\s*appUrl:\s*'[^']+',\s*$") {
     $updatedText = [regex]::Replace(
       $updatedText,
       "(?m)^(\s*releaseTag:\s*'[^']+',\s*)$",
-      "`${1}`n    downloadBaseUrl: '$($assetNames.DownloadBaseUrl)',",
+      "`${1}`n    appUrl: '$($webRelease.AppUrl)',",
       1
     )
   }
   $updatedText = [regex]::Replace(
     $updatedText,
-    "(?m)^(\s*downloadBaseUrl:\s*')[^']+(',\s*)$",
-    "`${1}$($assetNames.DownloadBaseUrl)`${2}",
-    1
-  )
-  $updatedText = [regex]::Replace(
-    $updatedText,
-    "(?m)^(\s*android:\s*')[^']+(',\s*)$",
-    "`${1}$($assetNames.AndroidFileName)`${2}",
-    1
-  )
-  $updatedText = [regex]::Replace(
-    $updatedText,
-    "(?m)^(\s*windows:\s*')[^']+(',\s*)$",
-    "`${1}$($assetNames.WindowsFileName)`${2}",
+    "(?m)^(\s*appUrl:\s*')[^']+(',\s*)$",
+    "`${1}$($webRelease.AppUrl)`${2}",
     1
   )
 
@@ -281,49 +251,12 @@ function Sync-WebsiteReleaseConfig {
     [System.StringComparison]::Ordinal
   )
 
-  $downloadReferenceChanged = $false
+  $htmlChanged = $false
   $htmlFiles = Get-ChildItem -LiteralPath $webRoot -Recurse -File -Filter 'index.html'
   foreach ($htmlFile in $htmlFiles) {
     $htmlOriginal = [System.IO.File]::ReadAllText($htmlFile.FullName)
     $htmlNormalized = $htmlOriginal.Replace("`r`n", "`n")
     $htmlUpdated = $htmlNormalized
-    $htmlUpdated = $htmlUpdated.Replace(
-      'https://api.tutor1on1.org/downloads/Tutor1on1.apk',
-      "$($assetNames.DownloadBaseUrl)/$($assetNames.AndroidFileName)"
-    )
-    $htmlUpdated = $htmlUpdated.Replace(
-      'https://api.tutor1on1.org/downloads/Tutor1on1.zip',
-      "$($assetNames.DownloadBaseUrl)/$($assetNames.WindowsFileName)"
-    )
-    $htmlUpdated = $htmlUpdated.Replace(
-      'Tutor1on1.apk',
-      $assetNames.AndroidFileName
-    )
-    $htmlUpdated = $htmlUpdated.Replace(
-      'Tutor1on1.zip',
-      $assetNames.WindowsFileName
-    )
-    $htmlUpdated = [regex]::Replace(
-      $htmlUpdated,
-      'https://api\.tutor1on1\.org/downloads/Tutor1on1(?:-[0-9]+\.[0-9]+\.[0-9]+)?\.apk',
-      "$($assetNames.DownloadBaseUrl)/$($assetNames.AndroidFileName)"
-    )
-    $htmlUpdated = [regex]::Replace(
-      $htmlUpdated,
-      'https://api\.tutor1on1\.org/downloads/Tutor1on1(?:-[0-9]+\.[0-9]+\.[0-9]+)?\.zip',
-      "$($assetNames.DownloadBaseUrl)/$($assetNames.WindowsFileName)"
-    )
-    $htmlUpdated = [regex]::Replace(
-      $htmlUpdated,
-      '\bTutor1on1(?:-[0-9]+\.[0-9]+\.[0-9]+)?\.apk\b',
-      $assetNames.AndroidFileName
-    )
-    $htmlUpdated = [regex]::Replace(
-      $htmlUpdated,
-      '\bTutor1on1(?:-[0-9]+\.[0-9]+\.[0-9]+)?\.zip\b',
-      $assetNames.WindowsFileName
-    )
-
     # Single-source the displayed version: rewrite the inner text of the
     # data-release-version / data-release-tag elements so no-JS / curl / SEO
     # never drift from site.js. The JS metadata becomes a redundant fallback.
@@ -339,7 +272,7 @@ function Sync-WebsiteReleaseConfig {
     )
 
     if (-not [string]::Equals($htmlNormalized, $htmlUpdated, [System.StringComparison]::Ordinal)) {
-      $downloadReferenceChanged = $true
+      $htmlChanged = $true
       [void](Write-PublicReleaseTextIfChanged `
         -Path $htmlFile.FullName `
         -OriginalText $htmlOriginal `
@@ -358,7 +291,7 @@ function Sync-WebsiteReleaseConfig {
   return [pscustomobject]@{
     Changed              = (
       $changed -or
-      $downloadReferenceChanged -or
+      $htmlChanged -or
       $documentChangedPaths.Count -gt 0
     )
     SiteJsPath           = $siteJsPath
@@ -374,10 +307,10 @@ function Assert-PublicReleaseVersionMetadata {
     [string]$RepoRoot
   )
 
-  $assetNames = Get-PublicReleaseAssetNames -RepoRoot $RepoRoot
-  $versionInfo = $assetNames.VersionInfo
-  $siteJsPath = Join-Path $RepoRoot 'web\site.js'
-  $webRoot = Join-Path $RepoRoot 'web'
+  $webRelease = Get-PublicWebReleaseInfo -RepoRoot $RepoRoot
+  $versionInfo = $webRelease.VersionInfo
+  $siteJsPath = Join-Path $RepoRoot 'website\site.js'
+  $webRoot = Join-Path $RepoRoot 'website'
   if (-not (Test-Path -LiteralPath $siteJsPath)) {
     throw "Website release config not found: $siteJsPath"
   }
@@ -395,19 +328,9 @@ function Assert-PublicReleaseVersionMetadata {
       Expected = $versionInfo.ReleaseTag
     },
     @{
-      Name = 'downloadBaseUrl'
-      Pattern = "(?m)^\s*downloadBaseUrl:\s*'([^']+)',\s*$"
-      Expected = $assetNames.DownloadBaseUrl
-    },
-    @{
-      Name = 'android asset'
-      Pattern = "(?m)^\s*android:\s*'([^']+)',\s*$"
-      Expected = $assetNames.AndroidFileName
-    },
-    @{
-      Name = 'windows asset'
-      Pattern = "(?m)^\s*windows:\s*'([^']+)',\s*$"
-      Expected = $assetNames.WindowsFileName
+      Name = 'web app URL'
+      Pattern = "(?m)^\s*appUrl:\s*'([^']+)',\s*$"
+      Expected = $webRelease.AppUrl
     }
   )
   foreach ($assignment in $siteAssignments) {
@@ -451,25 +374,6 @@ function Assert-PublicReleaseVersionMetadata {
       if ($tagMatch.Groups[1].Value.Trim() -cne $versionInfo.ReleaseTag) {
         throw "Release tag marker in $($htmlFile.FullName) is '$($tagMatch.Groups[1].Value.Trim())'; expected '$($versionInfo.ReleaseTag)'."
       }
-    }
-
-    $downloadMatches = [regex]::Matches(
-      $htmlText,
-      'https://api\.tutor1on1\.org/downloads/([^"''?#<>\s]+)',
-      [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-    )
-    foreach ($downloadMatch in $downloadMatches) {
-      $downloadName = $downloadMatch.Groups[1].Value
-      if (
-        $downloadName -cne $assetNames.AndroidFileName -and
-        $downloadName -cne $assetNames.WindowsFileName
-      ) {
-        throw "Unexpected public download name '$downloadName' in $($htmlFile.FullName)."
-      }
-    }
-
-    if ($htmlText -match '\bTutor1on1-[0-9]+\.[0-9]+\.[0-9]+\.(?:apk|zip)\b') {
-      throw "Versioned public download name found in $($htmlFile.FullName); stable asset names are required."
     }
   }
   if ($releaseVersionMarkerCount -eq 0) {

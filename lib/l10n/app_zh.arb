@@ -449,7 +449,7 @@
     }
   },
   "studyModeLabel": "学习模式",
-  "studyModeDescription": "保持常亮，进入全屏或沉浸模式，退出时需要教师 PIN。",
+  "studyModeDescription": "在此浏览器标签页中跟随教师安排的学习模式状态。",
   "quitButton": "退出（教师密码）",
   "notLoggedInMessage": "未登录。",
   "teacherNotFoundMessage": "未找到教师账号。",
@@ -867,5 +867,6 @@
       "medium": {},
       "hard": {}
     }
-  }
+  },
+  "browserStorageNotProtectedMessage": "Chrome 无法保护本地数据免遭自动存储清理；请导出备份，并安装或经常使用此网站。"
 }

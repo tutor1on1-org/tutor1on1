@@ -40,7 +40,79 @@ class _SharedTokenSecureStorage extends SecureStorageService {
   }
 }
 
+String _accessTokenForUser(int remoteUserId) {
+  String encodePart(Map<String, dynamic> value) =>
+      base64Url.encode(utf8.encode(jsonEncode(value))).replaceAll('=', '');
+
+  return '${encodePart(<String, dynamic>{'alg': 'none'})}.'
+      '${encodePart(<String, dynamic>{'sub': '$remoteUserId'})}.signature';
+}
+
 void main() {
+  test('does not refresh another account token before the marker changes',
+      () async {
+    const localUserId = 3001;
+    final storage = _SharedTokenSecureStorage(
+      accessToken: _accessTokenForUser(4002),
+      refreshToken: 'other-account-refresh',
+    )..bindAuthRemoteUser(localUserId);
+    var refreshCalls = 0;
+    final client = MockClient((request) async {
+      refreshCalls++;
+      return http.Response('{}', 200);
+    });
+
+    final refreshed = await AuthTokenRefreshCoordinator.refresh(
+      client: client,
+      secureStorage: storage,
+      baseUrl: 'https://refresh-identity-race.example.com',
+      browserAuthUserReader: () => localUserId,
+    );
+
+    expect(refreshed, isFalse);
+    expect(refreshCalls, isZero);
+    expect(
+      await storage.readAuthRefreshToken(),
+      equals('other-account-refresh'),
+    );
+  });
+
+  test('rejects a refresh response for another account', () async {
+    const localUserId = 3001;
+    final originalAccessToken = _accessTokenForUser(localUserId);
+    final storage = _SharedTokenSecureStorage(
+      accessToken: originalAccessToken,
+      refreshToken: 'refresh-1',
+    )..bindAuthRemoteUser(localUserId);
+    final client = MockClient((request) async {
+      return http.Response(
+        jsonEncode(<String, String>{
+          'access_token': _accessTokenForUser(4002),
+          'refresh_token': 'other-account-refresh',
+        }),
+        200,
+      );
+    });
+
+    await expectLater(
+      AuthTokenRefreshCoordinator.refresh(
+        client: client,
+        secureStorage: storage,
+        baseUrl: 'https://refresh-response-identity.example.com',
+        browserAuthUserReader: () => localUserId,
+      ),
+      throwsA(
+        isA<AuthTokenRefreshException>().having(
+          (error) => error.message,
+          'message',
+          'Token refresh response belongs to another account.',
+        ),
+      ),
+    );
+    expect(await storage.readAuthAccessToken(), equals(originalAccessToken));
+    expect(await storage.readAuthRefreshToken(), equals('refresh-1'));
+  });
+
   test(
     'coalesces concurrent refresh requests and preserves rotated auth tokens',
     () async {
@@ -123,5 +195,81 @@ void main() {
     await expectLater(invalidated, completes);
     expect(await storage.readAuthAccessToken(), isEmpty);
     expect(await storage.readAuthRefreshToken(), isEmpty);
+  });
+
+  test('does not overwrite tokens rotated while refresh was in flight',
+      () async {
+    final storage = _SharedTokenSecureStorage(
+      accessToken: 'expired-token',
+      refreshToken: 'refresh-1',
+    );
+    final refreshStarted = Completer<void>();
+    final releaseRefresh = Completer<void>();
+    final client = MockClient((request) async {
+      refreshStarted.complete();
+      await releaseRefresh.future;
+      return http.Response(
+        '{"access_token":"stale-access","refresh_token":"stale-refresh"}',
+        200,
+      );
+    });
+
+    final refresh = AuthTokenRefreshCoordinator.refresh(
+      client: client,
+      secureStorage: storage,
+      baseUrl: 'https://rotated.example.com',
+    );
+    await refreshStarted.future;
+    await storage.writeAuthTokens(
+      accessToken: 'other-tab-access',
+      refreshToken: 'refresh-2',
+    );
+    releaseRefresh.complete();
+
+    expect(await refresh, isTrue);
+    expect(await storage.readAuthAccessToken(), equals('other-tab-access'));
+    expect(await storage.readAuthRefreshToken(), equals('refresh-2'));
+  });
+
+  test('does not apply a refresh after the browser account changes', () async {
+    final storage = _SharedTokenSecureStorage(
+      accessToken: _accessTokenForUser(3001),
+      refreshToken: 'refresh-1',
+    )..bindAuthRemoteUser(3001);
+    final refreshStarted = Completer<void>();
+    final releaseRefresh = Completer<void>();
+    var browserAuthUserId = 3001;
+    final client = MockClient((request) async {
+      refreshStarted.complete();
+      await releaseRefresh.future;
+      return http.Response(
+        '{"access_token":"stale-access","refresh_token":"stale-refresh"}',
+        200,
+      );
+    });
+
+    final refresh = AuthTokenRefreshCoordinator.refresh(
+      client: client,
+      secureStorage: storage,
+      baseUrl: 'https://account-change.example.com',
+      browserAuthUserReader: () => browserAuthUserId,
+    );
+    await refreshStarted.future;
+    browserAuthUserId = 4002;
+    await storage.writeAuthTokens(
+      accessToken: _accessTokenForUser(4002),
+      refreshToken: 'other-account-refresh',
+    );
+    releaseRefresh.complete();
+
+    expect(await refresh, isFalse);
+    expect(
+      await storage.readAuthAccessToken(),
+      equals(_accessTokenForUser(4002)),
+    );
+    expect(
+      await storage.readAuthRefreshToken(),
+      equals('other-account-refresh'),
+    );
   });
 }

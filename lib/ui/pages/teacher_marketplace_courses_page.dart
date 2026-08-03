@@ -1,6 +1,5 @@
-import 'dart:io';
+import '../../services/file_system.dart';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -8,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../../l10n/app_localizations.dart';
 import '../../services/app_services.dart';
 import '../../services/course_bundle_service.dart';
+import '../../services/course_import_service.dart';
 import '../../services/marketplace_api_service.dart';
 import '../app_close_button.dart';
 
@@ -417,9 +417,7 @@ class _TeacherMarketplaceCoursesPageState
     TeacherCourseSummary course,
   ) async {
     final l10n = AppLocalizations.of(context)!;
-    final folderPath = await FilePicker.platform.getDirectoryPath(
-      dialogTitle: l10n.courseFolderPickerTitle,
-    );
+    final folderPath = await CourseImportService.pickAndImportCourseFolder();
     if (folderPath == null || folderPath.trim().isEmpty) {
       return;
     }

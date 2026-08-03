@@ -118,23 +118,6 @@ class LlmProviders {
         supportsStructuredOutputs: true,
       ),
       const LlmProvider(
-        id: 'openai-codex',
-        label: 'OpenAI Codex (ChatGPT OAuth)',
-        baseUrl: 'https://chatgpt.com/backend-api',
-        models: [
-          'gpt-5.5',
-          'gpt-5.4',
-          'gpt-5.4-mini',
-        ],
-        maxTokensParam: MaxTokensParam.maxTokens,
-        authMode: LlmAuthMode.openAiCodexOAuth,
-        chatPath: '/codex/responses',
-        apiFormat: LlmApiFormat.openAiCodexResponses,
-        noTemperatureModelPrefixes: ['gpt-'],
-        reasoningControlStyle: ReasoningControlStyle.openAiEffort,
-        supportsStructuredOutputs: true,
-      ),
-      const LlmProvider(
         id: 'openrouter',
         label: 'OpenRouter',
         baseUrl: 'https://openrouter.ai/api/v1',
@@ -168,6 +151,7 @@ class LlmProviders {
         reasoningControlStyle: ReasoningControlStyle.anthropicThinking,
         extraHeaders: <String, String>{
           'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
         },
       ),
       const LlmProvider(
