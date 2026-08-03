@@ -40,6 +40,7 @@
           <a class="button button-ghost" href="#student">Flujo estudiante</a>
           <a class="button button-ghost" href="#course-folder">ZIP del curso</a>
           <a class="button button-ghost" href="#config">API config</a>
+          <a class="button button-ghost" href="#oauth">ChatGPT OAuth</a>
         </div>
       </section>
 
@@ -88,6 +89,12 @@
       </section>
 
       <section class="grid grid-three section-block"><article class="card"><span class="kicker">Marketplace</span><h2>Descubrir cursos</h2><p>Los profesores publican cursos. Los estudiantes exploran, solicitan inscripción y descargan después de la aprobación.</p></article><article class="card"><span class="kicker">Sessions</span><h2>Feedback personal</h2><p>Learn sirve para material nuevo y Review para práctica de recuerdo. El feedback se adapta a la respuesta del estudiante y mantiene visible el progreso.</p></article><article class="card"><span class="kicker">Sync</span><h2>Continuidad</h2><p>Las páginas de profesor y estudiante sincronizan inscripciones, sesiones, progreso y señales del cuaderno de errores vinculadas a la cuenta.</p></article></section>
+
+      <section class="content-block" id="oauth">
+        <h2>Usar ChatGPT OAuth en lugar de una API key</h2>
+        <ol class="help-list"><li>Abra Settings y API Settings y elija <strong>OpenAI Codex (ChatGPT OAuth)</strong> como <strong>Provider</strong>.</li><li>Pulse <strong>Login with ChatGPT</strong> y complete la autorización en Chrome. Si Chrome termina en una página localhost que no carga, copie la URL final completa de la barra de direcciones y péguela en el diálogo; también puede pegar el authorization code.</li><li>Pulse <strong>Refresh models</strong>, elija un modelo de texto disponible y guarde la API config.</li><li>Inicie o vuelva a abrir una sesión de tutor y elija el modelo Codex OAuth guardado en el selector.</li></ol>
+        <p class="muted">Como Chrome no puede llamar directamente al backend de ChatGPT Codex por las restricciones CORS del navegador, Tutor1on1 envía temporalmente el OpenAI access token y account ID junto con el catálogo de modelos y el tráfico de prompts/respuestas del tutor por rutas fijas de <code>api.tutor1on1.org</code>. El relay no guarda ni registra esas credenciales ni el contenido. TTS y STT siguen usando providers con API key.</p>
+      </section>
 
       <section class="content-block">
         <h2>Problemas comunes</h2>

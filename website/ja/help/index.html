@@ -40,6 +40,7 @@
           <a class="button button-ghost" href="#student">生徒の流れ</a>
           <a class="button button-ghost" href="#course-folder">コース ZIP</a>
           <a class="button button-ghost" href="#config">API config</a>
+          <a class="button button-ghost" href="#oauth">ChatGPT OAuth</a>
         </div>
       </section>
 
@@ -88,6 +89,12 @@
       </section>
 
       <section class="grid grid-three section-block"><article class="card"><span class="kicker">Marketplace</span><h2>コースを見つける</h2><p>先生はコース listing を公開します。生徒は閲覧、受講申請、承認後のダウンロードを行います。</p></article><article class="card"><span class="kicker">Sessions</span><h2>個別フィードバック</h2><p>Learn は新しい内容、Review は想起練習に使います。フィードバックは生徒の回答に合わせて変わり、進歩を見える形にします。</p></article><article class="card"><span class="kicker">Sync</span><h2>継続性</h2><p>先生と生徒のホームは、アカウントに紐づく受講状態、セッション、進度、ミスノート信号を同期します。</p></article></section>
+
+      <section class="content-block" id="oauth">
+        <h2>API key の代わりに ChatGPT OAuth を使う</h2>
+        <ol class="help-list"><li>Settings の API Settings を開き、<strong>Provider</strong> で <strong>OpenAI Codex (ChatGPT OAuth)</strong> を選びます。</li><li><strong>Login with ChatGPT</strong> を押し、Chrome で認証を完了します。Chrome が読み込めない localhost ページで終了した場合は、アドレスバーの最終 URL 全体をコピーしてダイアログに貼り付けます。authorization code を直接貼り付けることもできます。</li><li><strong>Refresh models</strong> を押し、利用可能なテキストモデルを選んで API config を保存します。</li><li>tutor セッションを開始または開き直し、モデル選択で保存済み Codex OAuth モデルを選びます。</li></ol>
+        <p class="muted">ブラウザー CORS により Chrome から ChatGPT Codex backend を直接呼び出せないため、Tutor1on1 は OpenAI access token と account ID、モデル一覧、tutor の prompt/response 通信を <code>api.tutor1on1.org</code> の固定ルート経由で一時的に中継します。中継サービスはこれらの認証情報や内容を保存またはログ記録しません。音声が必要な場合、TTS と STT は引き続き API-key provider を使います。</p>
+      </section>
 
       <section class="content-block">
         <h2>よくある問題</h2>

@@ -1,7 +1,9 @@
 # Changelog
 
-## Unreleased - 2026-08-02
+## Unreleased - 2026-08-03
 
+- Restored OpenAI Codex (ChatGPT OAuth) to the Chrome client and routed Codex model/tutor traffic through a fixed authenticated API relay that does not persist or log OAuth credentials or prompt/response content.
+- Raised the bounded course-bundle entry limit from 10,000 to 100,000 on both client and server so valid production courses remain compatible while ZIP resource limits stay enforced.
 - Migrated the public client to Chrome/WebGUI only and removed the Windows and Android source, dependencies, and release targets.
 - Added durable browser database/file/audio persistence, continuous cross-tab-safe sync, account-bound auth guards, and bounded ZIP handling.
 - Replaced native artifact publishing with an atomic Flutter Web `/app/` release pipeline with preflight validation, full-tree checksums, rollback, a revalidated launcher, and deterministic gzip-compressed immutable release assets.

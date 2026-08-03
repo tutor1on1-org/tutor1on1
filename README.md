@@ -25,6 +25,7 @@ Excluded:
 - Auth uses the official API at `https://api.tutor1on1.org` with bearer tokens.
 - Course, session, progress, and mistake-book data synchronize with the server.
 - Optional LLM, TTS, and STT integrations use the provider configuration selected by the user.
+- For OpenAI Codex (ChatGPT OAuth), OpenAI authorization runs in Chrome, while fixed authenticated routes at `https://api.tutor1on1.org` transiently relay the OpenAI access token/account ID, model catalog, and tutor prompt/response traffic because the ChatGPT Codex backend does not accept direct browser CORS calls; the relay does not persist or log those credentials or content.
 
 The client does not contain hardcoded service credentials, an offline admin password, or an authentication fallback.
 
@@ -46,8 +47,8 @@ flutter build web --release --base-href /app/ --pwa-strategy=none --dart-define=
 
 ## Releases
 
-- Current public release tag: `v1.0.61`
-- App version in `pubspec.yaml`: `1.0.61`
+- Current public release tag: `v1.0.62`
+- App version in `pubspec.yaml`: `1.0.62`
 
 The canonical private release wrapper validates the source, builds and boots one service-worker-free candidate, verifies production CORS, publishes source refs only after those gates pass, installs that exact attested candidate under an immutable versioned directory, and atomically promotes `/app/`; only the small launcher revalidates, while gzip-compressed runtime files use one-year immutable release URLs, and failed live verification restores the prior release.
 

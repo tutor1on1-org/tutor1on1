@@ -151,7 +151,7 @@ void main() {
       CourseBundleSafetyLimits.defaults.maxUncompressedBytes,
       256 * 1024 * 1024,
     );
-    expect(CourseBundleSafetyLimits.defaults.maxEntryCount, 10000);
+    expect(CourseBundleSafetyLimits.defaults.maxEntryCount, 100000);
     expect(CourseBundleSafetyLimits.defaults.maxExpansionRatio, 100);
   });
 
@@ -217,6 +217,13 @@ void main() {
         ),
       );
     });
+  });
+
+  test('accepts a production-scale bundle under the default entry limit',
+      () async {
+    final bytes = _buildSafetyTestBundle(extraEntries: 13280);
+    final service = CourseBundleService();
+    await _withBundleFile(bytes, service.validateBundleForImport);
   });
 
   test('rejects a course bundle over the expansion-ratio limit', () async {

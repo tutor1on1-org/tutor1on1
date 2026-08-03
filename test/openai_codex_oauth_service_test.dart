@@ -11,6 +11,9 @@ class _MemorySecureStorage implements SecureStorageService {
   final Map<String, String> values = <String, String>{};
 
   @override
+  int? get boundAuthRemoteUserId => null;
+
+  @override
   Future<String?> readOAuthCredentials(String providerId) async {
     return values['oauth:$providerId'];
   }
@@ -26,15 +29,50 @@ class _MemorySecureStorage implements SecureStorageService {
   }
 
   @override
+  Future<String?> readAuthAccessToken() async => values['auth:access'];
+
+  @override
+  Future<String?> readAuthRefreshToken() async => values['auth:refresh'];
+
+  @override
+  Future<void> writeAuthTokens({
+    required String accessToken,
+    required String refreshToken,
+  }) async {
+    values['auth:access'] = accessToken;
+    values['auth:refresh'] = refreshToken;
+  }
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 void main() {
-  test('exchanges authorization code for ChatGPT OAuth credentials', () async {
+  test('creates direct OpenAI PKCE login for manual browser completion',
+      () async {
+    final attempt = await OpenAiCodexOAuthService(_MemorySecureStorage())
+        .createLoginAttempt();
+    final uri = Uri.parse(attempt.authUrl);
+
+    expect(uri.origin, equals('https://auth.openai.com'));
+    expect(uri.path, equals('/oauth/authorize'));
+    expect(uri.queryParameters['response_type'], equals('code'));
+    expect(
+      uri.queryParameters['redirect_uri'],
+      equals('http://localhost:1455/auth/callback'),
+    );
+    expect(uri.queryParameters['code_challenge_method'], equals('S256'));
+    expect(uri.queryParameters['code_challenge'], isNotEmpty);
+    expect(uri.queryParameters['state'], equals(attempt.state));
+    expect(attempt.verifier, isNotEmpty);
+    expect(await attempt.waitForCode(), isNull);
+    await attempt.close();
+  });
+
+  test('exchanges authorization code directly with OpenAI', () async {
     late Map<String, String> posted;
-    final storage = _MemorySecureStorage();
     final service = OpenAiCodexOAuthService(
-      storage,
+      _MemorySecureStorage(),
       client: MockClient((request) async {
         expect(request.method, equals('POST'));
         expect(
@@ -75,7 +113,7 @@ void main() {
     expect(credentials.refreshToken, equals('refresh-token'));
   });
 
-  test('refreshes expired stored credentials and persists replacement',
+  test('refreshes expired credentials directly and persists replacement',
       () async {
     final storage = _MemorySecureStorage();
     final expired = OpenAiCodexOAuthCredentials(
@@ -92,6 +130,7 @@ void main() {
       storage,
       client: MockClient((request) async {
         final posted = Uri.splitQueryString(request.body);
+        expect(request.url.host, equals('auth.openai.com'));
         expect(posted['grant_type'], equals('refresh_token'));
         expect(posted['refresh_token'], equals('old-refresh'));
         return http.Response(
@@ -118,21 +157,39 @@ void main() {
     expect(stored!.refreshToken, equals('new-refresh'));
   });
 
-  test('downloads visible API-supported OAuth models in server priority order',
+  test('fetches models through authenticated Tutor relay with transient token',
       () async {
+    final storage = _MemorySecureStorage()
+      ..values['auth:access'] = 'tutor-access-token';
+    final credentials = OpenAiCodexOAuthCredentials(
+      accessToken: 'openai-access-token',
+      refreshToken: 'openai-refresh-token',
+      expiresAtMs: 4102444800000,
+      accountId: 'acct_123',
+      email: 'user@example.com',
+    );
     final service = OpenAiCodexOAuthService(
-      _MemorySecureStorage(),
+      storage,
       client: MockClient((request) async {
         expect(request.method, equals('GET'));
         expect(
           request.url.toString(),
           equals(
-            'https://chatgpt.com/backend-api/codex/models'
-            '?client_version=1.0.53',
+            'https://api.tutor1on1.org'
+            '/api/llm/openai-codex/models?client_version=1.0.61',
           ),
         );
-        expect(request.headers['authorization'], equals('Bearer access-token'));
-        expect(request.headers['chatgpt-account-id'], equals('acct_123'));
+        expect(
+          request.headers['authorization'],
+          equals('Bearer tutor-access-token'),
+        );
+        expect(
+          request.headers['x-openai-oauth-token'],
+          equals('openai-access-token'),
+        );
+        expect(request.headers['x-openai-account-id'], equals('acct_123'));
+        expect(request.headers.values, isNot(contains('openai-refresh-token')));
+        expect(request.headers, isNot(contains('chatgpt-account-id')));
         return http.Response(
           jsonEncode(<String, dynamic>{
             'models': <Map<String, dynamic>>[
@@ -168,16 +225,86 @@ void main() {
     );
 
     final models = await service.fetchAvailableModelIds(
-      credentials: OpenAiCodexOAuthCredentials(
-        accessToken: 'access-token',
-        refreshToken: 'refresh-token',
-        expiresAtMs: DateTime.now().millisecondsSinceEpoch + 60000,
-        accountId: 'acct_123',
-      ),
-      clientVersion: '1.0.53',
+      credentials: credentials,
+      clientVersion: '1.0.61',
     );
 
     expect(models, equals(<String>['gpt-first', 'gpt-later']));
+  });
+
+  test('refreshes expired Tutor auth once before retrying model relay',
+      () async {
+    final storage = _MemorySecureStorage()
+      ..values['auth:access'] = 'expired-tutor-token'
+      ..values['auth:refresh'] = 'tutor-refresh-token';
+    var modelCalls = 0;
+    var refreshCalls = 0;
+    final service = OpenAiCodexOAuthService(
+      storage,
+      client: MockClient((request) async {
+        if (request.url.path == '/api/auth/refresh') {
+          refreshCalls += 1;
+          expect(request.method, equals('POST'));
+          expect(
+            jsonDecode(request.body),
+            equals(<String, dynamic>{
+              'refresh_token': 'tutor-refresh-token',
+            }),
+          );
+          return http.Response(
+            jsonEncode(<String, dynamic>{
+              'access_token': 'fresh-tutor-token',
+              'refresh_token': 'fresh-tutor-refresh-token',
+            }),
+            200,
+          );
+        }
+        modelCalls += 1;
+        expect(
+          request.url.path,
+          equals('/api/llm/openai-codex/models'),
+        );
+        if (modelCalls == 1) {
+          expect(
+            request.headers['authorization'],
+            equals('Bearer expired-tutor-token'),
+          );
+          return http.Response('{"error":"expired"}', 401);
+        }
+        expect(
+          request.headers['authorization'],
+          equals('Bearer fresh-tutor-token'),
+        );
+        return http.Response(
+          jsonEncode(<String, dynamic>{
+            'models': <Map<String, dynamic>>[
+              <String, dynamic>{
+                'slug': 'gpt-refreshed',
+                'visibility': 'list',
+                'supported_in_api': true,
+                'priority': 1,
+              },
+            ],
+          }),
+          200,
+        );
+      }),
+    );
+
+    final models = await service.fetchAvailableModelIds(
+      credentials: const OpenAiCodexOAuthCredentials(
+        accessToken: 'openai-access-token',
+        refreshToken: 'openai-refresh-token',
+        expiresAtMs: 4102444800000,
+        accountId: 'acct_123',
+      ),
+      clientVersion: '1.0.61',
+    );
+
+    expect(models, equals(<String>['gpt-refreshed']));
+    expect(modelCalls, equals(2));
+    expect(refreshCalls, equals(1));
+    expect(storage.values['auth:access'], equals('fresh-tutor-token'));
   });
 
   test('rejects mismatched OAuth state', () async {

@@ -40,6 +40,7 @@
           <a class="button button-ghost" href="#student">Student flow</a>
           <a class="button button-ghost" href="#course-folder">Course ZIP</a>
           <a class="button button-ghost" href="#config">API config</a>
+          <a class="button button-ghost" href="#oauth">ChatGPT OAuth</a>
         </div>
       </section>
 
@@ -88,6 +89,12 @@
       </section>
 
       <section class="grid grid-three section-block"><article class="card"><span class="kicker">Marketplace</span><h2>Course discovery</h2><p>Teachers publish course listings. Students browse, request enrollment, and download after approval.</p></article><article class="card"><span class="kicker">Sessions</span><h2>Personal feedback</h2><p>Use Learn for new material and Review for recall practice. Feedback adapts to the student&#x27;s answer and keeps progress visible.</p></article><article class="card"><span class="kicker">Sync</span><h2>Continuity</h2><p>Teacher and student home pages sync account-linked enrollment, sessions, progress, and mistake-book signals in the background.</p></article></section>
+
+      <section class="content-block" id="oauth">
+        <h2>Use ChatGPT OAuth instead of an API key</h2>
+        <ol class="help-list"><li>Open Settings, API Settings, and choose <strong>OpenAI Codex (ChatGPT OAuth)</strong> as the Provider.</li><li>Click <strong>Login with ChatGPT</strong> and complete authorization in Chrome. If Chrome finishes on a localhost page that does not load, copy the complete final URL from the address bar and paste it into the dialog; you can also paste the authorization code.</li><li>Click <strong>Refresh models</strong>, choose an available text model, and save the API config.</li><li>Start or reopen a tutor session and choose the saved Codex OAuth model from the model picker.</li></ol>
+        <p class="muted">Because Chrome cannot call the ChatGPT Codex backend directly under browser CORS, Tutor1on1 sends the OpenAI access token and account ID transiently with model-list and tutor prompt/response traffic through fixed routes at <code>api.tutor1on1.org</code>. The relay does not persist or log those credentials or content. TTS and STT still use API-key providers when voice is needed.</p>
+      </section>
 
       <section class="content-block">
         <h2>Common problems</h2>

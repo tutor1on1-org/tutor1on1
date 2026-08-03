@@ -40,6 +40,7 @@
           <a class="button button-ghost" href="#student">Parcours élève</a>
           <a class="button button-ghost" href="#course-folder">ZIP cours</a>
           <a class="button button-ghost" href="#config">API config</a>
+          <a class="button button-ghost" href="#oauth">ChatGPT OAuth</a>
         </div>
       </section>
 
@@ -88,6 +89,12 @@
       </section>
 
       <section class="grid grid-three section-block"><article class="card"><span class="kicker">Marketplace</span><h2>Découverte des cours</h2><p>Les enseignants publient des fiches de cours. Les élèves consultent, demandent une inscription et téléchargent après approbation.</p></article><article class="card"><span class="kicker">Sessions</span><h2>Feedback personnel</h2><p>Learn sert au nouveau contenu et Review à la pratique de rappel. Le feedback s&#x27;adapte à la réponse de l&#x27;élève et rend la progression visible.</p></article><article class="card"><span class="kicker">Sync</span><h2>Continuité</h2><p>Les pages enseignant et élève synchronisent inscriptions, sessions, progression et signaux du carnet d’erreurs liés au compte.</p></article></section>
+
+      <section class="content-block" id="oauth">
+        <h2>Utiliser ChatGPT OAuth au lieu d’une clé API</h2>
+        <ol class="help-list"><li>Ouvrez Settings puis API Settings et choisissez <strong>OpenAI Codex (ChatGPT OAuth)</strong> comme <strong>Provider</strong>.</li><li>Cliquez sur <strong>Login with ChatGPT</strong> et terminez l’autorisation dans Chrome. Si Chrome finit sur une page localhost inaccessible, copiez l’URL finale complète depuis la barre d’adresse et collez-la dans la boîte de dialogue ; vous pouvez aussi coller l’authorization code.</li><li>Cliquez sur <strong>Refresh models</strong>, choisissez un modèle texte disponible, puis enregistrez l’API config.</li><li>Lancez ou rouvrez une session tutor et choisissez le modèle Codex OAuth enregistré dans le sélecteur.</li></ol>
+        <p class="muted">Comme Chrome ne peut pas appeler directement le backend ChatGPT Codex à cause du CORS du navigateur, Tutor1on1 transmet temporairement l’OpenAI access token et l’account ID, le catalogue de modèles et le trafic prompt/réponse du tutor par des routes fixes sur <code>api.tutor1on1.org</code>. Le relais ne conserve ni ne journalise ces identifiants ou contenus. TTS et STT continuent d’utiliser des providers avec API key.</p>
+      </section>
 
       <section class="content-block">
         <h2>Problèmes fréquents</h2>

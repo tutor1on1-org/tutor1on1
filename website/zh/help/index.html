@@ -40,6 +40,7 @@
           <a class="button button-ghost" href="#student">学生流程</a>
           <a class="button button-ghost" href="#course-folder">课程 ZIP</a>
           <a class="button button-ghost" href="#config">API config</a>
+          <a class="button button-ghost" href="#oauth">ChatGPT OAuth</a>
         </div>
       </section>
 
@@ -88,6 +89,12 @@
       </section>
 
       <section class="grid grid-three section-block"><article class="card"><span class="kicker">Marketplace</span><h2>课程发现</h2><p>老师发布课程展示；学生浏览课程、申请报名，并在批准后下载。</p></article><article class="card"><span class="kicker">Sessions</span><h2>个人反馈</h2><p>Learn 用于新内容，Review 用于回忆练习。反馈会根据学生回答调整，并保持进步可见。</p></article><article class="card"><span class="kicker">Sync</span><h2>连续学习</h2><p>老师和学生主页会同步已连接账号的报名、会话、进度和错题信号。</p></article></section>
+
+      <section class="content-block" id="oauth">
+        <h2>不用 API key，改用 ChatGPT OAuth</h2>
+        <ol class="help-list"><li>打开设置里的 API Settings，把 <strong>Provider</strong> 选成 <strong>OpenAI Codex (ChatGPT OAuth)</strong>。</li><li>点击 <strong>Login with ChatGPT</strong>，在 Chrome 里完成授权。如果 Chrome 最后停在无法打开的 localhost 页面，请复制地址栏里的完整最终 URL 并粘贴到弹窗；也可以直接粘贴 authorization code。</li><li>点击 <strong>Refresh models</strong>，选择一个可用的文本模型，然后保存 API 配置。</li><li>开始或重新打开 tutor 会话，在模型选择器里选择已保存的 Codex OAuth 模型。</li></ol>
+        <p class="muted">由于浏览器 CORS 限制，Chrome 不能直接调用 ChatGPT Codex 后端，因此 Tutor1on1 会通过 <code>api.tutor1on1.org</code> 的固定路由临时中转 OpenAI access token、account ID、模型列表请求以及 tutor 提示词/回复流。中转服务不会持久保存或记录这些凭证或内容。需要语音时，TTS 和 STT 仍使用 API-key provider。</p>
+      </section>
 
       <section class="content-block">
         <h2>常见问题</h2>

@@ -40,6 +40,7 @@
           <a class="button button-ghost" href="#student">학생 흐름</a>
           <a class="button button-ghost" href="#course-folder">코스 ZIP</a>
           <a class="button button-ghost" href="#config">API config</a>
+          <a class="button button-ghost" href="#oauth">ChatGPT OAuth</a>
         </div>
       </section>
 
@@ -88,6 +89,12 @@
       </section>
 
       <section class="grid grid-three section-block"><article class="card"><span class="kicker">Marketplace</span><h2>코스 찾기</h2><p>교사는 코스 listing을 공개합니다. 학생은 탐색하고 수강 신청을 하며 승인 후 다운로드합니다.</p></article><article class="card"><span class="kicker">Sessions</span><h2>개인 피드백</h2><p>Learn은 새 내용, Review는 회상 연습에 사용합니다. 피드백은 학생 답변에 맞춰 바뀌며 진도를 보이게 합니다.</p></article><article class="card"><span class="kicker">Sync</span><h2>연속성</h2><p>교사와 학생 홈은 계정에 연결된 수강 상태, 세션, 진도, 오답 노트 신호를 동기화합니다.</p></article></section>
+
+      <section class="content-block" id="oauth">
+        <h2>API key 대신 ChatGPT OAuth 사용</h2>
+        <ol class="help-list"><li>Settings의 API Settings를 열고 <strong>Provider</strong>를 <strong>OpenAI Codex (ChatGPT OAuth)</strong>로 선택합니다.</li><li><strong>Login with ChatGPT</strong>를 누르고 Chrome에서 인증을 완료합니다. Chrome이 열리지 않는 localhost 페이지에서 끝나면 주소 표시줄의 최종 URL 전체를 복사해 대화상자에 붙여 넣습니다. authorization code를 직접 붙여 넣어도 됩니다.</li><li><strong>Refresh models</strong>를 누르고 사용 가능한 텍스트 모델을 선택한 뒤 API config를 저장합니다.</li><li>tutor 세션을 시작하거나 다시 열고 모델 선택기에서 저장된 Codex OAuth 모델을 선택합니다.</li></ol>
+        <p class="muted">브라우저 CORS 때문에 Chrome에서 ChatGPT Codex backend를 직접 호출할 수 없으므로 Tutor1on1은 OpenAI access token과 account ID, 모델 목록, tutor prompt/response 트래픽을 <code>api.tutor1on1.org</code>의 고정 경로를 통해 일시적으로 중계합니다. 중계 서비스는 이러한 자격 증명이나 콘텐츠를 저장하거나 로그에 기록하지 않습니다. 음성이 필요하면 TTS와 STT는 계속 API-key provider를 사용합니다.</p>
+      </section>
 
       <section class="content-block">
         <h2>자주 겪는 문제</h2>

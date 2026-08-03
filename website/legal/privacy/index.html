@@ -39,7 +39,7 @@
         <p class="eyebrow">Privacy notice</p>
         <h1>How Tutor1on1 handles data.</h1>
         <p class="lead">
-          Effective date: April 27, 2026. Contact: <a class="footer-link" href="mailto:tutor1on1.org@gmail.com">tutor1on1.org@gmail.com</a>.
+          Effective date: August 3, 2026. Contact: <a class="footer-link" href="mailto:tutor1on1.org@gmail.com">tutor1on1.org@gmail.com</a>.
         </p>
       </section>
 
@@ -61,6 +61,16 @@
           <li>Operate marketplace listings, enrollment approval, and approved course downloads.</li>
           <li>Provide personalized guidance, targeted practice, progress continuity, and mistake review.</li>
           <li>Support sync, abuse prevention, troubleshooting, and service operations.</li>
+        </ul>
+      </section>
+
+      <section class="content-block">
+        <h2>Optional OpenAI Codex OAuth relay</h2>
+        <ul class="help-list">
+          <li>When you choose OpenAI Codex (ChatGPT OAuth), authorization happens with OpenAI in Chrome.</li>
+          <li>Because browser CORS prevents the app from calling the ChatGPT Codex backend directly, the OpenAI access token and account ID, model-list requests, and tutor prompts/responses pass transiently through fixed authenticated routes at <code>api.tutor1on1.org</code>.</li>
+          <li>The relay forwards this data only for the requested Codex operation and does not persist or log the OpenAI credentials, prompts, or responses; normal connection and security metadata may still be processed as described above.</li>
+          <li>OpenAI receives the relayed request and handles it under the terms and privacy rules for the user’s OpenAI account.</li>
         </ul>
       </section>
 

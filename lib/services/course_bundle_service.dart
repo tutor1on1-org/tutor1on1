@@ -43,7 +43,7 @@ class CourseBundleSafetyLimits {
   static const int serverDefaultMaxBundleBytes = 1024 * 1024 * 1024;
   static const int browserMaxCompressedBytes = 64 * 1024 * 1024;
   static const int browserMaxUncompressedBytes = 256 * 1024 * 1024;
-  static const int browserMaxEntryCount = 10000;
+  static const int browserMaxEntryCount = 100000;
   static const int browserMaxExpansionRatio = 100;
 
   static const CourseBundleSafetyLimits defaults = CourseBundleSafetyLimits();

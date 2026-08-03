@@ -39,7 +39,7 @@
         <p class="eyebrow">隐私说明</p>
         <h1>Tutor1on1 如何处理数据。</h1>
         <p class="lead">
-          生效日期：2026 年 4 月 27 日。联系邮箱：<a class="footer-link" href="mailto:tutor1on1.org@gmail.com">tutor1on1.org@gmail.com</a>。
+          生效日期：2026 年 8 月 3 日。联系邮箱：<a class="footer-link" href="mailto:tutor1on1.org@gmail.com">tutor1on1.org@gmail.com</a>。
         </p>
       </section>
 
@@ -61,6 +61,16 @@
           <li>用于 marketplace 展示、报名审批和已批准课程下载。</li>
           <li>用于提供个性化指导、针对性练习、进度连续性和错题复习。</li>
           <li>用于同步、防滥用、排查问题和服务运营。</li>
+        </ul>
+      </section>
+
+      <section class="content-block">
+        <h2>可选的 OpenAI Codex OAuth 中转</h2>
+        <ul class="help-list">
+          <li>选择 OpenAI Codex (ChatGPT OAuth) 时，用户会在 Chrome 中直接向 OpenAI 完成授权。</li>
+          <li>由于浏览器 CORS 阻止应用直接调用 ChatGPT Codex 后端，OpenAI access token、account ID、模型列表请求以及 tutor 提示词/回复会通过 <code>api.tutor1on1.org</code> 的固定认证路由临时中转。</li>
+          <li>中转服务仅为当前 Codex 操作转发这些数据，不会持久保存或记录 OpenAI 凭证、提示词或回复；仍可能按上文处理普通连接和安全元数据。</li>
+          <li>OpenAI 会收到中转请求，并按用户 OpenAI 账号适用的条款和隐私规则处理。</li>
         </ul>
       </section>
 

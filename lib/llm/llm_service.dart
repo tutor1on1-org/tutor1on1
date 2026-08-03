@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import '../constants.dart';
+import '../services/auth_token_refresh_coordinator.dart';
 import '../services/llm_call_repository.dart';
 import '../services/llm_log_repository.dart';
 import '../services/openai_codex_oauth_service.dart';
@@ -554,6 +556,7 @@ class LlmService {
       return _LlmCredential(
         accessToken: credentials.accessToken,
         codexAccountId: credentials.accountId,
+        tutorAccessToken: await _requireTutorAccessToken(),
       );
     }
     final apiKey = await _secureStorage.readApiKeyForBaseUrl(baseUrl);
@@ -823,7 +826,7 @@ class LlmService {
     required bool Function() isCancelled,
     void Function(String chunk)? onChunk,
   }) async {
-    final url = Uri.parse('${_normalizeBaseUrl(baseUrl)}${provider.chatPath}');
+    final url = Uri.parse(OpenAiCodexOAuthService.relayResponsesUrl);
     final bodyMap = _buildOpenAiCodexResponsesBody(
       provider: provider,
       promptName: promptName,
@@ -833,22 +836,41 @@ class LlmService {
       maxTokens: maxTokens,
       reasoningEffort: reasoningEffort,
     );
+    var activeCredential = credential;
     Future<http.StreamedResponse> send() {
       return client
           .send(
             _buildJsonPostRequest(
               url: url,
-              headers: _buildOpenAiCodexHeaders(credential),
+              headers: _buildOpenAiCodexHeaders(activeCredential),
               bodyMap: bodyMap,
             ),
           )
           .timeout(Duration(seconds: timeoutSeconds));
     }
 
-    final response = await _sendStreamWithRetry(
+    var response = await _sendStreamWithRetry(
       send,
       isCancelled: isCancelled,
     );
+
+    if (response.statusCode == 401 &&
+        await AuthTokenRefreshCoordinator.refresh(
+          client: client,
+          secureStorage: _secureStorage,
+          baseUrl: kAuthBaseUrl,
+        )) {
+      await response.stream.drain<void>();
+      activeCredential = _LlmCredential(
+        accessToken: credential.accessToken,
+        codexAccountId: credential.codexAccountId,
+        tutorAccessToken: await _requireTutorAccessToken(),
+      );
+      response = await _sendStreamWithRetry(
+        send,
+        isCancelled: isCancelled,
+      );
+    }
 
     if (isCancelled()) {
       throw StateError('Request cancelled.');
@@ -924,17 +946,30 @@ class LlmService {
 
   Map<String, String> _buildOpenAiCodexHeaders(_LlmCredential credential) {
     final accountId = credential.codexAccountId?.trim() ?? '';
+    final tutorAccessToken = credential.tutorAccessToken?.trim() ?? '';
     if (accountId.isEmpty) {
       throw StateError('ChatGPT OAuth token is missing account id.');
     }
+    if (tutorAccessToken.isEmpty) {
+      throw StateError('Missing Tutor login. Sign in again.');
+    }
     return <String, String>{
-      'Authorization': 'Bearer ${credential.accessToken}',
-      'chatgpt-account-id': accountId,
-      'originator': 'pi',
-      'OpenAI-Beta': 'responses=experimental',
+      'Authorization': 'Bearer $tutorAccessToken',
+      OpenAiCodexOAuthService.oauthTokenHeader: credential.accessToken,
+      OpenAiCodexOAuthService.accountIdHeader: accountId,
       'Accept': 'text/event-stream',
       'Content-Type': 'application/json',
     };
+  }
+
+  Future<String> _requireTutorAccessToken() async {
+    final token = await AuthTokenRefreshCoordinator.readAccessToken(
+      secureStorage: _secureStorage,
+    );
+    if (token == null || token.trim().isEmpty) {
+      throw StateError('Missing Tutor login. Sign in again.');
+    }
+    return token.trim();
   }
 
   Future<LlmPreparedResponse> _readOpenAiCodexSse({
@@ -1409,8 +1444,10 @@ class _LlmCredential {
   const _LlmCredential({
     required this.accessToken,
     this.codexAccountId,
+    this.tutorAccessToken,
   });
 
   final String accessToken;
   final String? codexAccountId;
+  final String? tutorAccessToken;
 }

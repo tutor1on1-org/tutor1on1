@@ -4,7 +4,9 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
+import '../constants.dart';
 import '../security/hash_utils.dart';
+import 'auth_token_refresh_coordinator.dart';
 import 'browser_window.dart';
 import 'secure_storage_service.dart';
 
@@ -93,6 +95,10 @@ class OpenAiCodexOAuthService {
 
   static const providerId = 'openai-codex';
   static const baseUrl = 'https://chatgpt.com/backend-api';
+  static const relayModelsPath = '/api/llm/openai-codex/models';
+  static const relayResponsesPath = '/api/llm/openai-codex/responses';
+  static const oauthTokenHeader = 'X-OpenAI-OAuth-Token';
+  static const accountIdHeader = 'X-OpenAI-Account-ID';
   static const _clientId = 'app_EMoamEEZ73f0CkXaXp7hrann';
   static const _authorizeUrl = 'https://auth.openai.com/oauth/authorize';
   static const _tokenUrl = 'https://auth.openai.com/oauth/token';
@@ -103,6 +109,12 @@ class OpenAiCodexOAuthService {
 
   final SecureStorageService _secureStorage;
   final http.Client? _client;
+
+  static String get relayModelsUrl =>
+      '${_normalizeBaseUrl(kAuthBaseUrl)}$relayModelsPath';
+
+  static String get relayResponsesUrl =>
+      '${_normalizeBaseUrl(kAuthBaseUrl)}$relayResponsesPath';
 
   static String? credentialHash(OpenAiCodexOAuthCredentials? credentials) {
     if (credentials == null) {
@@ -229,18 +241,24 @@ class OpenAiCodexOAuthService {
     if (accessToken.isEmpty || accountId.isEmpty || version.isEmpty) {
       throw StateError('ChatGPT OAuth model request is missing credentials.');
     }
-    final uri = Uri.parse('$baseUrl/codex/models').replace(
+    final uri = Uri.parse(relayModelsUrl).replace(
       queryParameters: <String, String>{'client_version': version},
     );
-    final response = await _getModels(
-      uri,
-      <String, String>{
-        'Authorization': 'Bearer $accessToken',
-        'chatgpt-account-id': accountId,
-        'originator': 'Tutor1on1',
-        'Accept': 'application/json',
-      },
-    );
+    Future<http.Response> send(String tutorAccessToken) => _getModels(
+          uri,
+          <String, String>{
+            'Authorization': 'Bearer $tutorAccessToken',
+            oauthTokenHeader: accessToken,
+            accountIdHeader: accountId,
+            'Accept': 'application/json',
+          },
+        );
+    var tutorAccessToken = await _requireTutorAccessToken();
+    var response = await send(tutorAccessToken);
+    if (response.statusCode == 401 && await _refreshTutorAccessToken()) {
+      tutorAccessToken = await _requireTutorAccessToken();
+      response = await send(tutorAccessToken);
+    }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw http.ClientException(
         'OpenAI OAuth model request failed: HTTP ${response.statusCode}: '
@@ -285,6 +303,37 @@ class OpenAiCodexOAuthService {
         .map((entry) => entry.id)
         .where(seen.add)
         .toList(growable: false);
+  }
+
+  Future<String> _requireTutorAccessToken() async {
+    final token = await AuthTokenRefreshCoordinator.readAccessToken(
+      secureStorage: _secureStorage,
+    );
+    if (token == null || token.trim().isEmpty) {
+      throw StateError('Missing Tutor login. Sign in again.');
+    }
+    return token.trim();
+  }
+
+  Future<bool> _refreshTutorAccessToken() async {
+    final injected = _client;
+    if (injected != null) {
+      return AuthTokenRefreshCoordinator.refresh(
+        client: injected,
+        secureStorage: _secureStorage,
+        baseUrl: kAuthBaseUrl,
+      );
+    }
+    final client = http.Client();
+    try {
+      return await AuthTokenRefreshCoordinator.refresh(
+        client: client,
+        secureStorage: _secureStorage,
+        baseUrl: kAuthBaseUrl,
+      );
+    } finally {
+      client.close();
+    }
   }
 
   Future<OpenAiCodexOAuthCredentials> _exchangeToken(
@@ -466,4 +515,12 @@ class _OpenAiCodexModelEntry {
   final String id;
   final int priority;
   final int sourceIndex;
+}
+
+String _normalizeBaseUrl(String value) {
+  var trimmed = value.trim();
+  while (trimmed.endsWith('/')) {
+    trimmed = trimmed.substring(0, trimmed.length - 1);
+  }
+  return trimmed;
 }

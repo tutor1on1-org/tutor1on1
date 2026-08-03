@@ -19,24 +19,7 @@ class SettingsRepository {
       var companion = AppSettingsCompanion(
         updatedAt: Value(DateTime.now()),
       );
-      if (providerId == 'openai-codex') {
-        final openAiProvider = LlmProviders.findById(
-          LlmProviders.defaultProviders(
-            envBaseUrl: runtimeOpenAiBaseUrl,
-            envModel: runtimeOpenAiModel,
-          ),
-          'openai',
-        );
-        if (openAiProvider == null || openAiProvider.models.isEmpty) {
-          throw StateError('Built-in OpenAI provider is unavailable.');
-        }
-        companion = companion.copyWith(
-          providerId: Value(openAiProvider.id),
-          baseUrl: Value(openAiProvider.baseUrl),
-          model: Value(openAiProvider.models.first),
-        );
-        needsUpdate = true;
-      } else if (providerId == null || providerId.isEmpty) {
+      if (providerId == null || providerId.isEmpty) {
         final providers = LlmProviders.defaultProviders(
           envBaseUrl: runtimeOpenAiBaseUrl,
           envModel: runtimeOpenAiModel,

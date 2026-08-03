@@ -52,8 +52,8 @@
   ]
   const releaseConfig = Object.freeze({
     githubRepo: 'tutor1on1-org/tutor1on1',
-    appVersion: '1.0.61',
-    releaseTag: 'v1.0.61',
+    appVersion: '1.0.62',
+    releaseTag: 'v1.0.62',
     appUrl: 'https://www.tutor1on1.org/app/',
   })
   const languagesByCode = new Map(
