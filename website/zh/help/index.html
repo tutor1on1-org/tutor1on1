@@ -92,7 +92,7 @@
 
       <section class="content-block" id="oauth">
         <h2>不用 API key，改用 ChatGPT OAuth</h2>
-        <ol class="help-list"><li>打开设置里的 API Settings，把 <strong>Provider</strong> 选成 <strong>OpenAI Codex (ChatGPT OAuth)</strong>。</li><li>点击 <strong>Login with ChatGPT</strong>，在 Chrome 里完成授权。如果 Chrome 最后停在无法打开的 localhost 页面，请复制地址栏里的完整最终 URL 并粘贴到弹窗；也可以直接粘贴 authorization code。</li><li>点击 <strong>Refresh models</strong>，选择一个可用的文本模型，然后保存 API 配置。</li><li>开始或重新打开 tutor 会话，在模型选择器里选择已保存的 Codex OAuth 模型。</li></ol>
+        <ol class="help-list"><li>打开设置里的 API Settings，把 <strong>Provider</strong> 选成 <strong>OpenAI Codex (ChatGPT OAuth)</strong>。</li><li>在个人 ChatGPT 的 Security 设置中启用 <strong>ChatGPT device login</strong>；工作区账号需请管理员在 workspace permissions 中启用。</li><li>点击 <strong>Login with ChatGPT</strong>。Tutor1on1 会先显示一次性代码；然后点击 <strong>Open ChatGPT</strong>，仅在你主动开始此次登录时，才在 <a href="https://auth.openai.com/codex/device">auth.openai.com/codex/device</a> 输入该代码。如果浏览器窗口被拦截，请复制弹窗中显示的 <strong>verification URL</strong>，再自行用 Chrome 打开。</li><li>OpenAI 批准设备后，Tutor1on1 会自动检测完成并保存登录；点击 <strong>Refresh models</strong>，选择可用的文本模型，然后保存 API 配置。</li><li>开始或重新打开 tutor 会话，在模型选择器里选择已保存的 Codex OAuth 模型。</li></ol>
         <p class="muted">由于浏览器 CORS 限制，Chrome 不能直接调用 ChatGPT Codex 后端，因此 Tutor1on1 会通过 <code>api.tutor1on1.org</code> 的固定路由临时中转 OpenAI access token、account ID、模型列表请求以及 tutor 提示词/回复流。中转服务不会持久保存或记录这些凭证或内容。需要语音时，TTS 和 STT 仍使用 API-key provider。</p>
       </section>
 

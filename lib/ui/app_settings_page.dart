@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -29,6 +27,7 @@ import 'pages/account_devices_page.dart';
 import 'pages/llm_logs_page.dart';
 import 'pages/tts_logs_page.dart';
 import 'widgets/language_selector.dart';
+import 'widgets/openai_codex_device_login_dialog.dart';
 import 'widgets/restart_widget.dart';
 import 'widgets/searchable_model_picker.dart';
 
@@ -1319,22 +1318,17 @@ class _SettingsPageState extends State<SettingsPage> {
     OpenAiCodexOAuthLoginAttempt? attempt;
     try {
       attempt = await oauth.createLoginAttempt();
-      await oauth.openInBrowser(attempt.authUrl);
       if (!context.mounted) {
         return;
       }
-      final input = await _showOpenAiCodexOAuthDialog(
+      final credentials = await showOpenAiCodexDeviceLoginDialog(
         context: context,
         attempt: attempt,
+        onOpenChatGpt: () => oauth.openInBrowser(attempt!.authUrl),
       );
-      if (input == null || input.trim().isEmpty) {
+      if (credentials == null) {
         return;
       }
-      final credentials = await oauth.exchangeAuthorizationInput(
-        input: input,
-        verifier: attempt.verifier,
-        expectedState: attempt.state,
-      );
       await oauth.writeCredentials(credentials);
       await _cacheOpenAiCodexModels(
         services: services,
@@ -1402,81 +1396,6 @@ class _SettingsPageState extends State<SettingsPage> {
       if (mounted) {
         setState(() => _apiTesting = false);
       }
-    }
-  }
-
-  Future<String?> _showOpenAiCodexOAuthDialog({
-    required BuildContext context,
-    required OpenAiCodexOAuthLoginAttempt attempt,
-  }) async {
-    final controller = TextEditingController();
-    BuildContext? dialogContext;
-    String? callbackCode;
-    void popWithCallbackCodeIfReady() {
-      final activeContext = dialogContext;
-      final code = callbackCode?.trim() ?? '';
-      if (code.isEmpty || activeContext == null) {
-        return;
-      }
-      if (!activeContext.mounted || !Navigator.of(activeContext).canPop()) {
-        return;
-      }
-      Navigator.of(activeContext).pop(code);
-    }
-
-    try {
-      unawaited(
-        attempt.waitForCode().then((code) {
-          callbackCode = code;
-          if (dialogContext != null) {
-            popWithCallbackCodeIfReady();
-          }
-        }).catchError((_) {}),
-      );
-      return showDialog<String>(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) {
-          dialogContext = context;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            popWithCallbackCodeIfReady();
-          });
-          return AlertDialog(
-            title: const Text('ChatGPT OAuth'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Complete login in the browser. If it does not return '
-                  'automatically, paste the final redirect URL or code below.',
-                ),
-                const SizedBox(height: 8),
-                SelectableText(attempt.authUrl),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: controller,
-                  decoration: const InputDecoration(
-                    labelText: 'Redirect URL or authorization code',
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.of(context).pop(controller.text),
-                child: const Text('Complete'),
-              ),
-            ],
-          );
-        },
-      );
-    } finally {
-      controller.dispose();
     }
   }
 

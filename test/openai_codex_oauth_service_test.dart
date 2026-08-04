@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -48,37 +50,90 @@ class _MemorySecureStorage implements SecureStorageService {
 }
 
 void main() {
-  test('creates direct OpenAI PKCE login for manual browser completion',
-      () async {
-    final attempt = await OpenAiCodexOAuthService(_MemorySecureStorage())
-        .createLoginAttempt();
-    final uri = Uri.parse(attempt.authUrl);
-
-    expect(uri.origin, equals('https://auth.openai.com'));
-    expect(uri.path, equals('/oauth/authorize'));
-    expect(uri.queryParameters['response_type'], equals('code'));
-    expect(
-      uri.queryParameters['redirect_uri'],
-      equals('http://localhost:1455/auth/callback'),
-    );
-    expect(uri.queryParameters['code_challenge_method'], equals('S256'));
-    expect(uri.queryParameters['code_challenge'], isNotEmpty);
-    expect(uri.queryParameters['state'], equals(attempt.state));
-    expect(attempt.verifier, isNotEmpty);
-    expect(await attempt.waitForCode(), isNull);
-    await attempt.close();
-  });
-
-  test('exchanges authorization code directly with OpenAI', () async {
-    late Map<String, String> posted;
+  test('creates an OpenAI device login with a bare verification URL', () async {
+    final now = DateTime.utc(2026, 8, 4, 1);
     final service = OpenAiCodexOAuthService(
       _MemorySecureStorage(),
+      now: () => now,
       client: MockClient((request) async {
         expect(request.method, equals('POST'));
         expect(
           request.url.toString(),
-          equals('https://auth.openai.com/oauth/token'),
+          equals(
+            'https://auth.openai.com/api/accounts/deviceauth/usercode',
+          ),
         );
+        expect(
+          jsonDecode(request.body),
+          equals(<String, dynamic>{
+            'client_id': 'app_EMoamEEZ73f0CkXaXp7hrann',
+          }),
+        );
+        return http.Response(
+          jsonEncode(<String, dynamic>{
+            'device_auth_id': 'device-auth-id',
+            'user_code': 'ABCD-EFGH',
+            'interval': '5',
+          }),
+          200,
+        );
+      }),
+    );
+
+    final attempt = await service.createLoginAttempt();
+    final uri = Uri.parse(attempt.authUrl);
+
+    expect(uri.origin, equals('https://auth.openai.com'));
+    expect(uri.path, equals('/codex/device'));
+    expect(uri.query, isEmpty);
+    expect(attempt.userCode, equals('ABCD-EFGH'));
+    expect(attempt.expiresAt, equals(now.add(const Duration(minutes: 15))));
+    await attempt.close();
+    await attempt.close();
+  });
+
+  test('polls idempotently and exchanges a validated device authorization',
+      () async {
+    var now = DateTime.utc(2026, 8, 4, 1);
+    const verifier = 'device-code-verifier';
+    final challenge = _pkceChallenge(verifier);
+    late Map<String, String> posted;
+    var pollCalls = 0;
+    final delays = <Duration>[];
+    final service = OpenAiCodexOAuthService(
+      _MemorySecureStorage(),
+      now: () => now,
+      delay: (duration) async {
+        delays.add(duration);
+        now = now.add(duration);
+      },
+      client: MockClient((request) async {
+        if (request.url.path.endsWith('/deviceauth/usercode')) {
+          return _deviceCodeResponse(
+            expiresAt: now.add(const Duration(minutes: 20)),
+          );
+        }
+        if (request.url.path.endsWith('/deviceauth/token')) {
+          pollCalls += 1;
+          expect(
+            jsonDecode(request.body),
+            equals(<String, dynamic>{
+              'device_auth_id': 'device-auth-id',
+              'user_code': 'ABCD-EFGH',
+            }),
+          );
+          if (pollCalls == 1) {
+            return http.Response('{"error":"authorization_pending"}', 403);
+          }
+          if (pollCalls == 2) {
+            return http.Response('{"error":"authorization_pending"}', 404);
+          }
+          return _deviceAuthorizationResponse(
+            verifier: verifier,
+            challenge: challenge,
+          );
+        }
+        expect(request.url.path, equals('/oauth/token'));
         posted = Uri.splitQueryString(request.body);
         return http.Response(
           jsonEncode(<String, dynamic>{
@@ -94,23 +149,36 @@ void main() {
       }),
     );
 
-    final credentials = await service.exchangeAuthorizationInput(
-      input: 'http://localhost:1455/auth/callback?code=auth-code&state=state-1',
-      verifier: 'verifier-1',
-      expectedState: 'state-1',
-    );
+    final attempt = await service.createLoginAttempt();
+    final firstWait = attempt.waitForCredentials();
+    final secondWait = attempt.waitForCredentials();
+    expect(identical(firstWait, secondWait), isTrue);
+    final credentials = await firstWait;
 
     expect(posted['grant_type'], equals('authorization_code'));
     expect(posted['client_id'], equals('app_EMoamEEZ73f0CkXaXp7hrann'));
-    expect(posted['code'], equals('auth-code'));
-    expect(posted['code_verifier'], equals('verifier-1'));
+    expect(posted['code'], equals('authorization-code'));
+    expect(posted['code_verifier'], equals(verifier));
     expect(
       posted['redirect_uri'],
-      equals('http://localhost:1455/auth/callback'),
+      equals('https://auth.openai.com/deviceauth/callback'),
     );
     expect(credentials.accountId, equals('acct_123'));
     expect(credentials.email, equals('user@example.com'));
     expect(credentials.refreshToken, equals('refresh-token'));
+    expect(pollCalls, equals(3));
+    expect(
+      delays,
+      equals(<Duration>[
+        const Duration(seconds: 5),
+        const Duration(seconds: 5),
+      ]),
+    );
+    expect(
+      attempt.expiresAt,
+      equals(DateTime.utc(2026, 8, 4, 1, 15)),
+    );
+    await attempt.close();
   });
 
   test('refreshes expired credentials directly and persists replacement',
@@ -307,18 +375,300 @@ void main() {
     expect(storage.values['auth:access'], equals('fresh-tutor-token'));
   });
 
-  test('rejects mismatched OAuth state', () async {
-    final service = OpenAiCodexOAuthService(_MemorySecureStorage());
-
-    expect(
-      () => service.exchangeAuthorizationInput(
-        input: 'http://localhost:1455/auth/callback?code=auth-code&state=bad',
-        verifier: 'verifier-1',
-        expectedState: 'good',
-      ),
-      throwsStateError,
+  test('rejects a device authorization with a mismatched PKCE challenge',
+      () async {
+    final now = DateTime.utc(2026, 8, 4, 1);
+    var tokenExchangeCalled = false;
+    final service = OpenAiCodexOAuthService(
+      _MemorySecureStorage(),
+      now: () => now,
+      client: MockClient((request) async {
+        if (request.url.path.endsWith('/deviceauth/usercode')) {
+          return _deviceCodeResponse(
+              expiresAt: now.add(const Duration(minutes: 5)));
+        }
+        if (request.url.path.endsWith('/deviceauth/token')) {
+          return _deviceAuthorizationResponse(
+            verifier: 'device-code-verifier',
+            challenge: _pkceChallenge('different-verifier'),
+          );
+        }
+        tokenExchangeCalled = true;
+        return http.Response('{}', 500);
+      }),
     );
+
+    final attempt = await service.createLoginAttempt();
+
+    await expectLater(
+      attempt.waitForCredentials(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => '$error',
+          'message',
+          contains('PKCE validation'),
+        ),
+      ),
+    );
+    expect(tokenExchangeCalled, isFalse);
+    await attempt.close();
   });
+
+  test('cancels a pending device login promptly and idempotently', () async {
+    final now = DateTime.utc(2026, 8, 4, 1);
+    final delayStarted = Completer<void>();
+    final delayRelease = Completer<void>();
+    final service = OpenAiCodexOAuthService(
+      _MemorySecureStorage(),
+      now: () => now,
+      delay: (_) {
+        delayStarted.complete();
+        return delayRelease.future;
+      },
+      client: MockClient((request) async {
+        if (request.url.path.endsWith('/deviceauth/usercode')) {
+          return _deviceCodeResponse(
+              expiresAt: now.add(const Duration(minutes: 5)));
+        }
+        return http.Response('{"error":"authorization_pending"}', 403);
+      }),
+    );
+
+    final attempt = await service.createLoginAttempt();
+    final waiting = attempt.waitForCredentials();
+    await delayStarted.future;
+    final cancellationExpected = expectLater(
+      waiting,
+      throwsA(
+        isA<StateError>().having(
+          (error) => '$error',
+          'message',
+          contains('cancelled'),
+        ),
+      ),
+    );
+    await attempt.close();
+    await attempt.close();
+    await cancellationExpected;
+    delayRelease.complete();
+  });
+
+  test('expires at the server deadline without polling again', () async {
+    var now = DateTime.utc(2026, 8, 4, 1);
+    var pollCalls = 0;
+    final delays = <Duration>[];
+    final service = OpenAiCodexOAuthService(
+      _MemorySecureStorage(),
+      now: () => now,
+      delay: (duration) async {
+        delays.add(duration);
+        now = now.add(duration);
+      },
+      client: MockClient((request) async {
+        if (request.url.path.endsWith('/deviceauth/usercode')) {
+          return _deviceCodeResponse(
+            expiresAt: now.add(const Duration(seconds: 2)),
+          );
+        }
+        pollCalls += 1;
+        return http.Response('{"error":"authorization_pending"}', 403);
+      }),
+    );
+
+    final attempt = await service.createLoginAttempt();
+
+    await expectLater(
+      attempt.waitForCredentials(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => '$error',
+          'message',
+          contains('expired'),
+        ),
+      ),
+    );
+    expect(pollCalls, equals(1));
+    expect(delays, equals(<Duration>[const Duration(seconds: 2)]));
+    await attempt.close();
+  });
+
+  test('bounds Retry-After while polling a rate-limited device login',
+      () async {
+    var now = DateTime.utc(2026, 8, 4, 1);
+    const verifier = 'device-code-verifier';
+    var pollCalls = 0;
+    final delays = <Duration>[];
+    final service = OpenAiCodexOAuthService(
+      _MemorySecureStorage(),
+      now: () => now,
+      delay: (duration) async {
+        delays.add(duration);
+        now = now.add(duration);
+      },
+      client: MockClient((request) async {
+        if (request.url.path.endsWith('/deviceauth/usercode')) {
+          return _deviceCodeResponse(
+              expiresAt: now.add(const Duration(minutes: 5)));
+        }
+        if (request.url.path.endsWith('/deviceauth/token')) {
+          pollCalls += 1;
+          if (pollCalls == 1) {
+            return http.Response('', 429, headers: <String, String>{
+              'Retry-After': '999',
+            });
+          }
+          return _deviceAuthorizationResponse(
+            verifier: verifier,
+            challenge: _pkceChallenge(verifier),
+          );
+        }
+        return _tokenResponse();
+      }),
+    );
+
+    final attempt = await service.createLoginAttempt();
+    final credentials = await attempt.waitForCredentials();
+
+    expect(credentials.accountId, equals('acct_123'));
+    expect(pollCalls, equals(2));
+    expect(delays, equals(<Duration>[const Duration(seconds: 60)]));
+    await attempt.close();
+  });
+
+  test('sanitizes OAuth token exchange failures', () async {
+    final now = DateTime.utc(2026, 8, 4, 1);
+    const verifier = 'device-code-verifier';
+    final service = OpenAiCodexOAuthService(
+      _MemorySecureStorage(),
+      now: () => now,
+      client: MockClient((request) async {
+        if (request.url.path.endsWith('/deviceauth/usercode')) {
+          return _deviceCodeResponse(
+              expiresAt: now.add(const Duration(minutes: 5)));
+        }
+        if (request.url.path.endsWith('/deviceauth/token')) {
+          return _deviceAuthorizationResponse(
+            verifier: verifier,
+            challenge: _pkceChallenge(verifier),
+          );
+        }
+        return http.Response(
+          '{"error":"authorization-code-and-token-must-not-leak"}',
+          400,
+        );
+      }),
+    );
+
+    final attempt = await service.createLoginAttempt();
+    Object? failure;
+    try {
+      await attempt.waitForCredentials();
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure, isA<http.ClientException>());
+    expect('$failure', contains('HTTP 400'));
+    expect('$failure', isNot(contains('authorization-code-and-token')));
+    await attempt.close();
+  });
+
+  test('rejects invalid device polling bounds', () async {
+    final now = DateTime.utc(2026, 8, 4, 1);
+    for (final interval in <Object>['0', '61', 'invalid']) {
+      final service = OpenAiCodexOAuthService(
+        _MemorySecureStorage(),
+        now: () => now,
+        client: MockClient((_) async {
+          return http.Response(
+            jsonEncode(<String, dynamic>{
+              'device_auth_id': 'device-auth-id',
+              'user_code': 'ABCD-EFGH',
+              'interval': interval,
+              'expires_at':
+                  now.add(const Duration(minutes: 5)).toIso8601String(),
+            }),
+            200,
+          );
+        }),
+      );
+
+      await expectLater(
+        service.createLoginAttempt(),
+        throwsA(isA<StateError>()),
+      );
+    }
+  });
+
+  test('falls back when an optional device expiry is unrecognized', () async {
+    final now = DateTime.utc(2026, 8, 4, 1);
+    final service = OpenAiCodexOAuthService(
+      _MemorySecureStorage(),
+      now: () => now,
+      client: MockClient((_) async {
+        return http.Response(
+          jsonEncode(<String, dynamic>{
+            'device_auth_id': 'device-auth-id',
+            'user_code': 'ABCD-EFGH',
+            'interval': '5',
+            'expires_at': 'not-an-expiry',
+          }),
+          200,
+        );
+      }),
+    );
+
+    final attempt = await service.createLoginAttempt();
+
+    expect(attempt.expiresAt, equals(now.add(const Duration(minutes: 15))));
+    await attempt.close();
+  });
+}
+
+http.Response _deviceCodeResponse({required DateTime expiresAt}) {
+  return http.Response(
+    jsonEncode(<String, dynamic>{
+      'device_auth_id': 'device-auth-id',
+      'user_code': 'ABCD-EFGH',
+      'interval': '5',
+      'expires_at': expiresAt.toIso8601String(),
+    }),
+    200,
+  );
+}
+
+http.Response _deviceAuthorizationResponse({
+  required String verifier,
+  required String challenge,
+}) {
+  return http.Response(
+    jsonEncode(<String, dynamic>{
+      'authorization_code': 'authorization-code',
+      'code_challenge': challenge,
+      'code_verifier': verifier,
+    }),
+    200,
+  );
+}
+
+http.Response _tokenResponse() {
+  return http.Response(
+    jsonEncode(<String, dynamic>{
+      'access_token': _jwt(
+        accountId: 'acct_123',
+        email: 'user@example.com',
+      ),
+      'refresh_token': 'refresh-token',
+      'expires_in': 3600,
+    }),
+    200,
+  );
+}
+
+String _pkceChallenge(String verifier) {
+  return base64Url
+      .encode(sha256.convert(utf8.encode(verifier)).bytes)
+      .replaceAll('=', '');
 }
 
 String _jwt({required String accountId, String? email}) {

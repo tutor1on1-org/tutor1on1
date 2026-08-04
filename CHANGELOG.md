@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased - 2026-08-03
+## Unreleased - 2026-08-04
 
+- Replaced the unusable browser localhost OAuth callback and manual final callback URL/authorization-code handoff with OpenAI's device-code login, an explicit Open ChatGPT action, and automatic completion detection.
 - Restored OpenAI Codex (ChatGPT OAuth) to the Chrome client and routed Codex model/tutor traffic through a fixed authenticated API relay that does not persist or log OAuth credentials or prompt/response content.
 - Raised the bounded course-bundle entry limit from 10,000 to 100,000 on both client and server so valid production courses remain compatible while ZIP resource limits stay enforced.
 - Migrated the public client to Chrome/WebGUI only and removed the Windows and Android source, dependencies, and release targets.

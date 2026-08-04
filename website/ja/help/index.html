@@ -92,7 +92,7 @@
 
       <section class="content-block" id="oauth">
         <h2>API key の代わりに ChatGPT OAuth を使う</h2>
-        <ol class="help-list"><li>Settings の API Settings を開き、<strong>Provider</strong> で <strong>OpenAI Codex (ChatGPT OAuth)</strong> を選びます。</li><li><strong>Login with ChatGPT</strong> を押し、Chrome で認証を完了します。Chrome が読み込めない localhost ページで終了した場合は、アドレスバーの最終 URL 全体をコピーしてダイアログに貼り付けます。authorization code を直接貼り付けることもできます。</li><li><strong>Refresh models</strong> を押し、利用可能なテキストモデルを選んで API config を保存します。</li><li>tutor セッションを開始または開き直し、モデル選択で保存済み Codex OAuth モデルを選びます。</li></ol>
+        <ol class="help-list"><li>Settings の API Settings を開き、<strong>Provider</strong> で <strong>OpenAI Codex (ChatGPT OAuth)</strong> を選びます。</li><li>個人の ChatGPT の Security 設定で <strong>ChatGPT device login</strong> を有効にするか、workspace permissions で管理者に有効化を依頼します。</li><li><strong>Login with ChatGPT</strong> を押すと、Tutor1on1 が最初にワンタイムコードを表示します。次に <strong>Open ChatGPT</strong> を押し、自分でこのログインを開始した場合だけ <a href="https://auth.openai.com/codex/device">auth.openai.com/codex/device</a> でコードを入力します。ブラウザーウィンドウがブロックされた場合は、表示された <strong>verification URL</strong> をコピーして Chrome で自分で開きます。</li><li>OpenAI がデバイスを承認すると、Tutor1on1 が完了を自動検出してログインを保存します。<strong>Refresh models</strong> を押し、利用可能なテキストモデルを選んで API config を保存します。</li><li>tutor セッションを開始または開き直し、モデル選択で保存済み Codex OAuth モデルを選びます。</li></ol>
         <p class="muted">ブラウザー CORS により Chrome から ChatGPT Codex backend を直接呼び出せないため、Tutor1on1 は OpenAI access token と account ID、モデル一覧、tutor の prompt/response 通信を <code>api.tutor1on1.org</code> の固定ルート経由で一時的に中継します。中継サービスはこれらの認証情報や内容を保存またはログ記録しません。音声が必要な場合、TTS と STT は引き続き API-key provider を使います。</p>
       </section>
 

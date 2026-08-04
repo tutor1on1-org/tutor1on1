@@ -1,5 +1,5 @@
+import 'dart:async';
 import 'dart:convert';
-import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
@@ -74,16 +74,16 @@ class OpenAiCodexOAuthCredentials {
 class OpenAiCodexOAuthLoginAttempt {
   OpenAiCodexOAuthLoginAttempt({
     required this.authUrl,
-    required this.state,
-    required this.verifier,
-    required this.waitForCode,
+    required this.userCode,
+    required this.expiresAt,
+    required this.waitForCredentials,
     required this.close,
   });
 
   final String authUrl;
-  final String state;
-  final String verifier;
-  final Future<String?> Function() waitForCode;
+  final String userCode;
+  final DateTime expiresAt;
+  final Future<OpenAiCodexOAuthCredentials> Function() waitForCredentials;
   final Future<void> Function() close;
 }
 
@@ -91,7 +91,11 @@ class OpenAiCodexOAuthService {
   OpenAiCodexOAuthService(
     this._secureStorage, {
     http.Client? client,
-  }) : _client = client;
+    DateTime Function()? now,
+    Future<void> Function(Duration)? delay,
+  })  : _client = client,
+        _now = now ?? DateTime.now,
+        _delay = delay ?? Future<void>.delayed;
 
   static const providerId = 'openai-codex';
   static const baseUrl = 'https://chatgpt.com/backend-api';
@@ -100,15 +104,26 @@ class OpenAiCodexOAuthService {
   static const oauthTokenHeader = 'X-OpenAI-OAuth-Token';
   static const accountIdHeader = 'X-OpenAI-Account-ID';
   static const _clientId = 'app_EMoamEEZ73f0CkXaXp7hrann';
-  static const _authorizeUrl = 'https://auth.openai.com/oauth/authorize';
+  static const _deviceUserCodeUrl =
+      'https://auth.openai.com/api/accounts/deviceauth/usercode';
+  static const _deviceTokenUrl =
+      'https://auth.openai.com/api/accounts/deviceauth/token';
+  static const _deviceVerificationUrl = 'https://auth.openai.com/codex/device';
   static const _tokenUrl = 'https://auth.openai.com/oauth/token';
-  static const _redirectUri = 'http://localhost:1455/auth/callback';
-  static const _scope = 'openid profile email offline_access';
+  static const _deviceRedirectUri =
+      'https://auth.openai.com/deviceauth/callback';
   static const _authClaimPath = 'https://api.openai.com/auth';
   static const _profileClaimPath = 'https://api.openai.com/profile';
+  static const _maxDeviceLoginDuration = Duration(minutes: 15);
+  static const _maxRetryAfter = Duration(seconds: 60);
+  static const _maxOAuthResponseBytes = 64 * 1024;
+  static const _minPollIntervalSeconds = 1;
+  static const _maxPollIntervalSeconds = 60;
 
   final SecureStorageService _secureStorage;
   final http.Client? _client;
+  final DateTime Function() _now;
+  final Future<void> Function(Duration) _delay;
 
   static String get relayModelsUrl =>
       '${_normalizeBaseUrl(kAuthBaseUrl)}$relayModelsPath';
@@ -162,31 +177,74 @@ class OpenAiCodexOAuthService {
   }
 
   Future<OpenAiCodexOAuthLoginAttempt> createLoginAttempt() async {
-    final verifier = _base64UrlEncode(_randomBytes(32));
-    final challenge =
-        _base64UrlEncode(sha256.convert(utf8.encode(verifier)).bytes);
-    final state = _base64UrlEncode(_randomBytes(16));
-    final url = Uri.parse(_authorizeUrl).replace(
-      queryParameters: <String, String>{
-        'response_type': 'code',
-        'client_id': _clientId,
-        'redirect_uri': _redirectUri,
-        'scope': _scope,
-        'code_challenge': challenge,
-        'code_challenge_method': 'S256',
-        'state': state,
-        'id_token_add_organizations': 'true',
-        'codex_cli_simplified_flow': 'true',
-        'originator': 'openclaw',
-      },
+    final response = await _postJson(
+      Uri.parse(_deviceUserCodeUrl),
+      const <String, String>{'client_id': _clientId},
     );
-    final callback = await _tryStartCallbackServer(state);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      if (response.statusCode == 403) {
+        throw StateError(
+          'ChatGPT device login is unavailable. Enable device code login in '
+          'ChatGPT security or workspace settings.',
+        );
+      }
+      throw http.ClientException(
+        'OpenAI device login could not start (HTTP ${response.statusCode}).',
+      );
+    }
+    final decoded = _decodeOAuthObject(
+      response,
+      failureMessage: 'OpenAI device login response is invalid.',
+    );
+    final deviceAuthId = _requiredOAuthString(
+      decoded['device_auth_id'],
+      maxLength: 512,
+    );
+    final userCode = _requiredOAuthString(
+      decoded['user_code'] ?? decoded['usercode'],
+      maxLength: 128,
+    );
+    final intervalSeconds = _parseBoundedSeconds(
+      decoded['interval'],
+      minimum: _minPollIntervalSeconds,
+      maximum: _maxPollIntervalSeconds,
+    );
+    final startedAt = _now().toUtc();
+    if (deviceAuthId == null || userCode == null || intervalSeconds == null) {
+      throw StateError('OpenAI device login response is invalid.');
+    }
+    final hardExpiresAt = startedAt.add(_maxDeviceLoginDuration);
+    var expiresAt = hardExpiresAt;
+    if (decoded.containsKey('expires_at')) {
+      final serverExpiresAt = _parseOAuthExpiry(decoded['expires_at']);
+      if (serverExpiresAt != null && !serverExpiresAt.isAfter(startedAt)) {
+        throw StateError('OpenAI device login response is invalid.');
+      }
+      if (serverExpiresAt != null && serverExpiresAt.isBefore(hardExpiresAt)) {
+        expiresAt = serverExpiresAt;
+      }
+    }
+    final session = _OpenAiCodexDeviceLoginSession(
+      interval: Duration(seconds: intervalSeconds),
+      expiresAt: expiresAt,
+      now: _now,
+      delay: _delay,
+      poll: () => _postJson(
+        Uri.parse(_deviceTokenUrl),
+        <String, String>{
+          'device_auth_id': deviceAuthId,
+          'user_code': userCode,
+        },
+      ),
+      complete: _completeDeviceAuthorization,
+      maxRetryAfter: _maxRetryAfter,
+    );
     return OpenAiCodexOAuthLoginAttempt(
-      authUrl: url.toString(),
-      state: state,
-      verifier: verifier,
-      waitForCode: callback.waitForCode,
-      close: callback.close,
+      authUrl: _deviceVerificationUrl,
+      userCode: userCode,
+      expiresAt: expiresAt,
+      waitForCredentials: session.waitForCredentials,
+      close: session.close,
     );
   }
 
@@ -194,28 +252,52 @@ class OpenAiCodexOAuthService {
     openBrowserWindow(url);
   }
 
-  Future<OpenAiCodexOAuthCredentials> exchangeAuthorizationInput({
-    required String input,
+  Future<OpenAiCodexOAuthCredentials> _exchangeDeviceAuthorization({
+    required String authorizationCode,
     required String verifier,
-    required String expectedState,
-  }) async {
-    final parsed = _parseAuthorizationInput(input);
-    final state = parsed['state'];
-    if (state != null && state != expectedState) {
-      throw StateError('OAuth state mismatch.');
-    }
-    final code = parsed['code']?.trim() ?? '';
-    if (code.isEmpty) {
-      throw StateError('Missing OAuth authorization code.');
-    }
+  }) {
     return _exchangeToken(
       <String, String>{
         'grant_type': 'authorization_code',
         'client_id': _clientId,
-        'code': code,
+        'code': authorizationCode,
         'code_verifier': verifier,
-        'redirect_uri': _redirectUri,
+        'redirect_uri': _deviceRedirectUri,
       },
+    );
+  }
+
+  Future<OpenAiCodexOAuthCredentials> _completeDeviceAuthorization(
+    http.Response response,
+  ) {
+    final decoded = _decodeOAuthObject(
+      response,
+      failureMessage: 'OpenAI device authorization response is invalid.',
+    );
+    final authorizationCode = _requiredOAuthString(
+      decoded['authorization_code'],
+      maxLength: 8192,
+    );
+    final challenge = _requiredOAuthString(
+      decoded['code_challenge'],
+      maxLength: 256,
+    );
+    final verifier = _requiredOAuthString(
+      decoded['code_verifier'],
+      maxLength: 512,
+    );
+    if (authorizationCode == null || challenge == null || verifier == null) {
+      throw StateError('OpenAI device authorization response is invalid.');
+    }
+    final calculatedChallenge = base64Url
+        .encode(sha256.convert(utf8.encode(verifier)).bytes)
+        .replaceAll('=', '');
+    if (calculatedChallenge != challenge) {
+      throw StateError('OpenAI device authorization failed PKCE validation.');
+    }
+    return _exchangeDeviceAuthorization(
+      authorizationCode: authorizationCode,
+      verifier: verifier,
     );
   }
 
@@ -342,20 +424,22 @@ class OpenAiCodexOAuthService {
     final response = await _postToken(fields);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw http.ClientException(
-        'OpenAI OAuth token exchange failed: HTTP ${response.statusCode}: '
-        '${response.body}',
+        'OpenAI OAuth token exchange failed (HTTP ${response.statusCode}).',
       );
     }
-    final decoded = jsonDecode(response.body);
-    if (decoded is! Map<String, dynamic>) {
-      throw StateError('OpenAI OAuth response is not a JSON object.');
-    }
+    final decoded = _decodeOAuthObject(
+      response,
+      failureMessage: 'OpenAI OAuth response is invalid.',
+    );
     final access = (decoded['access_token'] as String?)?.trim() ?? '';
     final refresh = (decoded['refresh_token'] as String?)?.trim() ?? '';
     final expiresIn = decoded['expires_in'];
     final expiresInSeconds =
         expiresIn is num ? expiresIn.toInt() : int.tryParse('$expiresIn');
-    if (access.isEmpty || refresh.isEmpty || expiresInSeconds == null) {
+    if (access.isEmpty ||
+        refresh.isEmpty ||
+        expiresInSeconds == null ||
+        expiresInSeconds <= 0) {
       throw StateError('OpenAI OAuth response is missing token fields.');
     }
     final payload = _decodeJwtPayload(access);
@@ -373,11 +457,42 @@ class OpenAiCodexOAuthService {
     return OpenAiCodexOAuthCredentials(
       accessToken: access,
       refreshToken: refresh,
-      expiresAtMs:
-          DateTime.now().millisecondsSinceEpoch + expiresInSeconds * 1000,
+      expiresAtMs: _now().millisecondsSinceEpoch + expiresInSeconds * 1000,
       accountId: accountId,
       email: email == null || email.isEmpty ? null : email,
     );
+  }
+
+  Future<http.Response> _postJson(
+    Uri uri,
+    Map<String, String> fields,
+  ) async {
+    final injected = _client;
+    if (injected != null) {
+      return injected
+          .post(
+            uri,
+            headers: const <String, String>{
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode(fields),
+          )
+          .timeout(const Duration(seconds: 30));
+    }
+    final client = http.Client();
+    try {
+      return await client
+          .post(
+            uri,
+            headers: const <String, String>{
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode(fields),
+          )
+          .timeout(const Duration(seconds: 30));
+    } finally {
+      client.close();
+    }
   }
 
   Future<http.Response> _postToken(Map<String, String> fields) async {
@@ -429,34 +544,84 @@ class OpenAiCodexOAuthService {
     }
   }
 
-  Map<String, String?> _parseAuthorizationInput(String input) {
-    final value = input.trim();
-    if (value.isEmpty) {
-      return const <String, String?>{};
+  Map<String, dynamic> _decodeOAuthObject(
+    http.Response response, {
+    required String failureMessage,
+  }) {
+    if (response.bodyBytes.length > _maxOAuthResponseBytes) {
+      throw StateError(failureMessage);
     }
-    final asUri = Uri.tryParse(value);
-    if (asUri != null && asUri.hasScheme) {
-      return <String, String?>{
-        'code': asUri.queryParameters['code'],
-        'state': asUri.queryParameters['state'],
-      };
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) {
+        return decoded;
+      }
+    } catch (_) {
+      // The caller receives a bounded error that never includes OAuth data.
     }
-    if (value.contains('#')) {
-      final parts = value.split('#');
-      return <String, String?>{
-        'code': parts.isNotEmpty ? parts.first : null,
-        'state': parts.length > 1 ? parts[1] : null,
-      };
+    throw StateError(failureMessage);
+  }
+
+  String? _requiredOAuthString(Object? value, {required int maxLength}) {
+    if (value is! String) {
+      return null;
     }
-    if (value.contains('code=')) {
-      final params = Uri.splitQueryString(
-          value.startsWith('?') ? value.substring(1) : value);
-      return <String, String?>{
-        'code': params['code'],
-        'state': params['state'],
-      };
+    final trimmed = value.trim();
+    if (trimmed.isEmpty || trimmed.length > maxLength) {
+      return null;
     }
-    return <String, String?>{'code': value, 'state': null};
+    for (final codeUnit in trimmed.codeUnits) {
+      if (codeUnit < 0x20 || codeUnit == 0x7f) {
+        return null;
+      }
+    }
+    return trimmed;
+  }
+
+  int? _parseBoundedSeconds(
+    Object? value, {
+    required int minimum,
+    required int maximum,
+  }) {
+    final parsed = value is num
+        ? value.toInt()
+        : value is String
+            ? int.tryParse(value.trim())
+            : null;
+    if (parsed == null || parsed < minimum || parsed > maximum) {
+      return null;
+    }
+    return parsed;
+  }
+
+  DateTime? _parseOAuthExpiry(Object? value) {
+    if (value is num) {
+      return _epochToUtc(value.toInt());
+    }
+    if (value is! String) {
+      return null;
+    }
+    final trimmed = value.trim();
+    final numeric = int.tryParse(trimmed);
+    if (numeric != null) {
+      return _epochToUtc(numeric);
+    }
+    return DateTime.tryParse(trimmed)?.toUtc();
+  }
+
+  DateTime? _epochToUtc(int value) {
+    if (value <= 0) {
+      return null;
+    }
+    try {
+      final milliseconds = value >= 100000000000 ? value : value * 1000;
+      return DateTime.fromMillisecondsSinceEpoch(
+        milliseconds,
+        isUtc: true,
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   Map<String, dynamic>? _decodeJwtPayload(String token) {
@@ -473,36 +638,109 @@ class OpenAiCodexOAuthService {
       return null;
     }
   }
-
-  Future<_OAuthCallbackServer> _tryStartCallbackServer(String state) async {
-    return const _OAuthCallbackServer(
-      waitForCode: _noAutomaticAuthorizationCode,
-      close: _closeNoopCallback,
-    );
-  }
-
-  List<int> _randomBytes(int length) {
-    final random = Random.secure();
-    return List<int>.generate(length, (_) => random.nextInt(256));
-  }
-
-  String _base64UrlEncode(List<int> bytes) {
-    return base64Url.encode(bytes).replaceAll('=', '');
-  }
 }
 
-Future<String?> _noAutomaticAuthorizationCode() async => null;
-
-Future<void> _closeNoopCallback() async {}
-
-class _OAuthCallbackServer {
-  const _OAuthCallbackServer({
-    required this.waitForCode,
-    required this.close,
+class _OpenAiCodexDeviceLoginSession {
+  _OpenAiCodexDeviceLoginSession({
+    required this.interval,
+    required this.expiresAt,
+    required this.now,
+    required this.delay,
+    required this.poll,
+    required this.complete,
+    required this.maxRetryAfter,
   });
 
-  final Future<String?> Function() waitForCode;
-  final Future<void> Function() close;
+  final Duration interval;
+  final DateTime expiresAt;
+  final DateTime Function() now;
+  final Future<void> Function(Duration) delay;
+  final Future<http.Response> Function() poll;
+  final Future<OpenAiCodexOAuthCredentials> Function(http.Response) complete;
+  final Duration maxRetryAfter;
+
+  final Completer<void> _cancelled = Completer<void>();
+  Future<OpenAiCodexOAuthCredentials>? _credentialsFuture;
+
+  Future<OpenAiCodexOAuthCredentials> waitForCredentials() {
+    return _credentialsFuture ??= _pollUntilComplete();
+  }
+
+  Future<void> close() async {
+    if (!_cancelled.isCompleted) {
+      _cancelled.complete();
+    }
+  }
+
+  Future<OpenAiCodexOAuthCredentials> _pollUntilComplete() async {
+    while (true) {
+      _throwIfCancelledOrExpired();
+      final response = await _unlessCancelled(poll());
+      _throwIfCancelledOrExpired();
+      if (response.statusCode == 403 || response.statusCode == 404) {
+        await _wait(interval);
+        continue;
+      }
+      if (response.statusCode == 429) {
+        await _wait(_retryAfter(response));
+        continue;
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw http.ClientException(
+          'OpenAI device authorization failed '
+          '(HTTP ${response.statusCode}).',
+        );
+      }
+      return _unlessCancelled(complete(response));
+    }
+  }
+
+  Future<void> _wait(Duration requested) async {
+    _throwIfCancelledOrExpired();
+    final remaining = expiresAt.difference(now().toUtc());
+    final bounded = requested < remaining ? requested : remaining;
+    await _unlessCancelled(delay(bounded));
+    _throwIfCancelledOrExpired();
+  }
+
+  Duration _retryAfter(http.Response response) {
+    var raw = '';
+    for (final entry in response.headers.entries) {
+      if (entry.key.toLowerCase() == 'retry-after') {
+        raw = entry.value.trim();
+        break;
+      }
+    }
+    final parsed = int.tryParse(raw);
+    if (parsed == null) {
+      return interval;
+    }
+    final seconds = parsed.clamp(1, maxRetryAfter.inSeconds).toInt();
+    return Duration(seconds: seconds);
+  }
+
+  Future<T> _unlessCancelled<T>(Future<T> operation) {
+    if (_cancelled.isCompleted) {
+      return Future<T>.error(
+        StateError('ChatGPT device login was cancelled.'),
+      );
+    }
+    return Future.any<T>(<Future<T>>[
+      operation,
+      _cancelled.future.then<T>(
+        (_) => throw StateError('ChatGPT device login was cancelled.'),
+      ),
+    ]);
+  }
+
+  void _throwIfCancelledOrExpired() {
+    if (_cancelled.isCompleted) {
+      throw StateError('ChatGPT device login was cancelled.');
+    }
+    if (!now().toUtc().isBefore(expiresAt)) {
+      throw StateError('ChatGPT device login expired. Start again.');
+    }
+  }
 }
 
 class _OpenAiCodexModelEntry {

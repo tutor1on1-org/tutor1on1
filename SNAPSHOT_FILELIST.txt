@@ -163,6 +163,7 @@ lib/ui/widgets/html_message_view.dart
 lib/ui/widgets/language_selector.dart
 lib/ui/widgets/markdown_math.dart
 lib/ui/widgets/math_markdown_view.dart
+lib/ui/widgets/openai_codex_device_login_dialog.dart
 lib/ui/widgets/pan_scroll_view.dart
 lib/ui/widgets/prompt_editor_dialog.dart
 lib/ui/widgets/restart_widget.dart
@@ -212,6 +213,7 @@ test/math_markdown_view_test.dart
 test/migration_test.dart
 test/mistake_book_test.dart
 test/model_list_service_test.dart
+test/openai_codex_device_login_dialog_test.dart
 test/openai_codex_oauth_service_test.dart
 test/progress_display_test.dart
 test/prompt_assets_integrity_test.dart
