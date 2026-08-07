@@ -29,8 +29,19 @@ class ReasoningEffort {
   static const String low = 'low';
   static const String medium = 'medium';
   static const String high = 'high';
+  static const String xhigh = 'xhigh';
+  static const String max = 'max';
 
   static const List<String> values = <String>[
+    none,
+    low,
+    medium,
+    high,
+    xhigh,
+    max,
+  ];
+
+  static const List<String> legacyValues = <String>[
     none,
     low,
     medium,
@@ -57,6 +68,8 @@ class LlmCallContext {
     this.sessionId,
     this.kpKey,
     this.action,
+    this.remoteCourseId,
+    this.remoteBundleVersionId,
   });
 
   final int? teacherId;
@@ -65,6 +78,8 @@ class LlmCallContext {
   final int? sessionId;
   final String? kpKey;
   final String? action;
+  final int? remoteCourseId;
+  final int? remoteBundleVersionId;
 }
 
 class RequestHandle<T> {

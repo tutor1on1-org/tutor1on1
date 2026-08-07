@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'app.dart';
 import 'app_theme.dart';
 import 'services/app_services.dart';
+import 'services/runtime_environment.dart';
 
 class AppBootstrap extends StatefulWidget {
   const AppBootstrap({super.key});
@@ -29,7 +30,7 @@ class _AppBootstrapState extends State<AppBootstrap> {
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const _BootstrapShell(
-            message: 'Starting Tutor1on1...',
+            message: 'Starting $runtimeAppTitle...',
             showProgress: true,
           );
         }
@@ -65,7 +66,7 @@ class _BootstrapShell extends StatelessWidget {
           final theme = Theme.of(innerContext);
           return Scaffold(
             appBar: AppBar(
-              title: const Text('Tutor1on1'),
+              title: const Text(runtimeAppTitle),
             ),
             body: ColoredBox(
               color: theme.colorScheme.surface,

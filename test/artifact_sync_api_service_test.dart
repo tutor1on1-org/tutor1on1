@@ -40,6 +40,31 @@ class _MemorySecureStorage extends SecureStorageService {
 }
 
 void main() {
+  test('agent_tutor requests server-only course scaffolds', () async {
+    final service = ArtifactSyncApiService(
+      secureStorage: _MemorySecureStorage(),
+      baseUrl: 'https://api.tutor1on1.org',
+      appLabel: 'agent_tutor',
+      client: MockClient((request) async {
+        expect(request.url.path, '/api/artifacts/download');
+        expect(request.headers['X-Tutor-Client-Mode'], 'agent_tutor');
+        return http.Response.bytes(
+          <int>[1, 2, 3],
+          200,
+          headers: <String, String>{
+            'x-artifact-id': 'course_bundle:200',
+            'x-artifact-class': 'course_bundle',
+            'x-artifact-sha256': 'scaffold-sha',
+          },
+        );
+      }),
+    );
+
+    final artifact = await service.downloadArtifact('course_bundle:200');
+
+    expect(artifact.sha256, 'scaffold-sha');
+  });
+
   test('getState2 surfaces neutral transport error and keeps raw debug message',
       () async {
     var requestCount = 0;

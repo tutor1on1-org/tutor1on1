@@ -28,7 +28,9 @@ class LlmService {
     this._validator, {
     http.Client Function()? clientFactory,
     OpenAiCodexOAuthService? codexOAuthService,
+    String? appLabel,
   })  : _clientFactory = clientFactory ?? (() => http.Client()),
+        _appLabel = appLabel ?? runtimeAppLabel,
         _codexOAuthService =
             codexOAuthService ?? OpenAiCodexOAuthService(_secureStorage);
 
@@ -39,6 +41,7 @@ class LlmService {
   final SchemaValidator _validator;
   final http.Client Function() _clientFactory;
   final OpenAiCodexOAuthService _codexOAuthService;
+  final String _appLabel;
 
   LlmRequestHandle startCall({
     required String promptName,
@@ -125,6 +128,7 @@ class LlmService {
     final providers = LlmProviders.defaultProviders(
       envBaseUrl: runtimeOpenAiBaseUrl,
       envModel: runtimeOpenAiModel,
+      appLabel: _appLabel,
     );
     final provider = LlmProviders.findById(providers, settings.providerId) ??
         LlmProviders.findByBaseUrl(providers, settings.baseUrl) ??
@@ -187,6 +191,7 @@ class LlmService {
         schemaMap: schemaMap,
         timeoutSeconds: settings.timeoutSeconds,
         maxTokens: settings.maxTokens,
+        context: context,
         isCancelled: isCancelled,
       );
       stopwatch.stop();
@@ -331,6 +336,7 @@ class LlmService {
     final providers = LlmProviders.defaultProviders(
       envBaseUrl: runtimeOpenAiBaseUrl,
       envModel: runtimeOpenAiModel,
+      appLabel: _appLabel,
     );
     final provider = LlmProviders.findById(providers, settings.providerId) ??
         LlmProviders.findByBaseUrl(providers, settings.baseUrl) ??
@@ -396,6 +402,7 @@ class LlmService {
         schemaMap: schemaMap,
         timeoutSeconds: settings.timeoutSeconds,
         maxTokens: settings.maxTokens,
+        context: context,
         isCancelled: isCancelled,
         onChunk: onChunk,
       );
@@ -559,6 +566,9 @@ class LlmService {
         tutorAccessToken: await _requireTutorAccessToken(),
       );
     }
+    if (provider.usesTutorSession) {
+      return _LlmCredential(accessToken: await _requireTutorAccessToken());
+    }
     final apiKey = await _secureStorage.readApiKeyForBaseUrl(baseUrl);
     if ((apiKey ?? '').trim().isEmpty) {
       throw StateError('Missing API key. Set it in Settings.');
@@ -578,8 +588,24 @@ class LlmService {
     required Map<String, dynamic>? schemaMap,
     required int timeoutSeconds,
     required int maxTokens,
+    required LlmCallContext? context,
     required bool Function() isCancelled,
   }) async {
+    if (provider.apiFormat == LlmApiFormat.agentTutorExec) {
+      return _postAgentTutorExec(
+        client: client,
+        baseUrl: baseUrl,
+        promptName: promptName,
+        model: model,
+        reasoningEffort: reasoningEffort,
+        credential: credential,
+        renderedPrompt: renderedPrompt,
+        schemaMap: schemaMap,
+        timeoutSeconds: timeoutSeconds,
+        context: context,
+        isCancelled: isCancelled,
+      );
+    }
     if (provider.apiFormat == LlmApiFormat.openAiCodexResponses) {
       return _postOpenAiCodexResponsesStream(
         reasoningEffort: reasoningEffort,
@@ -662,9 +688,26 @@ class LlmService {
     required Map<String, dynamic>? schemaMap,
     required int timeoutSeconds,
     required int maxTokens,
+    required LlmCallContext? context,
     required bool Function() isCancelled,
     required void Function(String chunk) onChunk,
   }) async {
+    if (provider.apiFormat == LlmApiFormat.agentTutorExec) {
+      return _postAgentTutorExec(
+        client: client,
+        baseUrl: baseUrl,
+        promptName: promptName,
+        model: model,
+        reasoningEffort: reasoningEffort,
+        credential: credential,
+        renderedPrompt: renderedPrompt,
+        schemaMap: schemaMap,
+        timeoutSeconds: timeoutSeconds,
+        context: context,
+        isCancelled: isCancelled,
+        onChunk: onChunk,
+      );
+    }
     if (provider.apiFormat == LlmApiFormat.openAiCodexResponses) {
       return _postOpenAiCodexResponsesStream(
         reasoningEffort: reasoningEffort,
@@ -809,6 +852,86 @@ class LlmService {
       reasoningText: reasoningBuffer.toString(),
       reasoningTokens: reasoningTokens,
     );
+  }
+
+  Future<LlmPreparedResponse> _postAgentTutorExec({
+    required http.Client client,
+    required String baseUrl,
+    required String promptName,
+    required String model,
+    required String reasoningEffort,
+    required _LlmCredential credential,
+    required String renderedPrompt,
+    required Map<String, dynamic>? schemaMap,
+    required int timeoutSeconds,
+    required LlmCallContext? context,
+    required bool Function() isCancelled,
+    void Function(String chunk)? onChunk,
+  }) async {
+    final courseId = context?.remoteCourseId ?? 0;
+    final bundleVersionId = context?.remoteBundleVersionId ?? 0;
+    if (courseId <= 0 || bundleVersionId <= 0) {
+      throw StateError(
+        'Agent Tutor requires a server-synced course and bundle version.',
+      );
+    }
+    final url = Uri.parse(
+      '${_normalizeBaseUrl(baseUrl)}/api/agent-tutor/turn',
+    );
+    final body = jsonEncode(<String, dynamic>{
+      'course_id': courseId,
+      'bundle_version_id': bundleVersionId,
+      'kp_key': context?.kpKey?.trim() ?? '',
+      'action': context?.action?.trim() ?? '',
+      'prompt_name': promptName,
+      'rendered_prompt': renderedPrompt,
+      if (schemaMap != null) 'schema': schemaMap,
+      'model': model,
+      'reasoning_effort': ReasoningEffort.normalize(reasoningEffort),
+    });
+    var accessToken = credential.accessToken;
+    Future<http.Response> send() {
+      return client
+          .post(
+            url,
+            headers: <String, String>{
+              'Authorization': 'Bearer $accessToken',
+              'Content-Type': 'application/json',
+            },
+            body: body,
+          )
+          .timeout(Duration(seconds: timeoutSeconds));
+    }
+
+    var response = await _sendWithRetry(send, isCancelled: isCancelled);
+    if (response.statusCode == 401 &&
+        await AuthTokenRefreshCoordinator.refresh(
+          client: client,
+          secureStorage: _secureStorage,
+          baseUrl: kAuthBaseUrl,
+        )) {
+      accessToken = await _requireTutorAccessToken();
+      response = await _sendWithRetry(send, isCancelled: isCancelled);
+    }
+    if (isCancelled()) {
+      throw StateError('Request cancelled.');
+    }
+    final responseBody = utf8.decode(response.bodyBytes);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw http.ClientException(
+        'HTTP ${response.statusCode}: $responseBody',
+      );
+    }
+    final payload = jsonDecode(responseBody);
+    if (payload is! Map<String, dynamic>) {
+      throw StateError('Agent Tutor response is not a JSON object.');
+    }
+    final responseText = (payload['response_text'] as String?) ?? '';
+    if (responseText.trim().isEmpty) {
+      throw StateError('Agent Tutor response missing content.');
+    }
+    onChunk?.call(responseText);
+    return LlmPreparedResponse(responseText: responseText);
   }
 
   Future<LlmPreparedResponse> _postOpenAiCodexResponsesStream({

@@ -85,6 +85,7 @@
 100644 lib/services/enrollment_sync_service.dart
 100644 lib/services/exit_sync_service.dart
 100644 lib/services/file_system.dart
+100644 lib/services/file_system_errors.dart
 100644 lib/services/file_system_web.dart
 100644 lib/services/home_sync_coordinator.dart
 100644 lib/services/legacy_brand_compat.dart

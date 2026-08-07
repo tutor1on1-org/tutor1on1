@@ -1,3 +1,7 @@
+import '../constants.dart';
+import '../services/runtime_environment.dart';
+import 'llm_models.dart';
+
 enum MaxTokensParam {
   maxTokens,
   maxCompletionTokens,
@@ -8,11 +12,13 @@ enum LlmApiFormat {
   openAiChatCompletions,
   openAiCodexResponses,
   anthropicMessages,
+  agentTutorExec,
 }
 
 enum LlmAuthMode {
   apiKey,
   openAiCodexOAuth,
+  tutorSession,
 }
 
 enum ReasoningControlStyle {
@@ -42,6 +48,7 @@ class LlmProvider {
     this.reasoningControlStyle = ReasoningControlStyle.unsupported,
     this.supportsStructuredOutputs = false,
     this.extraHeaders = const <String, String>{},
+    this.reasoningEfforts = const <String>[],
   });
 
   final String id;
@@ -60,6 +67,7 @@ class LlmProvider {
   final ReasoningControlStyle reasoningControlStyle;
   final bool supportsStructuredOutputs;
   final Map<String, String> extraHeaders;
+  final List<String> reasoningEfforts;
 
   String maxTokensField(String model) {
     switch (maxTokensParam) {
@@ -93,13 +101,41 @@ class LlmProvider {
       reasoningControlStyle != ReasoningControlStyle.unsupported;
 
   bool get usesOpenAiCodexOAuth => authMode == LlmAuthMode.openAiCodexOAuth;
+
+  bool get usesTutorSession => authMode == LlmAuthMode.tutorSession;
 }
 
 class LlmProviders {
   static List<LlmProvider> defaultProviders({
     String? envBaseUrl,
     String? envModel,
+    String appLabel = runtimeAppLabel,
   }) {
+    if (appLabel.trim().toLowerCase() == 'agent_tutor') {
+      return const <LlmProvider>[
+        LlmProvider(
+          id: 'agent-tutor',
+          label: 'Agent Tutor',
+          baseUrl: kAuthBaseUrl,
+          models: <String>[
+            'gpt-5.6-sol',
+            'gpt-5.6-terra',
+          ],
+          maxTokensParam: MaxTokensParam.maxTokens,
+          apiFormat: LlmApiFormat.agentTutorExec,
+          authMode: LlmAuthMode.tutorSession,
+          reasoningControlStyle: ReasoningControlStyle.openAiEffort,
+          supportsStructuredOutputs: true,
+          reasoningEfforts: <String>[
+            ReasoningEffort.low,
+            ReasoningEffort.medium,
+            ReasoningEffort.high,
+            ReasoningEffort.xhigh,
+            ReasoningEffort.max,
+          ],
+        ),
+      ];
+    }
     final providers = <LlmProvider>[
       const LlmProvider(
         id: 'openai',

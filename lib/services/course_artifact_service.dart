@@ -159,11 +159,16 @@ class CourseArtifactService {
     if (!manifestFile.existsSync()) {
       return null;
     }
-    final decoded = jsonDecode(await manifestFile.readAsString(encoding: utf8));
-    if (decoded is! Map<String, dynamic>) {
-      throw StateError('Course artifact manifest is invalid.');
+    try {
+      final decoded =
+          jsonDecode(await manifestFile.readAsString(encoding: utf8));
+      if (decoded is! Map<String, dynamic>) {
+        throw StateError('Course artifact manifest is invalid.');
+      }
+      return CourseArtifactManifest.fromJson(decoded);
+    } on FileSystemDataMissingException {
+      return null;
     }
-    return CourseArtifactManifest.fromJson(decoded);
   }
 
   Future<void> replaceStoredContentBundle({
@@ -386,6 +391,45 @@ class CourseArtifactService {
     );
   }
 
+  Future<String?> findStoredEntryPath({
+    required int courseVersionId,
+    required List<String> candidateRelativePaths,
+  }) async {
+    final manifest = await readCourseArtifacts(courseVersionId);
+    if (manifest == null) {
+      return null;
+    }
+    final contentBundle = File(manifest.contentBundlePath);
+    if (!contentBundle.existsSync()) {
+      return null;
+    }
+    Archive? archive;
+    try {
+      archive = ZipDecoder().decodeBytes(
+        await contentBundle.readAsBytes(),
+        verify: true,
+      );
+      final candidates = candidateRelativePaths
+          .map(_normalizeArchivePath)
+          .where((value) => value.isNotEmpty)
+          .toList(growable: false);
+      for (final entry in archive.files) {
+        if (!entry.isFile) {
+          continue;
+        }
+        final name = _normalizeArchivePath(entry.name);
+        for (final candidate in candidates) {
+          if (name == candidate || name.endsWith('/$candidate')) {
+            return name;
+          }
+        }
+      }
+      return null;
+    } finally {
+      archive?.clearSync();
+    }
+  }
+
   Future<PreparedCourseUploadBundle> prepareUploadBundle({
     required int courseVersionId,
     required Map<String, dynamic>? promptMetadata,
@@ -474,7 +518,12 @@ class CourseArtifactService {
     if (contentBundlePath.isEmpty) {
       return false;
     }
-    return File(contentBundlePath).existsSync();
+    try {
+      await File(contentBundlePath).readAsBytes();
+      return true;
+    } on FileSystemDataMissingException {
+      return false;
+    }
   }
 
   Future<String?> computeStoredContentBundleByteHash(
@@ -494,7 +543,11 @@ class CourseArtifactService {
     if (!contentBundle.existsSync()) {
       return null;
     }
-    return _bundleService.computeBundleByteHash(contentBundle);
+    try {
+      return await _bundleService.computeBundleByteHash(contentBundle);
+    } on FileSystemDataMissingException {
+      return null;
+    }
   }
 
   Future<PreparedCourseUploadBundle?> readPreparedUploadBundle(

@@ -10,6 +10,7 @@ import '../constants.dart';
 import 'api_http_client.dart';
 import 'auth_token_refresh_coordinator.dart';
 import 'course_bundle_service.dart';
+import 'runtime_environment.dart';
 import 'secure_storage_service.dart';
 
 class MarketplaceApiException implements Exception {
@@ -898,9 +899,11 @@ class MarketplaceApiService {
     http.Client? client,
     FirstPartyApiHttpClientFactory? clientFactory,
     int? Function()? browserAuthUserReader,
+    String? appLabel,
   })  : assert(client == null || clientFactory == null),
         _secureStorage = secureStorage,
         _browserAuthUserReader = browserAuthUserReader,
+        _appLabel = appLabel ?? runtimeAppLabel,
         _baseUrl = _normalizeBaseUrl(baseUrl ?? kAuthBaseUrl),
         _clientFactory =
             clientFactory ?? (() => _buildClient(kAuthAllowInsecureTls)),
@@ -910,6 +913,7 @@ class MarketplaceApiService {
 
   final SecureStorageService _secureStorage;
   final int? Function()? _browserAuthUserReader;
+  final String _appLabel;
   final String _baseUrl;
   final FirstPartyApiHttpClientFactory _clientFactory;
   final bool _ownsClient;
@@ -1581,7 +1585,7 @@ class MarketplaceApiService {
         uri: uri,
         action: () {
           final request = http.Request('GET', uri);
-          request.headers['Authorization'] = 'Bearer $token';
+          request.headers.addAll(_authHeaders(token));
           return _client.send(request);
         },
       );
@@ -1706,6 +1710,8 @@ class MarketplaceApiService {
     return {
       'Content-Type': 'application/json',
       'Authorization': 'Bearer $token',
+      if (_appLabel.trim().toLowerCase() == 'agent_tutor')
+        'X-Tutor-Client-Mode': 'agent_tutor',
     };
   }
 

@@ -8,6 +8,25 @@ import 'package:tutor1on1/llm/llm_reasoning_support.dart';
 
 void main() {
   group('LlmReasoningSupport', () {
+    test('preserves Agent Tutor xhigh and max reasoning effort', () {
+      final provider = LlmProviders.defaultProviders(
+        appLabel: 'agent_tutor',
+      ).single;
+
+      expect(
+        LlmReasoningSupport.effortOptionsForProvider(provider),
+        containsAll(<String>[ReasoningEffort.xhigh, ReasoningEffort.max]),
+      );
+      expect(
+        LlmReasoningSupport.normalizeEffort('xhigh'),
+        ReasoningEffort.xhigh,
+      );
+      expect(
+        LlmReasoningSupport.normalizeEffort('max'),
+        ReasoningEffort.max,
+      );
+    });
+
     test('extracts DeepSeek reasoning_content separately from final JSON', () {
       const provider = LlmProvider(
         id: 'deepseek',

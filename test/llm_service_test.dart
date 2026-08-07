@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'package:tutor1on1/db/app_database.dart';
+import 'package:tutor1on1/llm/llm_models.dart';
 import 'package:tutor1on1/llm/llm_service.dart';
 import 'package:tutor1on1/llm/schema_validator.dart';
 import 'package:tutor1on1/services/llm_call_repository.dart';
@@ -112,12 +113,14 @@ Future<void> _seedSettings(
   String providerId = 'openai',
   String baseUrl = 'https://api.openai.com/v1',
   String model = 'gpt-4o-mini',
+  String reasoningEffort = 'medium',
 }) async {
   await db.into(db.appSettings).insert(
         AppSettingsCompanion.insert(
           baseUrl: baseUrl,
           providerId: Value(providerId),
           model: model,
+          reasoningEffort: Value(reasoningEffort),
           timeoutSeconds: 30,
           maxTokens: 4000,
           ttsInitialDelayMs: const Value(1000),
@@ -369,5 +372,79 @@ void main() {
     expect(relayCalls, equals(2));
     expect(refreshCalls, equals(1));
     expect(storage.values['auth:access'], equals('fresh-tutor-token'));
+  });
+
+  test('Agent Tutor sends model, max effort, and remote course context only',
+      () async {
+    await db.delete(db.appSettings).go();
+    await _seedSettings(
+      db,
+      providerId: 'agent-tutor',
+      baseUrl: 'https://api.tutor1on1.org',
+      model: 'gpt-5.6-sol',
+      reasoningEffort: 'max',
+    );
+    final service = LlmService(
+      SettingsRepository(db),
+      _FakeSecureStorage(),
+      LlmCallRepository(db),
+      logRepository,
+      SchemaValidator(),
+      appLabel: 'agent_tutor',
+      clientFactory: () => MockClient((request) async {
+        expect(request.method, equals('POST'));
+        expect(
+          request.url.toString(),
+          equals('https://api.tutor1on1.org/api/agent-tutor/turn'),
+        );
+        expect(
+          request.headers['authorization'],
+          equals('Bearer tutor-access-token'),
+        );
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(body['course_id'], equals(200));
+        expect(body['bundle_version_id'], equals(501));
+        expect(body['kp_key'], equals('2.1'));
+        expect(body['action'], equals('review'));
+        expect(body['prompt_name'], equals('review_init'));
+        expect(body['model'], equals('gpt-5.6-sol'));
+        expect(body['reasoning_effort'], equals('max'));
+        expect(
+          body['rendered_prompt'],
+          contains('[[AGENT_TUTOR_SERVER_FILE:path=2.1/easy/questions.txt]]'),
+        );
+        expect(request.body, isNot(contains('raw private question')));
+        return http.Response(
+          jsonEncode(<String, dynamic>{
+            'response_text': '{"teacher_message":"Server answer"}',
+          }),
+          200,
+          headers: const <String, String>{
+            'content-type': 'application/json',
+          },
+        );
+      }),
+    );
+
+    final chunks = <String>[];
+    final result = await service
+        .startStreamingCall(
+          promptName: 'review_init',
+          renderedPrompt:
+              '[[AGENT_TUTOR_SERVER_FILE:path=2.1/easy/questions.txt]]',
+          schemaMap: const <String, dynamic>{'type': 'object'},
+          context: const LlmCallContext(
+            remoteCourseId: 200,
+            remoteBundleVersionId: 501,
+            kpKey: '2.1',
+            action: 'review',
+          ),
+          onChunk: chunks.add,
+        )
+        .future;
+
+    expect(result.responseText, contains('Server answer'));
+    expect(chunks, equals(<String>[result.responseText]));
+    expect(logRepository.statuses, equals(<String>['ok']));
   });
 }

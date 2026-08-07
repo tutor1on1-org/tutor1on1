@@ -152,10 +152,12 @@ class _SettingsPageState extends State<SettingsPage> {
     _maybeLoadDeviceName(services);
 
     final provider = _resolveProvider(providers, settings);
-    if (provider.usesOpenAiCodexOAuth) {
-      _maybeLoadOpenAiCodexOAuth(services, provider);
-    } else {
-      _maybeLoadApiKey(services, provider.baseUrl);
+    if (!runtimeIsAgentTutor) {
+      if (provider.usesOpenAiCodexOAuth) {
+        _maybeLoadOpenAiCodexOAuth(services, provider);
+      } else {
+        _maybeLoadApiKey(services, provider.baseUrl);
+      }
     }
 
     return DefaultTabController(
@@ -398,49 +400,56 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ],
         const SizedBox(height: 8),
-        TextField(
-          decoration: InputDecoration(labelText: l10n.timeoutSecondsLabel),
-          controller: _timeoutController,
-          keyboardType: TextInputType.number,
-        ),
-        TextField(
-          decoration: InputDecoration(labelText: l10n.maxTokensLabel),
-          controller: _maxTokensController,
-          keyboardType: TextInputType.number,
-        ),
-        TextField(
-          decoration: InputDecoration(labelText: l10n.ttsInitialDelayLabel),
-          controller: _ttsDelayController,
-          keyboardType: TextInputType.number,
-        ),
-        TextField(
-          decoration: InputDecoration(labelText: l10n.ttsTextLeadLabel),
-          controller: _ttsTextLeadController,
-          keyboardType: TextInputType.number,
-        ),
-        SwitchListTile(
-          title: Text(l10n.sttAutoSendLabel),
-          value: _sttAutoSend,
-          onChanged: (value) => setState(() => _sttAutoSend = value),
-        ),
+        if (!runtimeIsAgentTutor) ...[
+          TextField(
+            decoration: InputDecoration(labelText: l10n.timeoutSecondsLabel),
+            controller: _timeoutController,
+            keyboardType: TextInputType.number,
+          ),
+          TextField(
+            decoration: InputDecoration(labelText: l10n.maxTokensLabel),
+            controller: _maxTokensController,
+            keyboardType: TextInputType.number,
+          ),
+        ],
+        if (!runtimeIsAgentTutor) ...[
+          TextField(
+            decoration: InputDecoration(labelText: l10n.ttsInitialDelayLabel),
+            controller: _ttsDelayController,
+            keyboardType: TextInputType.number,
+          ),
+          TextField(
+            decoration: InputDecoration(labelText: l10n.ttsTextLeadLabel),
+            controller: _ttsTextLeadController,
+            keyboardType: TextInputType.number,
+          ),
+          SwitchListTile(
+            title: Text(l10n.sttAutoSendLabel),
+            value: _sttAutoSend,
+            onChanged: (value) => setState(() => _sttAutoSend = value),
+          ),
+        ],
         SwitchListTile(
           title: Text(l10n.enterToSendLabel),
           value: _enterToSend,
           onChanged: (value) => setState(() => _enterToSend = value),
         ),
         const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                decoration: InputDecoration(labelText: l10n.ttsAudioPathLabel),
-                controller: _ttsAudioPathController,
+        if (!runtimeIsAgentTutor) ...[
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  decoration:
+                      InputDecoration(labelText: l10n.ttsAudioPathLabel),
+                  controller: _ttsAudioPathController,
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-          ],
-        ),
-        const SizedBox(height: 8),
+              const SizedBox(width: 8),
+            ],
+          ),
+          const SizedBox(height: 8),
+        ],
         Row(
           children: [
             Expanded(
@@ -458,35 +467,38 @@ class _SettingsPageState extends State<SettingsPage> {
           child: SelectableText(settings.llmLogPath ?? ''),
         ),
         const SizedBox(height: 8),
-        InputDecorator(
-          decoration: InputDecoration(labelText: l10n.ttsLogPathLabel),
-          child: SelectableText(settings.ttsLogPath ?? ''),
-        ),
-        const SizedBox(height: 8),
-        DropdownButtonFormField<String>(
-          initialValue: _mode,
-          decoration: InputDecoration(labelText: l10n.llmModeLabel),
-          items: [
-            DropdownMenuItem(
-              value: 'LIVE_RECORD',
-              child: Text(l10n.llmModeLiveRecord),
-            ),
-            DropdownMenuItem(
-              value: 'REPLAY',
-              child: Text(l10n.llmModeReplay),
-            ),
-            DropdownMenuItem(
-              value: 'LIVE',
-              child: Text(l10n.llmModeLive),
-            ),
-          ],
-          onChanged: (value) {
-            if (value == null) {
-              return;
-            }
-            setState(() => _mode = value);
-          },
-        ),
+        if (!runtimeIsAgentTutor) ...[
+          InputDecorator(
+            decoration: InputDecoration(labelText: l10n.ttsLogPathLabel),
+            child: SelectableText(settings.ttsLogPath ?? ''),
+          ),
+          const SizedBox(height: 8),
+        ],
+        if (!runtimeIsAgentTutor)
+          DropdownButtonFormField<String>(
+            initialValue: _mode,
+            decoration: InputDecoration(labelText: l10n.llmModeLabel),
+            items: [
+              DropdownMenuItem(
+                value: 'LIVE_RECORD',
+                child: Text(l10n.llmModeLiveRecord),
+              ),
+              DropdownMenuItem(
+                value: 'REPLAY',
+                child: Text(l10n.llmModeReplay),
+              ),
+              DropdownMenuItem(
+                value: 'LIVE',
+                child: Text(l10n.llmModeLive),
+              ),
+            ],
+            onChanged: (value) {
+              if (value == null) {
+                return;
+              }
+              setState(() => _mode = value);
+            },
+          ),
         const SizedBox(height: 12),
         ElevatedButton(
           onPressed: () async {
@@ -763,6 +775,15 @@ class _SettingsPageState extends State<SettingsPage> {
     required List<LlmProvider> providers,
     required AppServices services,
   }) {
+    if (runtimeIsAgentTutor) {
+      return _buildAgentTutorApiTab(
+        context: context,
+        l10n: l10n,
+        settings: settings,
+        settingsController: settingsController,
+        provider: provider,
+      );
+    }
     return StreamBuilder<List<ApiConfig>>(
       stream: services.db.watchApiConfigs(),
       builder: (context, snapshot) {
@@ -1222,6 +1243,86 @@ class _SettingsPageState extends State<SettingsPage> {
           },
         );
       },
+    );
+  }
+
+  Widget _buildAgentTutorApiTab({
+    required BuildContext context,
+    required AppLocalizations l10n,
+    required AppSetting settings,
+    required SettingsController settingsController,
+    required LlmProvider provider,
+  }) {
+    final modelOptions = TextModelSelection.buildOptions(
+      modelsLoaded: false,
+      loadedModels: provider.models,
+      defaultModels: provider.models,
+      savedModels: const <String>[],
+      settingsModel: settings.model,
+    );
+    final model = _coerceSelection(
+      current: _textModelSelection,
+      options: modelOptions,
+      fallback: settings.model,
+      onUpdate: (value) => setState(() => _textModelSelection = value),
+    );
+    final efforts = LlmReasoningSupport.effortOptionsForProvider(provider);
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const InputDecorator(
+          decoration: InputDecoration(labelText: 'Tutor engine'),
+          child: Text('Agent Tutor (server Codex)'),
+        ),
+        const SizedBox(height: 12),
+        _buildModelPicker(
+          label: l10n.textModelLabel,
+          options: modelOptions,
+          value: model,
+          emptyMessage: l10n.modelsNotLoadedMessage,
+          onChanged: (value) => setState(() => _textModelSelection = value),
+        ),
+        const SizedBox(height: 8),
+        _buildModelPicker(
+          label: 'Thinking effort',
+          options: efforts,
+          value: _reasoningEffortSelection,
+          emptyMessage: 'Thinking effort is unavailable.',
+          onChanged: (value) {
+            setState(() {
+              _reasoningEffortSelection = ReasoningEffort.normalize(value);
+            });
+          },
+        ),
+        const SizedBox(height: 12),
+        ElevatedButton(
+          onPressed: () async {
+            await settingsController.update(
+              providerId: provider.id,
+              baseUrl: provider.baseUrl,
+              model: model,
+              reasoningEffort: _reasoningEffortSelection,
+              ttsModel: '',
+              sttModel: '',
+              timeoutSeconds:
+                  int.tryParse(_timeoutController.text.trim()) ?? 600,
+              maxTokens: int.tryParse(_maxTokensController.text.trim()) ??
+                  settings.maxTokens,
+              ttsInitialDelayMs: settings.ttsInitialDelayMs,
+              ttsTextLeadMs: settings.ttsTextLeadMs,
+              ttsAudioPath: settings.ttsAudioPath ?? '',
+              logDirectory: settings.logDirectory ?? '',
+              llmMode: settings.llmMode,
+              sttAutoSend: false,
+              enterToSend: settings.enterToSend,
+            );
+            if (context.mounted) {
+              _showMessage(context, l10n.configSavedMessage);
+            }
+          },
+          child: Text(l10n.saveApiConfigButton),
+        ),
+      ],
     );
   }
 

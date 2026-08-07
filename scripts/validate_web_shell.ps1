@@ -103,7 +103,7 @@ foreach ($requiredToken in @(
     "'flutter-app-manifest'",
     "'flutter-temp-cache'",
     "'flutter-app-cache'",
-    "new URL('/app/', window.location.origin)",
+    "const stableScopePath = appSegment ? ``/`${appSegment}/`` : '/'",
     'registration.scope.startsWith(appScope)',
     "script.src = 'flutter_bootstrap.js'"
   )) {

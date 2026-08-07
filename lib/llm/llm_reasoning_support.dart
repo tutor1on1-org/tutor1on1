@@ -17,10 +17,13 @@ class LlmPreparedResponse {
 
 class LlmReasoningSupport {
   static List<String> effortOptionsForProvider(LlmProvider provider) {
+    if (provider.reasoningEfforts.isNotEmpty) {
+      return provider.reasoningEfforts;
+    }
     if (!provider.supportsReasoning) {
       return const <String>[ReasoningEffort.medium];
     }
-    return ReasoningEffort.values;
+    return ReasoningEffort.legacyValues;
   }
 
   static String normalizeEffort(String? value) {
@@ -89,6 +92,7 @@ class LlmReasoningSupport {
         _extractOpenAiCompatibleText(payload),
       LlmApiFormat.openAiChatCompletions =>
         _extractOpenAiCompatibleText(payload),
+      LlmApiFormat.agentTutorExec => _extractAgentTutorText(payload),
     };
     final reasoningText = switch (provider.apiFormat) {
       LlmApiFormat.anthropicMessages => _extractAnthropicReasoning(payload),
@@ -96,6 +100,7 @@ class LlmReasoningSupport {
         _extractOpenAiCompatibleReasoning(payload),
       LlmApiFormat.openAiChatCompletions =>
         _extractOpenAiCompatibleReasoning(payload),
+      LlmApiFormat.agentTutorExec => null,
     };
     final normalizedReasoning = _normalizeJoinedText(reasoningText);
     return LlmPreparedResponse(
@@ -239,6 +244,11 @@ class LlmReasoningSupport {
       return _normalizeJoinedText(buffer.toString());
     }
     return null;
+  }
+
+  static String? _extractAgentTutorText(Map<String, dynamic> payload) {
+    final responseText = payload['response_text'];
+    return responseText is String ? responseText : null;
   }
 
   static String? _extractOpenAiCompatibleReasoning(

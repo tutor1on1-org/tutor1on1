@@ -87,10 +87,13 @@ class AppServices {
           .whereType<int>()
           .toSet(),
     );
-    final settingsRepository = SettingsRepository(db);
     final secureStorage = SecureStorageService();
     await secureStorage.ensureReadableOrReset();
     await secureStorage.clearLegacySyncCompatibilityState();
+    final settingsRepository = SettingsRepository(
+      db,
+      secureStorage: secureStorage,
+    );
     final deviceIdentityService = DeviceIdentityService(secureStorage);
     final settings = await settingsRepository.load();
     final baseUrl = settings.baseUrl.trim();
@@ -146,6 +149,7 @@ class AppServices {
       llmLogRepository,
       courseArtifactService: courseArtifactService,
       sessionUploadCacheService: sessionUploadCacheService,
+      secureStorage: secureStorage,
     );
     final artifactStore = StudentKpArtifactStoreService();
     final sessionSyncService = SessionSyncService(

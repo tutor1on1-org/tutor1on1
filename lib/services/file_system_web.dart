@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'package:web/web.dart' as web;
 
 import 'browser_exclusive_lock.dart';
+import 'file_system_errors.dart';
 
 abstract class FileSystemEntity {
   const FileSystemEntity(this.path);
@@ -483,10 +484,19 @@ class _BrowserFileStore {
     final cache = await web.window.caches.open(_cacheName).toDart;
     final response = await cache.match(_request(resolved)).toDart;
     if (response == null) {
-      throw StateError('File data is missing: $resolved');
+      _removeStaleFileMetadata(resolved);
+      throw FileSystemDataMissingException(resolved);
     }
     final buffer = await response.arrayBuffer().toDart;
     return Uint8List.view(buffer.toDart);
+  }
+
+  void _removeStaleFileMetadata(String resolved) {
+    _loadIndex();
+    if (_index.remove(resolved) != null) {
+      _saveIndex();
+    }
+    _memory.remove(resolved);
   }
 
   web.Request _request(String resolved) {

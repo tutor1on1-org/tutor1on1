@@ -15,9 +15,12 @@
     }
 
     if ('serviceWorker' in navigator) {
-      // The base href is release-specific, but legacy Flutter workers used the
-      // stable /app/ scope; remove both that worker and any child-scope worker.
-      const appScope = new URL('/app/', window.location.origin).href;
+      // The base href may be release-specific; remove the stable first-level
+      // app scope (/app/ or /agent/) and any child-scope worker.
+      const basePath = new URL(document.baseURI).pathname;
+      const appSegment = basePath.split('/').find((part) => part.length > 0);
+      const stableScopePath = appSegment ? `/${appSegment}/` : '/';
+      const appScope = new URL(stableScopePath, window.location.origin).href;
       const registrations = await navigator.serviceWorker.getRegistrations();
       await Promise.all(
         registrations

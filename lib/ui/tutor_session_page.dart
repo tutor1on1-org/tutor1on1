@@ -617,74 +617,76 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                               ),
                             ),
                             const SizedBox(width: 8),
-                            Tooltip(
-                              message: sttSupported
-                                  ? (_sttTranscribing
-                                      ? l10n.sttTranscribingLabel
-                                      : (_sttRecording
-                                          ? l10n.sttStopTooltip
-                                          : l10n.sttRecordTooltip))
-                                  : l10n.sttRequiresOpenAi,
-                              child: Listener(
-                                key: const Key('chat_mic_button'),
-                                behavior: HitTestBehavior.opaque,
-                                onPointerDown: (_sending ||
-                                        _sttTranscribing ||
-                                        !sttSupported)
-                                    ? null
-                                    : _handleSttPointerDown,
-                                onPointerMove: (_sttPressActive &&
-                                        !_sttTranscribing &&
-                                        sttSupported)
-                                    ? _handleSttPointerMove
-                                    : null,
-                                onPointerUp: (_sttPressActive &&
-                                        !_sttTranscribing &&
-                                        sttSupported)
-                                    ? _handleSttPointerUp
-                                    : null,
-                                onPointerCancel: (_sttPressActive &&
-                                        !_sttTranscribing &&
-                                        sttSupported)
-                                    ? _handleSttPointerCancel
-                                    : null,
-                                child: CompositedTransformTarget(
-                                  link: _sttButtonLink,
-                                  child: AnimatedContainer(
-                                    duration: const Duration(milliseconds: 150),
-                                    padding: const EdgeInsets.all(10),
-                                    decoration: BoxDecoration(
-                                      color: _sttRecording
-                                          ? Theme.of(context)
-                                              .colorScheme
-                                              .errorContainer
-                                          : Theme.of(context)
-                                              .colorScheme
-                                              .surfaceContainerHighest,
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    child: _sttTranscribing
-                                        ? const SizedBox(
-                                            width: 20,
-                                            height: 20,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
+                            if (!runtimeIsAgentTutor)
+                              Tooltip(
+                                message: sttSupported
+                                    ? (_sttTranscribing
+                                        ? l10n.sttTranscribingLabel
+                                        : (_sttRecording
+                                            ? l10n.sttStopTooltip
+                                            : l10n.sttRecordTooltip))
+                                    : l10n.sttRequiresOpenAi,
+                                child: Listener(
+                                  key: const Key('chat_mic_button'),
+                                  behavior: HitTestBehavior.opaque,
+                                  onPointerDown: (_sending ||
+                                          _sttTranscribing ||
+                                          !sttSupported)
+                                      ? null
+                                      : _handleSttPointerDown,
+                                  onPointerMove: (_sttPressActive &&
+                                          !_sttTranscribing &&
+                                          sttSupported)
+                                      ? _handleSttPointerMove
+                                      : null,
+                                  onPointerUp: (_sttPressActive &&
+                                          !_sttTranscribing &&
+                                          sttSupported)
+                                      ? _handleSttPointerUp
+                                      : null,
+                                  onPointerCancel: (_sttPressActive &&
+                                          !_sttTranscribing &&
+                                          sttSupported)
+                                      ? _handleSttPointerCancel
+                                      : null,
+                                  child: CompositedTransformTarget(
+                                    link: _sttButtonLink,
+                                    child: AnimatedContainer(
+                                      duration:
+                                          const Duration(milliseconds: 150),
+                                      padding: const EdgeInsets.all(10),
+                                      decoration: BoxDecoration(
+                                        color: _sttRecording
+                                            ? Theme.of(context)
+                                                .colorScheme
+                                                .errorContainer
+                                            : Theme.of(context)
+                                                .colorScheme
+                                                .surfaceContainerHighest,
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: _sttTranscribing
+                                          ? const SizedBox(
+                                              width: 20,
+                                              height: 20,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            )
+                                          : Icon(
+                                              Icons.mic,
+                                              color: _sttRecording
+                                                  ? Theme.of(context)
+                                                      .colorScheme
+                                                      .onErrorContainer
+                                                  : Theme.of(context)
+                                                      .colorScheme
+                                                      .onSurfaceVariant,
                                             ),
-                                          )
-                                        : Icon(
-                                            Icons.mic,
-                                            color: _sttRecording
-                                                ? Theme.of(context)
-                                                    .colorScheme
-                                                    .onErrorContainer
-                                                : Theme.of(context)
-                                                    .colorScheme
-                                                    .onSurfaceVariant,
-                                          ),
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
                             const SizedBox(width: 4),
                             IconButton(
                               key: const Key('chat_send_button'),
@@ -719,17 +721,19 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                           scrollDirection: Axis.horizontal,
                                           child: Row(
                                             children: [
-                                              _buildCompactModelSelector(
-                                                db: db,
-                                                currentModel:
-                                                    settings?.model ?? '',
-                                                activeBaseUrl:
-                                                    settings?.baseUrl ??
-                                                        provider.baseUrl,
-                                                provider: provider,
-                                                l10n: l10n,
-                                              ),
-                                              const SizedBox(width: 8),
+                                              if (!runtimeIsAgentTutor) ...[
+                                                _buildCompactModelSelector(
+                                                  db: db,
+                                                  currentModel:
+                                                      settings?.model ?? '',
+                                                  activeBaseUrl:
+                                                      settings?.baseUrl ??
+                                                          provider.baseUrl,
+                                                  provider: provider,
+                                                  l10n: l10n,
+                                                ),
+                                                const SizedBox(width: 8),
+                                              ],
                                               _actionButton(
                                                 key: const Key('learn_button'),
                                                 label: l10n.promptLearn,
@@ -780,11 +784,13 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                     crossAxisAlignment:
                                         WrapCrossAlignment.center,
                                     children: [
-                                      _buildTtsControls(
-                                        l10n: l10n,
-                                        ttsSupported: ttsSupported,
-                                        livePlaybackActive: livePlaybackActive,
-                                      ),
+                                      if (!runtimeIsAgentTutor)
+                                        _buildTtsControls(
+                                          l10n: l10n,
+                                          ttsSupported: ttsSupported,
+                                          livePlaybackActive:
+                                              livePlaybackActive,
+                                        ),
                                       if (_ttsEnabled &&
                                           _ttsPreparingFirstChunk)
                                         Row(
@@ -823,20 +829,22 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                       scrollDirection: Axis.horizontal,
                                       child: Row(
                                         children: [
-                                          SizedBox(
-                                            width: 320,
-                                            child: _buildModelSelector(
-                                              db: db,
-                                              currentModel:
-                                                  settings?.model ?? '',
-                                              activeBaseUrl:
-                                                  settings?.baseUrl ??
-                                                      provider.baseUrl,
-                                              provider: provider,
-                                              l10n: l10n,
+                                          if (!runtimeIsAgentTutor) ...[
+                                            SizedBox(
+                                              width: 320,
+                                              child: _buildModelSelector(
+                                                db: db,
+                                                currentModel:
+                                                    settings?.model ?? '',
+                                                activeBaseUrl:
+                                                    settings?.baseUrl ??
+                                                        provider.baseUrl,
+                                                provider: provider,
+                                                l10n: l10n,
+                                              ),
                                             ),
-                                          ),
-                                          const SizedBox(width: 8),
+                                            const SizedBox(width: 8),
+                                          ],
                                           _actionButton(
                                             key: const Key('learn_button'),
                                             label: l10n.promptLearn,
@@ -869,12 +877,13 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                                             bias: TutorHelpBias.harder,
                                           ),
                                           const SizedBox(width: 12),
-                                          _buildTtsControls(
-                                            l10n: l10n,
-                                            ttsSupported: ttsSupported,
-                                            livePlaybackActive:
-                                                livePlaybackActive,
-                                          ),
+                                          if (!runtimeIsAgentTutor)
+                                            _buildTtsControls(
+                                              l10n: l10n,
+                                              ttsSupported: ttsSupported,
+                                              livePlaybackActive:
+                                                  livePlaybackActive,
+                                            ),
                                           if (_ttsEnabled &&
                                               _ttsPreparingFirstChunk) ...[
                                             const SizedBox(width: 8),
@@ -912,7 +921,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
                       ),
                   ],
                 ),
-                if (_sttPressActive || _sttRecording)
+                if (!runtimeIsAgentTutor && (_sttPressActive || _sttRecording))
                   _buildSttCancelOverlay(context),
               ],
             ),
@@ -930,7 +939,7 @@ class _ChatSessionPageState extends State<ChatSessionPage>
       required bool isPaused}) {
     final actions = <Widget>[];
 
-    if (hasAudio && audioPath != null) {
+    if (!runtimeIsAgentTutor && hasAudio && audioPath != null) {
       final isActive = isPlaying || isPaused;
       actions.add(
         IconButton(
@@ -1852,6 +1861,9 @@ class _ChatSessionPageState extends State<ChatSessionPage>
   }
 
   String? _resolveModelOverride() {
+    if (runtimeIsAgentTutor) {
+      return null;
+    }
     final settings = context.read<SettingsController>().settings;
     final selected = _sessionModel?.trim();
     if (selected != null && selected.isNotEmpty) {

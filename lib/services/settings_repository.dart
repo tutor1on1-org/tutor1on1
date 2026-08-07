@@ -5,11 +5,21 @@ import '../db/app_database.dart';
 import '../llm/llm_models.dart';
 import '../llm/llm_providers.dart';
 import 'runtime_environment.dart';
+import 'secure_storage_service.dart';
 
 class SettingsRepository {
-  SettingsRepository(this._db);
+  SettingsRepository(
+    this._db, {
+    SecureStorageService? secureStorage,
+    String? appLabel,
+  })  : _secureStorage = secureStorage,
+        _appLabel = appLabel ?? runtimeAppLabel;
 
   final AppDatabase _db;
+  final SecureStorageService? _secureStorage;
+  final String _appLabel;
+
+  bool get _isAgentTutor => _appLabel.trim().toLowerCase() == 'agent_tutor';
 
   Future<AppSetting> load() async {
     final existing = await _db.select(_db.appSettings).getSingleOrNull();
@@ -87,9 +97,11 @@ class SettingsRepository {
         await (_db.update(_db.appSettings)
               ..where((tbl) => tbl.id.equals(existing.id)))
             .write(companion);
-        return await _db.select(_db.appSettings).getSingle();
+        return _overlayAgentTutorSettings(
+          await _db.select(_db.appSettings).getSingle(),
+        );
       }
-      return existing;
+      return _overlayAgentTutorSettings(existing);
     }
     final envBaseUrl = runtimeOpenAiBaseUrl.trim();
     final envModel = runtimeOpenAiModel.trim();
@@ -122,7 +134,9 @@ class SettingsRepository {
             locale: const Value(null),
           ),
         );
-    return await _db.select(_db.appSettings).getSingle();
+    return _overlayAgentTutorSettings(
+      await _db.select(_db.appSettings).getSingle(),
+    );
   }
 
   Future<AppSetting> update({
@@ -144,6 +158,16 @@ class SettingsRepository {
     String? locale,
   }) async {
     final current = await load();
+    if (_isAgentTutor) {
+      return _updateAgentTutor(
+        current: current,
+        model: model,
+        reasoningEffort: reasoningEffort,
+        enterToSend: enterToSend,
+        logDirectory: logDirectory,
+        locale: locale,
+      );
+    }
     final cleanedPath = ttsAudioPath.trim();
     final resolvedPath =
         cleanedPath.isEmpty ? await _defaultTtsAudioPath() : cleanedPath;
@@ -175,7 +199,9 @@ class SettingsRepository {
     await (_db.update(_db.appSettings)
           ..where((tbl) => tbl.id.equals(current.id)))
         .write(companion);
-    return (await _db.select(_db.appSettings).getSingle());
+    return _overlayAgentTutorSettings(
+      await _db.select(_db.appSettings).getSingle(),
+    );
   }
 
   Future<AppSetting> updateLocale(String? locale) async {
@@ -187,7 +213,80 @@ class SettingsRepository {
     await (_db.update(_db.appSettings)
           ..where((tbl) => tbl.id.equals(current.id)))
         .write(companion);
-    return (await _db.select(_db.appSettings).getSingle());
+    return _overlayAgentTutorSettings(
+      await _db.select(_db.appSettings).getSingle(),
+    );
+  }
+
+  Future<AppSetting> _updateAgentTutor({
+    required AppSetting current,
+    required String model,
+    required String reasoningEffort,
+    required bool enterToSend,
+    required String logDirectory,
+    required String? locale,
+  }) async {
+    final storage = _secureStorage;
+    if (storage == null) {
+      throw StateError('Agent Tutor settings storage is unavailable.');
+    }
+    final provider = LlmProviders.defaultProviders(appLabel: _appLabel).single;
+    final normalizedModel = model.trim();
+    if (normalizedModel.isEmpty) {
+      throw StateError('Agent Tutor model is required.');
+    }
+    final normalizedEffort = ReasoningEffort.normalize(reasoningEffort);
+    if (!provider.reasoningEfforts.contains(normalizedEffort)) {
+      throw StateError('Agent Tutor reasoning effort is invalid.');
+    }
+    await storage.writeAgentTutorModel(normalizedModel);
+    await storage.writeAgentTutorReasoningEffort(normalizedEffort);
+    final cleanedLogDir = logDirectory.trim();
+    final resolvedLogDir = cleanedLogDir.isEmpty
+        ? (current.logDirectory ?? await _defaultLogDirectory())
+        : cleanedLogDir;
+    final logPaths = _buildLogPaths(resolvedLogDir);
+    await (_db.update(_db.appSettings)
+          ..where((tbl) => tbl.id.equals(current.id)))
+        .write(
+      AppSettingsCompanion(
+        enterToSend: Value(enterToSend),
+        logDirectory: Value(resolvedLogDir),
+        llmLogPath: Value(logPaths['llm']!),
+        locale: Value(locale ?? current.locale),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+    return _overlayAgentTutorSettings(
+      await _db.select(_db.appSettings).getSingle(),
+    );
+  }
+
+  Future<AppSetting> _overlayAgentTutorSettings(AppSetting settings) async {
+    if (!_isAgentTutor) {
+      return settings;
+    }
+    final provider = LlmProviders.defaultProviders(appLabel: _appLabel).single;
+    final storedModel = (await _secureStorage?.readAgentTutorModel())?.trim();
+    final storedEffort =
+        (await _secureStorage?.readAgentTutorReasoningEffort())?.trim();
+    final effort = ReasoningEffort.normalize(storedEffort);
+    return settings.copyWith(
+      baseUrl: provider.baseUrl,
+      providerId: Value(provider.id),
+      model: storedModel == null || storedModel.isEmpty
+          ? provider.models.first
+          : storedModel,
+      reasoningEffort: provider.reasoningEfforts.contains(effort)
+          ? effort
+          : ReasoningEffort.medium,
+      ttsModel: const Value(null),
+      sttModel: const Value(null),
+      timeoutSeconds:
+          settings.timeoutSeconds < 600 ? 600 : settings.timeoutSeconds,
+      sttAutoSend: false,
+      llmMode: LlmMode.live.value,
+    );
   }
 
   Future<String> _defaultTtsAudioPath() async {

@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import '../constants.dart';
 import 'api_http_client.dart';
 import 'auth_token_refresh_coordinator.dart';
+import 'runtime_environment.dart';
 import 'secure_storage_service.dart';
 
 class ArtifactState1Item {
@@ -150,9 +151,11 @@ class ArtifactSyncApiService {
     http.Client? client,
     FirstPartyApiHttpClientFactory? clientFactory,
     int? Function()? browserAuthUserReader,
+    String? appLabel,
   })  : assert(client == null || clientFactory == null),
         _secureStorage = secureStorage,
         _browserAuthUserReader = browserAuthUserReader,
+        _appLabel = appLabel ?? runtimeAppLabel,
         _baseUrl = _normalizeBaseUrl(baseUrl ?? kAuthBaseUrl),
         _clientFactory = clientFactory ??
             (() => buildFirstPartyApiHttpClient(
@@ -167,6 +170,7 @@ class ArtifactSyncApiService {
 
   final SecureStorageService _secureStorage;
   final int? Function()? _browserAuthUserReader;
+  final String _appLabel;
   final String _baseUrl;
   final FirstPartyApiHttpClientFactory _clientFactory;
   final bool _ownsClient;
@@ -533,6 +537,8 @@ class ArtifactSyncApiService {
     final headers = <String, String>{
       'Authorization': 'Bearer $token',
       'X-Device-Id': SecureStorageService.syncRunDeviceHash,
+      if (_appLabel.trim().toLowerCase() == 'agent_tutor')
+        'X-Tutor-Client-Mode': 'agent_tutor',
     };
     if (includeContentType) {
       headers['Content-Type'] = 'application/json';

@@ -47,8 +47,8 @@ flutter build web --release --base-href /app/ --pwa-strategy=none --dart-define=
 
 ## Releases
 
-- Current public release tag: `v1.0.63`
-- App version in `pubspec.yaml`: `1.0.63`
+- Current public release tag: `v1.0.64`
+- App version in `pubspec.yaml`: `1.0.64`
 
 The canonical private release wrapper validates the source, builds and boots one service-worker-free candidate, verifies production CORS, publishes source refs only after those gates pass, installs that exact attested candidate under an immutable versioned directory, and atomically promotes `/app/`; only the small launcher revalidates, while gzip-compressed runtime files use one-year immutable release URLs, and failed live verification restores the prior release.
 

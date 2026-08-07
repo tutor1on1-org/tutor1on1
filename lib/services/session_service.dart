@@ -21,6 +21,7 @@ import 'prompt_variable_registry.dart';
 import 'session_upload_cache_service.dart';
 import 'settings_repository.dart';
 import 'runtime_environment.dart';
+import 'secure_storage_service.dart';
 
 class _RenderResult {
   _RenderResult({
@@ -135,8 +136,10 @@ class SessionService {
     this._llmLogRepository, {
     CourseArtifactService? courseArtifactService,
     SessionUploadCacheService? sessionUploadCacheService,
+    SecureStorageService? secureStorage,
   })  : _courseArtifactService = courseArtifactService,
-        _sessionUploadCacheService = sessionUploadCacheService;
+        _sessionUploadCacheService = sessionUploadCacheService,
+        _secureStorage = secureStorage;
 
   final AppDatabase _db;
   final LlmService _llmService;
@@ -145,6 +148,7 @@ class SessionService {
   final LlmLogRepository _llmLogRepository;
   final CourseArtifactService? _courseArtifactService;
   final SessionUploadCacheService? _sessionUploadCacheService;
+  final SecureStorageService? _secureStorage;
   final PromptRenderer _renderer = PromptRenderer();
   final Map<String, LlmRequestHandle> _inflightTutorByKey = {};
   static final Uuid _uuid = Uuid();
@@ -520,7 +524,7 @@ class SessionService {
     }
     final renderedPrompt = renderResult.rendered;
     final schemaMap = await _loadStructuredSchema(promptName);
-    final llmContext = _buildTutorLlmContext(
+    final llmContext = await _buildTutorLlmContext(
       courseVersion: courseVersion,
       node: node,
       sessionId: sessionId,
@@ -555,13 +559,30 @@ class SessionService {
     );
   }
 
-  LlmCallContext _buildTutorLlmContext({
+  Future<LlmCallContext> _buildTutorLlmContext({
     required CourseVersion courseVersion,
     required CourseNode node,
     required int sessionId,
     required int? studentId,
     required String actionMode,
-  }) {
+  }) async {
+    int? remoteCourseId;
+    int? remoteBundleVersionId;
+    if (runtimeIsAgentTutor) {
+      remoteCourseId =
+          await _db.getRemoteCourseIdForCourseVersion(courseVersion.id);
+      final remoteUserId = _secureStorage?.boundAuthRemoteUserId;
+      if (remoteUserId != null &&
+          remoteUserId > 0 &&
+          remoteCourseId != null &&
+          remoteCourseId > 0) {
+        remoteBundleVersionId =
+            await _secureStorage?.readInstalledCourseBundleVersion(
+          remoteUserId: remoteUserId,
+          remoteCourseId: remoteCourseId,
+        );
+      }
+    }
     return LlmCallContext(
       teacherId: courseVersion.teacherId,
       studentId: studentId,
@@ -569,6 +590,8 @@ class SessionService {
       sessionId: sessionId,
       kpKey: node.kpKey,
       action: actionMode,
+      remoteCourseId: remoteCourseId,
+      remoteBundleVersionId: remoteBundleVersionId,
     );
   }
 
@@ -1327,6 +1350,21 @@ class SessionService {
     required CourseVersion courseVersion,
     required String kpKey,
   }) async {
+    if (runtimeIsAgentTutor) {
+      final path = await _findServerCourseFilePath(
+        courseVersion: courseVersion,
+        candidateRelativePaths: <String>[
+          '${kpKey}_lecture.txt',
+          p.join(kpKey, 'lecture.txt'),
+        ],
+      );
+      if (path != null) {
+        return _agentTutorServerFileMarker(path);
+      }
+      throw StateError(
+        'Missing lecture file for course ${courseVersion.id}: $kpKey',
+      );
+    }
     final basePath = courseVersion.sourcePath?.trim() ?? '';
     if (basePath.isNotEmpty) {
       final path = p.join(basePath, '${kpKey}_lecture.txt');
@@ -1431,6 +1469,16 @@ class SessionService {
     required String kpKey,
     required String level,
   }) async {
+    if (runtimeIsAgentTutor) {
+      final path = await _findServerCourseFilePath(
+        courseVersion: courseVersion,
+        candidateRelativePaths: <String>[
+          '${kpKey}_$level.txt',
+          p.join(kpKey, level, 'questions.txt'),
+        ],
+      );
+      return path == null ? '' : _agentTutorServerFileMarker(path);
+    }
     final basePath = courseVersion.sourcePath?.trim() ?? '';
     if (basePath.isNotEmpty) {
       final path = p.join(basePath, '${kpKey}_$level.txt');
@@ -1448,6 +1496,29 @@ class SessionService {
           ],
         ) ??
         '';
+  }
+
+  Future<String?> _findServerCourseFilePath({
+    required CourseVersion courseVersion,
+    required List<String> candidateRelativePaths,
+  }) async {
+    final basePath = courseVersion.sourcePath?.trim() ?? '';
+    if (basePath.isNotEmpty) {
+      for (final candidate in candidateRelativePaths) {
+        if (File(p.join(basePath, candidate)).existsSync()) {
+          return candidate.replaceAll('\\', '/');
+        }
+      }
+    }
+    return _courseArtifactService?.findStoredEntryPath(
+      courseVersionId: courseVersion.id,
+      candidateRelativePaths: candidateRelativePaths,
+    );
+  }
+
+  String _agentTutorServerFileMarker(String relativePath) {
+    final normalized = relativePath.replaceAll('\\', '/').trim();
+    return '[[AGENT_TUTOR_SERVER_FILE:path=$normalized]]';
   }
 
   Future<String?> _readTextFromStoredBundle({

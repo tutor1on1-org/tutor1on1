@@ -1,9 +1,35 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:tutor1on1/llm/llm_providers.dart';
+import 'package:tutor1on1/llm/llm_models.dart';
 
 void main() {
   group('LlmProviders', () {
+    test('agent_tutor exposes only the server Codex provider', () {
+      final providers = LlmProviders.defaultProviders(
+        appLabel: 'agent_tutor',
+      );
+
+      expect(providers, hasLength(1));
+      final provider = providers.single;
+      expect(provider.id, equals('agent-tutor'));
+      expect(provider.label, equals('Agent Tutor'));
+      expect(provider.authMode, equals(LlmAuthMode.tutorSession));
+      expect(provider.apiFormat, equals(LlmApiFormat.agentTutorExec));
+      expect(provider.supportsTts, isFalse);
+      expect(provider.supportsStt, isFalse);
+      expect(
+        provider.reasoningEfforts,
+        equals(<String>[
+          ReasoningEffort.low,
+          ReasoningEffort.medium,
+          ReasoningEffort.high,
+          ReasoningEffort.xhigh,
+          ReasoningEffort.max,
+        ]),
+      );
+    });
+
     test('includes OpenRouter and current provider defaults', () {
       final providers = LlmProviders.defaultProviders();
 

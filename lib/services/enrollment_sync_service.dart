@@ -17,6 +17,7 @@ import 'prompt_bundle_metadata_builder.dart';
 import 'prompt_template_validator.dart';
 import 'remote_student_identity_service.dart';
 import 'remote_teacher_identity_service.dart';
+import 'runtime_environment.dart';
 import 'secure_storage_service.dart';
 import 'sync_log_repository.dart';
 
@@ -1207,7 +1208,9 @@ class EnrollmentSyncService {
     await bundleFile.parent.create(recursive: true);
     await bundleFile.writeAsBytes(downloaded.bytes, flush: true);
     final computedHash = await bundleService.computeBundleByteHash(bundleFile);
-    if (expectedHash.isNotEmpty && computedHash != expectedHash) {
+    if (!runtimeIsAgentTutor &&
+        expectedHash.isNotEmpty &&
+        computedHash != expectedHash) {
       await _deleteTemporaryBundleFile(bundleFile);
       throw StateError(
         'Downloaded course artifact sha256 mismatch for $artifactId. '
@@ -2253,6 +2256,10 @@ class EnrollmentSyncService {
     required int? installedVersion,
     required SyncItemState? syncState,
   }) async {
+    final artifactService = _courseArtifactService;
+    if (artifactService != null) {
+      return artifactService.hasStoredContentBundle(localCourse.id);
+    }
     if (installedVersion != null && installedVersion > 0) {
       return true;
     }
@@ -2260,11 +2267,7 @@ class EnrollmentSyncService {
     if (contentHash.isNotEmpty) {
       return true;
     }
-    final artifactService = _courseArtifactService;
-    if (artifactService == null) {
-      return false;
-    }
-    return artifactService.hasStoredContentBundle(localCourse.id);
+    return false;
   }
 
   Future<String?> _readStudentCourseSyncHash({
@@ -2892,13 +2895,9 @@ class EnrollmentSyncService {
   }
 
   Future<bool> _hasCachedCourseArtifacts(int courseVersionId) async {
-    final manifest = await _requireCourseArtifactService().readCourseArtifacts(
+    return _requireCourseArtifactService().hasStoredContentBundle(
       courseVersionId,
     );
-    if (manifest == null) {
-      return false;
-    }
-    return File(manifest.contentBundlePath).existsSync();
   }
 
   Future<Map<String, dynamic>> _buildPromptBundleMetadata({

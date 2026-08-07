@@ -29,6 +29,8 @@ class SecureStorageService {
   static const _authDeviceKey = 'auth_device_key';
   static const _authDeviceNameKey = 'auth_device_name';
   static const _remoteStudyModePinHashKey = 'remote_study_mode_pin_hash';
+  static const _agentTutorModelKey = 'agent_tutor_model';
+  static const _agentTutorReasoningEffortKey = 'agent_tutor_reasoning_effort';
   static const _installedCourseBundleVersionPrefix =
       'installed_course_bundle_version:';
   static const _promptMetadataAppliedAtPrefix = 'prompt_metadata_applied_at:';
@@ -166,6 +168,28 @@ class SecureStorageService {
 
   Future<void> deleteRemoteStudyModePinHash() {
     return _storage.delete(key: _remoteStudyModePinHashKey);
+  }
+
+  Future<String?> readAgentTutorModel() {
+    return _storage.read(key: _agentTutorModelKey);
+  }
+
+  Future<void> writeAgentTutorModel(String value) {
+    return _storage.write(
+      key: _agentTutorModelKey,
+      value: value.trim(),
+    );
+  }
+
+  Future<String?> readAgentTutorReasoningEffort() {
+    return _storage.read(key: _agentTutorReasoningEffortKey);
+  }
+
+  Future<void> writeAgentTutorReasoningEffort(String value) {
+    return _storage.write(
+      key: _agentTutorReasoningEffortKey,
+      value: value.trim().toLowerCase(),
+    );
   }
 
   Future<int?> readInstalledCourseBundleVersion({

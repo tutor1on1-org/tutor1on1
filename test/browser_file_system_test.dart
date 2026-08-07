@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'dart:js_interop';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tutor1on1/services/course_artifact_service.dart';
 import 'package:tutor1on1/services/file_system.dart';
 import 'package:web/web.dart' as web;
 
@@ -34,6 +35,67 @@ void main() {
 
     await root.delete(recursive: true);
     expect(root.existsSync(), isFalse);
+  });
+
+  test('repairs the index when Cache Storage bytes are missing', () async {
+    final root = Directory(
+      '/tutor1on1/test/vfs_missing_${DateTime.now().microsecondsSinceEpoch}',
+    );
+    addTearDown(() async {
+      if (await root.exists()) {
+        await root.delete(recursive: true);
+      }
+    });
+    await root.create(recursive: true);
+    final file = File('${root.path}/manifest.json');
+    await file.writeAsString('{}');
+
+    final cache = await web.window.caches.open(_cacheName).toDart;
+    await cache.delete(_vfsRequest(file.path)).toDart;
+
+    expect(file.existsSync(), isTrue);
+    await expectLater(
+      file.readAsString(),
+      throwsA(isA<FileSystemDataMissingException>()),
+    );
+    expect(file.existsSync(), isFalse);
+    expect(_readVfsIndex(), isNot(contains(file.path)));
+  });
+
+  test('course artifact reads recover from stale VFS entries', () async {
+    final root = Directory(
+      '/tutor1on1/test/artifact_missing_${DateTime.now().microsecondsSinceEpoch}',
+    );
+    addTearDown(() async {
+      if (await root.exists()) {
+        await root.delete(recursive: true);
+      }
+    });
+    final service = CourseArtifactService(
+      artifactsRootProvider: () async => root,
+    );
+    final courseDir = Directory('${root.path}/course_1');
+    await courseDir.create(recursive: true);
+    final manifestFile = File('${courseDir.path}/manifest.json');
+    final contentBundle = File('${courseDir.path}/content_bundle.zip');
+    await contentBundle.writeAsBytes(<int>[1, 2, 3]);
+    await manifestFile.writeAsString(
+      jsonEncode(<String, Object?>{
+        'course_version_id': 1,
+        'folder_path': root.path,
+        'content_bundle_path': contentBundle.path,
+        'chapters': const <Object?>[],
+        'built_at': DateTime.utc(2026, 1, 1).toIso8601String(),
+      }),
+    );
+
+    expect(await service.readCourseArtifacts(1), isNotNull);
+    final cache = await web.window.caches.open(_cacheName).toDart;
+    await cache.delete(_vfsRequest(contentBundle.path)).toDart;
+    expect(await service.hasStoredContentBundle(1), isFalse);
+
+    await cache.delete(_vfsRequest(manifestFile.path)).toDart;
+    expect(await service.readCourseArtifacts(1), isNull);
   });
 
   test('merges the latest index and keeps cache content in sync', () async {

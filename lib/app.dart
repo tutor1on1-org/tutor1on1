@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import 'app_theme.dart';
 import 'services/app_services.dart';
+import 'services/runtime_environment.dart';
 import 'state/auth_controller.dart';
 import 'state/settings_controller.dart';
 import 'state/study_mode_controller.dart';
@@ -51,8 +52,9 @@ class Tutor1on1App extends StatelessWidget {
         builder: (context, settingsController, studyModeController, _) {
           final settings = settingsController.settings;
           return MaterialApp(
-            onGenerateTitle: (context) =>
-                AppLocalizations.of(context)!.appTitle,
+            onGenerateTitle: (context) => runtimeIsAgentTutor
+                ? runtimeAppTitle
+                : AppLocalizations.of(context)!.appTitle,
             locale: appLocaleFromSetting(settings?.locale),
             supportedLocales: AppLocalizations.supportedLocales,
             localizationsDelegates: AppLocalizations.localizationsDelegates,

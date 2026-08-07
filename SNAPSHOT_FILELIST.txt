@@ -85,6 +85,7 @@ lib/services/device_identity_service.dart
 lib/services/enrollment_sync_service.dart
 lib/services/exit_sync_service.dart
 lib/services/file_system.dart
+lib/services/file_system_errors.dart
 lib/services/file_system_web.dart
 lib/services/home_sync_coordinator.dart
 lib/services/legacy_brand_compat.dart

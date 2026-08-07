@@ -6,6 +6,7 @@ import '../../services/app_services.dart';
 import '../../services/app_version_service.dart';
 import '../../services/home_sync_coordinator.dart';
 import '../../services/marketplace_api_service.dart';
+import '../../services/runtime_environment.dart';
 import '../../state/auth_controller.dart';
 import '../../state/settings_controller.dart';
 import '../app_close_button.dart';
@@ -93,7 +94,7 @@ class _WelcomePageState extends State<WelcomePage> {
       length: 3,
       child: Scaffold(
         appBar: AppBar(
-          title: Text(l10n.appTitle),
+          title: Text(runtimeIsAgentTutor ? runtimeAppTitle : l10n.appTitle),
           actions: buildAppBarActionsWithClose(
             context,
             actions: [
