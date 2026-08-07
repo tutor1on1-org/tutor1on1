@@ -10,8 +10,8 @@ Tutor1on1 ships one Chrome web application:
 
 ## Current Public Release
 
-- Git tag: `v1.0.64`
-- App version: `1.0.64`
+- Git tag: `v1.0.65`
+- App version: `1.0.65`
 
 ## Release Checklist
 

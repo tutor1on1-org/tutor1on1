@@ -285,6 +285,7 @@ class LlmService {
         callHash: callHash,
         model: modelToUse,
         baseUrl: settings.baseUrl,
+        codexSessionId: responseText.codexSessionId,
       );
     } catch (error) {
       stopwatch.stop();
@@ -497,6 +498,7 @@ class LlmService {
         callHash: callHash,
         model: modelToUse,
         baseUrl: settings.baseUrl,
+        codexSessionId: responseText.codexSessionId,
       );
     } catch (error) {
       stopwatch.stop();
@@ -888,6 +890,10 @@ class LlmService {
       if (schemaMap != null) 'schema': schemaMap,
       'model': model,
       'reasoning_effort': ReasoningEffort.normalize(reasoningEffort),
+      if (context?.sessionId != null) 'client_session_id': context!.sessionId,
+      if ((context?.codexSessionId ?? '').trim().isNotEmpty)
+        'codex_session_id': context!.codexSessionId!.trim(),
+      'course_file_paths': _extractAgentTutorServerFilePaths(renderedPrompt),
     });
     var accessToken = credential.accessToken;
     Future<http.Response> send() {
@@ -930,8 +936,15 @@ class LlmService {
     if (responseText.trim().isEmpty) {
       throw StateError('Agent Tutor response missing content.');
     }
+    final codexSessionId = (payload['session_id'] as String?)?.trim() ?? '';
+    if (codexSessionId.isEmpty) {
+      throw StateError('Agent Tutor response missing session_id.');
+    }
     onChunk?.call(responseText);
-    return LlmPreparedResponse(responseText: responseText);
+    return LlmPreparedResponse(
+      responseText: responseText,
+      codexSessionId: codexSessionId,
+    );
   }
 
   Future<LlmPreparedResponse> _postOpenAiCodexResponsesStream({
@@ -1573,4 +1586,18 @@ class _LlmCredential {
   final String accessToken;
   final String? codexAccountId;
   final String? tutorAccessToken;
+}
+
+List<String> _extractAgentTutorServerFilePaths(String renderedPrompt) {
+  final paths = <String>{};
+  final markerPattern = RegExp(
+    r'\[\[AGENT_TUTOR_SERVER_FILE:path=([^\]]+)\]\]',
+  );
+  for (final match in markerPattern.allMatches(renderedPrompt)) {
+    final path = match.group(1)?.trim() ?? '';
+    if (path.isNotEmpty) {
+      paths.add(path.replaceAll('\\', '/'));
+    }
+  }
+  return paths.toList(growable: false);
 }

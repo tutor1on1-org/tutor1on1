@@ -320,6 +320,7 @@ LlmCallResult _llmOk({
   String model = 'gpt-4o-mini',
   String baseUrl = 'https://api.openai.com/v1',
   String callHash = 'hash',
+  String? codexSessionId,
 }) {
   return LlmCallResult(
     responseText: responseText,
@@ -328,6 +329,7 @@ LlmCallResult _llmOk({
     callHash: callHash,
     model: model,
     baseUrl: baseUrl,
+    codexSessionId: codexSessionId,
   );
 }
 
@@ -580,6 +582,7 @@ void main() {
       Future<LlmCallResult>.value(
         _llmOk(
           responseText: 'Start by thinking of zero as the middle point.',
+          codexSessionId: 'thread-test-123',
         ),
       ),
     );
@@ -592,6 +595,11 @@ void main() {
       node: fixture.node,
     );
     await handle.future;
+
+    expect(
+      (await db.getSession(fixture.sessionId))?.codexSessionId,
+      equals('thread-test-123'),
+    );
 
     final control = await _sessionControl(db, fixture.sessionId);
     final evidence = await _sessionEvidence(db, fixture.sessionId);

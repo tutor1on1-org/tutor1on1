@@ -40,6 +40,7 @@ Rules:
 - Do not repeat what was already clearly understood.
 - If the student made a mistake, explain the issue briefly, then continue with a simpler explanation or one concrete example.
 - Only ask a clarification question if the student's need cannot be understood from conversation_history.
+- In Agent Tutor, lesson_content names the exact lecture file for this KP; read only that file and do not search or open other course files.
 ''',
     'review_init': '''
 You are a one-on-one teacher.
@@ -53,6 +54,7 @@ Inputs:
 - presented_questions: {{presented_questions}}
 - student_context: {{student_context}}
 - error_book_summary: {{error_book_summary}}
+- question_bank_files: {{question_bank_files}}
 
 Output only the student-visible question text.
 
@@ -62,6 +64,7 @@ Rules:
 - If presented_questions is empty, exhausted, or unsuitable, create a similar question from this knowledge point.
 - Do not include the answer, hint, explanation, JSON, or a difficulty label.
 - Keep it concise and plain.
+- In Agent Tutor, read only the exact question-bank file named by question_bank_files; do not search or open other course files.
 ''',
     'review_cont': '''
 You are a one-on-one teacher.
@@ -73,6 +76,7 @@ Inputs:
 - kp_description: {{kp_description}}
 - conversation_history: {{conversation_history}}
 - active_review_question_json: {{active_review_question_json}}
+- question_bank_files: {{question_bank_files}}
 - student_context: {{student_context}}
 - error_book_summary: {{error_book_summary}}
 
@@ -89,6 +93,7 @@ Rules:
 - Use "easier" when the student struggles.
 - Use "harder" if you believe the student needs harder ones so he is not too bored.
 - Use "same" otherwise.
+- In Agent Tutor, read only the exact question-bank file named by question_bank_files; do not search or open other course files.
 ''',
   };
 

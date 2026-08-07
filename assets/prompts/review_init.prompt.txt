@@ -9,6 +9,7 @@ Inputs:
 - kp_description: {{kp_description}}
 - conversation_history: {{conversation_history}}
 - presented_questions: {{presented_questions}}
+- question_bank_files: {{question_bank_files}}
 - student_context: {{student_context}}
 - error_book_summary: {{error_book_summary}}
 
@@ -21,3 +22,4 @@ Rules:
 - MUST NOT REPEAT. Make significant modifications to the question if needed.
 - Do not include the answer, hint, explanation, JSON, or a difficulty label.
 - Keep it concise and plain.
+- In Agent Tutor, read only the exact question-bank file named by question_bank_files; do not search or open other course files.

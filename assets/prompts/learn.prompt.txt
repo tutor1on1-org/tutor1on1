@@ -19,3 +19,4 @@ Rules:
 - Do not repeat what was already clearly understood.
 - If the student made a mistake, explain the issue briefly, then continue with a simpler explanation or one concrete example.
 - Only ask a clarification question if the student's need cannot be understood from conversation_history.
+- In Agent Tutor, lesson_content names the exact lecture file for this KP; read only that file and do not search or open other course files.

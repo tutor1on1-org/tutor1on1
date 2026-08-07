@@ -147,6 +147,7 @@ class ChatSessions extends Table {
   TextColumn get syncId => text().nullable()();
   DateTimeColumn get syncUpdatedAt => dateTime().nullable()();
   DateTimeColumn get syncUploadedAt => dateTime().nullable()();
+  TextColumn get codexSessionId => text().nullable()();
 }
 
 class CourseRemoteLinks extends Table {
@@ -570,7 +571,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 34;
+  int get schemaVersion => 35;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -820,6 +821,9 @@ ORDER BY id
             }
             await m.createTable(mistakeEntries);
             await _ensureMistakeEntryIndexes();
+          }
+          if (from < 35 && await _tableExists('chat_sessions')) {
+            await m.addColumn(chatSessions, chatSessions.codexSessionId);
           }
         },
       );
@@ -1237,6 +1241,18 @@ ORDER BY c.subject COLLATE NOCASE ASC
   Stream<ChatSession?> watchSession(int sessionId) {
     return (select(chatSessions)..where((tbl) => tbl.id.equals(sessionId)))
         .watchSingleOrNull();
+  }
+
+  Future<void> updateCodexSessionId({
+    required int sessionId,
+    required String codexSessionId,
+  }) {
+    return (update(chatSessions)..where((tbl) => tbl.id.equals(sessionId)))
+        .write(
+      ChatSessionsCompanion(
+        codexSessionId: Value(codexSessionId.trim()),
+      ),
+    );
   }
 
   Future<void> updateSessionContracts({

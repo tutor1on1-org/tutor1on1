@@ -94,7 +94,7 @@ void main() {
 
     final initial = await repository.load();
     expect(initial.providerId, 'agent-tutor');
-    expect(initial.model, 'gpt-5.6-sol');
+    expect(initial.model, 'gpt-5.6-luna');
     expect(initial.timeoutSeconds, 600);
     expect(initial.ttsModel, isNull);
 

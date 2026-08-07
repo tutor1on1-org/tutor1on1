@@ -118,6 +118,7 @@ class LlmProviders {
           label: 'Agent Tutor',
           baseUrl: kAuthBaseUrl,
           models: <String>[
+            'gpt-5.6-luna',
             'gpt-5.6-sol',
             'gpt-5.6-terra',
           ],

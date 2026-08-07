@@ -16,6 +16,14 @@ void main() {
       expect(provider.label, equals('Agent Tutor'));
       expect(provider.authMode, equals(LlmAuthMode.tutorSession));
       expect(provider.apiFormat, equals(LlmApiFormat.agentTutorExec));
+      expect(
+        provider.models,
+        equals(<String>[
+          'gpt-5.6-luna',
+          'gpt-5.6-sol',
+          'gpt-5.6-terra',
+        ]),
+      );
       expect(provider.supportsTts, isFalse);
       expect(provider.supportsStt, isFalse);
       expect(

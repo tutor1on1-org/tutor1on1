@@ -40,6 +40,7 @@ class PromptVariableRegistry {
   static const String lessonContent = 'lesson_content';
   static const String errorBookSummary = 'error_book_summary';
   static const String presentedQuestions = 'presented_questions';
+  static const String questionBankFiles = 'question_bank_files';
   static const String activeReviewQuestionJson = 'active_review_question_json';
   static const String reviewPassCounts = 'review_pass_counts';
   static const String reviewFailCounts = 'review_fail_counts';
@@ -183,6 +184,12 @@ class PromptVariableRegistry {
       requiredFor: {reviewInitPrompt, courseBuilderQuestionPrompt},
     ),
     PromptVariableDefinition(
+      name: questionBankFiles,
+      description:
+          'Exact question-bank file names selected by the app for this KP; do not search other course files.',
+      promptNames: {reviewInitPrompt, reviewContPrompt},
+    ),
+    PromptVariableDefinition(
       name: activeReviewQuestionJson,
       description:
           'Legacy JSON state for the one active review question, or null.',
@@ -261,6 +268,7 @@ class PromptVariableRegistry {
     required Object? lessonContent,
     required Object? errorBookSummary,
     required Object? presentedQuestions,
+    Object? questionBankFiles = '',
     required Object? activeReviewQuestionJson,
     required Object? reviewPassCounts,
     required Object? reviewFailCounts,
@@ -282,6 +290,7 @@ class PromptVariableRegistry {
       PromptVariableRegistry.lessonContent: lessonContent,
       PromptVariableRegistry.errorBookSummary: errorBookSummary,
       PromptVariableRegistry.presentedQuestions: presentedQuestions,
+      PromptVariableRegistry.questionBankFiles: questionBankFiles,
       PromptVariableRegistry.activeReviewQuestionJson: activeReviewQuestionJson,
       PromptVariableRegistry.reviewPassCounts: reviewPassCounts,
       PromptVariableRegistry.reviewFailCounts: reviewFailCounts,

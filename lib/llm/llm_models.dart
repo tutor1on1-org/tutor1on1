@@ -10,6 +10,7 @@ class LlmCallResult {
     this.callHash,
     this.model,
     this.baseUrl,
+    this.codexSessionId,
   });
 
   final String responseText;
@@ -22,6 +23,7 @@ class LlmCallResult {
   final String? callHash;
   final String? model;
   final String? baseUrl;
+  final String? codexSessionId;
 }
 
 class ReasoningEffort {
@@ -70,6 +72,7 @@ class LlmCallContext {
     this.action,
     this.remoteCourseId,
     this.remoteBundleVersionId,
+    this.codexSessionId,
   });
 
   final int? teacherId;
@@ -80,6 +83,7 @@ class LlmCallContext {
   final String? action;
   final int? remoteCourseId;
   final int? remoteBundleVersionId;
+  final String? codexSessionId;
 }
 
 class RequestHandle<T> {

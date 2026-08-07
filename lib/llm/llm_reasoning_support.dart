@@ -8,11 +8,13 @@ class LlmPreparedResponse {
     required this.responseText,
     this.reasoningText,
     this.reasoningTokens,
+    this.codexSessionId,
   });
 
   final String responseText;
   final String? reasoningText;
   final int? reasoningTokens;
+  final String? codexSessionId;
 }
 
 class LlmReasoningSupport {

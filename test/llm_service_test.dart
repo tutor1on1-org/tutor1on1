@@ -409,6 +409,11 @@ void main() {
         expect(body['prompt_name'], equals('review_init'));
         expect(body['model'], equals('gpt-5.6-sol'));
         expect(body['reasoning_effort'], equals('max'));
+        expect(body['client_session_id'], equals(77));
+        expect(
+          body['course_file_paths'],
+          equals(<dynamic>['2.1/easy/questions.txt']),
+        );
         expect(
           body['rendered_prompt'],
           contains('[[AGENT_TUTOR_SERVER_FILE:path=2.1/easy/questions.txt]]'),
@@ -417,6 +422,7 @@ void main() {
         return http.Response(
           jsonEncode(<String, dynamic>{
             'response_text': '{"teacher_message":"Server answer"}',
+            'session_id': 'thread-789',
           }),
           200,
           headers: const <String, String>{
@@ -436,6 +442,7 @@ void main() {
           context: const LlmCallContext(
             remoteCourseId: 200,
             remoteBundleVersionId: 501,
+            sessionId: 77,
             kpKey: '2.1',
             action: 'review',
           ),
@@ -444,6 +451,7 @@ void main() {
         .future;
 
     expect(result.responseText, contains('Server answer'));
+    expect(result.codexSessionId, equals('thread-789'));
     expect(chunks, equals(<String>[result.responseText]));
     expect(logRepository.statuses, equals(<String>['ok']));
   });

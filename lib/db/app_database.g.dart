@@ -3785,6 +3785,12 @@ class $ChatSessionsTable extends ChatSessions
   late final GeneratedColumn<DateTime> syncUploadedAt =
       GeneratedColumn<DateTime>('sync_uploaded_at', aliasedName, true,
           type: DriftSqlType.dateTime, requiredDuringInsert: false);
+  static const VerificationMeta _codexSessionIdMeta =
+      const VerificationMeta('codexSessionId');
+  @override
+  late final GeneratedColumn<String> codexSessionId = GeneratedColumn<String>(
+      'codex_session_id', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         id,
@@ -3807,7 +3813,8 @@ class $ChatSessionsTable extends ChatSessions
         evidenceStateUpdatedAt,
         syncId,
         syncUpdatedAt,
-        syncUploadedAt
+        syncUploadedAt,
+        codexSessionId
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -3934,6 +3941,12 @@ class $ChatSessionsTable extends ChatSessions
           syncUploadedAt.isAcceptableOrUnknown(
               data['sync_uploaded_at']!, _syncUploadedAtMeta));
     }
+    if (data.containsKey('codex_session_id')) {
+      context.handle(
+          _codexSessionIdMeta,
+          codexSessionId.isAcceptableOrUnknown(
+              data['codex_session_id']!, _codexSessionIdMeta));
+    }
     return context;
   }
 
@@ -3987,6 +4000,8 @@ class $ChatSessionsTable extends ChatSessions
           DriftSqlType.dateTime, data['${effectivePrefix}sync_updated_at']),
       syncUploadedAt: attachedDatabase.typeMapping.read(
           DriftSqlType.dateTime, data['${effectivePrefix}sync_uploaded_at']),
+      codexSessionId: attachedDatabase.typeMapping.read(
+          DriftSqlType.string, data['${effectivePrefix}codex_session_id']),
     );
   }
 
@@ -4018,6 +4033,7 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
   final String? syncId;
   final DateTime? syncUpdatedAt;
   final DateTime? syncUploadedAt;
+  final String? codexSessionId;
   const ChatSession(
       {required this.id,
       required this.studentId,
@@ -4039,7 +4055,8 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
       this.evidenceStateUpdatedAt,
       this.syncId,
       this.syncUpdatedAt,
-      this.syncUploadedAt});
+      this.syncUploadedAt,
+      this.codexSessionId});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -4096,6 +4113,9 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
     if (!nullToAbsent || syncUploadedAt != null) {
       map['sync_uploaded_at'] = Variable<DateTime>(syncUploadedAt);
     }
+    if (!nullToAbsent || codexSessionId != null) {
+      map['codex_session_id'] = Variable<String>(codexSessionId);
+    }
     return map;
   }
 
@@ -4150,6 +4170,9 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
       syncUploadedAt: syncUploadedAt == null && nullToAbsent
           ? const Value.absent()
           : Value(syncUploadedAt),
+      codexSessionId: codexSessionId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(codexSessionId),
     );
   }
 
@@ -4182,6 +4205,7 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
       syncId: serializer.fromJson<String?>(json['syncId']),
       syncUpdatedAt: serializer.fromJson<DateTime?>(json['syncUpdatedAt']),
       syncUploadedAt: serializer.fromJson<DateTime?>(json['syncUploadedAt']),
+      codexSessionId: serializer.fromJson<String?>(json['codexSessionId']),
     );
   }
   @override
@@ -4211,6 +4235,7 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
       'syncId': serializer.toJson<String?>(syncId),
       'syncUpdatedAt': serializer.toJson<DateTime?>(syncUpdatedAt),
       'syncUploadedAt': serializer.toJson<DateTime?>(syncUploadedAt),
+      'codexSessionId': serializer.toJson<String?>(codexSessionId),
     };
   }
 
@@ -4235,7 +4260,8 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
           Value<DateTime?> evidenceStateUpdatedAt = const Value.absent(),
           Value<String?> syncId = const Value.absent(),
           Value<DateTime?> syncUpdatedAt = const Value.absent(),
-          Value<DateTime?> syncUploadedAt = const Value.absent()}) =>
+          Value<DateTime?> syncUploadedAt = const Value.absent(),
+          Value<String?> codexSessionId = const Value.absent()}) =>
       ChatSession(
         id: id ?? this.id,
         studentId: studentId ?? this.studentId,
@@ -4275,6 +4301,8 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
             syncUpdatedAt.present ? syncUpdatedAt.value : this.syncUpdatedAt,
         syncUploadedAt:
             syncUploadedAt.present ? syncUploadedAt.value : this.syncUploadedAt,
+        codexSessionId:
+            codexSessionId.present ? codexSessionId.value : this.codexSessionId,
       );
   ChatSession copyWithCompanion(ChatSessionsCompanion data) {
     return ChatSession(
@@ -4323,6 +4351,9 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
       syncUploadedAt: data.syncUploadedAt.present
           ? data.syncUploadedAt.value
           : this.syncUploadedAt,
+      codexSessionId: data.codexSessionId.present
+          ? data.codexSessionId.value
+          : this.codexSessionId,
     );
   }
 
@@ -4349,7 +4380,8 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
           ..write('evidenceStateUpdatedAt: $evidenceStateUpdatedAt, ')
           ..write('syncId: $syncId, ')
           ..write('syncUpdatedAt: $syncUpdatedAt, ')
-          ..write('syncUploadedAt: $syncUploadedAt')
+          ..write('syncUploadedAt: $syncUploadedAt, ')
+          ..write('codexSessionId: $codexSessionId')
           ..write(')'))
         .toString();
   }
@@ -4376,7 +4408,8 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
         evidenceStateUpdatedAt,
         syncId,
         syncUpdatedAt,
-        syncUploadedAt
+        syncUploadedAt,
+        codexSessionId
       ]);
   @override
   bool operator ==(Object other) =>
@@ -4402,7 +4435,8 @@ class ChatSession extends DataClass implements Insertable<ChatSession> {
           other.evidenceStateUpdatedAt == this.evidenceStateUpdatedAt &&
           other.syncId == this.syncId &&
           other.syncUpdatedAt == this.syncUpdatedAt &&
-          other.syncUploadedAt == this.syncUploadedAt);
+          other.syncUploadedAt == this.syncUploadedAt &&
+          other.codexSessionId == this.codexSessionId);
 }
 
 class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
@@ -4427,6 +4461,7 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
   final Value<String?> syncId;
   final Value<DateTime?> syncUpdatedAt;
   final Value<DateTime?> syncUploadedAt;
+  final Value<String?> codexSessionId;
   const ChatSessionsCompanion({
     this.id = const Value.absent(),
     this.studentId = const Value.absent(),
@@ -4449,6 +4484,7 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
     this.syncId = const Value.absent(),
     this.syncUpdatedAt = const Value.absent(),
     this.syncUploadedAt = const Value.absent(),
+    this.codexSessionId = const Value.absent(),
   });
   ChatSessionsCompanion.insert({
     this.id = const Value.absent(),
@@ -4472,6 +4508,7 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
     this.syncId = const Value.absent(),
     this.syncUpdatedAt = const Value.absent(),
     this.syncUploadedAt = const Value.absent(),
+    this.codexSessionId = const Value.absent(),
   })  : studentId = Value(studentId),
         courseVersionId = Value(courseVersionId),
         kpKey = Value(kpKey);
@@ -4497,6 +4534,7 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
     Expression<String>? syncId,
     Expression<DateTime>? syncUpdatedAt,
     Expression<DateTime>? syncUploadedAt,
+    Expression<String>? codexSessionId,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -4523,6 +4561,7 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
       if (syncId != null) 'sync_id': syncId,
       if (syncUpdatedAt != null) 'sync_updated_at': syncUpdatedAt,
       if (syncUploadedAt != null) 'sync_uploaded_at': syncUploadedAt,
+      if (codexSessionId != null) 'codex_session_id': codexSessionId,
     });
   }
 
@@ -4547,7 +4586,8 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
       Value<DateTime?>? evidenceStateUpdatedAt,
       Value<String?>? syncId,
       Value<DateTime?>? syncUpdatedAt,
-      Value<DateTime?>? syncUploadedAt}) {
+      Value<DateTime?>? syncUploadedAt,
+      Value<String?>? codexSessionId}) {
     return ChatSessionsCompanion(
       id: id ?? this.id,
       studentId: studentId ?? this.studentId,
@@ -4572,6 +4612,7 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
       syncId: syncId ?? this.syncId,
       syncUpdatedAt: syncUpdatedAt ?? this.syncUpdatedAt,
       syncUploadedAt: syncUploadedAt ?? this.syncUploadedAt,
+      codexSessionId: codexSessionId ?? this.codexSessionId,
     );
   }
 
@@ -4643,6 +4684,9 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
     if (syncUploadedAt.present) {
       map['sync_uploaded_at'] = Variable<DateTime>(syncUploadedAt.value);
     }
+    if (codexSessionId.present) {
+      map['codex_session_id'] = Variable<String>(codexSessionId.value);
+    }
     return map;
   }
 
@@ -4669,7 +4713,8 @@ class ChatSessionsCompanion extends UpdateCompanion<ChatSession> {
           ..write('evidenceStateUpdatedAt: $evidenceStateUpdatedAt, ')
           ..write('syncId: $syncId, ')
           ..write('syncUpdatedAt: $syncUpdatedAt, ')
-          ..write('syncUploadedAt: $syncUploadedAt')
+          ..write('syncUploadedAt: $syncUploadedAt, ')
+          ..write('codexSessionId: $codexSessionId')
           ..write(')'))
         .toString();
   }
@@ -12183,6 +12228,7 @@ typedef $$ChatSessionsTableCreateCompanionBuilder = ChatSessionsCompanion
   Value<String?> syncId,
   Value<DateTime?> syncUpdatedAt,
   Value<DateTime?> syncUploadedAt,
+  Value<String?> codexSessionId,
 });
 typedef $$ChatSessionsTableUpdateCompanionBuilder = ChatSessionsCompanion
     Function({
@@ -12207,6 +12253,7 @@ typedef $$ChatSessionsTableUpdateCompanionBuilder = ChatSessionsCompanion
   Value<String?> syncId,
   Value<DateTime?> syncUpdatedAt,
   Value<DateTime?> syncUploadedAt,
+  Value<String?> codexSessionId,
 });
 
 class $$ChatSessionsTableFilterComposer
@@ -12288,6 +12335,10 @@ class $$ChatSessionsTableFilterComposer
 
   ColumnFilters<DateTime> get syncUploadedAt => $composableBuilder(
       column: $table.syncUploadedAt,
+      builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get codexSessionId => $composableBuilder(
+      column: $table.codexSessionId,
       builder: (column) => ColumnFilters(column));
 }
 
@@ -12373,6 +12424,10 @@ class $$ChatSessionsTableOrderingComposer
   ColumnOrderings<DateTime> get syncUploadedAt => $composableBuilder(
       column: $table.syncUploadedAt,
       builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get codexSessionId => $composableBuilder(
+      column: $table.codexSessionId,
+      builder: (column) => ColumnOrderings(column));
 }
 
 class $$ChatSessionsTableAnnotationComposer
@@ -12446,6 +12501,9 @@ class $$ChatSessionsTableAnnotationComposer
 
   GeneratedColumn<DateTime> get syncUploadedAt => $composableBuilder(
       column: $table.syncUploadedAt, builder: (column) => column);
+
+  GeneratedColumn<String> get codexSessionId => $composableBuilder(
+      column: $table.codexSessionId, builder: (column) => column);
 }
 
 class $$ChatSessionsTableTableManager extends RootTableManager<
@@ -12495,6 +12553,7 @@ class $$ChatSessionsTableTableManager extends RootTableManager<
             Value<String?> syncId = const Value.absent(),
             Value<DateTime?> syncUpdatedAt = const Value.absent(),
             Value<DateTime?> syncUploadedAt = const Value.absent(),
+            Value<String?> codexSessionId = const Value.absent(),
           }) =>
               ChatSessionsCompanion(
             id: id,
@@ -12518,6 +12577,7 @@ class $$ChatSessionsTableTableManager extends RootTableManager<
             syncId: syncId,
             syncUpdatedAt: syncUpdatedAt,
             syncUploadedAt: syncUploadedAt,
+            codexSessionId: codexSessionId,
           ),
           createCompanionCallback: ({
             Value<int> id = const Value.absent(),
@@ -12541,6 +12601,7 @@ class $$ChatSessionsTableTableManager extends RootTableManager<
             Value<String?> syncId = const Value.absent(),
             Value<DateTime?> syncUpdatedAt = const Value.absent(),
             Value<DateTime?> syncUploadedAt = const Value.absent(),
+            Value<String?> codexSessionId = const Value.absent(),
           }) =>
               ChatSessionsCompanion.insert(
             id: id,
@@ -12564,6 +12625,7 @@ class $$ChatSessionsTableTableManager extends RootTableManager<
             syncId: syncId,
             syncUpdatedAt: syncUpdatedAt,
             syncUploadedAt: syncUploadedAt,
+            codexSessionId: codexSessionId,
           ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))

@@ -474,6 +474,7 @@ class SessionService {
       lessonContent: '',
       errorBookSummary: errorBookSummary,
       presentedQuestions: '',
+      questionBankFiles: '',
       activeReviewQuestionJson: controlState.activeReviewQuestion == null
           ? 'null'
           : jsonEncode(controlState.activeReviewQuestion),
@@ -491,11 +492,12 @@ class SessionService {
       values[PromptVariableRegistry.lessonContent] = lessonContent;
     }
     if (actionMode == 'review') {
+      final questionBankFiles = _questionsTextForDifficulty(
+        questionTextsByLevel: questionTextsByLevel,
+        difficulty: reviewQuestionDifficulty,
+      );
+      values[PromptVariableRegistry.questionBankFiles] = questionBankFiles;
       if (promptName == PromptVariableRegistry.reviewInitPrompt) {
-        final presentedQuestions = _questionsTextForDifficulty(
-          questionTextsByLevel: questionTextsByLevel,
-          difficulty: reviewQuestionDifficulty,
-        );
         final dueMistakes = session == null
             ? const <MistakeEntry>[]
             : await _db.getDueMistakeEntriesForCourse(
@@ -508,7 +510,7 @@ class SessionService {
             : _pendingMistakeFocusTags.remove(session.id);
         values[PromptVariableRegistry.presentedQuestions] =
             _questionsWithMistakeFocus(
-          questionsText: presentedQuestions,
+          questionsText: questionBankFiles,
           mistakes: dueMistakes,
           pendingTag: pendingFocusTag,
         );
@@ -530,6 +532,7 @@ class SessionService {
       sessionId: sessionId,
       studentId: session?.studentId,
       actionMode: actionMode,
+      codexSessionId: session?.codexSessionId,
     );
     final dedupeKey = await _buildTutorDedupeKey(
       sessionId: sessionId,
@@ -565,6 +568,7 @@ class SessionService {
     required int sessionId,
     required int? studentId,
     required String actionMode,
+    required String? codexSessionId,
   }) async {
     int? remoteCourseId;
     int? remoteBundleVersionId;
@@ -592,6 +596,7 @@ class SessionService {
       action: actionMode,
       remoteCourseId: remoteCourseId,
       remoteBundleVersionId: remoteBundleVersionId,
+      codexSessionId: codexSessionId,
     );
   }
 
@@ -767,6 +772,13 @@ class SessionService {
       parsed: decodedParsed,
     );
     final parsedJsonText = parsed == null ? null : jsonEncode(parsed);
+    final codexSessionId = resolution.result.codexSessionId?.trim();
+    if (codexSessionId != null && codexSessionId.isNotEmpty) {
+      await _db.updateCodexSessionId(
+        sessionId: request.sessionId,
+        codexSessionId: codexSessionId,
+      );
+    }
     final int persistedMessageId;
     if (assistantMessageId == null) {
       persistedMessageId = await _db.into(_db.chatMessages).insert(

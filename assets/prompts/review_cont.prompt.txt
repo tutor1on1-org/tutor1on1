@@ -7,6 +7,7 @@ Inputs:
 - kp_description: {{kp_description}}
 - conversation_history: {{conversation_history}}
 - active_review_question_json: {{active_review_question_json}}
+- question_bank_files: {{question_bank_files}}
 - student_context: {{student_context}}
 - error_book_summary: {{error_book_summary}}
 
@@ -23,3 +24,4 @@ Rules:
 - Use "easier" when the student struggles.
 - Use "harder" if you believe the student needs harder ones so he is not too bored.
 - Use "same" otherwise.
+- In Agent Tutor, read only the exact question-bank file named by question_bank_files; do not search or open other course files.
